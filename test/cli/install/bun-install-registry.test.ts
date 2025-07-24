@@ -3355,7 +3355,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
+    isLinux
+      ? expect.stringContaining("Checked 18 installs across 23 packages (no changes)")
+      : expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
   expect(await exited).toBe(0);
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -3384,7 +3386,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
+    isLinux
+      ? expect.stringContaining("Checked 18 installs across 23 packages (no changes)")
+      : expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
 });
 

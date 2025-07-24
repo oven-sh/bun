@@ -12,6 +12,7 @@ import {
   test,
 } from "bun:test";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { existsSync, readdirSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -25,7 +26,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -8594,4 +8595,245 @@ test("non-optional dependencies need to be resolvable in text lockfile", async (
   expect(out).not.toContain("1 package installed");
 
   expect(await exited).toBe(1);
+});
+
+describe("platform-specific dependencies", () => {
+  const registryDir = join(__dirname, "registry", "packages");
+
+  beforeEach(async () => {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true }).catch(() => {});
+    await rm(join(package_dir, "bun.lockb"), { force: true }).catch(() => {});
+    await rm(join(package_dir, "bun.lock"), { force: true }).catch(() => {});
+  });
+
+  test("handles missing platform packages gracefully", async () => {
+    await write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-missing-platform",
+        dependencies: {
+          "platform-test": `file:${join(registryDir, "platform-test", "platform-test-1.0.0.tgz")}`,
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--os=freebsd", "--cpu=x64"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
+
+    expect(exitCode).toBe(0);
+    expect(err).toContain("Saved lockfile");
+
+    expect(await exists(join(package_dir, "node_modules", "platform-test", "package.json"))).toBe(true);
+  });
+
+  const platformTestHandler = (req: Request, urls: string[]) => {
+    const url = new URL(req.url);
+    const pathname = url.pathname.replaceAll("%2f", "/");
+
+    urls.push(req.url);
+
+    if (pathname === "/platform-test") {
+      return Response.json({
+        name: "platform-test",
+        versions: {
+          "1.0.0": {
+            name: "platform-test",
+            version: "1.0.0",
+            main: "index.js",
+            optionalDependencies: {
+              "@platform-test/darwin-x64": "1.0.0",
+              "@platform-test/darwin-arm64": "1.0.0",
+              "@platform-test/linux-x64": "1.0.0",
+              "@platform-test/linux-arm64": "1.0.0",
+              "@platform-test/linux-x64-musl": "1.0.0",
+              "@platform-test/linux-arm64-musl": "1.0.0",
+              "@platform-test/windows-x64": "1.0.0",
+              "@platform-test/windows-ia32": "1.0.0",
+              "@platform-test/linux-arm": "1.0.0",
+            },
+            dist: {
+              tarball: `${root_url}/platform-test-1.0.0.tgz`,
+            },
+          },
+        },
+        "dist-tags": {
+          latest: "1.0.0",
+        },
+      });
+    }
+
+    if (pathname.startsWith("/@platform-test/")) {
+      const pkgName = pathname.slice(1);
+      const platform = pkgName.split("/")[1];
+
+      const constraints: any = {};
+
+      if (platform.includes("darwin")) {
+        constraints.os = ["darwin"];
+      } else if (platform.includes("linux")) {
+        constraints.os = ["linux"];
+      } else if (platform.includes("windows")) {
+        constraints.os = ["win32"];
+      }
+
+      if (platform.includes("x64")) {
+        constraints.cpu = ["x64"];
+      } else if (platform.includes("arm64")) {
+        constraints.cpu = ["arm64"];
+      } else if (platform.includes("arm") && !platform.includes("arm64")) {
+        constraints.cpu = ["arm"];
+      } else if (platform.includes("ia32")) {
+        constraints.cpu = ["ia32"];
+      }
+
+      if (!req.headers.get("accept")?.includes("application/vnd.bun.install-lockfile+json")) {
+        if (platform.includes("musl")) {
+          constraints.libc = ["musl"];
+        } else if (constraints.os?.includes("linux")) {
+          constraints.libc = ["glibc"];
+        }
+      }
+
+      return Response.json({
+        name: pkgName,
+        versions: {
+          "1.0.0": {
+            name: pkgName,
+            version: "1.0.0",
+            main: "index.js",
+            ...constraints,
+            dist: {
+              tarball: `${root_url}/${pkgName.replace("/", "-")}-1.0.0.tgz`,
+            },
+          },
+        },
+        "dist-tags": {
+          latest: "1.0.0",
+        },
+      });
+    }
+
+    if (pathname.endsWith(".tgz")) {
+      const filename = basename(pathname);
+      let tgzPath: string;
+
+      if (filename.startsWith("platform-test-")) {
+        // Main package: platform-test-1.0.0.tgz
+        tgzPath = join(registryDir, "platform-test", filename);
+      } else if (filename.includes("@platform-test-")) {
+        // Platform packages: @platform-test-linux-x64-1.0.0.tgz -> @platform-test/linux-x64/platform-test-linux-x64-1.0.0.tgz
+        const match = filename.match(/@platform-test-([^-]+(?:-[^-]+)*)-\d+\.\d+\.\d+\.tgz/);
+        if (match) {
+          const platform = match[1];
+          tgzPath = join(registryDir, "@platform-test", platform, filename.replace("@", ""));
+        } else {
+          return new Response("Invalid platform package filename", { status: 400 });
+        }
+      } else {
+        return new Response("Unknown package", { status: 404 });
+      }
+
+      try {
+        return new Response(file(tgzPath));
+      } catch (error) {
+        console.log("Failed to find tarball at:", tgzPath);
+        return new Response("Tarball not found", { status: 404 });
+      }
+    }
+
+    return new Response("Not found", { status: 404 });
+  };
+
+  const platforms = [
+    { os: "darwin", cpu: "x64", libc: "*" },
+    { os: "darwin", cpu: "arm64", libc: "*" },
+    { os: "linux", cpu: "x64", libc: "*" },
+    { os: "linux", cpu: "arm64", libc: "*" },
+    { os: "linux", cpu: "x64", libc: "glibc" },
+    { os: "linux", cpu: "arm64", libc: "glibc" },
+    { os: "linux", cpu: "x64", libc: "musl" },
+    { os: "linux", cpu: "arm64", libc: "musl" },
+    { os: "win32", cpu: "x64", libc: "*" },
+    { os: "win32", cpu: "ia32", libc: "*" },
+  ];
+  test.each(platforms)(
+    "filters (os: $os, cpu: $cpu, libc: $libc)",
+    async ({ os, cpu, libc }) => {
+      const urls: string[] = [];
+      setHandler(e => platformTestHandler(e, urls));
+
+      await write(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "test-registry-platform-filtering",
+          dependencies: {
+            "platform-test": "1.0.0",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", `--os=${os}`, `--cpu=${cpu}`, `--libc=${libc}`],
+        cwd: package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
+      if (exitCode !== 0) {
+        console.log(err);
+      }
+      expect(exitCode).toBe(0);
+
+      const platformDir = join(package_dir, "node_modules", "@platform-test");
+      const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
+
+      const installedName = (os + "-" + cpu + (libc === "musl" ? "-musl" : "")).replace("win32", "windows");
+
+      expect(installedPackages).toContain(installedName);
+      expect(installedPackages).toHaveLength(os === "linux" && libc === "*" ? 2 : 1);
+    },
+  );
+
+  test("wildcards should show all platforms", async () => {
+    const urls: string[] = [];
+    setHandler(e => platformTestHandler(e, urls));
+
+    await write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-registry-wildcard-filtering",
+        dependencies: {
+          "platform-test": "1.0.0",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--os=*", "--cpu=*", "--libc=*"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, exitCode] = await Promise.all([new Response(stderr).text(), exited]);
+    expect(exitCode).toBe(0);
+
+    const platformDir = join(package_dir, "node_modules", "@platform-test");
+    const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
+
+    expect(installedPackages.length).toBeGreaterThan(5);
+    expect(installedPackages).toContain("linux-x64");
+    expect(installedPackages).toContain("darwin-x64");
+    expect(installedPackages).toContain("windows-x64");
+  });
 });

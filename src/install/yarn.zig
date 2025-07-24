@@ -171,7 +171,7 @@ pub const YarnLock = struct {
             if (strings.hasPrefixComptime(version, "github:")) {
                 const github_path = version["github:".len..];
                 const path_without_commit = if (strings.indexOf(github_path, "#")) |idx| github_path[0..idx] else github_path;
-                
+
                 if (strings.indexOf(path_without_commit, "/")) |slash_idx| {
                     owner = path_without_commit[0..slash_idx];
                     repo = path_without_commit[slash_idx + 1 ..];
@@ -379,7 +379,6 @@ pub const YarnLock = struct {
                             const git_info = try Entry.parseGitUrl(self, value);
                             current_entry.?.resolved = git_info.url;
                             current_entry.?.commit = git_info.commit;
-                            // Store the actual repository name for git dependencies
                             if (git_info.repo) |repo_name| {
                                 current_entry.?.git_repo_name = try self.allocator.dupe(u8, repo_name);
                             }
@@ -837,7 +836,7 @@ pub fn migrateYarnLockfile(
                 break;
             }
         }
-        
+
         const base_name = if (is_npm_alias and entry.resolved != null)
             YarnLock.Entry.getPackageNameFromResolvedUrl(entry.resolved.?) orelse YarnLock.Entry.getNameFromSpec(entry.specs[0])
         else
@@ -870,7 +869,7 @@ pub fn migrateYarnLockfile(
                     if (entry.resolved) |resolved| {
                         var owner_str: []const u8 = "";
                         var repo_str: []const u8 = resolved;
-                        
+
                         if (strings.contains(resolved, "github.com/")) {
                             if (strings.indexOf(resolved, "github.com/")) |idx| {
                                 const after_github = resolved[idx + "github.com/".len ..];
@@ -883,9 +882,9 @@ pub fn migrateYarnLockfile(
                                 }
                             }
                         }
-                        
+
                         const actual_name = if (entry.git_repo_name) |repo_name| repo_name else base_name;
-                        
+
                         if (owner_str.len > 0 and repo_str.len > 0) {
                             break :blk Resolution.init(.{
                                 .github = .{
@@ -915,7 +914,7 @@ pub fn migrateYarnLockfile(
                             .remote_tarball = try string_buf.append(resolved),
                         });
                     }
-                    
+
                     if (YarnLock.Entry.isRemoteTarball(resolved)) {
                         break :blk Resolution.init(.{
                             .remote_tarball = try string_buf.append(resolved),

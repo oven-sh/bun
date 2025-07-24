@@ -156,10 +156,11 @@ pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const e
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
-        const width = switch (comptime encoding) {
+        const width: u8 = switch (comptime encoding) {
             .latin1, .ascii => 1,
             .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            .utf16 => strings.utf16CodepointWithFFFD([]const u16, text[i..]).len,
+            .utf16 => if (text[i] >= strings.HIGH_SURROGATE_START and text[i] <= strings.HIGH_SURROGATE_END and text.len > i + 1 and //
+                text[i + 1] >= strings.LOW_SURROGATE_START and text[i + 1] <= strings.LOW_SURROGATE_END) 2 else 1,
         };
         const clamped_width = @min(@as(usize, width), n -| i);
         const c: i32 = switch (encoding) {
@@ -177,7 +178,8 @@ pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const e
                 0,
             ),
             .ascii, .latin1 => text[i],
-            .utf16 => @bitCast(strings.utf16CodepointWithFFFD([]const u16, text[i..]).code_point),
+            .utf16 => if (text[i] >= strings.HIGH_SURROGATE_START and text[i] <= strings.HIGH_SURROGATE_END and text.len > i + 1 and //
+                text[i + 1] >= strings.LOW_SURROGATE_START and text[i + 1] <= strings.LOW_SURROGATE_END) @bitCast(strings.utf16DecodeSurrogatePair(text[i], text[i + 1])) else text[i],
         };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];

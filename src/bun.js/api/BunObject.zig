@@ -47,43 +47,50 @@ pub const BunObject = struct {
 
     // --- Callbacks ---
 
+    // --- Lazy property callbacks ---
+    pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
+    pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
+    pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
+    pub const FileSystemRouter = toJSLazyPropertyCallback(Bun.getFileSystemRouter);
+    pub const Glob = toJSLazyPropertyCallback(Bun.getGlobConstructor);
+    pub const MD4 = toJSLazyPropertyCallback(Crypto.MD4.getter);
+    pub const MD5 = toJSLazyPropertyCallback(Crypto.MD5.getter);
+    pub const SHA1 = toJSLazyPropertyCallback(Crypto.SHA1.getter);
+    pub const SHA224 = toJSLazyPropertyCallback(Crypto.SHA224.getter);
+    pub const SHA256 = toJSLazyPropertyCallback(Crypto.SHA256.getter);
+    pub const SHA384 = toJSLazyPropertyCallback(Crypto.SHA384.getter);
+    pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
+    pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
+    pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
+    pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
+    pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
+    pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
+    pub const embeddedFiles = toJSLazyPropertyCallback(Bun.getEmbeddedFiles);
+    pub const enableANSIColors = toJSLazyPropertyCallback(Bun.enableANSIColors);
+    pub const hash = toJSLazyPropertyCallback(Bun.getHashObject);
+    pub const inspect = toJSLazyPropertyCallback(Bun.getInspect);
+    pub const origin = toJSLazyPropertyCallback(Bun.getOrigin);
+    pub const semver = toJSLazyPropertyCallback(Bun.getSemver);
+    pub const stderr = toJSLazyPropertyCallback(Bun.getStderr);
+    pub const stdin = toJSLazyPropertyCallback(Bun.getStdin);
+    pub const stdout = toJSLazyPropertyCallback(Bun.getStdout);
+    pub const unsafe = toJSLazyPropertyCallback(Bun.getUnsafe);
+    pub const S3Client = toJSLazyPropertyCallback(Bun.getS3ClientConstructor);
+    pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
+    pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
+    pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    // --- Lazy property callbacks ---
+
     // --- Getters ---
-    pub const CryptoHasher = toJSGetter(Crypto.CryptoHasher.getter);
-    pub const CSRF = toJSGetter(Bun.getCSRFObject);
-    pub const FFI = toJSGetter(Bun.FFIObject.getter);
-    pub const FileSystemRouter = toJSGetter(Bun.getFileSystemRouter);
-    pub const Glob = toJSGetter(Bun.getGlobConstructor);
-    pub const MD4 = toJSGetter(Crypto.MD4.getter);
-    pub const MD5 = toJSGetter(Crypto.MD5.getter);
-    pub const SHA1 = toJSGetter(Crypto.SHA1.getter);
-    pub const SHA224 = toJSGetter(Crypto.SHA224.getter);
-    pub const SHA256 = toJSGetter(Crypto.SHA256.getter);
-    pub const SHA384 = toJSGetter(Crypto.SHA384.getter);
-    pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
-    pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
-    pub const TOML = toJSGetter(Bun.getTOMLObject);
-    pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
-    pub const argv = toJSGetter(Bun.getArgv);
-    pub const cwd = toJSGetter(Bun.getCWD);
-    pub const embeddedFiles = toJSGetter(Bun.getEmbeddedFiles);
-    pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
-    pub const hash = toJSGetter(Bun.getHashObject);
-    pub const inspect = toJSGetter(Bun.getInspect);
-    pub const main = toJSGetter(Bun.getMain);
-    pub const origin = toJSGetter(Bun.getOrigin);
-    pub const semver = toJSGetter(Bun.getSemver);
-    pub const stderr = toJSGetter(Bun.getStderr);
-    pub const stdin = toJSGetter(Bun.getStdin);
-    pub const stdout = toJSGetter(Bun.getStdout);
-    pub const unsafe = toJSGetter(Bun.getUnsafe);
-    pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
-    pub const s3 = toJSGetter(Bun.getS3DefaultClient);
-    pub const ValkeyClient = toJSGetter(Bun.getValkeyClientConstructor);
-    pub const valkey = toJSGetter(Bun.getValkeyDefaultClient);
+    pub const main = Bun.getMain;
     // --- Getters ---
 
-    fn getterName(comptime baseName: anytype) [:0]const u8 {
-        return "BunObject_getter_" ++ baseName;
+    // --- Setters ---
+    pub const setMain = Bun.setMain;
+    // --- Setters ---
+
+    fn lazyPropertyCallbackName(comptime baseName: anytype) [:0]const u8 {
+        return "BunObject_lazyPropCb_" ++ baseName;
     }
 
     fn callbackName(comptime baseName: anytype) [:0]const u8 {
@@ -94,10 +101,10 @@ pub const BunObject = struct {
 
     const LazyPropertyCallback = fn (*jsc.JSGlobalObject, *jsc.JSObject) callconv(jsc.conv) JSValue;
 
-    fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
+    fn toJSLazyPropertyCallback(comptime wrapped: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *jsc.JSGlobalObject, object: *jsc.JSObject) callconv(jsc.conv) JSValue {
-                return bun.jsc.toJSHostCall(this, @src(), getter, .{ this, object });
+                return bun.jsc.toJSHostCall(this, @src(), wrapped, .{ this, object });
             }
         }.callback;
     }
@@ -107,43 +114,42 @@ pub const BunObject = struct {
             @compileError("Must be comptime");
         }
 
-        // --- Getters ---
-        @export(&BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
-        @export(&BunObject.CSRF, .{ .name = getterName("CSRF") });
-        @export(&BunObject.FFI, .{ .name = getterName("FFI") });
-        @export(&BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
-        @export(&BunObject.MD4, .{ .name = getterName("MD4") });
-        @export(&BunObject.MD5, .{ .name = getterName("MD5") });
-        @export(&BunObject.SHA1, .{ .name = getterName("SHA1") });
-        @export(&BunObject.SHA224, .{ .name = getterName("SHA224") });
-        @export(&BunObject.SHA256, .{ .name = getterName("SHA256") });
-        @export(&BunObject.SHA384, .{ .name = getterName("SHA384") });
-        @export(&BunObject.SHA512, .{ .name = getterName("SHA512") });
-        @export(&BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+        // --- Lazy property callbacks ---
+        @export(&BunObject.CryptoHasher, .{ .name = lazyPropertyCallbackName("CryptoHasher") });
+        @export(&BunObject.CSRF, .{ .name = lazyPropertyCallbackName("CSRF") });
+        @export(&BunObject.FFI, .{ .name = lazyPropertyCallbackName("FFI") });
+        @export(&BunObject.FileSystemRouter, .{ .name = lazyPropertyCallbackName("FileSystemRouter") });
+        @export(&BunObject.MD4, .{ .name = lazyPropertyCallbackName("MD4") });
+        @export(&BunObject.MD5, .{ .name = lazyPropertyCallbackName("MD5") });
+        @export(&BunObject.SHA1, .{ .name = lazyPropertyCallbackName("SHA1") });
+        @export(&BunObject.SHA224, .{ .name = lazyPropertyCallbackName("SHA224") });
+        @export(&BunObject.SHA256, .{ .name = lazyPropertyCallbackName("SHA256") });
+        @export(&BunObject.SHA384, .{ .name = lazyPropertyCallbackName("SHA384") });
+        @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
+        @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
 
-        @export(&BunObject.TOML, .{ .name = getterName("TOML") });
-        @export(&BunObject.Glob, .{ .name = getterName("Glob") });
-        @export(&BunObject.Transpiler, .{ .name = getterName("Transpiler") });
-        @export(&BunObject.argv, .{ .name = getterName("argv") });
-        @export(&BunObject.cwd, .{ .name = getterName("cwd") });
-        @export(&BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
-        @export(&BunObject.hash, .{ .name = getterName("hash") });
-        @export(&BunObject.inspect, .{ .name = getterName("inspect") });
-        @export(&BunObject.main, .{ .name = getterName("main") });
-        @export(&BunObject.origin, .{ .name = getterName("origin") });
-        @export(&BunObject.stderr, .{ .name = getterName("stderr") });
-        @export(&BunObject.stdin, .{ .name = getterName("stdin") });
-        @export(&BunObject.stdout, .{ .name = getterName("stdout") });
-        @export(&BunObject.unsafe, .{ .name = getterName("unsafe") });
-        @export(&BunObject.semver, .{ .name = getterName("semver") });
-        @export(&BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
-        @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
-        @export(&BunObject.s3, .{ .name = getterName("s3") });
-        @export(&BunObject.ValkeyClient, .{ .name = getterName("ValkeyClient") });
-        @export(&BunObject.valkey, .{ .name = getterName("valkey") });
-        // --- Getters --
+        @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
+        @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
+        @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
+        @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
+        @export(&BunObject.cwd, .{ .name = lazyPropertyCallbackName("cwd") });
+        @export(&BunObject.enableANSIColors, .{ .name = lazyPropertyCallbackName("enableANSIColors") });
+        @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
+        @export(&BunObject.inspect, .{ .name = lazyPropertyCallbackName("inspect") });
+        @export(&BunObject.origin, .{ .name = lazyPropertyCallbackName("origin") });
+        @export(&BunObject.stderr, .{ .name = lazyPropertyCallbackName("stderr") });
+        @export(&BunObject.stdin, .{ .name = lazyPropertyCallbackName("stdin") });
+        @export(&BunObject.stdout, .{ .name = lazyPropertyCallbackName("stdout") });
+        @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
+        @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
+        @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
+        @export(&BunObject.S3Client, .{ .name = lazyPropertyCallbackName("S3Client") });
+        @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
+        @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
+        @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        // --- Lazy property callbacks ---
 
-        // -- Callbacks --
+        // --- Callbacks ---
         @export(&BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(&BunObject.build, .{ .name = callbackName("build") });
         @export(&BunObject.color, .{ .name = callbackName("color") });
@@ -178,7 +184,15 @@ pub const BunObject = struct {
         @export(&BunObject.zstdDecompressSync, .{ .name = callbackName("zstdDecompressSync") });
         @export(&BunObject.zstdCompress, .{ .name = callbackName("zstdCompress") });
         @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
-        // -- Callbacks --
+        // --- Callbacks ---
+
+        // --- Getters ---
+        @export(&BunObject.main, .{ .name = "BunObject_getter_main" });
+        // --- Getters ---
+
+        // --- Setters ---
+        @export(&BunObject.setMain, .{ .name = "BunObject_setter_main" });
+        // --- Setters ---
     }
 };
 
@@ -576,8 +590,10 @@ pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.J
     return JSValue.jsBoolean(Output.enable_ansi_colors);
 }
 
-pub fn getMain(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
     const vm = globalThis.bunVM();
+    // If JS has set it to a custom value, use that one
+    if (vm.overridden_main.get()) |overridden_main| return overridden_main;
 
     // Attempt to use the resolved filesystem path
     // This makes `eval('require.main === module')` work when the main module is a symlink.
@@ -624,6 +640,11 @@ pub fn getMain(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     }
 
     return ZigString.init(vm.main).toJS(globalThis);
+}
+
+fn setMain(global_this: *jsc.JSGlobalObject, new_value: JSValue) callconv(jsc.conv) bool {
+    global_this.bunVM().overridden_main.set(global_this, new_value);
+    return true;
 }
 
 pub fn getArgv(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

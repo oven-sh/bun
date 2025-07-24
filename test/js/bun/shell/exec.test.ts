@@ -9,11 +9,12 @@ const BUN = bunExe();
 
 $.nothrow();
 describe("bun exec", () => {
-  TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
+  TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").quiet().runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`
     .env(bunEnv)
     .exitCode(1)
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
+    .quiet()
     .runAsTest("it works on command fail");
 
   TestBuilder.command`${BUN} exec`
@@ -21,10 +22,12 @@ describe("bun exec", () => {
     .stdout(
       'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bun exec "echo hi"\n  bun exec "echo \\"hey friends\\"!"\n',
     )
+    .quiet()
     .runAsTest("no args prints help text");
 
   TestBuilder.command`${BUN} exec ${{ raw: Bun.$.escape(`echo 'hi "there bud"'`) }}`
     .stdout('hi "there bud"\n')
+    .quiet()
     .runAsTest("it works2");
 
   TestBuilder.command`${BUN} exec ${"cat filename"}`
@@ -40,6 +43,7 @@ describe("bun exec", () => {
         .fill("a")
         .join("")}`,
     )
+    .quiet()
     .runAsTest("write a lot of data");
 
   describe("--help works", () => {
@@ -67,6 +71,7 @@ describe("bun exec", () => {
         .exitCode(exitCode)
         .stderr(stderr)
         .stdout(stdout)
+        .quiet()
         .runAsTest(item);
     }
   });
@@ -76,6 +81,7 @@ describe("bun exec", () => {
     .exitCode(0)
     .stderr("")
     .stdout("")
+    .quiet()
     .runAsTest("cd with no arguments works");
 
   test("bun works even when not in PATH", async () => {
@@ -91,7 +97,8 @@ describe("bun exec", () => {
     const result = await $`${BUN} exec ls`
       .env({ ...(bunEnv as any) })
       .cwd(join(tempdir, "Í"))
-      .quiet();
+      .quiet()
+      .run();
     expect(result.text()).toBe("hi\n");
   });
 });

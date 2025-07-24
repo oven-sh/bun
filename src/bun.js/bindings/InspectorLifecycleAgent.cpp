@@ -61,7 +61,7 @@ InspectorLifecycleAgent::~InspectorLifecycleAgent()
     }
 }
 
-void InspectorLifecycleAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 {
 }
 

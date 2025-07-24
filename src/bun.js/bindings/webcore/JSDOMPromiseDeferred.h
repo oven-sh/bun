@@ -213,7 +213,6 @@ private:
 };
 
 class DOMPromiseDeferredBase {
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
     DOMPromiseDeferredBase(Ref<DeferredPromise>&& genericPromise)

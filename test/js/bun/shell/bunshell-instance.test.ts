@@ -64,20 +64,20 @@ function make(expected: unknown) {
 
   for (let data of inputType) {
     test(`$(cat < ${data.constructor.name}).text()`, async () => {
-      expect(await $`cat < ${data}`.text()).toEqual(expected);
+      expect(await $`cat < ${data}`.quiet().text()).toEqual(expected);
     });
 
     if (ArrayBuffer.isView(data)) {
       test(`$(cat hello > ${data.constructor.name}).text() passes`, async () => {
         await $`cat ${import.meta.path} > ${data}`.quiet();
-        const out = await $`cat ${import.meta.path}`.arrayBuffer();
+        const out = await $`cat ${import.meta.path}`.quiet().arrayBuffer();
         expect(data.subarray(0, out.byteLength)).toEqual(new Uint8Array(out));
       });
 
       // TODO: if the buffer is not sufficiently large, this will hang forever
     } else {
       test(`$(cat hello > ${data.constructor.name}).text() fails`, async () => {
-        expect(async () => await $`cat ${import.meta.path} > ${data}`.text()).toThrow();
+        expect(async () => await $`cat ${import.meta.path} > ${data}`.quiet().text()).toThrow();
       });
     }
   }

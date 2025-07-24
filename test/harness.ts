@@ -1730,6 +1730,8 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   // Remove timestamps from test result lines that start with (pass), (fail), (skip), or (todo)
   snapshot = snapshot.replace(/^((?:pass|fail|skip|todo)\) .+) \[[\d.]+\s?m?s\]$/gm, "$1");
 
+  snapshot = snapshot.replace(/(localhost|127\.0\.0\.1):\d+/g, "$1:<port>");
+
   return (
     snapshot
       .replaceAll("\r\n", "\n")

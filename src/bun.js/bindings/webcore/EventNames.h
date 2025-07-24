@@ -42,7 +42,6 @@ namespace WebCore {
 
 struct EventNames {
     WTF_MAKE_NONCOPYABLE(EventNames);
-    WTF_MAKE_FAST_ALLOCATED;
 
 public:
 #define DOM_EVENT_NAMES_DECLARE(name) const AtomString name##Event;

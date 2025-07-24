@@ -66,7 +66,7 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValue)
 {
     if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
-        return makeUnique<JSEventTargetWrapper>(target->wrapped(), *target);
+        return makeUniqueWithoutFastMallocCheck<JSEventTargetWrapper>(target->wrapped(), *target);
     if (!thisValue.isObject())
         return nullptr;
 
@@ -77,7 +77,7 @@ std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValu
             return nullptr;
     }
     if (auto* global = jsDynamicCast<Zig::GlobalObject*>(object))
-        return makeUnique<JSEventTargetWrapper>(global->eventTarget(), *global);
+        return makeUniqueWithoutFastMallocCheck<JSEventTargetWrapper>(global->eventTarget(), *global);
 
     // if (auto* window = toJSDOMGlobalObject<JSDOMGlobalObject>(vm, thisValue))
     //     return makeUnique<JSEventTargetWrapper>(*window, *window);

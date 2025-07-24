@@ -43,10 +43,7 @@ class ScriptExecutionContext;
 template<typename> class ExceptionOr;
 class HTMLElement;
 class HTMLFormElement;
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
-
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 public:
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;

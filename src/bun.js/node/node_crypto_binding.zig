@@ -358,7 +358,7 @@ const random = struct {
 
         const offset = try assertOffset(
             global,
-            if (offset_value.isUndefined()) jsc.jsNumber(0) else offset_value,
+            if (offset_value.isUndefined()) .jsNumber(0) else offset_value,
             element_size,
             buf.byte_len,
         );
@@ -466,7 +466,7 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSErr
         return global.ERR(.CRYPTO_TIMING_SAFE_EQUAL_LENGTH, "Input buffers must have the same byte length", .{}).throw();
     }
 
-    return jsc.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
+    return .jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
 }
 
 pub fn secureHeapUsed(_: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {

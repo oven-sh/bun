@@ -515,11 +515,30 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 17 - zig very long string [DURATION]
+    308 | });
+    309 | 
+    310 | test("example 18 - very long single line string", () => {
+    311 |   const expected = "a".repeat(1000000);
+    312 |   const received = "a".repeat(1000001);
+    313 |   expect(received).toEqual(expected);
+                             ^
+    error: expect(received).toEqual(expected)
+
+
+    - "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    - Expected  - 0
+    + Received  + 0
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) example 18 - very long single line string [DURATION]
 
      1 pass
-     16 fail
-     17 expect() calls
-    Ran 17 tests across 1 file. [DURATION]
+     17 fail
+     18 expect() calls
+    Ran 18 tests across 1 file. [DURATION]
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

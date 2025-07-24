@@ -306,3 +306,9 @@ test("example 17 - zig very long string", () => {
   const expectedString = expectedLines.join("\n") + "\n";
   expect(receivedString).toEqual(expectedString);
 });
+
+test("example 18 - very long single line string", () => {
+  const expected = "a".repeat(1000000);
+  const received = "a".repeat(1000001);
+  expect(received).toEqual(expected);
+});

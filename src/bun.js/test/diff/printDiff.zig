@@ -5,6 +5,8 @@ pub const DiffConfig = struct {
     min_bytes_before_chunking: usize = 2 * 1024, // 2kB
     chunk_context_lines: usize = 3,
     enable_ansi_colors: bool,
+    truncate_threshold: usize = 2 * 1024, // 2kb
+    truncate_context: usize = 50,
 };
 
 fn removeTrailingNewline(text: []const u8) []const u8 {
@@ -131,7 +133,7 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
         };
         if (i != diff_segments.items.len - 1) segment.inserted_line_count += 1;
     }
-    try printDiff(arena, writer, diff_segments.items, config.enable_ansi_colors);
+    try printDiff(arena, writer, diff_segments.items, config);
 }
 
 pub const Diff = struct {
@@ -151,6 +153,7 @@ const colors = struct {
     const invert = "\x1b[7m";
     const underline = "\x1b[4m";
     const dim = "\x1b[2m";
+    const white = "\x1b[97m";
     const reset = "\x1b[0m";
 };
 
@@ -196,18 +199,18 @@ pub const DiffSegment = struct {
     skip: bool = false,
 };
 
-fn printDiffFooter(writer: anytype, enable_colors: bool, received_diff_lines: usize, expected_diff_lines: usize) !void {
-    if (enable_colors) try writer.writeAll(styles.inserted.prefix_color);
+fn printDiffFooter(writer: anytype, config: DiffConfig, received_diff_lines: usize, expected_diff_lines: usize) !void {
+    if (config.enable_ansi_colors) try writer.writeAll(styles.inserted.prefix_color);
     try writer.writeAll(styles.inserted.prefix);
     try writer.writeAll("Expected");
     try writer.print("  {s}{d}", .{ styles.inserted.prefix, expected_diff_lines });
-    if (enable_colors) try writer.writeAll(colors.reset);
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
     try writer.writeAll("\n");
-    if (enable_colors) try writer.writeAll(styles.removed.prefix_color);
+    if (config.enable_ansi_colors) try writer.writeAll(styles.removed.prefix_color);
     try writer.writeAll(styles.removed.prefix);
     try writer.writeAll("Received");
     try writer.print("  {s}{d}", .{ styles.removed.prefix, received_diff_lines });
-    if (enable_colors) try writer.writeAll(colors.reset);
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
     try writer.writeAll("\n");
 }
 
@@ -219,32 +222,56 @@ const Style = struct {
 
 fn printLinePrefix(
     writer: anytype,
-    enable_colors: bool,
+    config: DiffConfig,
     style: Style,
 ) !void {
-    if (enable_colors) try writer.writeAll(style.prefix_color);
+    if (config.enable_ansi_colors) try writer.writeAll(style.prefix_color);
     try writer.writeAll(style.prefix);
-    if (enable_colors) try writer.writeAll(colors.reset);
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
+}
+
+fn printTruncatedLine(
+    line: []const u8,
+    writer: anytype,
+    config: DiffConfig,
+    style: Style,
+) !void {
+    if (line.len <= config.truncate_threshold or line.len <= config.truncate_context * 2) {
+        if (config.enable_ansi_colors) try writer.writeAll(style.text_color);
+        try writer.writeAll(line);
+        if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
+        return;
+    }
+
+    // Line is too long, truncate it.
+    if (config.enable_ansi_colors) try writer.writeAll(style.text_color);
+    try writer.writeAll(line[0..config.truncate_context]);
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
+
+    if (config.enable_ansi_colors) try writer.writeAll(colors.white);
+    // The context is shown on both sides, so we truncate line.len - 2 * context
+    try writer.print("... ({} bytes truncated) ...", .{line.len - 2 * config.truncate_context});
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
+
+    if (config.enable_ansi_colors) try writer.writeAll(style.text_color);
+    try writer.writeAll(line[line.len - config.truncate_context ..]);
+    if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
 }
 
 fn printSegment(
     text: []const u8,
     writer: anytype,
-    enable_colors: bool,
+    config: DiffConfig,
     style: Style,
 ) !void {
     var lines = std.mem.splitScalar(u8, text, '\n');
 
-    if (enable_colors) try writer.writeAll(style.text_color);
-    try writer.writeAll(lines.next().?);
-    if (enable_colors) try writer.writeAll(colors.reset);
+    try printTruncatedLine(lines.next().?, writer, config, style);
 
     while (lines.next()) |line| {
         try writer.writeAll("\n");
-        try printLinePrefix(writer, enable_colors, style);
-        if (enable_colors) try writer.writeAll(style.text_color);
-        try writer.writeAll(line);
-        if (enable_colors) try writer.writeAll(colors.reset);
+        try printLinePrefix(writer, config, style);
+        try printTruncatedLine(line, writer, config, style);
     }
 }
 
@@ -252,34 +279,34 @@ fn printModifiedSegment(
     segment: DiffSegment,
     arena: std.mem.Allocator,
     writer: anytype,
-    enable_colors: bool,
+    config: DiffConfig,
 ) !void {
     var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
     try DMP.diffCleanupSemantic(arena, &char_diff);
 
-    try printLinePrefix(writer, enable_colors, styles.inserted);
+    try printLinePrefix(writer, config, styles.inserted);
     for (char_diff.items) |item| {
         switch (item.operation) {
             .delete => {},
-            .insert => try printSegment(item.text, writer, enable_colors, styles.inserted),
-            .equal => try printSegment(item.text, writer, enable_colors, styles.inserted_equal),
+            .insert => try printSegment(item.text, writer, config, styles.inserted),
+            .equal => try printSegment(item.text, writer, config, styles.inserted_equal),
         }
     }
     try writer.writeAll("\n");
 
-    try printLinePrefix(writer, enable_colors, styles.removed);
+    try printLinePrefix(writer, config, styles.removed);
     for (char_diff.items) |item| {
         switch (item.operation) {
-            .delete => try printSegment(item.text, writer, enable_colors, styles.removed),
+            .delete => try printSegment(item.text, writer, config, styles.removed),
             .insert => {},
-            .equal => try printSegment(item.text, writer, enable_colors, styles.removed_equal),
+            .equal => try printSegment(item.text, writer, config, styles.removed_equal),
         }
     }
     try writer.writeAll("\n");
 }
 
-pub fn printHunkHeader(writer: anytype, enable_colors: bool, original_line_number: usize, original_line_count: usize, changed_line_number: usize, changed_line_count: usize) !void {
-    if (enable_colors) {
+pub fn printHunkHeader(writer: anytype, config: DiffConfig, original_line_number: usize, original_line_count: usize, changed_line_number: usize, changed_line_count: usize) !void {
+    if (config.enable_ansi_colors) {
         try writer.print("{s}@@ -{},{} +{},{} @@{s}\n", .{ colors.cyan, original_line_number, original_line_count, changed_line_number, changed_line_count, colors.reset });
     } else {
         try writer.print("@@ -{},{} +{},{} @@\n", .{ original_line_number, original_line_count, changed_line_number, changed_line_count });
@@ -290,7 +317,7 @@ pub fn printDiff(
     arena: std.mem.Allocator,
     writer: anytype,
     diff_segments: []const DiffSegment,
-    enable_ansi_colors: bool,
+    config: DiffConfig,
 ) !void {
     try writer.writeAll("\n");
 
@@ -319,7 +346,7 @@ pub fn printDiff(
                 original_line_count += seg.removed_line_count;
                 changed_line_count += seg.inserted_line_count;
             }
-            try printHunkHeader(writer, enable_ansi_colors, original_line_number, original_line_count, changed_line_number, changed_line_count);
+            try printHunkHeader(writer, config, original_line_number, original_line_count, changed_line_number, changed_line_count);
             was_skipped = false;
         }
 
@@ -329,24 +356,24 @@ pub fn printDiff(
                     was_skipped = true;
                     continue;
                 }
-                try printLinePrefix(writer, enable_ansi_colors, styles.equal);
-                try printSegment(segment.removed, writer, enable_ansi_colors, styles.equal);
+                try printLinePrefix(writer, config, styles.equal);
+                try printSegment(segment.removed, writer, config, styles.equal);
                 try writer.writeAll("\n");
             },
             .removed => {
-                try printLinePrefix(writer, enable_ansi_colors, styles.removed);
-                try printSegment(segment.removed, writer, enable_ansi_colors, styles.removed);
+                try printLinePrefix(writer, config, styles.removed);
+                try printSegment(segment.removed, writer, config, styles.removed);
                 try writer.writeAll("\n");
                 original_diff_lines += segment.removed_line_count;
             },
             .inserted => {
-                try printLinePrefix(writer, enable_ansi_colors, styles.inserted);
-                try printSegment(segment.inserted, writer, enable_ansi_colors, styles.inserted);
+                try printLinePrefix(writer, config, styles.inserted);
+                try printSegment(segment.inserted, writer, config, styles.inserted);
                 try writer.writeAll("\n");
                 changed_diff_lines += segment.inserted_line_count;
             },
             .modified => {
-                try printModifiedSegment(segment, arena, writer, enable_ansi_colors);
+                try printModifiedSegment(segment, arena, writer, config);
                 original_diff_lines += segment.removed_line_count;
                 changed_diff_lines += segment.inserted_line_count;
             },
@@ -355,7 +382,7 @@ pub fn printDiff(
 
     try writer.writeAll("\n");
 
-    try printDiffFooter(writer, enable_ansi_colors, original_diff_lines, changed_diff_lines);
+    try printDiffFooter(writer, config, original_diff_lines, changed_diff_lines);
 }
 
 const diff_match_patch = @import("./diff_match_patch.zig");

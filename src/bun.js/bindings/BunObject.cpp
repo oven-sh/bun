@@ -86,6 +86,8 @@ static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
+extern JSValue constructYAMLObject(VM& vm, JSObject* bunObject);
+static JSValue constructYAMLObjectWrapper(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -710,6 +712,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512                                         BunObject_getter_wrap_SHA512                                        DontDelete|PropertyCallback
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
+    YAML                                           constructYAMLObjectWrapper                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
@@ -865,6 +868,13 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
+extern JSValue constructYAMLObject(VM& vm, JSObject* bunObject);
+
+static JSValue constructYAMLObjectWrapper(VM& vm, JSObject* bunObject)
+{
+    return constructYAMLObject(vm, bunObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

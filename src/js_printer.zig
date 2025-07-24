@@ -288,7 +288,7 @@ pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const e
             },
 
             else => {
-                i += @as(usize, width);
+                i += @as(usize, clamped_width);
 
                 if (c <= 0xFF and !json) {
                     const k = @as(usize, @intCast(c));

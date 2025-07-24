@@ -454,12 +454,12 @@ pub const NodeCommand = struct {
 
         if (!Env.isWindows or !strings.eql(src_binary, dest_binary)) {
             if (Env.isWindows) {
-                const src_binaryZ = try allocator.dupeZ(u8, src_binary);
-                defer allocator.free(src_binaryZ);
-                const dest_binaryZ = try allocator.dupeZ(u8, dest_binary);
-                defer allocator.free(dest_binaryZ);
+                var src_buf: bun.OSPathBuffer = undefined;
+                var dest_buf: bun.OSPathBuffer = undefined;
+                const src_path = bun.strings.toWPathNormalized(&src_buf, src_binary);
+                const dest_path = bun.strings.toWPathNormalized(&dest_buf, dest_binary);
 
-                bun.copyFile(src_binaryZ, dest_binaryZ).unwrap() catch |err| {
+                bun.copyFile(src_path, dest_path).unwrap() catch |err| {
                     if (is_quiet) Output.prettyErrorln("", .{});
                     Output.prettyErrorln("<r><red>error:<r> Failed to copy binary: {}", .{err});
                     Global.exit(1);
@@ -585,7 +585,12 @@ pub const NodeCommand = struct {
             .err => |err| switch (err.getErrno()) {
                 .XDEV => {
                     if (Env.isWindows) {
-                        bun.copyFile(version_binary, global_binary).unwrap() catch |copy_err| {
+                        var src_buf: bun.OSPathBuffer = undefined;
+                        var dest_buf: bun.OSPathBuffer = undefined;
+                        const src_path = bun.strings.toWPathNormalized(&src_buf, version_binary);
+                        const dest_path = bun.strings.toWPathNormalized(&dest_buf, global_binary);
+                        
+                        bun.copyFile(src_path, dest_path).unwrap() catch |copy_err| {
                             Output.prettyErrorln("<r><red>error:<r> Failed to copy Node binary: {}", .{copy_err});
                             Global.exit(1);
                         };
@@ -657,10 +662,12 @@ pub const NodeCommand = struct {
             .err => |err| switch (err.getErrno()) {
                 .XDEV => {
                     if (Env.isWindows) {
-                        const bun_exeZ = try allocator.dupeZ(u8, bun_exe);
-                        defer allocator.free(bun_exeZ);
+                        var src_buf: bun.OSPathBuffer = undefined;
+                        var dest_buf: bun.OSPathBuffer = undefined;
+                        const src_path = bun.strings.toWPathNormalized(&src_buf, bun_exe);
+                        const dest_path = bun.strings.toWPathNormalized(&dest_buf, global_binary);
 
-                        bun.copyFile(bun_exeZ, global_binary).unwrap() catch |copy_err| {
+                        bun.copyFile(src_path, dest_path).unwrap() catch |copy_err| {
                             Output.prettyErrorln("<r><red>error:<r> Failed to copy Bun binary: {}", .{copy_err});
                             Global.exit(1);
                         };

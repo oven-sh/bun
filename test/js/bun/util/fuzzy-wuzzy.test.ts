@@ -220,14 +220,14 @@ function callAllMethods(object, rootName) {
         }
         log(fullName, "Calling...");
         const returnValue = wrap(Reflect.apply(object?.[methodName], object, []), fullName + "()");
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
         calls++;
       } catch (e) {
         const returnValue = wrap(
           Reflect.apply(object.constructor?.[methodName], object?.constructor, []),
           "(new " + fullName + "())",
         );
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         calls++;
       }
     } catch (e) {
@@ -259,7 +259,7 @@ function callAllMethods(object, rootName) {
           if (returnValue?.then) {
             continue;
           }
-          Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" });
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
           calls++;
         } catch (e) {}
       }
@@ -278,19 +278,19 @@ function constructAllConstructors(object, rootName) {
       try {
         log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object, [], method);
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       } catch (e) {
         log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       }
     } catch (e) {
       try {
         log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       } catch (e) {
         Error.captureStackTrace(e);
@@ -314,7 +314,7 @@ function constructAllConstructors(object, rootName) {
           continue;
         }
 
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         seen.add(returnValue);
         constructs++;
       } catch (e) {}
@@ -335,7 +335,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
         class Subclass extends object {}
         log(fullName, "Constructing with subclass...");
         const returnValue = Reflect.construct(object, [], Subclass);
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
         subclasses++;
       } catch (e) {
         try {
@@ -343,7 +343,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
           class Subclass extends object?.constructor {}
           log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(object?.constructor, [], Subclass);
-          Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           subclasses++;
         } catch (e) {
           // Fallback to a more generic approach
@@ -351,7 +351,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
           Object.setPrototypeOf(Subclass.prototype, object);
           log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(object, [], Subclass);
-          Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           subclasses++;
         }
       }
@@ -361,7 +361,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
         class Subclass extends object?.prototype?.constructor {}
         log(fullName, "Constructing with subclass...");
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], Subclass);
-        Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
         subclasses++;
       } catch (e) {
         Error.captureStackTrace(e);
@@ -388,7 +388,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
             continue;
           }
 
-          Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           seen.add(returnValue);
           subclasses++;
         } catch (e) {
@@ -401,7 +401,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
             continue;
           }
 
-          Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" });
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           seen.add(returnValue);
           subclasses++;
         }

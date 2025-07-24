@@ -159,10 +159,10 @@ pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const e
         const width = switch (comptime encoding) {
             .latin1, .ascii => 1,
             .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            .utf16 => 1,
+            .utf16 => strings.utf16CodepointWithFFFD([]const u16, text[i..]).len,
         };
         const clamped_width = @min(@as(usize, width), n -| i);
-        const c = switch (encoding) {
+        const c: i32 = switch (encoding) {
             .utf8 => strings.decodeWTF8RuneT(
                 &switch (clamped_width) {
                     // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
@@ -177,12 +177,7 @@ pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const e
                 0,
             ),
             .ascii, .latin1 => text[i],
-            .utf16 => brk: {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
-                break :brk @as(i32, text[i]);
-            },
+            .utf16 => @bitCast(strings.utf16CodepointWithFFFD([]const u16, text[i..]).code_point),
         };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];

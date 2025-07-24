@@ -536,12 +536,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor
-        if (globalObject->m_hasPendingNapiModule) {
+        if (globalObject->m_pendingNapiModule) {
             // Execute the stored registration function now that dlopen has completed
             Napi::executePendingNapiModule(globalObject);
 
             // Clear the pending module
-            globalObject->m_hasPendingNapiModule = false;
             globalObject->m_pendingNapiModule = {};
         }
 

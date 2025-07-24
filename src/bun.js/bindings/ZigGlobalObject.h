@@ -644,8 +644,7 @@ public:
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
     // Store the napi module struct to defer calling nm_register_func until after dlopen completes
-    napi_module m_pendingNapiModule = {};
-    bool m_hasPendingNapiModule = false;
+    std::optional<napi_module> m_pendingNapiModule = {};
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 

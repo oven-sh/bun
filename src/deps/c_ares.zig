@@ -321,7 +321,7 @@ pub const hostent_with_ttls = struct {
                     bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
 
                 const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
-                const resultObject = try jsc.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| jsc.jsNumber(val) else .js_undefined);
+                const resultObject = try jsc.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| .jsNumber(val) else .js_undefined);
                 try array.putIndex(globalThis, count, resultObject);
             }
 

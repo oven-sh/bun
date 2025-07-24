@@ -206,7 +206,7 @@ const FullSettingsPayload = packed struct(u288) {
         result.put(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
         // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
         // we should also support customSettings
-        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), jsc.JSValue.jsBoolean(false));
+        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
         return result;
     }
 
@@ -3057,7 +3057,7 @@ pub const H2FrameParser = struct {
         };
 
         if (!stream.canSendData() and !stream.canReceiveData()) {
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         if (!options.isObject()) {
@@ -3100,7 +3100,7 @@ pub const H2FrameParser = struct {
         }
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         stream.streamDependency = parent_id;
@@ -3128,7 +3128,7 @@ pub const H2FrameParser = struct {
             _ = frame.write(@TypeOf(writer), writer);
             _ = priority.write(@TypeOf(writer), writer);
         }
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
     pub fn rstStream(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("rstStream", .{});
@@ -3160,7 +3160,7 @@ pub const H2FrameParser = struct {
 
         this.endStream(stream, @enumFromInt(error_code));
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     const MemoryWriter = struct {
@@ -3558,7 +3558,7 @@ pub const H2FrameParser = struct {
         };
         if (!stream.canSendData()) {
             this.dispatchWriteCallback(callback_arg);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         const encoding: jsc.Node.Encoding = brk: {
@@ -3587,7 +3587,7 @@ pub const H2FrameParser = struct {
 
         this.sendData(stream, buffer.slice(), close, callback_arg);
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {

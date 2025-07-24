@@ -114,43 +114,43 @@ pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
         break :blk (SocketAddress.initFromAddrFamily(globalThis, address_js, family_js) catch |err| {
             bun.debugAssert(err == error.JSError);
             globalThis.clearException();
-            return .jsBoolean(false);
+            return .false;
         })._addr;
     };
     for (this.da_rules.items) |item| {
         switch (item) {
             .addr => |a| {
                 const order = _compare(address, a) orelse continue;
-                if (order.compare(.eq)) return .jsBoolean(true);
+                if (order.compare(.eq)) return .true;
             },
             .range => |r| {
                 const os = _compare(address, r.start) orelse continue;
                 const oe = _compare(address, r.end) orelse continue;
-                if (os.compare(.gte) and oe.compare(.lte)) return .jsBoolean(true);
+                if (os.compare(.gte) and oe.compare(.lte)) return .true;
             },
             .subnet => |s| {
                 if (address.as_v4()) |ip_addr| if (s.network.as_v4()) |subnet_addr| {
-                    if (s.prefix == 32) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    if (s.prefix == 32) if (ip_addr == subnet_addr) (return .true) else continue;
                     const one: u32 = 1;
                     const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(32 - s.prefix);
                     const ip_net: u32 = @byteSwap(ip_addr) & mask_addr;
                     const subnet_net: u32 = @byteSwap(subnet_addr) & mask_addr;
-                    if (ip_net == subnet_net) return .jsBoolean(true);
+                    if (ip_net == subnet_net) return .true;
                 };
                 if (address.sin.family == std.posix.AF.INET6 and s.network.sin.family == std.posix.AF.INET6) {
                     const ip_addr: u128 = @bitCast(address.sin6.addr);
                     const subnet_addr: u128 = @bitCast(s.network.sin6.addr);
-                    if (s.prefix == 128) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    if (s.prefix == 128) if (ip_addr == subnet_addr) (return .true) else continue;
                     const one: u128 = 1;
                     const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(128 - s.prefix);
                     const ip_net: u128 = @byteSwap(ip_addr) & mask_addr;
                     const subnet_net: u128 = @byteSwap(subnet_addr) & mask_addr;
-                    if (ip_net == subnet_net) return .jsBoolean(true);
+                    if (ip_net == subnet_net) return .true;
                 }
             },
         }
     }
-    return .jsBoolean(false);
+    return .false;
 }
 
 pub fn rules(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

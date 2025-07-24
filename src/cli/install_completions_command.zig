@@ -529,6 +529,8 @@ pub const InstallCompletionsCommand = struct {
     }
 };
 
+const string = []const u8;
+
 const DotEnv = @import("../env_loader.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 const fs = @import("../fs.zig");
@@ -540,5 +542,4 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const string = bun.string;
 const strings = bun.strings;

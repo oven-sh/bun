@@ -366,20 +366,21 @@ pub const TOML = struct {
     }
 };
 
+pub const lexer = @import("./toml/lexer.zig");
+pub const Lexer = lexer.Lexer;
+const T = lexer.T;
+
+const string = []const u8;
+
 const std = @import("std");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const expect = std.testing.expect;
-
-const toml_lexer = @import("./toml_lexer.zig");
-const Lexer = toml_lexer.Lexer;
-const T = toml_lexer.T;
 
 const bun = @import("bun");
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

@@ -73,6 +73,24 @@ for (const flag of ["-e", "--print"]) {
       });
       expect(stdout.toString("utf8")).toEqual(code + "\n");
     });
+
+    test("does not crash in non-latin1 directory", async () => {
+      const dir = join(tmpdirSync(), "eval-test-开始学习");
+      await Bun.write(join(dir, "index.js"), "console.log('hello world')");
+
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag, "import './index.js'"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toEqual("hello world\n" + (flag === "--print" ? "undefined\n" : ""));
+      expect(exitCode).toBe(0);
+    });
   });
 }
 

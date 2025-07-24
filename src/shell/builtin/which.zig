@@ -17,7 +17,7 @@ state: union(enum) {
         },
     },
     done,
-    err: JSC.SystemError,
+    err: jsc.SystemError,
 } = .idle,
 
 pub fn start(this: *Which) Yield {
@@ -106,7 +106,7 @@ fn argComplete(this: *Which) Yield {
     return this.next();
 }
 
-pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Which, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .one_arg or
             (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -147,8 +147,8 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const assert = bun.assert;
+const jsc = bun.jsc;
 const which = bun.which;
 
 const shell = bun.shell;

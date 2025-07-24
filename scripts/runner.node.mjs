@@ -1589,20 +1589,30 @@ async function getVendorTests(cwd) {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          await spawnSafe({
+          const { ok, error } = await spawnSafe({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
             cwd,
           });
+          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
         }
 
-        await spawnSafe({
+        let { ok, error } = await spawnSafe({
           command: "git",
           args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
           cwd: vendorPath,
         });
+        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
+
+        ({ ok, error } = await spawnSafe({
+          command: "git",
+          args: ["checkout", tag],
+          timeout: testTimeout,
+          cwd: vendorPath,
+        }));
+        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {

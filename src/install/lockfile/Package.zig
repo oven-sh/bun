@@ -52,7 +52,7 @@ pub const Package = extern struct {
         pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
-    pub inline fn isDisabled(this: *const Package, manager: *PackageManager) bool {
+    pub inline fn isDisabled(this: *const Package, manager: *const PackageManager) bool {
         return this.meta.isDisabled(manager);
     }
 

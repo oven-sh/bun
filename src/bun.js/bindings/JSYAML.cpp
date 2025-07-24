@@ -109,9 +109,51 @@ static String escapeYAMLString(const String& str)
     return result.toString();
 }
 
-static String serializeYAMLValue(JSGlobalObject* globalObject, JSValue value, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter);
+// Forward declarations
+static String serializeYAMLValue(JSGlobalObject* globalObject, JSValue value, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter, HashSet<JSObject*>& visitedForCircular);
 
-static String serializeYAMLArray(JSGlobalObject* globalObject, JSArray* array, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter)
+// Pre-pass to detect circular references
+static void detectCircularReferences(JSGlobalObject* globalObject, JSValue value, HashSet<JSObject*>& visiting, HashSet<JSObject*>& circular)
+{
+    if (!value.isObject()) {
+        return;
+    }
+    
+    JSObject* object = value.getObject();
+    
+    if (visiting.contains(object)) {
+        circular.add(object);
+        return;
+    }
+    
+    if (circular.contains(object)) {
+        return;
+    }
+    
+    visiting.add(object);
+    
+    if (value.inherits<JSArray>()) {
+        JSArray* array = jsCast<JSArray*>(object);
+        auto length = array->length();
+        for (unsigned i = 0; i < length; i++) {
+            JSValue element = array->getIndex(globalObject, i);
+            detectCircularReferences(globalObject, element, visiting, circular);
+        }
+    } else {
+        auto& vm = globalObject->vm();
+        PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+        
+        for (auto& propertyName : propertyNames) {
+            JSValue propValue = object->get(globalObject, propertyName);
+            detectCircularReferences(globalObject, propValue, visiting, circular);
+        }
+    }
+    
+    visiting.remove(object);
+}
+
+static String serializeYAMLArray(JSGlobalObject* globalObject, JSArray* array, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter, HashSet<JSObject*>& visitedForCircular)
 {
     auto length = array->length();
     
@@ -134,30 +176,64 @@ static String serializeYAMLArray(JSGlobalObject* globalObject, JSArray* array, u
         result.append("- "_s);
         
         JSValue element = array->getIndex(globalObject, i);
-        String serializedElement = serializeYAMLValue(globalObject, element, indent + 2, objectMap, anchorCounter);
+        String serializedElement = serializeYAMLValue(globalObject, element, indent + 2, objectMap, anchorCounter, visitedForCircular);
         
         if (element.inherits<JSArray>() && !serializedElement.startsWith("*"_s)) {
-            // Arrays should be inline, replacing the "- " with the array content
-            // But don't modify alias references (they start with *)
-            result.append(serializedElement.substring(2)); // Remove leading "- " from nested array
-        } else if (element.isObject()) {
+            // For nested arrays, we want: "- - first_element\n  - second_element\n  ..."
+            // The serializedElement comes with indentation, we need to restructure it
+            auto lines = serializedElement.split('\n');
+            if (lines.size() > 0) {
+                // First line should become "- first_element" (removing leading spaces and first dash)
+                String firstLine = lines[0];
+                unsigned trimStart = 0;
+                while (trimStart < firstLine.length() && firstLine[trimStart] == ' ') {
+                    trimStart++;
+                }
+                // Should now be at "- element", we want just "- element"
+                result.append(firstLine.substring(trimStart));
+                
+                // Subsequent lines should be indented to align under the first element
+                for (size_t lineIdx = 1; lineIdx < lines.size(); lineIdx++) {
+                    result.append('\n');
+                    result.append(indentStr);
+                    result.append("  "_s); // Align with the content after "- "
+                    
+                    String line = lines[lineIdx];
+                    // Remove the original indentation
+                    unsigned lineTrimStart = 0;
+                    while (lineTrimStart < line.length() && line[lineTrimStart] == ' ') {
+                        lineTrimStart++;
+                    }
+                    result.append(line.substring(lineTrimStart));
+                }
+            }
+        } else if (element.isObject() && !serializedElement.startsWith("*"_s)) {
             // Objects should have their first property on the same line as "- "
             // and subsequent properties indented to align with the first
             auto lines = serializedElement.split('\n');
             if (lines.size() > 0) {
-                // Trim leading whitespace from first line since it will follow "- "
+                // First line should be after "- " with no extra indentation
                 String firstLine = lines[0];
+                // Remove leading whitespace since we already have "- "
                 unsigned trimStart = 0;
                 while (trimStart < firstLine.length() && firstLine[trimStart] == ' ') {
                     trimStart++;
                 }
                 result.append(firstLine.substring(trimStart));
                 
+                // Subsequent lines should be indented to align with the start of the first property
                 for (size_t lineIdx = 1; lineIdx < lines.size(); lineIdx++) {
                     result.append('\n');
                     result.append(indentStr);
                     result.append("  "_s); // Align with the content after "- "
-                    result.append(lines[lineIdx]);
+                    
+                    String line = lines[lineIdx];
+                    // Remove the original indentation since we're adding our own
+                    unsigned lineTrimStart = 0;
+                    while (lineTrimStart < line.length() && line[lineTrimStart] == ' ') {
+                        lineTrimStart++;
+                    }
+                    result.append(line.substring(lineTrimStart));
                 }
             }
         } else {
@@ -168,7 +244,7 @@ static String serializeYAMLArray(JSGlobalObject* globalObject, JSArray* array, u
     return result.toString();
 }
 
-static String serializeYAMLObject(JSGlobalObject* globalObject, JSObject* object, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter)
+static String serializeYAMLObject(JSGlobalObject* globalObject, JSObject* object, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter, HashSet<JSObject*>& visitedForCircular)
 {
     auto& vm = globalObject->vm();
     
@@ -199,16 +275,16 @@ static String serializeYAMLObject(JSGlobalObject* globalObject, JSObject* object
         result.append(": "_s);
         
         JSValue value = object->get(globalObject, propertyName);
-        String serializedValue = serializeYAMLValue(globalObject, value, indent + 2, objectMap, anchorCounter);
+        String serializedValue = serializeYAMLValue(globalObject, value, indent + 2, objectMap, anchorCounter, visitedForCircular);
         
         if (value.isObject() && (value.inherits<JSArray>() || value.inherits<JSObject>())) {
-            result.append('\n');
-            StringBuilder additionalIndentBuilder;
-            for (unsigned j = 0; j < indent + 2; j++) {
-                additionalIndentBuilder.append(' ');
+            if (serializedValue.startsWith("*"_s)) {
+                // For aliases, keep them on the same line
+                result.append(serializedValue);
+            } else {
+                result.append('\n');
+                result.append(serializedValue);
             }
-            result.append(additionalIndentBuilder.toString());
-            result.append(serializedValue);
         } else {
             result.append(serializedValue);
         }
@@ -217,7 +293,7 @@ static String serializeYAMLObject(JSGlobalObject* globalObject, JSObject* object
     return result.toString();
 }
 
-static String serializeYAMLValue(JSGlobalObject* globalObject, JSValue value, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter)
+static String serializeYAMLValue(JSGlobalObject* globalObject, JSValue value, unsigned indent, HashMap<JSObject*, unsigned>& objectMap, unsigned& anchorCounter, HashSet<JSObject*>& visitedForCircular)
 {
     auto& vm = globalObject->vm();
     
@@ -272,14 +348,28 @@ static String serializeYAMLValue(JSGlobalObject* globalObject, JSValue value, un
             return alias.toString();
         }
         
-        // For now, don't add anchors to non-circular objects to keep output clean
-        // In a production implementation, we'd do a pre-pass to detect which objects are truly circular
-        objectMap.set(object, ++anchorCounter);
-        
-        if (value.inherits<JSArray>()) {
-            return serializeYAMLArray(globalObject, jsCast<JSArray*>(object), indent, objectMap, anchorCounter);
+        // Only add anchors for objects that are actually circular
+        if (visitedForCircular.contains(object)) {
+            objectMap.set(object, ++anchorCounter);
+            
+            StringBuilder anchor;
+            anchor.append("&anchor"_s);
+            anchor.append(String::number(anchorCounter));
+            anchor.append(' ');
+            
+            if (value.inherits<JSArray>()) {
+                anchor.append(serializeYAMLArray(globalObject, jsCast<JSArray*>(object), indent, objectMap, anchorCounter, visitedForCircular));
+            } else {
+                anchor.append(serializeYAMLObject(globalObject, object, indent, objectMap, anchorCounter, visitedForCircular));
+            }
+            
+            return anchor.toString();
         } else {
-            return serializeYAMLObject(globalObject, object, indent, objectMap, anchorCounter);
+            if (value.inherits<JSArray>()) {
+                return serializeYAMLArray(globalObject, jsCast<JSArray*>(object), indent, objectMap, anchorCounter, visitedForCircular);
+            } else {
+                return serializeYAMLObject(globalObject, object, indent, objectMap, anchorCounter, visitedForCircular);
+            }
         }
     }
     
@@ -298,10 +388,16 @@ JSC_DEFINE_HOST_FUNCTION(yamlStringify, (JSGlobalObject* globalObject, CallFrame
     
     JSValue value = callFrame->uncheckedArgument(0);
     
+    // First pass: detect circular references
+    HashSet<JSObject*> visiting;
+    HashSet<JSObject*> circular;
+    detectCircularReferences(globalObject, value, visiting, circular);
+    
+    // Second pass: serialize with circular reference handling
     HashMap<JSObject*, unsigned> objectMap;
     unsigned anchorCounter = 0;
     
-    String result = serializeYAMLValue(globalObject, value, 0, objectMap, anchorCounter);
+    String result = serializeYAMLValue(globalObject, value, 0, objectMap, anchorCounter, circular);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     
     return JSValue::encode(jsString(vm, result));

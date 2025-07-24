@@ -171,7 +171,7 @@ pub const PackageJSON = struct {
             values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
             i += 1;
         }
-        framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
+        framework.override_modules = api.StringMap{ .keys = keys, .values = values };
     }
 
     fn loadDefineExpression(
@@ -2038,6 +2038,8 @@ fn findInvalidSegment(path_: string) ?string {
     return null;
 }
 
+const string = []const u8;
+
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
 const cache = @import("../cache.zig");
@@ -2046,7 +2048,6 @@ const options = @import("../options.zig");
 const resolve_path = @import("./resolve_path.zig");
 const resolver = @import("./resolver.zig");
 const std = @import("std");
-const Api = @import("../api/schema.zig").Api;
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const Libc = @import("../install/npm.zig").Libc;
@@ -2058,11 +2059,11 @@ const MainFieldMap = bun.StringMap;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
+const api = bun.schema.api;
 
 const Semver = bun.Semver;
 const String = Semver.String;

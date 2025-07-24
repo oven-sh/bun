@@ -653,6 +653,7 @@ pub const FillItem = struct {
 pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 
 const string = []const u8;
+const stringZ = [:0]const u8;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -664,7 +665,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const assert = bun.assert;
 const logger = bun.logger;
-const stringZ = bun.stringZ;
 const z_allocator = bun.z_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;

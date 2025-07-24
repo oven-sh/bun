@@ -12,7 +12,7 @@ has_content_length_header: bool,
 pub const InitOptions = struct {
     server: ?AnyServer,
     status_code: u16 = 200,
-    headers: ?*JSC.WebCore.FetchHeaders = null,
+    headers: ?*jsc.WebCore.FetchHeaders = null,
 };
 
 pub fn lastModifiedDate(this: *const FileRoute) bun.JSError!?u64 {
@@ -20,7 +20,7 @@ pub fn lastModifiedDate(this: *const FileRoute) bun.JSError!?u64 {
         if (this.headers.get("last-modified")) |last_modified| {
             var string = bun.String.init(last_modified);
             defer string.deref();
-            const date_f64 = try bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+            const date_f64 = try bun.String.parseDate(&string, bun.jsc.VirtualMachine.get().global);
             if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
                 return @intFromFloat(date_f64);
             }
@@ -57,8 +57,8 @@ pub fn memoryCost(this: *const FileRoute) usize {
     return @sizeOf(FileRoute) + this.headers.memoryCost() + this.blob.reported_estimated_size;
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*FileRoute {
-    if (argument.as(JSC.WebCore.Response)) |response| {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*FileRoute {
+    if (argument.as(jsc.WebCore.Response)) |response| {
         response.body.value.toBlobIfPossible();
         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
             if (response.body.value.Blob.store.?.data.file.pathlike == .fd) {
@@ -297,7 +297,7 @@ const StreamTransfer = struct {
 
     max_size: ?u64 = null,
 
-    eof_task: ?JSC.AnyTask = null,
+    eof_task: ?jsc.AnyTask = null,
 
     state: packed struct(u8) {
         has_ended_response: bool = false,
@@ -398,8 +398,8 @@ const StreamTransfer = struct {
                         // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
                         this.reader.pause();
                         // we cannot free inside onReadChunk this would be UAF so we schedule it to be done in the next event loop tick
-                        this.eof_task = JSC.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
-                        server.vm().enqueueTask(JSC.Task.init(&this.eof_task.?));
+                        this.eof_task = jsc.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
+                        server.vm().enqueueTask(jsc.Task.init(&this.eof_task.?));
                     }
                     break :brk .{ chunk, .eof };
                 }
@@ -462,8 +462,8 @@ const StreamTransfer = struct {
         this.finish();
     }
 
-    pub fn eventLoop(this: *StreamTransfer) JSC.EventLoopHandle {
-        return JSC.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
+    pub fn eventLoop(this: *StreamTransfer) jsc.EventLoopHandle {
+        return jsc.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
     }
 
     pub fn loop(this: *StreamTransfer) *Async.Loop {
@@ -532,16 +532,16 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 const std = @import("std");
-const writeStatus = @import("../server.zig").writeStatus;
 
 const bun = @import("bun");
 const Async = bun.Async;
-const JSC = bun.JSC;
 const Output = bun.Output;
+const jsc = bun.jsc;
 const FileType = bun.io.FileType;
 const Headers = bun.http.Headers;
-const AnyServer = JSC.API.AnyServer;
-const Blob = JSC.WebCore.Blob;
+const AnyServer = jsc.API.AnyServer;
+const Blob = jsc.WebCore.Blob;
+const writeStatus = bun.api.server.writeStatus;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

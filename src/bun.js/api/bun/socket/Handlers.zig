@@ -1,22 +1,22 @@
 const Handlers = @This();
 
-onOpen: JSC.JSValue = .zero,
-onClose: JSC.JSValue = .zero,
-onData: JSC.JSValue = .zero,
-onWritable: JSC.JSValue = .zero,
-onTimeout: JSC.JSValue = .zero,
-onConnectError: JSC.JSValue = .zero,
-onEnd: JSC.JSValue = .zero,
-onError: JSC.JSValue = .zero,
-onHandshake: JSC.JSValue = .zero,
+onOpen: jsc.JSValue = .zero,
+onClose: jsc.JSValue = .zero,
+onData: jsc.JSValue = .zero,
+onWritable: jsc.JSValue = .zero,
+onTimeout: jsc.JSValue = .zero,
+onConnectError: jsc.JSValue = .zero,
+onEnd: jsc.JSValue = .zero,
+onError: jsc.JSValue = .zero,
+onHandshake: jsc.JSValue = .zero,
 
 binary_type: BinaryType = .Buffer,
 
-vm: *JSC.VirtualMachine,
-globalObject: *JSC.JSGlobalObject,
+vm: *jsc.VirtualMachine,
+globalObject: *jsc.JSGlobalObject,
 active_connections: u32 = 0,
 is_server: bool,
-promise: JSC.Strong.Optional = .empty,
+promise: jsc.Strong.Optional = .empty,
 
 protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
 
@@ -103,7 +103,7 @@ pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, args: *const [2]JSV
     return true;
 }
 
-pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, is_server: bool) bun.JSError!Handlers {
+pub fn fromJS(globalObject: *jsc.JSGlobalObject, opts: jsc.JSValue, is_server: bool) bun.JSError!Handlers {
     var handlers = Handlers{
         .vm = globalObject.bunVM(),
         .globalObject = globalObject,
@@ -172,7 +172,7 @@ pub fn unprotect(this: *Handlers) void {
     this.onHandshake.unprotect();
 }
 
-pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *JSC.JSGlobalObject) void {
+pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *jsc.JSGlobalObject) void {
     inline for (.{
         "onOpen",
         "onClose",
@@ -207,12 +207,12 @@ pub fn protect(this: *Handlers) void {
 }
 
 pub const SocketConfig = struct {
-    hostname_or_unix: JSC.ZigString.Slice,
+    hostname_or_unix: jsc.ZigString.Slice,
     port: ?u16 = null,
     fd: ?bun.FileDescriptor = null,
-    ssl: ?JSC.API.ServerConfig.SSLConfig = null,
+    ssl: ?jsc.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
-    default_data: JSC.JSValue = .zero,
+    default_data: jsc.JSValue = .zero,
     exclusive: bool = false,
     allowHalfOpen: bool = false,
     reusePort: bool = false,
@@ -236,8 +236,8 @@ pub const SocketConfig = struct {
         return flags;
     }
 
-    pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject, is_server: bool) bun.JSError!SocketConfig {
-        var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
+    pub fn fromJS(vm: *jsc.VirtualMachine, opts: jsc.JSValue, globalObject: *jsc.JSGlobalObject, is_server: bool) bun.JSError!SocketConfig {
+        var hostname_or_unix: jsc.ZigString.Slice = jsc.ZigString.Slice.empty;
         errdefer hostname_or_unix.deinit();
         var port: ?u16 = null;
         var fd: ?bun.FileDescriptor = null;
@@ -246,16 +246,16 @@ pub const SocketConfig = struct {
         var reusePort = false;
         var ipv6Only = false;
 
-        var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
+        var ssl: ?jsc.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
         if (try opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
-                    ssl = JSC.API.ServerConfig.SSLConfig.zero;
+                    ssl = jsc.API.ServerConfig.SSLConfig.zero;
                 }
             } else {
-                if (try JSC.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls)) |ssl_config| {
+                if (try jsc.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls)) |ssl_config| {
                     ssl = ssl_config;
                 }
             }
@@ -383,8 +383,8 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const uws = bun.uws;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-const BinaryType = JSC.ArrayBuffer.BinaryType;
-const Listener = JSC.API.Listener;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const BinaryType = jsc.ArrayBuffer.BinaryType;
+const Listener = jsc.API.Listener;

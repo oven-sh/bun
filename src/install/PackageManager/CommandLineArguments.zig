@@ -1007,6 +1007,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     return cli;
 }
 
+const string = []const u8;
+
 const Options = @import("./PackageManagerOptions.zig");
 const std = @import("std");
 const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;
@@ -1014,12 +1016,11 @@ const PackageManagerCommand = @import("../../cli/package_manager_command.zig").P
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const Path = bun.path;
 const URL = bun.URL;
 const clap = bun.clap;
-const string = bun.string;
 const strings = bun.strings;
 const PackageInstall = bun.install.PackageInstall;
 const Subcommand = bun.install.PackageManager.Subcommand;

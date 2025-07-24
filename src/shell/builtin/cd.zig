@@ -91,7 +91,7 @@ fn handleChangeCwdErr(this: *Cd, err: Syscall.Error, new_cwd_: []const u8) Yield
     }
 }
 
-pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_write_stderr);
     }
@@ -125,9 +125,9 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Syscall = bun.sys;
 const assert = bun.assert;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
 const Yield = bun.shell.Yield;

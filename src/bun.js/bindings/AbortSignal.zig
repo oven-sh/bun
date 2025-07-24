@@ -41,14 +41,14 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__cleanNativeBindings(this, ctx);
     }
 
-    extern fn WebCore__AbortSignal__signal(*AbortSignal, *JSC.JSGlobalObject, CommonAbortReason) void;
+    extern fn WebCore__AbortSignal__signal(*AbortSignal, *jsc.JSGlobalObject, CommonAbortReason) void;
 
     pub fn signal(
         this: *AbortSignal,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
         reason: CommonAbortReason,
     ) void {
-        bun.Analytics.Features.abort_signal += 1;
+        bun.analytics.Features.abort_signal += 1;
         return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 
@@ -73,20 +73,20 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__abortReason(this);
     }
 
-    extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *JSC.JSGlobalObject, *u8) JSValue;
+    extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *jsc.JSGlobalObject, *u8) JSValue;
 
     pub const AbortReason = union(enum) {
         common: CommonAbortReason,
         js: JSValue,
 
-        pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
+        pub fn toBodyValueError(this: AbortReason, globalObject: *jsc.JSGlobalObject) jsc.WebCore.Body.Value.ValueError {
             return switch (this) {
                 .common => |reason| .{ .AbortReason = reason },
                 .js => |value| .{ .JSValue = .create(value, globalObject) },
             };
         }
 
-        pub fn toJS(this: AbortReason, global: *JSC.JSGlobalObject) JSValue {
+        pub fn toJS(this: AbortReason, global: *jsc.JSGlobalObject) JSValue {
             return switch (this) {
                 .common => |reason| reason.toJS(global),
                 .js => |value| value,
@@ -94,7 +94,7 @@ pub const AbortSignal = opaque {
         }
     };
 
-    pub fn reasonIfAborted(this: *AbortSignal, global: *JSC.JSGlobalObject) ?AbortReason {
+    pub fn reasonIfAborted(this: *AbortSignal, global: *jsc.JSGlobalObject) ?AbortReason {
         var reason: u8 = 0;
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
@@ -134,7 +134,7 @@ pub const AbortSignal = opaque {
 
     extern fn WebCore__AbortSignal__new(*JSGlobalObject) *AbortSignal;
     pub fn new(global: *JSGlobalObject) *AbortSignal {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         return WebCore__AbortSignal__new(global);
     }
 };
@@ -142,6 +142,6 @@ pub const AbortSignal = opaque {
 const bun = @import("bun");
 const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

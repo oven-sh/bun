@@ -1114,6 +1114,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         // When Bun crashes, it exits before the subcommand it runs to upload the crash report has necessarily finished.
         // So wait a little bit to make sure that the crash report has at least started uploading
         // (once the server sees the /ack request then /traces will wait for any crashes to finish processing)
+        // There is a bug that if a test causes crash reports but exits with code 0, the crash reports will instead
+        // be attributed to the next test that fails. I'm not sure how to fix this without adding a sleep in between
+        // all tests (which would slow down CI a lot).
         await setTimeoutPromise(500);
         const response = await fetch(`http://localhost:${remapPort}/traces`);
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);

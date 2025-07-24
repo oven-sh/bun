@@ -1748,8 +1748,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
 
                     route_ptr.data.server = AnyServer.from(srv);
+                    const server_any = AnyServer.from(srv);
+                    route_ptr.data.server = server_any;
 
-                    if (srv.dev_server == null and srv.config.development.isHMREnabled()) {
+                    if (server_any.devServer()) |dev| {
+                        bake.DevServer.registerCatchAllHtmlRoute(dev, route_ptr.data) catch bun.outOfMemory();
+                    } else if (srv.config.development.isHMREnabled()) {
                         const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
                         jsc.ConsoleObject.messageWithTypeAndLevel(
                             undefined,
@@ -2704,3 +2708,4 @@ const FetchHeaders = jsc.WebCore.FetchHeaders;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
 const StaticRoute = @import("./StaticRoute.zig");
+const bake = bun.bake;

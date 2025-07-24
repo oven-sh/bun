@@ -168,6 +168,61 @@ describe("mock()", () => {
     }
   });
 
+  test("toHaveNthReturnedWith", () => {
+    const fn = jest.fn();
+    
+    // Test when function hasn't been called
+    expect(() => expect(fn).toHaveNthReturnedWith(1, "value")).toThrow();
+    
+    // Call with different return values
+    fn.mockReturnValueOnce("first");
+    fn.mockReturnValueOnce("second");
+    fn.mockReturnValueOnce("third");
+    
+    fn();
+    fn();
+    fn();
+    
+    // Test positive cases
+    expect(fn).toHaveNthReturnedWith(1, "first");
+    expect(fn).toHaveNthReturnedWith(2, "second");
+    expect(fn).toHaveNthReturnedWith(3, "third");
+    
+    // Test negative cases
+    expect(fn).not.toHaveNthReturnedWith(1, "wrong");
+    expect(fn).not.toHaveNthReturnedWith(2, "wrong");
+    expect(fn).not.toHaveNthReturnedWith(3, "wrong");
+    
+    // Test out of bounds
+    expect(() => expect(fn).toHaveNthReturnedWith(4, "value")).toThrow();
+    expect(() => expect(fn).toHaveNthReturnedWith(0, "value")).toThrow();
+    expect(() => expect(fn).toHaveNthReturnedWith(-1, "value")).toThrow();
+    
+    // Test with objects
+    const obj1 = { a: 1 };
+    const obj2 = { b: 2 };
+    fn.mockReturnValueOnce(obj1);
+    fn.mockReturnValueOnce(obj2);
+    
+    fn();
+    fn();
+    
+    expect(fn).toHaveNthReturnedWith(4, obj1);
+    expect(fn).toHaveNthReturnedWith(5, obj2);
+    
+    // Test with thrown errors
+    const error = new Error("test error");
+    fn.mockImplementationOnce(() => {
+      throw error;
+    });
+    
+    try {
+      fn();
+    } catch (e) {}
+    
+    expect(() => expect(fn).toHaveNthReturnedWith(6, "value")).toThrow();
+  });
+
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
       "use strict";

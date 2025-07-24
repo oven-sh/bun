@@ -14,7 +14,7 @@ pipelined_requests: u32 = 0,
 nonpipelinable_requests: u32 = 0,
 
 poll_ref: bun.Async.KeepAlive = .{},
-globalObject: *JSC.JSGlobalObject,
+globalObject: *jsc.JSGlobalObject,
 
 statements: PreparedStatementsMap,
 prepared_statement_id: u64 = 0,
@@ -34,7 +34,7 @@ options_buf: []const u8 = "",
 authentication_state: AuthenticationState = .{ .pending = {} },
 
 tls_ctx: ?*uws.SocketContext = null,
-tls_config: JSC.API.ServerConfig.SSLConfig = .{},
+tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
 
@@ -136,18 +136,18 @@ pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
     this.globalObject.bunVM().timer.insert(&this.timer);
 }
 
-pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+pub fn getQueries(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     if (js.queriesGetCached(thisValue)) |value| {
         return value;
     }
 
-    const array = try JSC.JSValue.createEmptyArray(globalObject, 0);
+    const array = try jsc.JSValue.createEmptyArray(globalObject, 0);
     js.queriesSetCached(thisValue, globalObject, array);
 
     return array;
 }
 
-pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
     if (js.onconnectGetCached(thisValue)) |value| {
         return value;
     }
@@ -155,11 +155,11 @@ pub fn getOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.J
     return .js_undefined;
 }
 
-pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
     js.onconnectSetCached(thisValue, globalObject, value);
 }
 
-pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
     if (js.oncloseGetCached(thisValue)) |value| {
         return value;
     }
@@ -167,7 +167,7 @@ pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSG
     return .js_undefined;
 }
 
-pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
     js.oncloseSetCached(thisValue, globalObject, value);
 }
 
@@ -328,7 +328,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
-pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: JSC.Error, comptime fmt: [:0]const u8, args: anytype) void {
+pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {
     this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
 }
 
@@ -553,17 +553,17 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     this.read_buffer.head = 0;
 }
 
-pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLConnection {
+pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*PostgresSQLConnection {
     _ = callframe;
     return globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
 }
 
 comptime {
-    const jscall = JSC.toJSHostFn(call);
+    const jscall = jsc.toJSHostFn(call);
     @export(&jscall, .{ .name = "PostgresSQLConnection__createInstance" });
 }
 
-pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
     const arguments = callframe.arguments_old(15).slice();
     const hostname_str = try arguments[0].toBunString(globalObject);
@@ -587,13 +587,13 @@ pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const tls_object = arguments[6];
 
-    var tls_config: JSC.API.ServerConfig.SSLConfig = .{};
+    var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
     var tls_ctx: ?*uws.SocketContext = null;
     if (ssl_mode != .disable) {
         tls_config = if (tls_object.isBoolean() and tls_object.toBoolean())
             .{}
         else if (tls_object.isObject())
-            (JSC.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls_object) catch return .zero) orelse .{}
+            (jsc.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls_object) catch return .zero) orelse .{}
         else {
             return globalObject.throwInvalidArguments("tls must be a boolean or an object", .{});
         };
@@ -810,18 +810,18 @@ pub fn ref(this: *@This()) void {
     this.ref_count += 1;
 }
 
-pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.ref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
     return .js_undefined;
 }
 
-pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.unref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
     return .js_undefined;
 }
-pub fn doFlush(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn doFlush(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.registerAutoFlusher();
     return .js_undefined;
 }
@@ -836,7 +836,7 @@ pub fn deref(this: *@This()) void {
     }
 }
 
-pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
     this.disconnect();
     this.unregisterAutoFlusher();
@@ -872,7 +872,7 @@ pub fn deinit(this: *@This()) void {
     bun.default_allocator.destroy(this);
 }
 
-fn refAndClose(this: *@This(), js_reason: ?JSC.JSValue) void {
+fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
     // refAndClose is always called when we wanna to disconnect or when we are closed
 
     if (!this.socket.isClosed()) {
@@ -1265,7 +1265,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             };
 
             var stack_buf: [70]DataCell = undefined;
-            var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSObject.maxInlineCapacity())];
+            var cells: []DataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
             var free_cells = false;
             defer {
                 for (cells[0..putter.count]) |*cell| {
@@ -1274,7 +1274,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 if (free_cells) bun.default_allocator.free(cells);
             }
 
-            if (statement.fields.len >= JSC.JSObject.maxInlineCapacity()) {
+            if (statement.fields.len >= jsc.JSObject.maxInlineCapacity()) {
                 cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                 free_cells = true;
             }
@@ -1688,11 +1688,11 @@ pub fn updateRef(this: *PostgresSQLConnection) void {
     }
 }
 
-pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) JSValue {
+pub fn getConnected(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.status == Status.connected);
 }
 
-pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
     const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
     debug("consumeOnConnectCallback exists", .{});
@@ -1701,7 +1701,7 @@ pub fn consumeOnConnectCallback(this: *const PostgresSQLConnection, globalObject
     return on_connect;
 }
 
-pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnCloseCallback", .{});
     const on_close = js.oncloseGetCached(this.js_value) orelse return null;
     debug("consumeOnCloseCallback exists", .{});
@@ -1715,7 +1715,7 @@ const debug = bun.Output.scoped(.Postgres, false);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
-pub const js = JSC.Codegen.JSPostgresSQLConnection;
+pub const js = jsc.Codegen.JSPostgresSQLConnection;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
@@ -1742,9 +1742,9 @@ const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;
 const assert = bun.assert;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const AutoFlusher = JSC.WebCore.AutoFlusher;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;

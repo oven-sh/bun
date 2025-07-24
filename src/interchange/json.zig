@@ -1004,8 +1004,9 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
     try std.testing.expectEqualStrings(expected, js);
 }
 
+const string = []const u8;
+
 const std = @import("std");
-const BabyList = @import("./baby_list.zig").BabyList;
 const expect = std.testing.expect;
 
 const bun = @import("bun");
@@ -1016,11 +1017,11 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
 const Indentation = js_printer.Options.Indentation;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const ExprNodeList = js_ast.ExprNodeList;
 const G = js_ast.G;

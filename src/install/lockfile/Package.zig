@@ -2137,17 +2137,15 @@ const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const PackageJSON = bun.PackageJSON;
 const Path = bun.path;
 const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
+const Expr = bun.ast.Expr;
 const FileSystem = bun.fs.FileSystem;
-
-const JSAst = bun.JSAst;
-const Expr = bun.JSAst.Expr;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

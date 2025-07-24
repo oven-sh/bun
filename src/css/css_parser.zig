@@ -1,6 +1,6 @@
 pub const SrcIndex = bun.bundle_v2.Index;
 
-pub const SymbolList = bun.JSAst.Symbol.List;
+pub const SymbolList = bun.ast.Symbol.List;
 
 pub const ImportRecord = bun.ImportRecord;
 pub const ImportKind = bun.ImportKind;
@@ -89,7 +89,7 @@ pub const ImportInfo = css_printer.ImportInfo;
 pub const PropertyHandlerContext = context.PropertyHandlerContext;
 pub const DeclarationHandler = declaration.DeclarationHandler;
 
-pub const Maybe = bun.JSC.Node.Maybe;
+pub const Maybe = bun.jsc.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
 pub const Err = errors_.Err;
 pub const PrinterErrorKind = errors_.PrinterErrorKind;
@@ -285,7 +285,7 @@ pub fn PrintResult(comptime T: type) type {
 }
 
 pub fn todo(comptime fmt: []const u8, args: anytype) noreturn {
-    bun.Analytics.Features.todo_panic = 1;
+    bun.analytics.Features.todo_panic = 1;
     std.debug.panic("TODO: " ++ fmt, args);
 }
 
@@ -3134,7 +3134,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: css_printer.PrinterOptions,
             import_info: ?bun.css.ImportInfo,
             local_names: ?*const LocalsResultsMap,
-            symbols: *const bun.JSAst.Symbol.Map,
+            symbols: *const bun.ast.Symbol.Map,
         ) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
 
@@ -3204,7 +3204,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: css_printer.PrinterOptions,
             import_info: ?bun.css.ImportInfo,
             local_names: ?*const LocalsResultsMap,
-            symbols: *const bun.JSAst.Symbol.Map,
+            symbols: *const bun.ast.Symbol.Map,
         ) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
@@ -3489,7 +3489,7 @@ pub const StyleAttribute = struct {
         //   "Source maps are not supported for style attributes"
         // );
 
-        var symbols = bun.JSAst.Symbol.Map{};
+        var symbols = bun.ast.Symbol.Map{};
         var dest = ArrayList(u8){};
         const writer = dest.writer(allocator);
         var printer = Printer(@TypeOf(writer)).new(
@@ -3835,7 +3835,7 @@ pub const Parser = struct {
                 },
                 .loc = loc,
             };
-            extra.symbols.push(this.allocator(), bun.JSAst.Symbol{
+            extra.symbols.push(this.allocator(), bun.ast.Symbol{
                 .kind = .local_css,
                 .original_name = name,
             }) catch bun.outOfMemory();
@@ -7005,7 +7005,7 @@ pub const to_css = struct {
         options: PrinterOptions,
         import_info: ?ImportInfo,
         local_names: ?*const LocalsResultsMap,
-        symbols: *const bun.JSAst.Symbol.Map,
+        symbols: *const bun.ast.Symbol.Map,
     ) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         errdefer s.deinit(allocator);

@@ -853,6 +853,10 @@ fn NewPrinter(
             }
         };
 
+        pub fn deinit(self: *Printer) void {
+            self.source_map_builder.deinit();
+        }
+
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
         }
@@ -5805,7 +5809,7 @@ pub fn printAst(
         if (comptime generate_source_map) {
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
-        printer.source_map_builder.source_map.deinit();
+        printer.deinit();
     }
     printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -5843,10 +5847,12 @@ pub fn printAst(
 
     if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
+
+            defer source_maps_chunk.deinit();
 
             try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
@@ -5856,7 +5862,9 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 
@@ -5892,6 +5900,7 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
+    defer printer.deinit();
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5997,6 +6006,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    defer printer.deinit();
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -6078,6 +6088,7 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
+    defer printer.deinit();
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -6097,7 +6108,9 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 

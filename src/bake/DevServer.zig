@@ -803,8 +803,10 @@ pub fn deinit(dev: *DevServer) void {
         },
         .route_lookup = dev.route_lookup.deinit(allocator),
         .source_maps = {
-            for (dev.source_maps.entries.keys()) |key| {
-                dev.source_maps.unref(key);
+            for (dev.source_maps.entries.values()) |*value| {
+                bun.assert(value.ref_count > 0);
+                value.ref_count = 0;
+                value.deinit(dev);
             }
             dev.source_maps.entries.deinit(allocator);
 
@@ -2401,7 +2403,7 @@ pub fn finalizeBundle(
             bun.assert(compile_result.javascript.result == .result);
             bun.assert(dev.server_transpiler.options.source_map != .none);
             bun.assert(!part_range.source_index.isRuntime());
-            break :brk .empty;
+            break :brk .initEmpty();
         };
         // TODO: investigate why linker.files is not indexed by linker's index
         // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
@@ -3318,8 +3320,7 @@ pub const PackedMap = struct {
     ref_count: RefCount,
     /// Allocated by `dev.allocator`. Access with `.vlq()`
     /// This is stored to allow lazy construction of source map files.
-    vlq_ptr: [*]u8,
-    vlq_len: u32,
+    vlq_str: bun.MutableString,
     /// The bundler runs quoting on multiple threads, so it only makes
     /// sense to preserve that effort for concatenation and
     /// re-concatenation.
@@ -3340,28 +3341,27 @@ pub const PackedMap = struct {
     /// already counted for.
     bits_used_for_memory_cost_dedupe: u32 = 0,
 
-    pub fn newNonEmpty(source_map: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
-        assert(source_map.buffer.list.items.len > 0);
+    pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
+        assert(chunk.buffer.list.items.len > 0);
         return .new(.{
             .ref_count = .init(),
-            .vlq_ptr = source_map.buffer.list.items.ptr,
-            .vlq_len = @intCast(source_map.buffer.list.items.len),
+            .vlq_str = chunk.buffer,
             .quoted_contents_ptr = quoted_contents.ptr,
             .quoted_contents_len = @intCast(quoted_contents.len),
             .end_state = .{
-                .original_line = source_map.end_state.original_line,
-                .original_column = source_map.end_state.original_column,
+                .original_line = chunk.end_state.original_line,
+                .original_column = chunk.end_state.original_column,
             },
         });
     }
 
-    fn destroy(self: *@This(), dev: *DevServer) void {
-        dev.allocator.free(self.vlq());
+    fn destroy(self: *@This(), _: *DevServer) void {
+        self.vlq_str.deinit();
         bun.destroy(self);
     }
 
     pub fn memoryCost(self: *const @This()) usize {
-        return self.vlq_len + self.quoted_contents_len + @sizeOf(@This());
+        return self.vlq_str.len() + self.quoted_contents_len + @sizeOf(@This());
     }
 
     /// When DevServer iterates everything to calculate memory usage, it passes
@@ -3376,7 +3376,7 @@ pub const PackedMap = struct {
     }
 
     pub fn vlq(self: *const @This()) []u8 {
-        return self.vlq_ptr[0..self.vlq_len];
+        return self.vlq_str.list.items;
     }
 
     // TODO: rename to `escapedSource`
@@ -3955,14 +3955,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     switch (content) {
                         .css => |css| gop.value_ptr.* = .initCSS(css, flags),
                         .js => |js| {
-                            dev.allocation_scope.assertOwned(js.code);
-
                             // Insert new source map or patch existing empty source map.
                             const source_map: PackedMap.RefOrEmpty = brk: {
                                 if (js.source_map) |source_map| {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
-                                        dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
@@ -7570,7 +7567,7 @@ pub const SourceMapStore = struct {
         .weak_ref_sweep_timer = .initPaused(.DevServerSweepSourceMaps),
         .weak_refs = .init(),
     };
-    const weak_ref_expiry_seconds = 10;
+    pub const weak_ref_expiry_seconds = 10;
     const weak_ref_entry_max = 16;
 
     /// Route bundle keys clear the bottom 32 bits of this value, using only the

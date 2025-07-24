@@ -1607,13 +1607,19 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
-    pub const empty: Chunk = .{
-        .buffer = MutableString.initEmpty(bun.default_allocator),
-        .mappings_count = 0,
-        .end_state = .{},
-        .final_generated_column = 0,
-        .should_ignore = true,
-    };
+    pub fn initEmpty() Chunk {
+        return .{
+            .buffer = MutableString.initEmpty(bun.default_allocator),
+            .mappings_count = 0,
+            .end_state = .{},
+            .final_generated_column = 0,
+            .should_ignore = true,
+        };
+    }
+
+    pub fn deinit(this: *Chunk) void {
+        this.buffer.deinit();
+    }
 
     pub fn printSourceMapContents(
         chunk: Chunk,
@@ -1726,8 +1732,7 @@ pub const Chunk = struct {
         }
 
         pub fn deinit(this: *VLQSourceMap) void {
-            // this.data.deinit();
-            _ = this;
+            this.data.deinit();
         }
 
         pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
@@ -1788,15 +1793,20 @@ pub const Chunk = struct {
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
+            pub fn deinit(this: *ThisBuilder) void {
+                this.source_map.deinit();
+            }
+
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
+                var buffer = b.source_map.getBuffer();
                 if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
-                    b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
-                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
+                    buffer.list.items[0..8].* = @as([8]u8, @bitCast(buffer.list.items.len));
+                    buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                    buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
-                    .buffer = b.source_map.getBuffer(),
+                    .buffer = MutableString.initCopy(bun.default_allocator, buffer.list.items) catch bun.outOfMemory(),
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,

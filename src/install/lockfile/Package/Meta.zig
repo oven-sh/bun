@@ -34,7 +34,7 @@ pub const Meta = extern struct {
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta, manager: *const PackageManager) bool {
+    pub fn isDisabled(this: *const Meta, manager: *PackageManager) bool {
         const os_match = this.os.isMatch(manager.options.target_os);
         const cpu_match = this.arch.isMatch(manager.options.target_cpu);
         const libc_match = this.libc.isMatch(manager.options.target_libc);

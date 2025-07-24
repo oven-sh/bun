@@ -1640,7 +1640,10 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
                     else => continue,
                 }
             }
-            @panic("unreachable");
+            // We reached end of iterator without finding a newline.
+            // This can happen when indexOfNewlineOrNonASCIICheckStart found a non-ASCII character
+            // that wasn't a newline, or we're at the end of the text.
+            continue;
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {

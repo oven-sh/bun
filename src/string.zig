@@ -67,8 +67,8 @@ pub const String = extern struct {
         if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
     }
 
-    extern fn BunString__transferToJS(this: *const String, globalThis: *jsc.JSGlobalObject) jsc.JSValue;
-    pub fn transferToJS(this: *const String, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    extern fn BunString__transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue;
+    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         jsc.markBinding(@src());
         return BunString__transferToJS(this, globalThis);
     }

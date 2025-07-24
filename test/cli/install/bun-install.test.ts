@@ -8838,7 +8838,7 @@ describe("platform-specific dependencies", () => {
     if (isLinux) {
       packages.push(`linux-${process.arch}-${libcFamily}`);
     } else if (isWindows) {
-      packages[0].replace("win32", "windows");
+      packages[0] = packages[0].replace("win32", "windows");
     }
 
     expect(installedPackages).toContainValues(packages);

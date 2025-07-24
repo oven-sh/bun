@@ -801,7 +801,7 @@ pub fn DMP(comptime Unit: type) type {
         ) DiffError!LinesToCharsResult {
             var line_array: std.ArrayListUnmanaged([]const Unit) = .empty;
             errdefer line_array.deinit(allocator);
-            var line_hash: std.StringHashMapUnmanaged(usize) = .empty;
+            var line_hash: StringHashMapUnmanaged(usize) = .empty;
             defer line_hash.deinit(allocator);
             // e.g. line_array[4] == "Hello\n"
             // e.g. line_hash.get("Hello\n") == 4
@@ -828,7 +828,7 @@ pub fn DMP(comptime Unit: type) type {
             allocator: std.mem.Allocator,
             text: []const Unit,
             line_array: *std.ArrayListUnmanaged([]const Unit),
-            line_hash: *std.StringHashMapUnmanaged(usize),
+            line_hash: *StringHashMapUnmanaged(usize),
         ) DiffError![]const usize {
             if (Unit != u8) @panic("Unit must be u8");
             var line_start: isize = 0;
@@ -2967,3 +2967,6 @@ pub fn DMP(comptime Unit: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;

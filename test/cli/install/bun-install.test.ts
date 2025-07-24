@@ -27,6 +27,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join, resolve, sep } from "path";
+import { getAbi } from "../../../scripts/utils.mjs";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -39,7 +40,6 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry.js";
-import { getAbi } from "../../../scripts/utils.mjs";
 
 expect.extend({
   toBeWorkspaceLink,

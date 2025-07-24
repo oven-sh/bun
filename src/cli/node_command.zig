@@ -827,7 +827,7 @@ pub const NodeCommand = struct {
             .stdin = .inherit,
             .use_execve_on_macos = true,
             .windows = if (Env.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
                 .hide_window = false,
             } else {},
         }) catch |err| {

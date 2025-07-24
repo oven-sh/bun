@@ -1748,7 +1748,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
 
                     route_ptr.data.server = AnyServer.from(srv);
-                    
+
+                    if (srv.dev_server == null and srv.config.development.isHMREnabled()) {
+                        const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
+                        jsc.ConsoleObject.messageWithTypeAndLevel(
+                            undefined,
+                            jsc.ConsoleObject.MessageType.Log,
+                            jsc.ConsoleObject.MessageLevel.Warning,
+                            globalThis,
+                            &[_]jsc.JSValue{msg},
+                            1,
+                        );
+                    }
+
                     const resp_ptr = this.resp.?;
                     const resp_any = uws.AnyResponse.init(resp_ptr);
                     const response = this.response_ptr.?;

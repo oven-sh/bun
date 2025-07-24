@@ -390,6 +390,14 @@ pub const YarnLock = struct {
                         }
                     } else if (strings.eqlComptime(key, "resolved")) {
                         current_entry.?.resolved = value;
+                        if (Entry.isGitDependency(value)) {
+                            const git_info = try Entry.parseGitUrl(self, value);
+                            current_entry.?.resolved = git_info.url;
+                            current_entry.?.commit = git_info.commit;
+                            if (git_info.repo) |repo_name| {
+                                current_entry.?.git_repo_name = try self.allocator.dupe(u8, repo_name);
+                            }
+                        }
                     } else if (strings.eqlComptime(key, "integrity")) {
                         current_entry.?.integrity = value;
                     } else if (strings.eqlComptime(key, "os")) {
@@ -849,7 +857,29 @@ pub fn migrateYarnLockfile(
 
         package_id_to_yarn_idx[package_id] = yarn_idx;
 
-        const name_to_use = base_name;
+        const name_to_use = blk: {
+            if (entry.commit != null and entry.git_repo_name != null) {
+                break :blk entry.git_repo_name.?;
+            } else if (entry.resolved) |resolved| {
+                if (is_direct_url_dep or YarnLock.Entry.isRemoteTarball(resolved) or strings.endsWithComptime(resolved, ".tgz")) {
+                    // https://registry.npmjs.org/package/-/package-version.tgz
+                    if (strings.contains(resolved, "registry.npmjs.org/") or strings.contains(resolved, "registry.yarnpkg.com/")) {
+                        if (strings.indexOf(resolved, "/-/")) |separator_idx| {
+                            if (strings.indexOf(resolved, "registry.")) |registry_idx| {
+                                const after_registry = resolved[registry_idx..];
+                                if (strings.indexOf(after_registry, "/")) |domain_slash| {
+                                    const package_start = registry_idx + domain_slash + 1;
+                                    const extracted_name = resolved[package_start..separator_idx];
+                                    break :blk extracted_name;
+                                }
+                            }
+                        }
+                    }
+                    break :blk base_name;
+                }
+            }
+            break :blk base_name;
+        };
 
         const name_hash = stringHash(name_to_use);
 
@@ -883,15 +913,15 @@ pub fn migrateYarnLockfile(
                             }
                         }
 
-                        const actual_name = if (entry.git_repo_name) |repo_name| repo_name else base_name;
+                        const actual_name = if (entry.git_repo_name) |repo_name| repo_name else repo_str;
 
                         if (owner_str.len > 0 and repo_str.len > 0) {
                             break :blk Resolution.init(.{
                                 .github = .{
                                     .owner = try string_buf.append(owner_str),
                                     .repo = try string_buf.append(repo_str),
-                                    .committish = try string_buf.append(commit[0..@min(7, commit.len)]), // Shorten to 7 chars
-                                    .resolved = try string_buf.append(commit[0..@min(7, commit.len)]),
+                                    .committish = try string_buf.append(commit[0..@min("github:".len, commit.len)]),
+                                    .resolved = String{},
                                     .package_name = try string_buf.append(actual_name),
                                 },
                             });
@@ -901,7 +931,7 @@ pub fn migrateYarnLockfile(
                                     .owner = try string_buf.append(owner_str),
                                     .repo = try string_buf.append(repo_str),
                                     .committish = try string_buf.append(commit),
-                                    .resolved = try string_buf.append(commit),
+                                    .resolved = String{},
                                     .package_name = try string_buf.append(actual_name),
                                 },
                             });

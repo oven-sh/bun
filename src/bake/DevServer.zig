@@ -2640,14 +2640,13 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
 
             const reload_event_timer = event.timer;
 
-            event.processFileList(dev, &entry_points, temp_alloc);
-
-            if (dev.watcher_atomics.recycleEventFromDevServer(event)) |second| {
-                if (Environment.isDebug) {
-                    assert(second.debug_mutex.tryLock());
+            var current = event;
+            while (true) {
+                current.processFileList(dev, &entry_points, temp_alloc);
+                current = dev.watcher_atomics.recycleEventFromDevServer(current) orelse break;
+                if (comptime Environment.isDebug) {
+                    assert(current.debug_mutex.tryLock());
                 }
-                second.processFileList(dev, &entry_points, temp_alloc);
-                dev.watcher_atomics.recycleSecondEventFromDevServer(second);
             }
 
             break :brk .{ true, reload_event_timer };

@@ -622,6 +622,10 @@ pub fn installIsolatedPackages(
 
         manager.useCopyfileBackendIfFaster();
 
+        const tasks = try manager.allocator.alloc(Store.Installer.Task, store.entries.len);
+        defer manager.allocator.free(tasks);
+
+
         var installer: Store.Installer = .{
             .lockfile = lockfile,
             .manager = manager,
@@ -630,11 +634,23 @@ pub fn installIsolatedPackages(
             .install_node = if (manager.options.log_level.showProgress()) &install_node else null,
             .scripts_node = if (manager.options.log_level.showProgress()) &scripts_node else null,
             .store = &store,
-            .preallocated_tasks = .init(bun.default_allocator),
+            .tasks = tasks,
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),
         };
+
+        for (tasks, 0..) |*task, _entry_id| {
+            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+            task.* = .{
+                .entry_id = entry_id,
+                .installer = &installer,
+                .result = .none,
+
+                .task = .{ .callback = &Store.Installer.Task.callback },
+                .next = null,
+            };
+        }
 
         // add the pending task count upfront
         _ = manager.incrementPendingTasks(@intCast(store.entries.len));

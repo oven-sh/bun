@@ -70,12 +70,9 @@ pub fn runTasks(
 
     if (Ctx == *Store.Installer) {
         const installer: *Store.Installer = extract_ctx;
-        const batch = installer.tasks.popBatch();
+        const batch = installer.task_queue.popBatch();
         var iter = batch.iterator();
         while (iter.next()) |task| {
-            defer {
-                installer.preallocated_tasks.put(task);
-            }
             switch (task.result) {
                 .none => {
                     if (comptime Environment.ci_assert) {

@@ -1399,3 +1399,67 @@ describe.skipIf(!minioCredentials)("minio", () => {
     }
   });
 });
+
+describe("s3 missing credentials", () => {
+  async function assertMissingCredentials(fn: () => Promise<any>) {
+    try {
+      await fn();
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e?.code).toBe("ERR_S3_MISSING_CREDENTIALS");
+    }
+  }
+  it("unlink", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.unlink("test");
+    });
+  });
+  it("write", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.write("test", "test");
+    });
+  });
+  it("exists", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.exists("test");
+    });
+  });
+  it("size", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.size("test");
+    });
+  });
+  it("stat", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.stat("test");
+    });
+  });
+  it("presign", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.presign("test");
+    });
+  });
+  it("file", async () => {
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").text();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").bytes();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").json();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").formData();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").delete();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").exists();
+    });
+    assertMissingCredentials(async () => {
+      await Bun.s3.file("test").stat();
+    });
+  });
+});

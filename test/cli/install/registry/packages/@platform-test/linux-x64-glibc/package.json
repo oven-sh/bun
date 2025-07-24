@@ -1,10 +1,10 @@
 {
-	"name": "@platform-test/linux-x64",
+	"name": "@platform-test/linux-x64-glibc",
 	"versions": {
 		"1.0.0": {
-			"name": "@platform-test/linux-x64",
+			"name": "@platform-test/linux-x64-glibc",
 			"version": "1.0.0",
-			"description": "Platform test package for linux-x64 (no libc constraint)",
+			"description": "Platform test package for linux-x64-glibc",
 			"main": "index.js",
 			"scripts": {
 				"postinstall": "node postinstall.js"
@@ -15,13 +15,16 @@
 			"cpu": [
 				"x64"
 			],
-			"_id": "@platform-test/linux-x64@1.0.0",
+			"libc": [
+				"glibc"
+			],
+			"_id": "@platform-test/linux-x64-glibc@1.0.0",
 			"_nodeVersion": "20.8.0",
 			"_npmVersion": "10.1.0",
 			"dist": {
 				"integrity": "sha512-PLACEHOLDER",
 				"shasum": "PLACEHOLDER",
-				"tarball": "http://localhost:4873/@platform-test/linux-x64/-/platform-test-linux-x64-1.0.0.tgz"
+				"tarball": "http://localhost:4873/@platform-test/linux-x64-glibc/-/platform-test-linux-x64-glibc-1.0.0.tgz"
 			}
 		}
 	},
@@ -33,5 +36,5 @@
 	"dist-tags": {
 		"latest": "1.0.0"
 	},
-	"_id": "@platform-test/linux-x64"
+	"_id": "@platform-test/linux-x64-glibc"
 }

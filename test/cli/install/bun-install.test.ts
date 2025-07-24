@@ -8648,15 +8648,17 @@ describe("platform-specific dependencies", () => {
             version: "1.0.0",
             main: "index.js",
             optionalDependencies: {
-              "@platform-test/darwin-x64": "1.0.0",
-              "@platform-test/darwin-arm64": "1.0.0",
-              "@platform-test/linux-x64": "1.0.0",
-              "@platform-test/linux-arm64": "1.0.0",
-              "@platform-test/linux-x64-musl": "1.0.0",
-              "@platform-test/linux-arm64-musl": "1.0.0",
               "@platform-test/windows-x64": "1.0.0",
               "@platform-test/windows-ia32": "1.0.0",
+              "@platform-test/linux-x64": "1.0.0",
+              "@platform-test/linux-x64-glibc": "1.0.0",
+              "@platform-test/linux-arm64": "1.0.0",
+              "@platform-test/linux-arm64-glibc": "1.0.0",
               "@platform-test/linux-arm": "1.0.0",
+              "@platform-test/linux-x64-musl": "1.0.0",
+              "@platform-test/linux-arm64-musl": "1.0.0",
+              "@platform-test/darwin-x64": "1.0.0",
+              "@platform-test/darwin-arm64": "1.0.0",
             },
             dist: {
               tarball: `${root_url}/platform-test-1.0.0.tgz`,
@@ -8696,7 +8698,7 @@ describe("platform-specific dependencies", () => {
       if (!req.headers.get("accept")?.includes("application/vnd.bun.install-lockfile+json")) {
         if (platform.includes("musl")) {
           constraints.libc = ["musl"];
-        } else if (constraints.os?.includes("linux")) {
+        } else if (platform.includes("glibc")) {
           constraints.libc = ["glibc"];
         }
       }
@@ -8752,18 +8754,19 @@ describe("platform-specific dependencies", () => {
   };
 
   const platforms = [
-    { os: "darwin", cpu: "x64", libc: "*" },
-    { os: "darwin", cpu: "arm64", libc: "*" },
-    { os: "linux", cpu: "x64", libc: "*" },
-    { os: "linux", cpu: "arm64", libc: "*" },
-    { os: "linux", cpu: "x64", libc: "glibc" },
-    { os: "linux", cpu: "arm64", libc: "glibc" },
-    { os: "linux", cpu: "x64", libc: "musl" },
-    { os: "linux", cpu: "arm64", libc: "musl" },
-    { os: "win32", cpu: "x64", libc: "*" },
-    { os: "win32", cpu: "ia32", libc: "*" },
+    { os: "darwin", cpu: "x64", libc: "*", packages: ["darwin-x64"] },
+    { os: "darwin", cpu: "arm64", libc: "*", packages: ["darwin-arm64"] },
+    { os: "linux", cpu: "x64", libc: "*", packages: ["linux-x64", "linux-x64-glibc", "linux-x64-musl"] },
+    { os: "linux", cpu: "arm64", libc: "*", packages: ["linux-arm64", "linux-arm64-glibc", "linux-arm64-musl"] },
+    { os: "linux", cpu: "arm", libc: "*", packages: ["linux-arm"] },
+    { os: "linux", cpu: "x64", libc: "glibc", packages: ["linux-x64-glibc", "linux-x64"] },
+    { os: "linux", cpu: "arm64", libc: "glibc", packages: ["linux-arm64-glibc", "linux-arm64"] },
+    { os: "linux", cpu: "x64", libc: "musl", packages: ["linux-x64-musl", "linux-x64"] },
+    { os: "linux", cpu: "arm64", libc: "musl", packages: ["linux-arm64-musl", "linux-arm64"] },
+    { os: "win32", cpu: "x64", libc: "*", packages: ["windows-x64"] },
+    { os: "win32", cpu: "ia32", libc: "*", packages: ["windows-ia32"] },
   ];
-  test.each(platforms)("filters (os: $os, cpu: $cpu, libc: $libc)", async ({ os, cpu, libc }) => {
+  test.each(platforms)("filters (os: $os, cpu: $cpu, libc: $libc)", async ({ os, cpu, libc, packages }) => {
     const urls: string[] = [];
     setHandler(e => platformTestHandler(e, urls));
 
@@ -8794,10 +8797,8 @@ describe("platform-specific dependencies", () => {
     const platformDir = join(package_dir, "node_modules", "@platform-test");
     const installedPackages = existsSync(platformDir) ? readdirSync(platformDir) : [];
 
-    const installedName = (os + "-" + cpu + (libc === "musl" ? "-musl" : "")).replace("win32", "windows");
-
-    expect(installedPackages).toContain(installedName);
-    expect(installedPackages).toHaveLength(os === "linux" && libc === "*" ? 2 : 1);
+    expect(installedPackages).toContainValues(packages);
+    expect(installedPackages).toHaveLength(packages.length);
   });
 
   test("wildcards should show all platforms", async () => {

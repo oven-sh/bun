@@ -145,11 +145,11 @@ const z_allocator_vtable = Allocator.VTable{
 };
 
 const Environment = @import("../env.zig");
-const mimalloc = @import("./mimalloc.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const assert = bun.assert;
+const mimalloc = bun.mimalloc;
 
 const mem = @import("std").mem;
 const Allocator = mem.Allocator;

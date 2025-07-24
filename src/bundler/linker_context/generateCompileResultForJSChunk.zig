@@ -16,7 +16,7 @@ pub fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
 
     if (Environment.show_crash_trace) {
         const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
-        if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
+        if (bun.cli.debug_flags.hasPrintBreakpoint(path)) {
             @breakpoint();
         }
     }
@@ -80,6 +80,9 @@ const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const renamer = bun.renamer;
 
+const js_ast = bun.ast;
+const Scope = js_ast.Scope;
+
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
@@ -89,6 +92,3 @@ const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
-
-const js_ast = bun.js_ast;
-const Scope = js_ast.Scope;

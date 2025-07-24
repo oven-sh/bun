@@ -33,7 +33,7 @@ pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
     };
 }
 
-pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *Watcher) bun.jsc.Maybe(void) {
     const fd: bun.FD = this.platform.fd.unwrap() orelse
         @panic("KEventWatcher has an invalid file descriptor");
 

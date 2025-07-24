@@ -272,7 +272,7 @@ pub fn crashHandler(
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
-                    if (bun.CLI.Cli.is_main_thread) {
+                    if (bun.cli.Cli.is_main_thread) {
                         writer.writeAll("(main thread)") catch std.posix.abort();
                     } else switch (bun.Environment.os) {
                         .windows => {
@@ -906,18 +906,18 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
-        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const platform = bun.analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
         if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
                 try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
         } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
@@ -945,7 +945,7 @@ pub fn printMetadata(writer: anytype) !void {
             }
         }
     }
-    try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
+    try writer.print("\n{}", .{bun.analytics.Features.formatter()});
 
     if (bun.use_mimalloc) {
         var elapsed_msecs: usize = 0;
@@ -1261,7 +1261,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
             "/" ++
             .{@intFromEnum(Platform.current)},
     );
-    try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
+    try writer.writeByte(if (bun.cli.Cli.cmd) |cmd| cmd.char() else '_');
 
     try writer.writeAll(version_char ++ git_sha);
 
@@ -1753,11 +1753,11 @@ pub const StoredTrace = struct {
 };
 
 pub const js_bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
 
-    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
-        const obj = JSC.JSValue.createEmptyObject(global, 3);
+    pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(global, 3);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
             .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
@@ -1769,13 +1769,13 @@ pub const js_bindings = struct {
             .{ "outOfMemory", jsOutOfMemory },
             .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
-            const name = JSC.ZigString.static(tuple[0]);
-            obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
+            const name = jsc.ZigString.static(tuple[0]);
+            obj.put(global, name, jsc.createCallback(global, name, 1, tuple[1]));
         }
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.jsc.JSGlobalObject, _: *bun.jsc.CallFrame) bun.JSError!JSValue {
         if (!bun.Environment.isMac) return .js_undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .js_undefined;
@@ -1785,7 +1785,7 @@ pub const js_bindings = struct {
         return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsSegfault(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         @setRuntimeSafety(false);
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
@@ -1793,24 +1793,24 @@ pub const js_bindings = struct {
         return .js_undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsPanic(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsRootError(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         bun.outOfMemory();
     }
 
-    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const bits = bun.Analytics.packedFeatures();
+    pub fn jsGetFeaturesAsVLQ(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const bits = bun.analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
             // there is definitely enough space in the bounded array
@@ -1820,22 +1820,22 @@ pub const js_bindings = struct {
         return str.transferToJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsGetFeatureData(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
-        const list = bun.Analytics.packed_features_list;
+        const list = bun.analytics.packed_features_list;
         const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
-        obj.put(global, JSC.ZigString.static("features"), array);
-        obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
-        obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+        obj.put(global, jsc.ZigString.static("features"), array);
+        obj.put(global, jsc.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, jsc.ZigString.static("is_canary"), jsc.JSValue.jsBoolean(bun.Environment.is_canary));
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
-        obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, jsc.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
 
-        obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
+        obj.put(global, jsc.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };
@@ -2195,7 +2195,6 @@ comptime {
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 const builtin = @import("builtin");
-const mimalloc = @import("./allocators/mimalloc.zig");
 const std = @import("std");
 const windows = std.os.windows;
 
@@ -2205,7 +2204,8 @@ const VLQ = SourceMap.VLQ;
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
-const Features = bun.Analytics.Features;
+const mimalloc = bun.mimalloc;
+const Features = bun.analytics.Features;
 
 const debug = std.debug;
 const SourceLocation = debug.SourceLocation;

@@ -1,6 +1,6 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`yarn.lock migration with snapshots simple yarn.lock migration produces correct bun.lock: simple-yarn-migration 1`] = `
+exports[`yarn.lock migration basic simple yarn.lock migration produces correct bun.lock: simple-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -18,7 +18,7 @@ exports[`yarn.lock migration with snapshots simple yarn.lock migration produces 
 "
 `;
 
-exports[`yarn.lock migration with snapshots complex yarn.lock with multiple dependencies and versions: complex-yarn-migration 1`] = `
+exports[`yarn.lock migration basic complex yarn.lock with multiple dependencies and versions: complex-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -165,7 +165,32 @@ exports[`yarn.lock migration with snapshots complex yarn.lock with multiple depe
 "
 `;
 
-exports[`yarn.lock migration with snapshots yarn.lock with workspace dependencies: resolutions-yarn-migration 1`] = `
+exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migration 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "alias-test",
+      "dependencies": {
+        "@types/bun": "npm:bun-types@1.2.19",
+        "my-lodash": "npm:lodash@4.17.21",
+      },
+    },
+  },
+  "packages": {
+    "@types/bun": ["bun-types@1.2.19", "", { "dependencies": { "@types/node": "*" } }, "sha512-uAOTaZSPuYsWIXRpj7o56Let0g/wjihKCkeRqUBhlLVM/Bt+Fj9xTo+LhC1OV1XDaGkz4hNC80et5xgy+9KTHQ=="],
+
+    "@types/node": ["@types/node@20.11.5", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-g557vgQjUUfN76MZAN/dt1z3dzcUsimuysco0KeluHgrPdJXkP/XdAURgyO2W9fZWHRtRBiVKzKn8vyOAwlG+w=="],
+
+    "my-lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+  }
+}
+"
+`;
+
+exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -188,7 +213,7 @@ exports[`yarn.lock migration with snapshots yarn.lock with workspace dependencie
 "
 `;
 
-exports[`yarn.lock migration with snapshots yarn.lock with workspace dependencies: workspace-yarn-migration 1`] = `
+exports[`yarn.lock migration basic yarn.lock with workspace dependencies: workspace-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -206,7 +231,7 @@ exports[`yarn.lock migration with snapshots yarn.lock with workspace dependencie
 "
 `;
 
-exports[`yarn.lock migration with snapshots yarn.lock with scoped packages and parent/child relationships: scoped-yarn-migration 1`] = `
+exports[`yarn.lock migration basic yarn.lock with scoped packages and parent/child relationships: scoped-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -233,55 +258,7 @@ exports[`yarn.lock migration with snapshots yarn.lock with scoped packages and p
 "
 `;
 
-exports[`yarn.lock migration with snapshots yarn.lock with npm aliases: aliases-yarn-migration 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "alias-test",
-      "dependencies": {
-        "@types/bun": "npm:bun-types@1.2.19",
-        "my-lodash": "npm:lodash@4.17.21",
-      },
-    },
-  },
-  "packages": {
-    "@types/bun": ["bun-types@1.2.19", "", { "dependencies": { "@types/node": "*" } }, "sha512-uAOTaZSPuYsWIXRpj7o56Let0g/wjihKCkeRqUBhlLVM/Bt+Fj9xTo+LhC1OV1XDaGkz4hNC80et5xgy+9KTHQ=="],
-
-    "@types/node": ["@types/node@20.11.5", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-g557vgQjUUfN76MZAN/dt1z3dzcUsimuysco0KeluHgrPdJXkP/XdAURgyO2W9fZWHRtRBiVKzKn8vyOAwlG+w=="],
-
-    "my-lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
-
-    "undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
-  }
-}
-"
-`;
-
-exports[`yarn.lock migration with snapshots yarn.lock with resolutions: resolutions-yarn-migration 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "resolutions-test",
-      "dependencies": {
-        "webpack": "^5.89.0",
-      },
-    },
-  },
-  "overrides": {
-    "acorn": "8.11.3",
-  },
-  "packages": {
-    "acorn": ["acorn@8.11.3", "", {}, "sha512-Y9rRfJG5jcKOE0CLisYbojUjIrIEE7AGMzA/Sm4BslANhbS+cDMpgBdcPT91oJ7OuJ9hYJBx59RjbhxVnrF8Xg=="],
-
-    "webpack": ["webpack@5.89.0", "", { "dependencies": { "@types/eslint-scope": "^3.7.3", "@types/estree": "^1.0.0", "@webassemblyjs/ast": "^1.11.5", "@webassemblyjs/wasm-edit": "^1.11.5", "@webassemblyjs/wasm-parser": "^1.11.5", "acorn": "^8.7.1", "acorn-import-assertions": "^1.9.0", "browserslist": "^4.14.5", "chrome-trace-event": "^1.0.2", "enhanced-resolve": "^5.15.0", "es-module-lexer": "^1.2.1", "eslint-scope": "5.1.1", "events": "^3.2.0", "glob-to-regexp": "^0.4.1", "graceful-fs": "^4.2.9", "json-parse-even-better-errors": "^2.3.1", "loader-runner": "^4.2.0", "mime-types": "^2.1.27", "neo-async": "^2.6.2", "schema-utils": "^3.2.0", "tapable": "^2.1.1", "terser-webpack-plugin": "^5.3.7", "watchpack": "^2.4.0", "webpack-sources": "^3.2.3" } }, "sha512-qyfIC10pOr70V+jkmud8tMfajraGCZMBWJtrmuBymQKCrLTRejBI8STDp1MCyZu/QTdZSeacCQYpYNQVOzX5kw=="],
-  }
-}
-"
-`;
-
-exports[`yarn.lock migration with snapshots migration with realistic complex yarn.lock: complex-realistic-yarn-migration 1`] = `
+exports[`yarn.lock migration basic migration with realistic complex yarn.lock: complex-realistic-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -335,7 +312,7 @@ exports[`yarn.lock migration with snapshots migration with realistic complex yar
 "
 `;
 
-exports[`yarn.lock migration with snapshots migration with yarn CLI repository yarn.lock 1`] = `
+exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] = `
 "{
   "lockfileVersion": 1,
   "workspaces": {
@@ -3075,6 +3052,112 @@ exports[`yarn.lock migration with snapshots migration with yarn CLI repository y
 
     "liftoff/findup-sync/micromatch/extglob/expand-brackets/define-property/is-descriptor/is-data-descriptor/kind-of": ["kind-of@3.2.2", "", { "dependencies": { "is-buffer": "^1.1.5" } }, "sha1-MeohpzS6ubuw8yRm2JOupR5KPGQ="],
   }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp: yarn-lock-mkdirp 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "mkdirp": "^1.0.2",
+      },
+    },
+  },
+  "packages": {
+    "mkdirp": ["mkdirp@1.0.4", "", {}, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-file-dep: yarn-lock-mkdirp-file-dep 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "mkdirp": "file:mkdirp",
+      },
+    },
+  },
+  "packages": {
+    "mkdirp": ["mkdirp@file:mkdirp", {}],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-no-resolved: yarn-lock-mkdirp-no-resolved 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "mkdirp": "^1.0.2",
+      },
+    },
+  },
+  "packages": {
+    "mkdirp": ["mkdirp@1.0.4", "", {}, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "a",
+      "dependencies": {
+        "abbrev": "^1.1.1",
+        "full-git-url": "git+https://github.com/isaacs/abbrev-js.git",
+        "ghshort": "github:isaacs/abbrev-js",
+        "old": "npm:abbrev@1.0.x",
+        "pinned": "npm:abbrev@1.1.1",
+        "reg": "npm:abbrev@^1.1.1",
+        "remote": "https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz",
+        "symlink": "file:./abbrev-link-target",
+        "tarball": "file:abbrev-1.1.1.tgz",
+      },
+    },
+  },
+  "packages": {
+    "abbrev": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
+
+    "full-git-url": ["full-git-url@3.0.1", "git+https://github.com/isaacs/abbrev-js.git#3f9802e56ff878761a338e43ecacbfed39d2181d", {}, ""],
+
+    "ghshort": ["ghshort@3.0.1", "https://codeload.github.com/isaacs/abbrev-js/tar.gz/3f9802e56ff878761a338e43ecacbfed39d2181d", {}, ""],
+
+    "old": ["abbrev@1.0.9", "", {}, "sha512-LEyx4aLEC3x6T0UguF6YILf+ntvmOaWsVfENmIW0E9H09vKlLDGelMjjSm0jkDHALj8A8quZ/HapKNigzwge+Q=="],
+
+    "pinned": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
+
+    "reg": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
+
+    "remote": ["remote@1.1.1", "", {}, ""],
+
+    "symlink": ["symlink@file:./abbrev-link-target", {}],
+
+    "tarball": ["tarball@file:abbrev-1.1.1.tgz", {}],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn-stuff/abbrev-link-target: yarn-stuff/abbrev-link-target 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "abbrev",
+    },
+  },
+  "packages": {}
 }
 "
 `;

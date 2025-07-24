@@ -1658,6 +1658,8 @@ pub fn migrateYarnLockfile(
     return result;
 }
 
+const string = []const u8;
+
 const Dependency = @import("./dependency.zig");
 const Npm = @import("./npm.zig");
 const std = @import("std");
@@ -1681,8 +1683,7 @@ const Tree = Lockfile.Tree;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
+const JSON = bun.json;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = []const u8;
 const strings = bun.strings;
-const JSON = bun.json;

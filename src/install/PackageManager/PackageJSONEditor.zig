@@ -411,35 +411,37 @@ pub fn edit(
 
                             if (query.expr.asProperty(name)) |value| {
                                 if (value.expr.data == .e_string) {
+                                    // For update command, always populate updating_packages during before_install phase
+                                    if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
+                                        const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
+                                        var tag = Dependency.Version.Tag.infer(version_literal);
+
+                                        if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+
+                                        const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+
+                                        // first come, first serve
+                                        if (entry.found_existing) break :add_packages_to_update;
+
+                                        var is_alias = false;
+                                        if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
+                                            if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
+                                                tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                                if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                                is_alias = true;
+                                            }
+                                        }
+
+                                        entry.value_ptr.* = .{
+                                            .original_version_literal = version_literal,
+                                            .is_alias = is_alias,
+                                            .original_version = null,
+                                        };
+                                    }
+
                                     if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
                                         replacing += 1;
                                     } else {
-                                        if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
-                                            const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                            var tag = Dependency.Version.Tag.infer(version_literal);
-
-                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-
-                                            const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
-
-                                            // first come, first serve
-                                            if (entry.found_existing) break :add_packages_to_update;
-
-                                            var is_alias = false;
-                                            if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
-                                                if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                                    tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                                    if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-                                                    is_alias = true;
-                                                }
-                                            }
-
-                                            entry.value_ptr.* = .{
-                                                .original_version_literal = version_literal,
-                                                .is_alias = is_alias,
-                                                .original_version = null,
-                                            };
-                                        }
                                         if (!only_add_missing) {
                                             request.e_string = value.expr.data.e_string;
                                             remaining -= 1;

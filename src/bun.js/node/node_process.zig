@@ -316,9 +316,9 @@ pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
 }
 
-pub export fn Bun__suppressCoreOnProcessKillSelfIfDesired() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CORE_ON_PROCESS_KILL_SELF)) {
-        bun.crash_handler.suppressCoreDumpsIfNecessary();
+pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+        bun.crash_handler.suppressReporting();
     }
 }
 

@@ -31,12 +31,12 @@ pub const RuntimeFeatureFlag = enum {
     BUN_FEATURE_FLAG_NO_LIBDEFLATE,
     BUN_INSTRUMENTS,
     BUN_INTERNAL_BUNX_INSTALL,
-    /// Suppress creating a core dump when we abort due to an unsupported libuv function being called
-    BUN_INTERNAL_SUPPRESS_CORE_ON_UV_STUB,
-    /// Suppress creating a core dump when we abort due to a fatal Node-API error
-    BUN_INTERNAL_SUPPRESS_CORE_ON_NAPI_ABORT,
-    /// Suppress creating a core dump when `process._kill()` is passed its own PID
-    BUN_INTERNAL_SUPPRESS_CORE_ON_PROCESS_KILL_SELF,
+    /// Suppress crash reporting and creating a core dump when we abort due to an unsupported libuv function being called
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB,
+    /// Suppress crash reporting and creating a core dump when we abort due to a fatal Node-API error
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT,
+    /// Suppress crash reporting and creating a core dump when `process._kill()` is passed its own PID
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF,
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
     NODE_NO_WARNINGS,

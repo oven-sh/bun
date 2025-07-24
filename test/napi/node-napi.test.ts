@@ -134,7 +134,7 @@ describe("js-native-api tests", () => {
     describe.skipIf(failingJsNativeApiTests.includes(test))(`${test}`, () => {
       it("passes", () => {
         const env = abortingJsNativeApiTests.includes(test)
-          ? { ...bunEnv, BUN_INTERNAL_SUPPRESS_CORE_ON_NAPI_ABORT: "1" }
+          ? { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" }
           : bunEnv;
         const result = spawnSync({
           cmd: [bunExe(), "run", test],

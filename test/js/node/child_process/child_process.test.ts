@@ -456,7 +456,7 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
 
   const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
     // @ts-expect-error
-    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CORE_ON_PROCESS_KILL_SELF: "1" },
+    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF: "1" },
   });
 
   expect(signal).toBe("SIGTRAP");

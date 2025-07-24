@@ -1155,7 +1155,7 @@ fn napiSpan(ptr: anytype, len: usize) []const u8 {
 }
 pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize, message_ptr: ?[*:0]const u8, message_len_: usize) noreturn {
     log("napi_fatal_error", .{});
-    napi_internal_suppress_core_on_abort_if_desired();
+    napi_internal_suppress_crash_on_abort_if_desired();
     var message = napiSpan(message_ptr, message_len_);
     if (message.len == 0) {
         message = "fatal error";
@@ -1330,9 +1330,9 @@ pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
     }.callback);
 }
 
-pub export fn napi_internal_suppress_core_on_abort_if_desired() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CORE_ON_NAPI_ABORT)) {
-        bun.crash_handler.suppressCoreDumpsIfNecessary();
+pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT)) {
+        bun.crash_handler.suppressReporting();
     }
 }
 

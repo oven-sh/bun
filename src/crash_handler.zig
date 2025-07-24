@@ -57,6 +57,8 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
+var suppress_reporting: bool = false;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -1350,6 +1352,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 }
 
 fn isReportingEnabled() bool {
+    if (suppress_reporting) return false;
+
     // If trying to test the crash handler backend, implicitly enable reporting
     if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
         return value.len > 0;
@@ -1704,8 +1708,9 @@ pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimit
 }
 
 /// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
-/// Used in places where we intentionally crash for testing purposes.
-pub fn suppressCoreDumpsIfNecessary() void {
+/// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
+/// with core dumps.
+fn suppressCoreDumpsIfNecessary() void {
     if (bun.Environment.isPosix) {
         var existing_limit = std.posix.getrlimit(.CORE) catch return;
         if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
@@ -1713,6 +1718,16 @@ pub fn suppressCoreDumpsIfNecessary() void {
             std.posix.setrlimit(.CORE, existing_limit) catch {};
         }
     }
+}
+
+/// From now on, prevent crashes from being reported to bun.report or the URL overridden in
+/// BUN_CRASH_REPORT_URL. Should only be used for tests that are going to intentionally crash,
+/// so that they do not fail CI due to having a crash reported. And those cases should guard behind
+/// a feature flag and call right before the crash, in order to make sure that crashes other than
+/// the expected one are not suppressed.
+pub fn suppressReporting() void {
+    suppressCoreDumpsIfNecessary();
+    suppress_reporting = true;
 }
 
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
@@ -2182,8 +2197,8 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CORE_ON_UV_STUB)) {
-        suppressCoreDumpsIfNecessary();
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+        suppressReporting();
     }
     std.debug.panic("unsupported uv function: {s}", .{name.?});
 }

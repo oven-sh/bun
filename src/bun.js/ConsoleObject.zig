@@ -2134,6 +2134,10 @@ pub const Formatter = struct {
                                 }
                                 writer.writeAll("\"");
                             } else {
+                                if (isUTF16) {
+                                    try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                                    return;
+                                }
                                 writer.writeAll("\"");
                                 JSPrinter.writePreQuotedString(encoding, @ptrCast(slice), Writer, writer_, '"', false, true) catch {};
                                 writer.writeAll("\"");

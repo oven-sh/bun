@@ -625,7 +625,6 @@ pub fn installIsolatedPackages(
         const tasks = try manager.allocator.alloc(Store.Installer.Task, store.entries.len);
         defer manager.allocator.free(tasks);
 
-
         var installer: Store.Installer = .{
             .lockfile = lockfile,
             .manager = manager,

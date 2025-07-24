@@ -145,7 +145,7 @@ pub const Process = struct {
     ref_count: RefCount,
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
-    event_loop: JSC.EventLoopHandle,
+    event_loop: jsc.EventLoopHandle,
 
     pub fn memoryCost(_: *const Process) usize {
         return @sizeOf(@This());
@@ -172,7 +172,7 @@ pub const Process = struct {
             .ref_count = .init(),
             .pid = posix.pid,
             .pidfd = posix.pidfd orelse 0,
-            .event_loop = JSC.EventLoopHandle.init(event_loop),
+            .event_loop = jsc.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
             .status = brk: {
@@ -230,7 +230,7 @@ pub const Process = struct {
         } else if (comptime Environment.isWindows) {}
     }
 
-    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const jsc.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
@@ -250,7 +250,7 @@ pub const Process = struct {
         this.deref();
     }
 
-    fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    fn onWaitPid(this: *Process, waitpid_result: *const jsc.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
         if (comptime !Environment.isPosix) {
             @compileError("not implemented on this platform");
         }
@@ -289,7 +289,7 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+    pub fn watchOrReap(this: *Process) jsc.Maybe(bool) {
         if (this.hasExited()) {
             this.onExit(this.status, &std.mem.zeroes(Rusage));
             return .{ .result = true };
@@ -310,10 +310,10 @@ pub const Process = struct {
         }
     }
 
-    pub fn watch(this: *Process) JSC.Maybe(void) {
+    pub fn watch(this: *Process) jsc.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
-            return JSC.Maybe(void){ .result = {} };
+            return jsc.Maybe(void){ .result = {} };
         }
 
         if (WaiterThread.shouldUseWaiterThread()) {
@@ -321,7 +321,7 @@ pub const Process = struct {
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return JSC.Maybe(void){ .result = {} };
+            return jsc.Maybe(void){ .result = {} };
         }
 
         const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
@@ -340,7 +340,7 @@ pub const Process = struct {
         )) {
             .result => {
                 this.ref();
-                return JSC.Maybe(void){ .result = {} };
+                return jsc.Maybe(void){ .result = {} };
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
@@ -352,14 +352,14 @@ pub const Process = struct {
         unreachable;
     }
 
-    pub fn rewatchPosix(this: *Process) JSC.Maybe(void) {
+    pub fn rewatchPosix(this: *Process) jsc.Maybe(void) {
         if (WaiterThread.shouldUseWaiterThread()) {
             if (this.poller != .waiter_thread)
                 this.poller = .{ .waiter_thread = .{} };
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return JSC.Maybe(void){ .result = {} };
+            return jsc.Maybe(void){ .result = {} };
         }
 
         if (this.poller == .fd) {
@@ -635,7 +635,7 @@ pub const PollerPosix = union(enum) {
         }
     }
 
-    pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: JSC.EventLoopHandle) void {
+    pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: jsc.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
                 poll.enableKeepingProcessAlive(event_loop);
@@ -647,7 +647,7 @@ pub const PollerPosix = union(enum) {
         }
     }
 
-    pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: JSC.EventLoopHandle) void {
+    pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: jsc.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
                 poll.disableKeepingProcessAlive(event_loop);
@@ -680,7 +680,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
         _ = event_loop; // autofix
         switch (this.*) {
             .uv => |*process| {
@@ -690,7 +690,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
         _ = event_loop; // autofix
 
         // This is disabled on Windows
@@ -749,7 +749,7 @@ const WaiterThreadPosix = struct {
             pub const ConcurrentQueue = bun.UnboundedQueue(TaskQueueEntry, .next);
 
             pub const ResultTask = struct {
-                result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                result: jsc.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
                 rusage: Rusage,
 
@@ -771,9 +771,9 @@ const WaiterThreadPosix = struct {
             };
 
             pub const ResultTaskMini = struct {
-                result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                result: jsc.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
-                task: JSC.AnyTaskWithExtraContext = .{},
+                task: jsc.AnyTaskWithExtraContext = .{},
 
                 pub const new = bun.TrivialNew(@This());
 
@@ -831,7 +831,7 @@ const WaiterThreadPosix = struct {
                         switch (process.event_loop) {
                             .js => |event_loop| {
                                 event_loop.enqueueTaskConcurrent(
-                                    JSC.ConcurrentTask.create(JSC.Task.init(
+                                    jsc.ConcurrentTask.create(jsc.Task.init(
                                         ResultTask.new(
                                             .{
                                                 .result = result,
@@ -843,7 +843,7 @@ const WaiterThreadPosix = struct {
                                 );
                             },
                             .mini => |mini| {
-                                const AnyTask = JSC.AnyTaskWithExtraContext.New(ResultTaskMini, void, ResultTaskMini.runFromMainThreadMini);
+                                const AnyTask = jsc.AnyTaskWithExtraContext.New(ResultTaskMini, void, ResultTaskMini.runFromMainThreadMini);
                                 const out = ResultTaskMini.new(
                                     .{
                                         .result = result,
@@ -995,7 +995,7 @@ pub const PosixSpawnOptions = struct {
         ipc: void,
         pipe: bun.FileDescriptor,
         // TODO: remove this entry, it doesn't seem to be used
-        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
+        dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
     };
 
     pub fn deinit(_: *const PosixSpawnOptions) void {
@@ -1057,7 +1057,7 @@ pub const WindowsSpawnOptions = struct {
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
-        loop: JSC.EventLoopHandle = undefined,
+        loop: jsc.EventLoopHandle = undefined,
     };
 
     pub const Stdio = union(enum) {
@@ -1067,7 +1067,7 @@ pub const WindowsSpawnOptions = struct {
         buffer: *bun.windows.libuv.Pipe,
         ipc: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
-        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
+        dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
             if (this.* == .buffer) {
@@ -1130,7 +1130,7 @@ pub const PosixSpawnResult = struct {
             0;
     }
 
-    pub fn pifdFromPid(this: *PosixSpawnResult) JSC.Maybe(PidFDType) {
+    pub fn pifdFromPid(this: *PosixSpawnResult) jsc.Maybe(PidFDType) {
         if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
             return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
         }
@@ -1204,7 +1204,7 @@ pub fn spawnProcess(
     options: *const SpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(SpawnProcessResult) {
+) !jsc.Maybe(SpawnProcessResult) {
     if (comptime Environment.isPosix) {
         return spawnProcessPosix(
             options,
@@ -1223,8 +1223,8 @@ pub fn spawnProcessPosix(
     options: *const PosixSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(PosixSpawnResult) {
-    bun.Analytics.Features.spawn += 1;
+) !jsc.Maybe(PosixSpawnResult) {
+    bun.analytics.Features.spawn += 1;
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
 
@@ -1524,9 +1524,9 @@ pub fn spawnProcessWindows(
     options: *const WindowsSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(WindowsSpawnResult) {
+) !jsc.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
-    bun.Analytics.Features.spawn += 1;
+    bun.analytics.Features.spawn += 1;
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 
@@ -1977,7 +1977,7 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        var loop: JSC.EventLoopHandle = options.windows.loop;
+        var loop: jsc.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |process| process,
@@ -2246,6 +2246,6 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const Subprocess = JSC.Subprocess;
+const jsc = bun.jsc;
+const Maybe = jsc.Maybe;
+const Subprocess = jsc.Subprocess;

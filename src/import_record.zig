@@ -83,16 +83,16 @@ pub const ImportKind = enum(u8) {
         return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
-    pub fn toAPI(k: ImportKind) Api.ImportKind {
+    pub fn toAPI(k: ImportKind) api.ImportKind {
         return switch (k) {
-            ImportKind.entry_point => Api.ImportKind.entry_point,
-            ImportKind.stmt => Api.ImportKind.stmt,
-            ImportKind.require => Api.ImportKind.require,
-            ImportKind.dynamic => Api.ImportKind.dynamic,
-            ImportKind.require_resolve => Api.ImportKind.require_resolve,
-            ImportKind.at => Api.ImportKind.at,
-            ImportKind.url => Api.ImportKind.url,
-            else => Api.ImportKind.internal,
+            ImportKind.entry_point => api.ImportKind.entry_point,
+            ImportKind.stmt => api.ImportKind.stmt,
+            ImportKind.require => api.ImportKind.require,
+            ImportKind.dynamic => api.ImportKind.dynamic,
+            ImportKind.require_resolve => api.ImportKind.require_resolve,
+            ImportKind.at => api.ImportKind.at,
+            ImportKind.url => api.ImportKind.url,
+            else => api.ImportKind.internal,
         };
     }
 };
@@ -106,7 +106,7 @@ pub const ImportRecord = struct {
     tag: Tag = .none,
     loader: ?bun.options.Loader = null,
 
-    source_index: bun.JSAst.Index = .invalid,
+    source_index: bun.ast.Index = .invalid,
 
     /// True for the following cases:
     ///
@@ -206,9 +206,9 @@ pub const ImportRecord = struct {
 };
 
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const Index = @import("./ast/base.zig").Index;
 
 const bun = @import("bun");
 const fs = bun.fs;
 const logger = bun.logger;
+const Index = bun.ast.Index;
+const api = bun.schema.api;

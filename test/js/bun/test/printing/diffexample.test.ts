@@ -32,7 +32,6 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-
       "a
     - d
     + b
@@ -55,7 +54,6 @@ test("no color", async () => {
     11 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
 
       {
         object1: "a",
@@ -81,7 +79,6 @@ test("no color", async () => {
     31 |   expect(originalString).toEqual(expectedString);
                                   ^
     error: expect(received).toEqual(expected)
-
 
     @@ -98,7 +98,7 @@
       line 98
@@ -134,12 +131,8 @@ test("no color", async () => {
                                           ^
     error: expect(received).toEqual(expected)
 
-
-    - "\\u001B[32mhello\\u001B[0m"
-    + "\\u001B[31mhello\\u001B[0m"
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "\\u001B[32mhello\\u001B[0m"
+    Received: "\\u001B[31mhello\\u001B[0m"
 
 
           at <anonymous> (FILE:LINE)
@@ -153,12 +146,8 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-
-    - "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E"
-    + "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D"
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E"
+    Received: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D"
 
 
           at <anonymous> (FILE:LINE)
@@ -171,7 +160,6 @@ test("no color", async () => {
     43 |   expect("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Здравствуйте").toEqual("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Привет");
                                                                     ^
     error: expect(received).toEqual(expected)
-
 
       "Line 1: 你好
       Line 2: مرحبا
@@ -192,7 +180,6 @@ test("no color", async () => {
     52 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
 
       {
         arabic: "اختبار",
@@ -218,12 +205,8 @@ test("no color", async () => {
                                       ^
     error: expect(received).toEqual(expected)
 
-
-    - "café resumé naive"
-    + "café résumé naïve"
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "café resumé naive"
+    Received: "café résumé naïve"
 
 
           at <anonymous> (FILE:LINE)
@@ -237,7 +220,6 @@ test("no color", async () => {
     69 |   expect("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: aeiou");
                                                                   ^
     error: expect(received).toEqual(expected)
-
 
       "Línea 1: ñoño
       Línea 2: àèìòù
@@ -258,7 +240,6 @@ test("no color", async () => {
     77 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
-
 
       {
     -   french: "crème brulée",
@@ -281,7 +262,6 @@ test("no color", async () => {
     162 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
 
       "line one
       line two
@@ -340,7 +320,6 @@ test("no color", async () => {
     245 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
 
       "=== diffdiff ===
       line one
@@ -409,12 +388,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-
-    - "\\"hello, world!\\""
-    + "\\"¡hello, world\\""
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "\\"hello, world!\\""
+    Received: "\\"¡hello, world\\""
 
 
           at <anonymous> (FILE:LINE)
@@ -428,12 +403,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-
-    - "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!"
-    + "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!"
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0D!"
+    Received: "Hello \\uD83D\\uDC4B 世界 \\uD83C\\uDF0E!"
 
 
           at <anonymous> (FILE:LINE)
@@ -446,7 +417,6 @@ test("no color", async () => {
     271 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
-
 
       "function main() {
     -     print(\\"Hello, world!\\");
@@ -471,7 +441,6 @@ test("no color", async () => {
     307 |   expect(receivedString).toEqual(expectedString);
                                    ^
     error: expect(received).toEqual(expected)
-
 
     @@ -98,7 +98,7 @@
       line 97
@@ -524,12 +493,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-
-    - "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-    - Expected  - 0
-    + Received  + 0
+    Expected: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    Received: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
           at <anonymous> (FILE:LINE)
@@ -586,7 +551,6 @@ test("color", async () => {
   expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-
       \x1B[0m\x1B[2m"a\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7mb\x1B[0m
@@ -600,7 +564,6 @@ test("color", async () => {
 
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
-
 
       \x1B[0m\x1B[2m{\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m

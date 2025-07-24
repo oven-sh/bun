@@ -330,6 +330,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         .stop_after_positional_at = switch (cmd) {
             .RunCommand => 2,
             .AutoCommand, .RunAsNodeCommand => 1,
+            .NodeCommand => 0,
             else => 0,
         },
     }) catch |err| {

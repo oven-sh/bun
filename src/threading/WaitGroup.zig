@@ -33,6 +33,10 @@ pub fn add(self: *Self, n: usize) void {
     _ = self.raw_count.fetchAdd(n, .monotonic);
 }
 
+pub fn addOne(self: *Self) void {
+    self.add(1);
+}
+
 pub fn finish(self: *Self) void {
     const old_count = self.raw_count.fetchSub(1, .acq_rel);
     if (old_count > 1) return;

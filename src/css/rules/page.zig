@@ -356,7 +356,7 @@ pub const PageRuleParser = struct {
                     .column = loc.column,
                 },
             }) catch bun.outOfMemory();
-            return Result(AtRuleParser.AtRule).success;
+            return .success;
         }
 
         pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {

@@ -455,7 +455,7 @@ pub const Snapshots = struct {
         return success;
     }
 
-    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !jsc.Maybe(void) {
+    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !bun.sys.Maybe(void) {
         if (this._current_file == null or this._current_file.?.id != file_id) {
             try this.writeSnapshotFile();
 
@@ -478,9 +478,7 @@ pub const Snapshots = struct {
                     .err => |err| {
                         switch (err.getErrno()) {
                             .EXIST => this.snapshot_dir_path = dir_path,
-                            else => return jsc.Maybe(void){
-                                .err = err,
-                            },
+                            else => return .initErr(err),
                         }
                     },
                 }
@@ -497,9 +495,7 @@ pub const Snapshots = struct {
             if (this.update_snapshots) flags |= bun.O.TRUNC;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
-                .err => |err| return jsc.Maybe(void){
-                    .err = err,
-                },
+                .err => |err| return .initErr(err),
             };
 
             var file: File = .{
@@ -529,7 +525,7 @@ pub const Snapshots = struct {
             this._current_file = file;
         }
 
-        return jsc.Maybe(void).success;
+        return .success;
     }
 };
 

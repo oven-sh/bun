@@ -715,6 +715,7 @@ pub const FFI = struct {
                 },
                 error.JSError => |e| return e,
                 error.OutOfMemory => |e| return e,
+                error.JSExecutionTerminated => |e| return e,
             }
         };
         defer {

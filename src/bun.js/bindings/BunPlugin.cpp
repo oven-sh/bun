@@ -684,6 +684,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (removeFromCJS) {
         globalObject->requireMap()->remove(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);

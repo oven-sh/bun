@@ -610,6 +610,7 @@ pub const ToJSError = error{
     MacroError,
     OutOfMemory,
     JSError,
+    JSExecutionTerminated,
 };
 
 /// Say you need to allocate a bunch of tiny arrays

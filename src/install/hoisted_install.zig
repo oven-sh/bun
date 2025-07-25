@@ -236,7 +236,7 @@ pub fn installHoistedPackages(
                     );
                     if (!installer.options.do.install_packages) return error.InstallFailed;
                 }
-                this.tickLifecycleScripts();
+                try this.tickLifecycleScripts();
                 this.reportSlowLifecycleScripts();
             }
 
@@ -258,7 +258,7 @@ pub fn installHoistedPackages(
             );
             if (!installer.options.do.install_packages) return error.InstallFailed;
 
-            this.tickLifecycleScripts();
+            try this.tickLifecycleScripts();
             this.reportSlowLifecycleScripts();
         }
 
@@ -316,7 +316,7 @@ pub fn installHoistedPackages(
                 return err;
             }
         } else {
-            this.tickLifecycleScripts();
+            try this.tickLifecycleScripts();
             this.reportSlowLifecycleScripts();
         }
 
@@ -345,7 +345,7 @@ pub fn installHoistedPackages(
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 
-            this.sleep();
+            try this.sleep();
         }
 
         if (log_level.showProgress()) {

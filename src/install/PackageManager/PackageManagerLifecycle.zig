@@ -163,14 +163,14 @@ pub fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
     return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
 }
 
-pub fn tickLifecycleScripts(this: *PackageManager) void {
-    this.event_loop.tickOnce(this);
+pub fn tickLifecycleScripts(this: *PackageManager) bun.JSExecutionTerminated!void {
+    return this.event_loop.tickOnce(this);
 }
 
-pub fn sleep(this: *PackageManager) void {
+pub fn sleep(this: *PackageManager) bun.JSExecutionTerminated!void {
     this.reportSlowLifecycleScripts();
     Output.flush();
-    this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
+    return this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
 }
 
 pub fn reportSlowLifecycleScripts(this: *PackageManager) void {

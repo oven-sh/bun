@@ -1965,6 +1965,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSExecutionTerminated => return null,
           });
         }
       `;
@@ -1978,6 +1979,7 @@ const JavaScriptCoreBindings = struct {
               globalObject.throwOutOfMemory() catch {};
               return null;
             },
+            error.JSExecutionTerminated => return null,
           });
         }
       `;

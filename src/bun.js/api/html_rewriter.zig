@@ -519,7 +519,7 @@ pub const HTMLRewriter = struct {
                     sink.response.body.value.Locked.task = null;
                 }
                 if (is_async) {
-                    sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global);
+                    sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global) catch {}; // TODO: properly propagate exception upwards
                 } else {
                     var ret_err = createLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
@@ -549,7 +549,7 @@ pub const HTMLRewriter = struct {
 
             sink.rewriter.?.write(bytes) catch {
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch return null; // TODO: properly propagate exception upwards
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -560,7 +560,7 @@ pub const HTMLRewriter = struct {
                 if (!is_async) response.finalize();
                 sink.response = undefined;
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
+                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global) catch return null; // TODO: properly propagate exception upwards
                     return null;
                 } else {
                     return createLOLHTMLError(global);
@@ -588,11 +588,7 @@ pub const HTMLRewriter = struct {
                 },
             };
 
-            prev_value.resolve(
-                &this.response.body.value,
-                this.global,
-                null,
-            );
+            prev_value.resolve(&this.response.body.value, this.global, null) catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {
@@ -901,7 +897,7 @@ fn HandlerCallback(
                 }
 
                 if (result.asAnyPromise()) |promise| {
-                    this.global.bunVM().waitForPromise(promise);
+                    this.global.bunVM().waitForPromise(promise) catch return false; // XXX:
                     const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
                         this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());

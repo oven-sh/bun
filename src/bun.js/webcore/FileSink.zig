@@ -116,7 +116,7 @@ fn runPending(this: *FileSink) void {
     const l = this.eventLoop();
     l.enter();
     defer l.exit();
-    this.pending.run();
+    this.pending.run() catch return;
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {

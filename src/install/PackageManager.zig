@@ -422,7 +422,11 @@ pub fn wake(this: *PackageManager) void {
 
 pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: anytype) void {
     Output.flush();
-    this.event_loop.tick(closure, isDoneFn);
+    this.event_loop.tick(closure, isDoneFn) catch |err| switch (err) {
+        error.JSExecutionTerminated => |e| {
+            closure.err = e;
+        },
+    };
 }
 
 pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;

@@ -21,8 +21,7 @@
 #include <time.h>
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
-void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
-// void Bun__internal_dispatch_ready_poll(void* loop, void* poll) {}
+bool Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 
 #ifndef WIN32
 /* Cannot include this one on Windows */
@@ -211,7 +210,7 @@ void us_loop_run(struct us_loop_t *loop) {
             /* Any ready poll marked with nullptr will be ignored */
             if (LIKELY(poll)) {
                 if (CLEAR_POINTER_TAG(poll) != poll) {
-                    Bun__internal_dispatch_ready_poll(loop, poll);
+                    if (!Bun__internal_dispatch_ready_poll(loop, poll)) break;
                     continue;
                 }
 #ifdef LIBUS_USE_EPOLL
@@ -284,7 +283,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         /* Any ready poll marked with nullptr will be ignored */
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
-                Bun__internal_dispatch_ready_poll(loop, poll);
+                if (!Bun__internal_dispatch_ready_poll(loop, poll)) break;
                 continue;
             }
 #ifdef LIBUS_USE_EPOLL

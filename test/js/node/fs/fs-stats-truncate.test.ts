@@ -1,7 +1,7 @@
 // BUN-2C1
 //   const value = @field(this, @tagName(field));
 //  if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
-//    return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
+//    return jsc.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
 //  }
 import { expect, test } from "bun:test";
 import { Stats, statSync } from "node:fs";

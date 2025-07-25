@@ -814,14 +814,14 @@ pub const ShellGlobTask = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromMainThread(this: *This) void {
+    pub fn runFromMainThread(this: *This) bun.JSExecutionTerminated!void {
         debug("runFromJS", .{});
-        this.expansion.onGlobWalkDone(this).run();
-        this.ref.unref(this.event_loop);
+        defer this.ref.unref(this.event_loop);
+        return this.expansion.onGlobWalkDone(this).run();
     }
 
-    pub fn runFromMainThreadMini(this: *This, _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *This, _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     pub fn schedule(this: *This) void {

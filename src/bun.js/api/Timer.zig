@@ -130,7 +130,7 @@ pub const All = struct {
     pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
-        all.drainTimers(vm);
+        all.drainTimers(vm) catch return;
         all.ensureUVTimer(vm);
     }
 
@@ -199,7 +199,7 @@ pub const All = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
-    pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
+    pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bun.JSExecutionTerminated!bool {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
@@ -213,7 +213,7 @@ pub const All = struct {
                     // Side-effect: potentially call the StopIfNecessary timer.
                     if (min.tag == .WTFTimer) {
                         _ = this.timers.deleteMin();
-                        _ = min.fire(&now, vm);
+                        _ = try min.fire(&now, vm);
                         continue;
                     }
 
@@ -231,7 +231,7 @@ pub const All = struct {
     }
 
     export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
-        drainTimers(&vm.timer, vm);
+        drainTimers(&vm.timer, vm) catch {}; // ??
     }
 
     comptime {
@@ -263,14 +263,14 @@ pub const All = struct {
         return null;
     }
 
-    pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+    pub fn drainTimers(this: *All, vm: *VirtualMachine) bun.JSExecutionTerminated!void {
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(&now, vm)) {
+            switch (try t.fire(&now, vm)) {
                 .disarm => {},
                 .rearm => {},
             }

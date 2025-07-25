@@ -58,6 +58,7 @@ pub const Yield = union(enum) {
     /// Failed and threw a JS error
     failed,
     done,
+    terminated,
 
     /// Used in debug builds to ensure the shell is not creating a callstack
     /// that is too deep.
@@ -71,7 +72,7 @@ pub const Yield = union(enum) {
         return this.* == .done;
     }
 
-    pub fn run(this: Yield) void {
+    pub fn run(this: Yield) bun.JSExecutionTerminated!void {
         if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
@@ -122,6 +123,7 @@ pub const Yield = union(enum) {
                 }
                 return;
             },
+            .terminated => return error.JSExecutionTerminated,
         }
     }
 

@@ -52,7 +52,7 @@ pub fn WorkTask(comptime Context: type) type {
             Context.run(this.ctx, this);
         }
 
-        pub fn runFromJS(this: *This) void {
+        pub fn runFromJS(this: *This) bun.JSError!void {
             var ctx = this.ctx;
             const tracker = this.async_task_tracker;
             const vm = this.event_loop.virtual_machine;
@@ -60,7 +60,7 @@ pub fn WorkTask(comptime Context: type) type {
             this.ref.unref(vm);
 
             tracker.willDispatch(globalThis);
-            ctx.then(globalThis);
+            try ctx.then(globalThis);
             tracker.didDispatch(globalThis);
         }
 

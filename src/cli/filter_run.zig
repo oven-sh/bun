@@ -95,7 +95,7 @@ pub const ProcessHandle = struct {
             .result => {},
             .err => |err| {
                 if (!process.hasExited())
-                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+                    try process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
             },
         }
     }
@@ -615,7 +615,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             AbortHandler.uninstall();
             state.abort();
         }
-        event_loop.tickOnce(&state);
+        event_loop.tickOnce(&state) catch break;
     }
 
     const status = state.finalize();

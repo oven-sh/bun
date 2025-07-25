@@ -270,13 +270,9 @@ pub fn NewResponse(ssl_flag: i32) type {
             const Wrapper = struct {
                 pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserDataType == void) {
-                        @call(bun.callmod_inline, handler, .{
-                            {},
-                        });
+                        @call(bun.callmod_inline, handler, .{{}});
                     } else {
-                        @call(bun.callmod_inline, handler, .{
-                            @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
-                        });
+                        @call(bun.callmod_inline, handler, .{@as(UserDataType, @ptrCast(@alignCast(user_data.?)))});
                     }
                 }
             };

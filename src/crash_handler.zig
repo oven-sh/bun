@@ -57,6 +57,9 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
+/// Prevents crash reports from being uploaded to any server. Reports will still be printed and
+/// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
+/// things that affect crash reporting. See suppressReporting() for intended usage.
 var suppress_reporting: bool = false;
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.

@@ -3656,12 +3656,12 @@ pub const H2FrameParser = struct {
 
     pub fn getStreamContext(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected stream_id argument", .{});
         }
 
-        const stream_id_arg = args_list.ptr[0];
+        const stream_id_arg = args_list[0];
         if (!stream_id_arg.isNumber()) {
             return globalObject.throw("Expected stream_id to be a number", .{});
         }
@@ -3675,19 +3675,19 @@ pub const H2FrameParser = struct {
 
     pub fn setStreamContext(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(2);
+        const args_list = callframe.arguments();
         if (args_list.len < 2) {
             return globalObject.throw("Expected stream_id and context arguments", .{});
         }
 
-        const stream_id_arg = args_list.ptr[0];
+        const stream_id_arg = args_list[0];
         if (!stream_id_arg.isNumber()) {
             return globalObject.throw("Expected stream_id to be a number", .{});
         }
         var stream = this.streams.getPtr(stream_id_arg.to(u32)) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
-        const context_arg = args_list.ptr[1];
+        const context_arg = args_list[1];
         if (!context_arg.isObject()) {
             return globalObject.throw("Expected context to be an object", .{});
         }
@@ -3739,7 +3739,7 @@ pub const H2FrameParser = struct {
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
 
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected error argument", .{});
         }
@@ -3751,11 +3751,11 @@ pub const H2FrameParser = struct {
             // } else if (stream.id % 2 != 0) continue;
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
-                stream.rstCode = args_list.ptr[0].to(u32);
+                stream.rstCode = args_list[0].to(u32);
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
                 stream.freeResources(this, false);
-                this.dispatchWithExtra(.onStreamError, identifier, args_list.ptr[0]);
+                this.dispatchWithExtra(.onStreamError, identifier, args_list[0]);
             }
         }
         return .js_undefined;
@@ -3771,16 +3771,16 @@ pub const H2FrameParser = struct {
         jsc.markBinding(@src());
         log("request", .{});
 
-        const args_list = callframe.arguments_old(5);
+        const args_list = callframe.arguments();
         if (args_list.len < 4) {
             return globalObject.throw("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments", .{});
         }
 
-        const stream_id_arg = args_list.ptr[0];
-        const stream_ctx_arg = args_list.ptr[1];
+        const stream_id_arg = args_list[0];
+        const stream_ctx_arg = args_list[1];
 
-        const headers_arg = args_list.ptr[2];
-        const sensitive_arg = args_list.ptr[3];
+        const headers_arg = args_list[2];
+        const sensitive_arg = args_list[3];
 
         const headers_obj = headers_arg.getObject() orelse {
             return globalObject.throw("Expected headers to be an object", .{});
@@ -3970,8 +3970,8 @@ pub const H2FrameParser = struct {
         var silent: bool = false;
         var waitForTrailers: bool = false;
         var end_stream: bool = false;
-        if (args_list.len > 4 and !args_list.ptr[4].isEmptyOrUndefinedOrNull()) {
-            const options = args_list.ptr[4];
+        if (args_list.len > 4 and !args_list[4].isEmptyOrUndefinedOrNull()) {
+            const options = args_list[4];
             if (!options.isObject()) {
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
@@ -4176,12 +4176,12 @@ pub const H2FrameParser = struct {
 
     pub fn read(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected 1 argument", .{});
         }
         defer this.incrementWindowSizeIfNeeded();
-        const buffer = args_list.ptr[0];
+        const buffer = args_list[0];
         buffer.ensureStillAlive();
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
             var bytes = array_buffer.byteSlice();
@@ -4218,12 +4218,12 @@ pub const H2FrameParser = struct {
 
     pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected socket argument", .{});
         }
 
-        const socket_js = args_list.ptr[0];
+        const socket_js = args_list[0];
         this.detachNativeSocket();
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
@@ -4270,12 +4270,12 @@ pub const H2FrameParser = struct {
     }
 
     pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*H2FrameParser {
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected 1 argument", .{});
         }
 
-        const options = args_list.ptr[0];
+        const options = args_list[0];
         if (options.isEmptyOrUndefinedOrNull() or options.isBoolean() or !options.isObject()) {
             return globalObject.throwInvalidArguments("expected options as argument", .{});
         }

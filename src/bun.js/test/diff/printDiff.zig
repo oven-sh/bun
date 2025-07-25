@@ -17,7 +17,7 @@ fn removeTrailingNewline(text: []const u8) []const u8 {
 pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []const u8, expected_slice: []const u8, writer: anytype, config: DiffConfig) !void {
     if (not) {
         switch (config.enable_ansi_colors) {
-            true => try writer.print("Expected: not " ++ colors.green ++ "{s}" ++ colors.reset, .{expected_slice}),
+            true => try writer.print("Expected: not " ++ colors.red ++ "{s}" ++ colors.reset, .{expected_slice}),
             false => try writer.print("Expected: not {s}", .{expected_slice}),
         }
         return;
@@ -123,15 +123,16 @@ pub fn printDiffMain(arena: std.mem.Allocator, not: bool, received_slice: []cons
     }
 
     // fill removed_line_count and inserted_line_count
-    for (diff_segments.items, 0..) |*segment, i| {
+    for (diff_segments.items) |*segment| {
         for (segment.removed) |char| if (char == '\n') {
             segment.removed_line_count += 1;
         };
-        if (i != diff_segments.items.len - 1) segment.removed_line_count += 1;
+        segment.removed_line_count += 1;
+
         for (segment.inserted) |char| if (char == '\n') {
             segment.inserted_line_count += 1;
         };
-        if (i != diff_segments.items.len - 1) segment.inserted_line_count += 1;
+        segment.inserted_line_count += 1;
     }
     try printDiff(arena, writer, diff_segments.items, config);
 }

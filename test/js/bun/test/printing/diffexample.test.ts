@@ -166,8 +166,8 @@ test("no color", async () => {
     - Line 3: Привет"
     + Line 3: Здравствуйте"
 
-    - Expected  - 0
-    + Received  + 0
+    - Expected  - 1
+    + Received  + 1
 
 
           at <anonymous> (FILE:LINE)
@@ -226,8 +226,8 @@ test("no color", async () => {
     - Línea 3: aeiou"
     + Línea 3: äëïöü"
 
-    - Expected  - 0
-    + Received  + 0
+    - Expected  - 1
+    + Received  + 1
 
 
           at <anonymous> (FILE:LINE)
@@ -373,8 +373,8 @@ test("no color", async () => {
     - "
     + === has newline at end vs doesn't ==="
 
-    - Expected  - 13
-    + Received  + 8
+    - Expected  - 14
+    + Received  + 9
 
 
           at <anonymous> (FILE:LINE)
@@ -525,8 +525,8 @@ test("no color", async () => {
     + "Hello, World!
     + "
 
-    - Expected  - 0
-    + Received  + 1
+    - Expected  - 1
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)

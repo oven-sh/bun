@@ -161,10 +161,6 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
-    ["fail-on-coredump-or-report"]: {
-      type: "boolean",
-      default: true,
-    },
   },
 });
 
@@ -1074,7 +1070,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         crashes += `main process killed by ${result.signalCode} but no core file found\n`;
       }
 
-      if (options["fail-on-coredump-or-report"] && newCores.length > 0) {
+      if (newCores.length > 0) {
         result.ok = false;
         if (!isAlwaysFailure(result.error)) result.error = "core dumped";
       }
@@ -1124,10 +1120,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
         const traces = await response.json();
         if (traces.length > 0) {
-          if (options["fail-on-coredump-or-report"]) {
-            result.ok = false;
-            if (!isAlwaysFailure(result.error)) result.error = "crash reported";
-          }
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "crash reported";
+
           crashes += `${traces.length} crashes reported during this test\n`;
           for (const t of traces) {
             if (t.failed_parse) {

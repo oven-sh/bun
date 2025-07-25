@@ -20,7 +20,7 @@ pub fn constructor(_: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*TextEncod
 }
 
 pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callFrame.arguments_old(1).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len == 0) {
         return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
     }

@@ -37,7 +37,7 @@ pub fn arrayBufferToString(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(2).slice();
+    const args = callframe.arguments();
     if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArrayOrArrayBuffer()) {
         return globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
     }

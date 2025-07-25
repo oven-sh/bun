@@ -39,7 +39,7 @@ pub fn order(
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) {
         return globalThis.throw("Expected two arguments", .{});
     }
@@ -85,7 +85,7 @@ pub fn satisfies(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) {
         return globalThis.throw("Expected two arguments", .{});
     }

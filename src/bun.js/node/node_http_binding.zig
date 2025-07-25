@@ -1,5 +1,5 @@
 pub fn getBunServerAllClosedPromise(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalThis.throwNotEnoughArguments("getBunServerAllClosePromise", 1, arguments.len);
     }
@@ -27,7 +27,7 @@ pub fn getMaxHTTPHeaderSize(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 }
 
 pub fn setMaxHTTPHeaderSize(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);
     }

@@ -485,7 +485,7 @@ pub const Run = struct {
 };
 
 pub export fn Bun__onResolveEntryPointResult(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) noreturn {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
@@ -493,7 +493,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *jsc.JSGlobalObject, callfr
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) noreturn {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);

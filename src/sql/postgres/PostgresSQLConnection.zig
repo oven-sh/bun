@@ -565,7 +565,7 @@ comptime {
 
 pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments_old(15).slice();
+    const arguments = callframe.arguments();
     const hostname_str = try arguments[0].toBunString(globalObject);
     defer hostname_str.deref();
     const port = try arguments[1].coerce(i32, globalObject);

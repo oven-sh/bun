@@ -524,7 +524,7 @@ pub const Jest = struct {
             return Bun__Jest__testPreloadObject(globalObject);
         }
 
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
 
         if (arguments.len < 1 or !arguments[0].isString()) {
             return globalObject.throw("Bun.jest() expects a string filename", .{});
@@ -545,7 +545,7 @@ pub const Jest = struct {
     }
 
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         if (arguments.len < 1 or !arguments[0].isNumber()) {
             return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }

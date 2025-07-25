@@ -196,7 +196,7 @@ pub fn estimatedSize(this: *PostgresSQLQuery) usize {
 }
 
 pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(6).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const query = args.nextEat() orelse {

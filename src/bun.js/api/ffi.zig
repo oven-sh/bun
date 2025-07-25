@@ -556,7 +556,7 @@ pub const FFI = struct {
     };
 
     pub fn Bun__FFI__cc(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         if (arguments.len == 0 or !arguments[0].isObject()) {
             return globalThis.throwInvalidArguments("Expected object", .{});
         }

@@ -1827,7 +1827,7 @@ pub fn constructBunFile(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments);
     defer args.deinit();
 
@@ -1993,7 +1993,7 @@ pub fn toStreamWithOffset(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
-    const args = callframe.arguments_old(1).slice();
+    const args = callframe.arguments();
 
     return jsc.WebCore.ReadableStream.fromFileBlobWithOffset(
         globalThis,
@@ -2220,7 +2220,7 @@ const S3BlobDownloadTask = struct {
 };
 
 pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
@@ -2272,7 +2272,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 }
 
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const store = this.store orelse {

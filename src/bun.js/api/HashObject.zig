@@ -64,7 +64,7 @@ fn hashWrap(comptime Hasher_: anytype) jsc.JSHostFnZig {
     return struct {
         const Hasher = Hasher_;
         pub fn hash(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(2).slice();
+            const arguments = callframe.arguments();
             var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
             defer args.deinit();
 

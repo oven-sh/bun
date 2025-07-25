@@ -645,7 +645,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn timeout(this: *ThisServer, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(2).slice();
+            const arguments = callframe.arguments();
             if (arguments.len < 2 or arguments[0].isEmptyOrUndefinedOrNull()) {
                 return globalObject.throwNotEnoughArguments("timeout", 2, arguments.len);
             }
@@ -1137,7 +1137,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
             }
 
-            const arguments = callframe.arguments_old(2).slice();
+            const arguments = callframe.arguments();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));

@@ -2492,7 +2492,7 @@ pub const bindings = struct {
     const JSObject = jsc.JSObject;
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
         if (args.len < 1 or !args[0].isString()) {
             return global.throw("expected tarball path string argument", .{});
         }

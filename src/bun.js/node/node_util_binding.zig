@@ -1,5 +1,5 @@
 pub fn internalErrorName(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalThis.throwNotEnoughArguments("internalErrorName", 1, arguments.len);
     }

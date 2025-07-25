@@ -1332,7 +1332,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-            const args = callFrame.arguments_old(2).slice();
+            const args = callFrame.arguments();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
                 return global.throw("expected manifest filename and registry string arguments", .{});
             }

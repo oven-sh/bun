@@ -1066,7 +1066,7 @@ pub const String = extern struct {
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return .jsNumber(@as(i32, 0));

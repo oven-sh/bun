@@ -335,7 +335,7 @@ pub const Expect = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         const value = if (arguments.len < 1) .js_undefined else arguments[0];
 
         var custom_label = bun.String.empty;
@@ -4256,7 +4256,7 @@ pub const Expect = struct {
 
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         incrementExpectCallCounter();
 
@@ -4500,7 +4500,7 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
 
         const name = comptime if (known_index != null and known_index.? == 0) "toHaveReturned" else "toHaveReturnedTimes";
@@ -4626,7 +4626,7 @@ pub const Expect = struct {
 
     /// Implements `expect.extend({ ... })`
     pub fn extend(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args[0].isObject()) {
             return globalThis.throwPretty("<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n", .{});
@@ -5132,7 +5132,7 @@ pub const ExpectCloseTo = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(2).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args[0].isNumber()) {
             return globalThis.throwPretty("<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value", .{});
@@ -5177,7 +5177,7 @@ pub const ExpectObjectContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args[0].isObject()) {
             const fmt = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
@@ -5213,7 +5213,7 @@ pub const ExpectStringContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args[0].isString()) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
@@ -5302,7 +5302,7 @@ pub const ExpectArrayContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.arguments();
 
         if (args.len == 0 or !args[0].jsType().isArray()) {
             const fmt = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
@@ -5421,7 +5421,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     }
 
     pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         const received_value = if (arguments.len < 1) .js_undefined else arguments[0];
         const matched = execute(this, callframe.this(), globalThis, received_value);
         return JSValue.jsBoolean(matched);
@@ -5572,25 +5572,25 @@ pub const ExpectMatcherUtils = struct {
     }
 
     pub fn stringify(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         const value = if (arguments.len < 1) .js_undefined else arguments[0];
         return printValueCatched(globalThis, value, null);
     }
 
     pub fn printExpected(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         const value = if (arguments.len < 1) .js_undefined else arguments[0];
         return printValueCatched(globalThis, value, "<green>");
     }
 
     pub fn printReceived(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         const value = if (arguments.len < 1) .js_undefined else arguments[0];
         return printValueCatched(globalThis, value, "<red>");
     }
 
     pub fn matcherHint(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(4).slice();
+        const arguments = callframe.arguments();
 
         if (arguments.len == 0 or !arguments[0].isString()) {
             return globalThis.throw("matcherHint: the first argument (matcher name) must be a string", .{});

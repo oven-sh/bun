@@ -51,7 +51,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
     const S = struct {
         fn impl(globalThis_: *jsc.JSGlobalObject, callframe_: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments_ = callframe_.arguments_old(1).slice();
+            const arguments_ = callframe_.arguments();
             const ex = arguments_[0];
             Process__emitErrorEvent(globalThis_, ex.toError() orelse ex);
             return .js_undefined;

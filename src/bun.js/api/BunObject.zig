@@ -419,7 +419,7 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 }
 
 pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(4).slice();
+    const arguments = callframe.arguments();
     if (arguments.len == 0)
         return bun.String.empty.toJS(globalThis);
 
@@ -1025,7 +1025,7 @@ pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 }
 
 pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.arguments();
     var config: jsc.API.ServerConfig = brk: {
         var args = jsc.CallFrame.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: jsc.API.ServerConfig = .{};
@@ -1477,7 +1477,7 @@ pub const JSZlib = struct {
 
     // This has to be `inline` due to the callframe.
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         const buffer_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())

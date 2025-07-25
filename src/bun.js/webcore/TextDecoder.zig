@@ -156,7 +156,7 @@ pub fn decodeUTF16(
 }
 
 pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.arguments();
 
     const input_slice = input_slice: {
         if (arguments.len == 0 or arguments[0].isUndefined()) {

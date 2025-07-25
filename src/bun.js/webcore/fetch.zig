@@ -1416,7 +1416,7 @@ pub fn Bun__fetchPreconnect_(
     globalObject: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
 
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);

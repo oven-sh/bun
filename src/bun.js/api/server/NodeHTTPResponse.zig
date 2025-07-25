@@ -621,7 +621,7 @@ pub fn onRequestComplete(this: *NodeHTTPResponse) void {
 
 pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     log("onResolve", .{});
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.arguments();
     const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
     this.promise.deinit();
     defer this.deref();
@@ -645,7 +645,7 @@ pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *jsc.JSGlobalObject,
 }
 
 pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.arguments();
     const err = arguments[0];
     const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
     this.promise.deinit();
@@ -1063,7 +1063,7 @@ export fn NodeHTTPResponse__setTimeout(this: *NodeHTTPResponse, seconds: jsc.JSV
 }
 
 pub fn cork(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len == 0) {
         return globalObject.throwNotEnoughArguments("cork", 1, 0);
     }

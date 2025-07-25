@@ -10,7 +10,7 @@ comptime {
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -60,7 +60,7 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
 }
 
 fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -198,7 +198,7 @@ pub const prompt = struct {
         globalObject: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(3).slice();
+        const arguments = callframe.arguments();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();

@@ -90,7 +90,7 @@ pub const S3Client = struct {
     storage_class: ?bun.S3.StorageClass = null,
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, globalThis);
@@ -124,7 +124,7 @@ pub const S3Client = struct {
         formatter.resetLine();
     }
     pub fn file(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -141,7 +141,7 @@ pub const S3Client = struct {
     }
 
     pub fn presign(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -159,7 +159,7 @@ pub const S3Client = struct {
     }
 
     pub fn exists(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -176,7 +176,7 @@ pub const S3Client = struct {
     }
 
     pub fn size(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -193,7 +193,7 @@ pub const S3Client = struct {
     }
 
     pub fn stat(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -210,7 +210,7 @@ pub const S3Client = struct {
     }
 
     pub fn write(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(3).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -244,7 +244,7 @@ pub const S3Client = struct {
     }
 
     pub fn unlink(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
@@ -291,7 +291,7 @@ pub const S3Client = struct {
     }
 
     pub fn staticFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 

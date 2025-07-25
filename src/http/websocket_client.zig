@@ -296,7 +296,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                     this.receive_pending_chunk_len = 0;
-                    this.receive_body_remain = 0;
+                    // Don't modify this.receive_body_remain here as it's managed by the caller (handleData)
                     if (is_final) {
                         // Decompress the complete message
                         this.dispatchCompressedData(this.receive_buffer.readableSlice(0), kind);
@@ -335,7 +335,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                 this.receive_pending_chunk_len = 0;
-                this.receive_body_remain = 0;
+                // Don't modify this.receive_body_remain here as it's managed by the caller (handleData)
                 if (is_final) {
                     this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                     this.clearReceiveBuffers(false);

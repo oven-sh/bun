@@ -1,25 +1,3 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
-const String = Semver.String;
-const Output = bun.Output;
-const Global = bun.Global;
-const std = @import("std");
-const strings = bun.strings;
-const Environment = @import("../env.zig");
-const Fs = @import("../fs.zig");
-const stringZ = bun.stringZ;
-const Resolution = @import("./resolution.zig").Resolution;
-const bun = @import("bun");
-const path = bun.path;
-const string = bun.string;
-const Install = @import("./install.zig");
-const PackageInstall = Install.PackageInstall;
-const Dependency = @import("./dependency.zig");
-const OOM = bun.OOM;
-const JSON = bun.JSON;
-const Lockfile = Install.Lockfile;
-
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -568,8 +546,7 @@ pub const Bin = extern struct {
         // linking each tree.
         seen: ?*bun.StringHashMap(void),
 
-        node_modules: bun.FileDescriptor,
-        node_modules_path: []const u8,
+        node_modules_path: *bun.AbsPath(.{}),
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -634,7 +611,7 @@ pub const Bin = extern struct {
                 return;
             }
 
-            bun.Analytics.Features.binlinks += 1;
+            bun.analytics.Features.binlinks += 1;
 
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
@@ -697,7 +674,11 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
+                const node_modules_path_save = this.node_modules_path.save();
+                this.node_modules_path.append(".bin");
+                bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
+                node_modules_path_save.restore();
+
                 break :bunx_file bun.sys.File.openatOSPath(bun.invalid_fd, abs_bunx_file, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |real_err| {
                     this.err = real_err;
                     return;
@@ -790,7 +771,11 @@ pub const Bin = extern struct {
                             return;
                         }
 
-                        bun.makePath(this.node_modules.stdDir(), ".bin") catch {};
+                        const node_modules_path_save = this.node_modules_path.save();
+                        this.node_modules_path.append(".bin");
+                        bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
+                        node_modules_path_save.restore();
+
                         switch (bun.sys.symlink(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
@@ -820,7 +805,7 @@ pub const Bin = extern struct {
 
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path);
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
 
             var remain = this.abs_target_buf;
 
@@ -839,7 +824,7 @@ pub const Bin = extern struct {
         }
 
         pub fn buildDestinationDir(this: *const Linker, global: bool) []u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path);
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
 
             var remain = this.abs_dest_buf;
             if (global) {
@@ -1055,3 +1040,24 @@ pub const Bin = extern struct {
         }
     };
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("./dependency.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+
+const Install = @import("./install.zig");
+const ExternalStringList = @import("./install.zig").ExternalStringList;
+const Lockfile = Install.Lockfile;
+
+const bun = @import("bun");
+const JSON = bun.json;
+const OOM = bun.OOM;
+const path = bun.path;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const String = Semver.String;

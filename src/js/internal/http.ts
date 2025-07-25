@@ -23,6 +23,8 @@ const {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
@@ -356,6 +358,9 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const kOutHeaders = Symbol("kOutHeaders");
 
 export {
   ConnResetException,
@@ -380,6 +385,7 @@ export {
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
   getIsNextIncomingMessageHTTPS,
+  getMaxHTTPHeaderSize,
   getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -404,6 +410,7 @@ export {
   kMaxHeadersCount,
   kMethod,
   kOptions,
+  kOutHeaders,
   kParser,
   kPath,
   kPendingCallbacks,
@@ -426,6 +433,7 @@ export {
   serverSymbol,
   setHeader,
   setIsNextIncomingMessageHTTPS,
+  setMaxHTTPHeaderSize,
   setRequestTimeout,
   setServerCustomOptions,
   setServerIdleTimeout,

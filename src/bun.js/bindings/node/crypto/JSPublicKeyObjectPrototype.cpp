@@ -44,7 +44,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_export, (JSGlobalObject * gl
     JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(callFrame->thisValue());
     if (!publicKeyObject) {
         throwThisTypeError(*globalObject, scope, "PublicKeyObject"_s, "export"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     KeyObject& handle = publicKeyObject->handle();
@@ -97,7 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPublicKeyObjectPrototype_asymmetricKeyDetails, (JSGlo
 //     JSPublicKeyObject* publicKeyObject = jsDynamicCast<JSPublicKeyObject*>(callFrame->thisValue());
 //     if (!publicKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "PublicKeyObject"_s, "toCryptoKey"_s);
-//         return JSValue::encode({});
+//         return {};
 //     }
 
 //     KeyObject& handle = publicKeyObject->handle();

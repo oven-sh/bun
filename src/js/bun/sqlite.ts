@@ -267,6 +267,14 @@ class Statement {
     return this.#raw.columns;
   }
 
+  get columnTypes() {
+    return this.#raw.columnTypes;
+  }
+
+  get declaredTypes() {
+    return this.#raw.declaredTypes;
+  }
+
   get paramsCount() {
     return this.#raw.paramsCount;
   }

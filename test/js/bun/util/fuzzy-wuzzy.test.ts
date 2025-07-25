@@ -17,7 +17,7 @@
  *
  */
 
-const ENABLE_LOGGING = false;
+const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1";
 
 import { afterAll, describe, test } from "bun:test";
 import { EventEmitter } from "events";
@@ -28,6 +28,12 @@ var calls = 0,
 afterAll(() => {
   process.stdout.write(`\nStats: ${calls} calls, ${constructs} constructs, ${subclasses} subclasses\n`);
 });
+
+function log(from, ...message: any[]) {
+  if (!ENABLE_LOGGING) return;
+  console.log(`[ ${from} ] ${message.join(" ")}`);
+}
+
 const Promise = globalThis.Promise;
 globalThis.Promise = function (...args) {
   if (args.length === 0) {
@@ -39,6 +45,7 @@ globalThis.Promise = function (...args) {
 
   return promise?.catch?.(e => {
     if (ENABLE_LOGGING) {
+      log("unknown", "Uncaught error:");
       console.log(e);
     }
   });
@@ -46,10 +53,11 @@ globalThis.Promise = function (...args) {
 globalThis.Promise.prototype = Promise.prototype;
 Object.assign(globalThis.Promise, Promise);
 
-function wrap(input) {
+function wrap(input, from) {
   if (typeof input?.catch === "function") {
     return input?.catch?.(e => {
       if (ENABLE_LOGGING) {
+        log(from, "Threw error:");
         console.error(e);
       }
     });
@@ -199,38 +207,44 @@ if (ENABLE_LOGGING) {
 
 const seenValues = new WeakSet();
 var callAllMethodsCount = 0;
-function callAllMethods(object) {
+function callAllMethods(object, rootName) {
   callAllMethodsCount++;
-  const queue = [];
+  const queue: { value: unknown; from: string }[] = [];
   const seen = new Set([object, object?.subarray]);
   for (const methodName of allThePropertyNames(object, callBanned)) {
+    const fullName = rootName + "." + methodName;
     try {
       try {
         if (object instanceof EventEmitter) {
           object?.on?.("error", () => {});
         }
-        const returnValue = wrap(Reflect.apply(object?.[methodName], object, []));
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        log(fullName, "Calling...");
+        const returnValue = wrap(Reflect.apply(object?.[methodName], object, []), fullName + "()");
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
         calls++;
       } catch (e) {
-        const returnValue = wrap(Reflect.apply(object.constructor?.[methodName], object?.constructor, []));
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        const returnValue = wrap(
+          Reflect.apply(object.constructor?.[methodName], object?.constructor, []),
+          "(new " + fullName + "())",
+        );
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         calls++;
       }
     } catch (e) {
       const val = object?.[methodName];
       if (val && (typeof val === "object" || typeof val === "function") && !seenValues.has(val)) {
         seenValues.add(val);
-        queue.push(val);
+        queue.push({ value: val, from: fullName });
       }
     } finally {
     }
   }
 
   while (queue.length) {
-    const value = queue.shift();
+    const { value, from } = queue.shift()!;
     if (value) {
       for (const methodName of allThePropertyNames(value, callBanned)) {
+        const fullName = from + "." + methodName;
         try {
           const method = value?.[methodName];
           if (method && seen.has(method)) {
@@ -240,11 +254,12 @@ function callAllMethods(object) {
           if (value instanceof EventEmitter) {
             value?.on?.("error", () => {});
           }
-          const returnValue = wrap(Reflect?.apply?.(method, value, []));
+          log(fullName, "Calling...");
+          const returnValue = wrap(Reflect?.apply?.(method, value, []), fullName + "()");
           if (returnValue?.then) {
             continue;
           }
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: fullName + "()" }));
           calls++;
         } catch (e) {}
       }
@@ -252,26 +267,30 @@ function callAllMethods(object) {
   }
 }
 
-function constructAllConstructors(object) {
-  const queue = [];
+function constructAllConstructors(object, rootName) {
+  const queue: { value: unknown; from: string }[] = [];
   const seen = new Set([object?.subarray]);
   for (const methodName of allThePropertyNames(object, constructBanned)) {
+    const fullName = rootName + "." + methodName;
     const method = object?.[methodName];
 
     try {
       try {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       } catch (e) {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       }
     } catch (e) {
       try {
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
       } catch (e) {
         Error.captureStackTrace(e);
@@ -280,20 +299,22 @@ function constructAllConstructors(object) {
   }
 
   while (queue.length) {
-    const value = queue.shift();
+    const { value, from } = queue.shift()!;
     for (const methodName of allThePropertyNames(value, constructBanned)) {
+      const fullName = from + "." + methodName;
       try {
         const method = value?.[methodName];
         if (method && seen.has(method)) {
           continue;
         }
 
+        log(fullName, "Constructing...");
         const returnValue = Reflect.construct(value, [], method);
         if (seen.has(returnValue)) {
           continue;
         }
 
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         seen.add(returnValue);
         constructs++;
       } catch (e) {}
@@ -301,32 +322,36 @@ function constructAllConstructors(object) {
   }
 }
 
-function constructAllConstructorsWithSubclassing(object) {
-  const queue = [];
+function constructAllConstructorsWithSubclassing(object, rootName) {
+  const queue: { value: unknown; from: string }[] = [];
   const seen = new Set([object?.subarray]);
   for (const methodName of allThePropertyNames(object, constructBanned)) {
+    const fullName = rootName + "." + methodName;
     const method = object?.[methodName];
 
     try {
       try {
         // Create a subclass of the constructor
         class Subclass extends object {}
+        log(fullName, "Constructing with subclass...");
         const returnValue = Reflect.construct(object, [], Subclass);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
         subclasses++;
       } catch (e) {
         try {
           // Try with the constructor property
           class Subclass extends object?.constructor {}
+          log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(object?.constructor, [], Subclass);
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           subclasses++;
         } catch (e) {
           // Fallback to a more generic approach
           const Subclass = function () {};
           Object.setPrototypeOf(Subclass.prototype, object);
+          log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(object, [], Subclass);
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           subclasses++;
         }
       }
@@ -334,8 +359,9 @@ function constructAllConstructorsWithSubclassing(object) {
       try {
         // Try with prototype constructor
         class Subclass extends object?.prototype?.constructor {}
+        log(fullName, "Constructing with subclass...");
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], Subclass);
-        Bun.inspect?.(returnValue), queue.push(returnValue);
+        (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
         subclasses++;
       } catch (e) {
         Error.captureStackTrace(e);
@@ -344,8 +370,9 @@ function constructAllConstructorsWithSubclassing(object) {
   }
 
   while (queue.length) {
-    const value = queue.shift();
+    const { value, from } = queue.shift()!;
     for (const methodName of allThePropertyNames(value, constructBanned)) {
+      const fullName = from + "." + methodName;
       try {
         const method = value?.[methodName];
         if (method && seen.has(method)) {
@@ -355,24 +382,26 @@ function constructAllConstructorsWithSubclassing(object) {
         // Create a subclass of the value
         try {
           class Subclass extends value {}
+          log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(value, [], Subclass);
           if (seen.has(returnValue)) {
             continue;
           }
 
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           seen.add(returnValue);
           subclasses++;
         } catch (e) {
           // Fallback to a more generic approach
           const Subclass = function () {};
           Object.setPrototypeOf(Subclass.prototype, value);
+          log(fullName, "Constructing with subclass...");
           const returnValue = Reflect.construct(value, [], Subclass);
           if (seen.has(returnValue)) {
             continue;
           }
 
-          Bun.inspect?.(returnValue), queue.push(returnValue);
+          (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
           seen.add(returnValue);
           subclasses++;
         }
@@ -418,9 +447,9 @@ const modules = [
 
 for (const mod of modules) {
   describe(mod, () => {
-    test("call", () => callAllMethods(require(mod)));
-    test("construct", () => constructAllConstructors(require(mod)));
-    test("construct-subclass", () => constructAllConstructorsWithSubclassing(require(mod)));
+    test("call", () => callAllMethods(require(mod), `require("${mod}")`));
+    test("construct", () => constructAllConstructors(require(mod), `require("${mod}")`));
+    test("construct-subclass", () => constructAllConstructorsWithSubclassing(require(mod), `require("${mod}")`));
   });
 }
 
@@ -447,10 +476,17 @@ for (const HardCodedClass of [
 
   process,
 ]) {
-  test("call " + (HardCodedClass.name || HardCodedClass.toString()), () => constructAllConstructors(HardCodedClass));
-  test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () => callAllMethods(HardCodedClass));
+  test("call " + (HardCodedClass.name || HardCodedClass.toString()), () =>
+    constructAllConstructors(HardCodedClass, HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass"),
+  );
+  test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () =>
+    callAllMethods(HardCodedClass, HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass"),
+  );
   test("construct-subclass " + (HardCodedClass.name || HardCodedClass.toString()), () =>
-    constructAllConstructorsWithSubclassing(HardCodedClass),
+    constructAllConstructorsWithSubclassing(
+      HardCodedClass,
+      HardCodedClass.name || HardCodedClass.toString() || "HardCodedClass",
+    ),
   );
 }
 
@@ -464,18 +500,18 @@ for (const [Global, name] of globals) {
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
-      callAllMethods(Global);
+      callAllMethods(Global, Global === Bun ? "Bun" : "globalThis");
       await Bun.sleep(1);
     });
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
-      constructAllConstructors(Global);
+      constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis");
       await Bun.sleep(1);
     });
     test.skipIf(isWindows && Global === Bun)("construct-subclass", async () => {
       await Bun.sleep(1);
-      constructAllConstructorsWithSubclassing(Global);
+      constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis");
       await Bun.sleep(1);
     });
   });

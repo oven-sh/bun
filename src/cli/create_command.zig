@@ -1,48 +1,4 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Progress = bun.Progress;
-
-const lex = bun.js_lexer;
-const logger = bun.logger;
-
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-
-const JSON = bun.JSON;
-const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Lock = bun.Mutex;
-const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = @import("../futex.zig");
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -153,7 +109,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
         },
     }) catch return;
 }
@@ -494,7 +450,7 @@ pub const CreateCommand = struct {
 
                 const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
-                var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
+                var walker_ = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
 
                 const FileCopier = struct {
@@ -508,7 +464,7 @@ pub const CreateCommand = struct {
                         src_base_len: if (Environment.isWindows) usize else void,
                         src_buf: if (Environment.isWindows) *bun.WPathBuffer else void,
                     ) !void {
-                        while (try walker.next()) |entry| {
+                        while (try walker.next().unwrap()) |entry| {
                             if (comptime Environment.isWindows) {
                                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -571,7 +527,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            const infile = bun.FD.fromStdFile(try entry.dir.openFile(entry.basename, .{ .mode = .read_only }));
+                            const infile = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
@@ -698,9 +654,9 @@ pub const CreateCommand = struct {
             if (package_json_file != null) {
                 initializeStore();
 
-                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+                const source = &logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -1439,7 +1395,7 @@ pub const CreateCommand = struct {
                     @TypeOf(&package_json_writer),
                     &package_json_writer,
                     package_json_expr,
-                    &source,
+                    source,
                     .{ .mangled_props = null },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1527,7 +1483,7 @@ pub const CreateCommand = struct {
                 .stdin = .inherit,
 
                 .windows = if (Environment.isWindows) .{
-                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
                 },
             });
             _ = try process.unwrap();
@@ -1551,7 +1507,7 @@ pub const CreateCommand = struct {
 
         Output.pretty(
             \\
-            \\<d>Come hang out in bun's Discord: https://bun.sh/discord<r>
+            \\<d>Come hang out in bun's Discord: https://bun.com/discord<r>
             \\
         , .{});
 
@@ -1707,7 +1663,7 @@ pub const CreateCommand = struct {
             .entry_points = &[_]string{analyzer.entry_point},
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
     }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
@@ -1716,7 +1672,7 @@ pub const CreateCommand = struct {
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
         if (positionals.len == 0) {
-            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            bun.cli.Command.Tag.printHelp(.CreateCommand, false);
             Global.crash();
         }
 
@@ -1851,7 +1807,6 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -2145,8 +2100,8 @@ pub const Example = struct {
         progress.name = "Parsing package.json";
         refresher.refresh();
         initializeStore();
-        var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("package.json", mutable.list.items);
+        var expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2276,8 +2231,8 @@ pub const Example = struct {
         }
 
         initializeStore();
-        var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("examples.json", mutable.list.items);
+        const examples_object = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
@@ -2467,4 +2422,35 @@ const GitHandler = struct {
     }
 };
 
+const string = []const u8;
+
+const CopyFile = @import("../copy_file.zig");
+const DotEnv = @import("../env_loader.zig");
 const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
+const Zlib = @import("../zlib.zig");
+const fs = @import("../fs.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const NPMClient = @import("../which_npm_client.zig").NPMClient;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const Archiver = bun.libarchive.Archiver;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

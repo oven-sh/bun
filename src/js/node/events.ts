@@ -32,7 +32,8 @@ const {
   validateFunction,
 } = require("internal/validators");
 
-const { inspect, types } = require("node:util");
+const types = require("node:util/types");
+let inspect: typeof import("node:util").inspect | undefined;
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -68,6 +69,11 @@ function EventEmitter(opts) {
     this.emit = emitWithRejectionCapture;
   } else {
     this[kCapture] = EventEmitterPrototype[kCapture];
+    const capture = EventEmitterPrototype[kCapture];
+    this[kCapture] = capture;
+    if (capture) {
+      this.emit = emitWithRejectionCapture;
+    }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
@@ -116,7 +122,8 @@ function emitError(emitter, args) {
 
   let stringifiedEr;
   try {
-    stringifiedEr = inspect(er);
+    if (!inspect) inspect = require("internal/util/inspect").inspect;
+    stringifiedEr = inspect!(er);
   } catch {
     stringifiedEr = er;
   }
@@ -280,9 +287,10 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 };
 
 function overflowWarning(emitter, type, handlers) {
+  if (!inspect) inspect = require("internal/util/inspect").inspect;
   handlers.warned = true;
   const warn = new Error(
-    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
+    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
   );
   warn.name = "MaxListenersExceededWarning";
   warn.emitter = emitter;

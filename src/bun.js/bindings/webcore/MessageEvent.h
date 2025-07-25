@@ -39,9 +39,6 @@
 
 namespace WebCore {
 
-class MessageEventSource {
-};
-
 class MessageEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(MessageEvent);
 
@@ -50,8 +47,8 @@ public:
     };
     // using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
     using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<ArrayBuffer>>;
-    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, std::optional<MessageEventSource>&& = std::nullopt, Vector<RefPtr<MessagePort>>&& = {});
-    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, std::optional<MessageEventSource>&& = std::nullopt, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     static Ref<MessageEvent> createForBindings();
 
@@ -59,7 +56,7 @@ public:
         JSC::JSValue data;
         String origin;
         String lastEventId;
-        std::optional<MessageEventSource> source;
+        RefPtr<MessagePort> source;
         Vector<RefPtr<MessagePort>> ports;
     };
     static Ref<MessageEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
@@ -69,17 +66,17 @@ public:
         JSC::Strong<JSC::JSObject> strongWrapper; // Keep the wrapper alive until the event is fired, since it is what keeps `data` alive.
     };
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, std::optional<MessageEventSource>&& = std::nullopt, Vector<RefPtr<MessagePort>>&& = {});
+    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, std::optional<MessageEventSource>&& = std::nullopt, Vector<RefPtr<MessagePort>>&& = {});
+    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     virtual ~MessageEvent();
 
-    void initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&&, Vector<RefPtr<MessagePort>>&&);
+    void initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&&, Vector<RefPtr<MessagePort>>&&);
 
     const String& origin() const { return m_origin; }
     const String& lastEventId() const { return m_lastEventId; }
-    const std::optional<MessageEventSource>& source() const { return m_source; }
+    const RefPtr<MessagePort>& source() const { return m_source; }
     const Vector<RefPtr<MessagePort>>& ports() const { return m_ports; }
 
     const DataType& data() const { return m_data; }
@@ -93,14 +90,14 @@ public:
 private:
     MessageEvent();
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
-    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, std::optional<MessageEventSource>&& = std::nullopt, Vector<RefPtr<MessagePort>>&& = {});
+    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     EventInterface eventInterface() const final;
 
     DataType m_data;
     String m_origin;
     String m_lastEventId;
-    std::optional<MessageEventSource> m_source;
+    RefPtr<MessagePort> m_source;
     Vector<RefPtr<MessagePort>> m_ports;
 
     JSValueInWrappedObject m_jsData;

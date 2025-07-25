@@ -5,7 +5,7 @@
 namespace JSC {
 Inspector::InspectorDebuggerAgent* debuggerAgent(JSC::JSGlobalObject* globalObject)
 {
-    if (LIKELY(!globalObject->hasDebugger())) {
+    if (!globalObject->hasDebugger()) [[likely]] {
         return nullptr;
     }
 

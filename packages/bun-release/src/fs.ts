@@ -1,7 +1,7 @@
-import path from "path";
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
-import crypto from "crypto";
+import path from "path";
 import { debug } from "./console";
 
 export function join(...paths: (string | string[])[]): string {
@@ -156,4 +156,16 @@ export function exists(path: string): boolean {
     debug("fs.existsSync failed", error);
   }
   return false;
+}
+
+export function link(path: string, newPath: string): void {
+  debug("link", path, newPath);
+  try {
+    fs.unlinkSync(newPath);
+    fs.linkSync(path, newPath);
+    return;
+  } catch (error) {
+    copy(path, newPath);
+    debug("fs.linkSync failed, reverting to copy", error);
+  }
 }

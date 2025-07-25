@@ -249,6 +249,7 @@ public:
     }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
+
         auto* httpContext = HttpContext<SSL>::create(Loop::get(), options);
         if (!httpContext) {
             return nullptr;
@@ -628,8 +629,14 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setRequireHostHeader(bool value) {
-        httpContext->getSocketContextData()->flags.requireHostHeader = value;
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+        httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
+        httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
+        httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
         return std::move(*this);
     }
 
@@ -639,4 +646,3 @@ typedef TemplatedApp<false> App;
 typedef TemplatedApp<true> SSLApp;
 
 }
-

@@ -22,19 +22,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-const std = @import("std");
-const bun = @import("bun");
-
-const Allocator = std.mem.Allocator;
-
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces
 /// One such stack buffer is created recursively for each pair of braces
 /// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
 /// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
-const GLOB_STACK_BUF_SIZE = 64;
-const BRACE_DEPTH_MAX = 10;
-
 const Brace = struct {
     open_brace_idx: u32,
     branch_idx: u32,
@@ -531,3 +523,7 @@ const BraceIndex = struct {
     start: u32 = 0,
     end: u32 = 0,
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

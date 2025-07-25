@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSError = bun.JSError;
-const String = bun.String;
-
 pub const JSBigInt = opaque {
     extern fn JSC__JSBigInt__fromJS(JSValue) ?*JSBigInt;
     pub fn fromJS(value: JSValue) ?*JSBigInt {
@@ -37,10 +29,16 @@ pub const JSBigInt = opaque {
 
     extern fn JSC__JSBigInt__toString(*JSBigInt, *JSGlobalObject) bun.String;
     pub fn toString(this: *JSBigInt, global: *JSGlobalObject) JSError!bun.String {
-        const str = JSC__JSBigInt__toString(this, global);
-        if (global.hasException()) {
-            return error.JSError;
-        }
-        return str;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSBigInt__toString, .{ this, global });
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

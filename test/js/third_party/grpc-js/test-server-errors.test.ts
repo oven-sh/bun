@@ -807,7 +807,7 @@ describe("Other conditions", () => {
 
   describe("Max message size", () => {
     const largeMessage = "a".repeat(10_000_000);
-    it.todo("Should be enforced on the server", done => {
+    it("Should be enforced on the server", done => {
       client.unary({ message: largeMessage }, (error?: ServiceError) => {
         assert(error);
         console.error(error);

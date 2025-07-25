@@ -94,7 +94,29 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
     ),
   );
 const PromiseAll = Promise.all;
+const PromiseResolve = Promise.resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
+const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
+  new Promise((resolve, reject) => {
+    const { length } = promises;
+
+    const returnVal = Array(length);
+    ObjectSetPrototypeOf(returnVal, null);
+    if (length === 0) resolve(returnVal);
+
+    let pendingPromises = length;
+    for (let i = 0; i < length; i++) {
+      const promise = mapFn != null ? mapFn(promises[i], i) : promises[i];
+      PromisePrototypeThen.$call(
+        PromiseResolve(promise),
+        result => {
+          returnVal[i] = result;
+          if (--pendingPromises === 0) resolve(returnVal);
+        },
+        reject,
+      );
+    }
+  });
 
 export default {
   Array,
@@ -113,6 +135,7 @@ export default {
     },
   ),
   SafePromiseAll,
+  SafePromiseAllReturnArrayLike,
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {

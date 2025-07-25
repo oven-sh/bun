@@ -1,8 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Calc = css.css_values.calc.Calc;
@@ -61,3 +58,5 @@ pub const CSSIntegerFns = struct {
         try css.to_css.integer(i32, this.*, W, dest);
     }
 };
+
+const bun = @import("bun");

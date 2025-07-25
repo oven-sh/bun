@@ -90,10 +90,7 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
-
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
 }
 

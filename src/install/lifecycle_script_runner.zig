@@ -1,19 +1,3 @@
-const bun = @import("bun");
-const Lockfile = @import("./lockfile.zig");
-const std = @import("std");
-const Async = bun.Async;
-const PosixSpawn = bun.posix.spawn;
-const PackageManager = @import("./install.zig").PackageManager;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSC = bun.JSC;
-const WaiterThread = bun.spawn.WaiterThread;
-const Timer = std.time.Timer;
-const String = bun.Semver.String;
-const string = bun.string;
-
-const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
     package_name: string,
@@ -28,6 +12,7 @@ pub const LifecycleScriptSubprocess = struct {
     has_called_process_exit: bool = false,
     manager: *PackageManager,
     envp: [:null]?[*:0]const u8,
+    shell_bin: ?[:0]const u8,
 
     timer: ?Timer = null,
 
@@ -37,7 +22,14 @@ pub const LifecycleScriptSubprocess = struct {
     optional: bool = false,
     started_at: u64 = 0,
 
+    ctx: ?InstallCtx,
+
     heap: bun.io.heap.IntrusiveField(LifecycleScriptSubprocess) = .{},
+
+    pub const InstallCtx = struct {
+        entry_id: Store.Entry.Id,
+        installer: *Store.Installer,
+    };
 
     pub const List = bun.io.heap.Intrusive(LifecycleScriptSubprocess, *PackageManager, sortByStartedAt);
 
@@ -59,7 +51,7 @@ pub const LifecycleScriptSubprocess = struct {
         return this.manager.event_loop.loop();
     }
 
-    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *JSC.AnyEventLoop {
+    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *jsc.AnyEventLoop {
         return &this.manager.event_loop;
     }
 
@@ -98,8 +90,21 @@ pub const LifecycleScriptSubprocess = struct {
         this.handleExit(process.status);
     }
 
-    // This is only used on the main thread.
-    var cwd_z_buf: bun.PathBuffer = undefined;
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+        output.flags.nonblocking = true;
+        output.flags.socket = true;
+        output.flags.memfd = false;
+        output.flags.received_eof = false;
+        output.flags.closed_without_reporting = false;
+
+        if (comptime Environment.allow_assert) {
+            const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
+
+            const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
+        }
+    }
 
     fn ensureNotInHeap(this: *LifecycleScriptSubprocess) void {
         if (this.heap.child != null or this.heap.next != null or this.heap.prev != null or this.manager.active_lifecycle_scripts.root == this) {
@@ -108,7 +113,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
-        bun.Analytics.Features.lifecycle_scripts += 1;
+        bun.analytics.Features.lifecycle_scripts += 1;
 
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
@@ -127,7 +132,6 @@ pub const LifecycleScriptSubprocess = struct {
         const manager = this.manager;
         const original_script = this.scripts.items[next_script_index].?;
         const cwd = this.scripts.cwd;
-        const env = manager.env;
         this.stdout.setParent(this);
         this.stderr.setParent(this);
 
@@ -136,11 +140,9 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        const shell_bin = if (Environment.isWindows) null else bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse null;
-
-        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
+        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.len + 1);
         defer copy_script.deinit();
-        try bun.CLI.RunCommand.replacePackageManagerRun(&copy_script, original_script.script);
+        try bun.cli.RunCommand.replacePackageManagerRun(&copy_script, original_script);
         try copy_script.append(0);
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
@@ -162,8 +164,8 @@ pub const LifecycleScriptSubprocess = struct {
 
         log("{s} - {s} $ {s}", .{ this.package_name, this.scriptName(), combined_script });
 
-        var argv = if (shell_bin != null and !Environment.isWindows) [_]?[*:0]const u8{
-            shell_bin.?,
+        var argv = if (this.shell_bin != null and !Environment.isWindows) [_]?[*:0]const u8{
+            this.shell_bin.?,
             "-c",
             combined_script,
             null,
@@ -206,7 +208,7 @@ pub const LifecycleScriptSubprocess = struct {
             .cwd = cwd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+                .loop = jsc.EventLoopHandle.init(&manager.event_loop),
             },
 
             .stream = false,
@@ -223,7 +225,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stdout.setParent(this);
                     _ = bun.sys.setNonblocking(stdout);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stdout, stdout);
                     try this.stdout.start(stdout, true).unwrap();
+                    if (this.stdout.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stdout.setParent(this);
                     this.stdout.startMemfd(stdout);
@@ -234,7 +241,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stderr.setParent(this);
                     _ = bun.sys.setNonblocking(stderr);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stderr, stderr);
                     try this.stderr.start(stderr, true).unwrap();
+                    if (this.stderr.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stderr.setParent(this);
                     this.stderr.startMemfd(stderr);
@@ -325,6 +337,10 @@ pub const LifecycleScriptSubprocess = struct {
 
                 if (exit.code > 0) {
                     if (this.optional) {
+                        if (this.ctx) |ctx| {
+                            ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .monotonic);
+                            ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                        }
                         _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                         this.deinitAndDeletePackage();
                         return;
@@ -361,6 +377,21 @@ pub const LifecycleScriptSubprocess = struct {
                     }
                 }
 
+                if (this.ctx) |ctx| {
+                    switch (this.current_script_index) {
+                        // preinstall
+                        0 => {
+                            const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.binaries, .monotonic);
+                            bun.debugAssert(previous_step == .run_preinstall);
+                            ctx.installer.startTask(ctx.entry_id);
+                            _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                            this.deinit();
+                            return;
+                        },
+                        else => {},
+                    }
+                }
+
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts.items[new_script_index] != null) {
                         this.resetPolls();
@@ -379,6 +410,15 @@ pub const LifecycleScriptSubprocess = struct {
                     Output.prettyErrorln("<r><d>[Scripts]<r> Finished scripts for <b>{}<r>", .{
                         bun.fmt.quote(this.package_name),
                     });
+                }
+
+                if (this.ctx) |ctx| {
+                    const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.done, .monotonic);
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.current_script_index != 0, @src());
+                        bun.assertWithLocation(previous_step == .@"run (post)install and (pre/post)prepare", @src());
+                    }
+                    ctx.installer.onTaskComplete(ctx.entry_id, .success);
                 }
 
                 // the last script finished
@@ -400,6 +440,10 @@ pub const LifecycleScriptSubprocess = struct {
             },
             .err => |err| {
                 if (this.optional) {
+                    if (this.ctx) |ctx| {
+                        ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .monotonic);
+                        ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                    }
                     _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                     this.deinitAndDeletePackage();
                     return;
@@ -484,17 +528,21 @@ pub const LifecycleScriptSubprocess = struct {
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]const u8,
+        shell_bin: ?[:0]const u8,
         optional: bool,
         log_level: PackageManager.Options.LogLevel,
         foreground: bool,
+        ctx: ?InstallCtx,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
             .envp = envp,
+            .shell_bin = shell_bin,
             .scripts = list,
             .package_name = list.package_name,
             .foreground = foreground,
             .optional = optional,
+            .ctx = ctx,
         });
 
         if (log_level.isVerbose()) {
@@ -510,6 +558,22 @@ pub const LifecycleScriptSubprocess = struct {
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
+            Global.exit(1);
         };
     }
 };
+
+const string = []const u8;
+
+const Lockfile = @import("./lockfile.zig");
+const std = @import("std");
+const PackageManager = @import("./install.zig").PackageManager;
+const Timer = std.time.Timer;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const jsc = bun.jsc;
+const Process = bun.spawn.Process;
+const Store = bun.install.Store;

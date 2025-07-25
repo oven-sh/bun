@@ -160,7 +160,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject *
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSURLSearchParams*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(jsNumber(thisObject->wrapped().size()));
 }
@@ -239,7 +239,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexical
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSURLSearchParamsPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -251,7 +251,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_appendBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -274,7 +274,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -302,7 +302,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -324,7 +324,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getAllBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -346,7 +346,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -376,7 +376,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_setBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());

@@ -147,7 +147,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasureConstructor, (JSGlobalObject * lexi
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformanceMeasurePrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceMeasure::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

@@ -1,7 +1,7 @@
 :host {
   --bun-error-color: #e33737;
-  --bun-error-monospace: ui-monospace, Menlo, Monaco, "Cascadia Mono",
-    "Segoe UI Mono", "Roboto Mono", "Oxygen Mono", "Ubuntu Monospace",
+  --bun-error-monospace:
+    ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", "Oxygen Mono", "Ubuntu Monospace",
     "Source Code Pro", "Fira Mono", "Droid Sans Mono", "Courier New", monospace;
   --bun-error-width: 512px;
 }
@@ -15,7 +15,9 @@
   text-decoration: underline;
 }
 #BunErrorOverlay-container {
-  box-shadow: 0px 16px 24px rgba(0, 0, 0, 0.06), 0px 2px 6px rgba(0, 0, 0, 0.1),
+  box-shadow:
+    0px 16px 24px rgba(0, 0, 0, 0.06),
+    0px 2px 6px rgba(0, 0, 0, 0.1),
     0px 0px 1px rgba(0, 0, 0, 0.04);
   backdrop-filter: blur(42px);
   backface-visibility: visible;
@@ -29,8 +31,9 @@
   right: 48px;
   z-index: 999999;
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol";
 }
 
 .BunErrorRoot--FullPage #BunErrorOverlay-container {

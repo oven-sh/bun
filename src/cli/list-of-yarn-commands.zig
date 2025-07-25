@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const all_yarn_commands = bun.ComptimeStringMap(void, .{
     // yarn v2.3 commands
     .{"add"},
@@ -75,3 +72,5 @@ pub const all_yarn_commands = bun.ComptimeStringMap(void, .{
     .{"workspace"},
     .{"workspaces"},
 });
+
+const bun = @import("bun");

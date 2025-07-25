@@ -46,11 +46,11 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSAES_PKCS1_v1_5::platformEncrypt(co
         return Exception { OperationError };
 
     size_t cipherTextLen;
-    if (EVP_PKEY_encrypt(ctx.get(), nullptr, &cipherTextLen, plainText.data(), plainText.size()) <= 0)
+    if (EVP_PKEY_encrypt(ctx.get(), nullptr, &cipherTextLen, plainText.begin(), plainText.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> cipherText(cipherTextLen);
-    if (EVP_PKEY_encrypt(ctx.get(), cipherText.data(), &cipherTextLen, plainText.data(), plainText.size()) <= 0)
+    if (EVP_PKEY_encrypt(ctx.get(), cipherText.begin(), &cipherTextLen, plainText.begin(), plainText.size()) <= 0)
         return Exception { OperationError };
     cipherText.shrink(cipherTextLen);
 
@@ -70,11 +70,11 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSAES_PKCS1_v1_5::platformDecrypt(co
         return Exception { OperationError };
 
     size_t plainTextLen;
-    if (EVP_PKEY_decrypt(ctx.get(), nullptr, &plainTextLen, cipherText.data(), cipherText.size()) <= 0)
+    if (EVP_PKEY_decrypt(ctx.get(), nullptr, &plainTextLen, cipherText.begin(), cipherText.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> plainText(plainTextLen);
-    if (EVP_PKEY_decrypt(ctx.get(), plainText.data(), &plainTextLen, cipherText.data(), cipherText.size()) <= 0)
+    if (EVP_PKEY_decrypt(ctx.get(), plainText.begin(), &plainTextLen, cipherText.begin(), cipherText.size()) <= 0)
         return Exception { OperationError };
     plainText.shrink(plainTextLen);
 

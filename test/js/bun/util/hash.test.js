@@ -66,3 +66,8 @@ it(`Bun.hash.murmur64v2()`, () => {
   gcTick();
   expect(Bun.hash.murmur64v2(new TextEncoder().encode("hello world"))).toBe(0xd3ba2368a832afcen);
 });
+it(`Bun.hash.rapidhash()`, () => {
+  expect(Bun.hash.rapidhash("hello world")).toBe(0x58a89bdcee89c08cn);
+  gcTick();
+  expect(Bun.hash.rapidhash(new TextEncoder().encode("hello world"))).toBe(0x58a89bdcee89c08cn);
+});

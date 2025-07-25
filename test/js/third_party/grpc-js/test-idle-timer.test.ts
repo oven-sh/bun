@@ -101,7 +101,7 @@ describe("Channel idle timer", () => {
   });
 });
 
-describe.todo("Channel idle timer with UDS", () => {
+describe("Channel idle timer with UDS", () => {
   let server: TestServer;
   let client: TestClient | null = null;
   before(() => {

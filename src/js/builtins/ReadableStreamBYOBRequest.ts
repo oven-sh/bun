@@ -33,8 +33,8 @@ export function initializeReadableStreamBYOBRequest(this, controller, view) {
 export function respond(this, bytesWritten) {
   if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
-  if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") === undefined)
-    throw new TypeError("ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined");
+  if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") == null)
+    throw $ERR_INVALID_STATE_TypeError("This BYOB request has been invalidated");
 
   return $readableByteStreamControllerRespond(
     $getByIdDirectPrivate(this, "associatedReadableByteStreamController"),
@@ -45,12 +45,12 @@ export function respond(this, bytesWritten) {
 export function respondWithNewView(this, view) {
   if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
-  if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") === undefined)
-    throw new TypeError("ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined");
+  if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") == null)
+    throw $ERR_INVALID_STATE_TypeError("This BYOB request has been invalidated");
 
-  if (!$isObject(view)) throw new TypeError("Provided view is not an object");
+  if (!$isObject(view)) throw $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view);
 
-  if (!ArrayBuffer.$isView(view)) throw new TypeError("Provided view is not an ArrayBufferView");
+  if (!ArrayBuffer.$isView(view)) throw $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view);
 
   return $readableByteStreamControllerRespondWithNewView(
     $getByIdDirectPrivate(this, "associatedReadableByteStreamController"),
@@ -60,7 +60,7 @@ export function respondWithNewView(this, view) {
 
 $getter;
 export function view(this) {
-  if (!$isReadableStreamBYOBRequest(this)) throw $makeGetterTypeError("ReadableStreamBYOBRequest", "view");
+  if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
   return $getByIdDirectPrivate(this, "view");
 }

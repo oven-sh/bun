@@ -567,7 +567,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
                 length = impl->byteLength();
             }
         } else if (auto* object = data.getObject()) {
-            JSValue lengthValue = object->getIfPropertyExists(globalObject, vm.propertyNames->length);
+            JSValue lengthValue = object->get(globalObject, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, {});
             length = lengthValue.toLength(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
@@ -615,11 +615,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto buffer = callFrame->argument(0);
     auto name = callFrame->argument(1);
 
-    if (!buffer.isCell()) return JSValue::encode(jsUndefined());
-    auto ty = buffer.asCell()->type();
+    if (!buffer.isUndefined()) {
+        if (!buffer.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
 
-    if (JSC::typedArrayType(ty) == NotTypedArray) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        auto ty = buffer.asCell()->type();
+
+        if (JSC::typedArrayType(ty) == NotTypedArray) {
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        }
     }
     return JSValue::encode(jsUndefined());
 }
@@ -637,8 +640,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
         unsigned length = array->length();
         for (size_t i = 0; i < length; i++) {
             JSValue element = array->getIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-            if (JSC::sameValue(globalObject, value, element)) {
+            RETURN_IF_EXCEPTION(scope, {});
+            auto same = JSC::sameValue(globalObject, value, element);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (same) {
                 return JSValue::encode(jsUndefined());
             }
         }
@@ -658,8 +663,9 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     }
 
     JSC::JSString* valueStr = value.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     auto valueView = valueStr->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (ASCIILiteral oneOfStr : oneOf) {
 
@@ -697,11 +703,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
     auto value = callFrame->argument(0);
 
-    if (value.isNull() || JSC::isArray(globalObject, value)) {
+    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
@@ -710,11 +716,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
-    if (value.isNull() || JSC::isArray(globalObject, value)) {
+    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 

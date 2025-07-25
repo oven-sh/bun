@@ -1,15 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
-const bits = bun.bits;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
-
-const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -32,30 +25,16 @@ const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
 const Length = css.css_values.length.Length;
-const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
 const Time = css.css_values.time.Time;
 const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
 const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 pub const font = css.css_properties.font;
 const border = css.css_properties.border;
@@ -230,7 +209,6 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-const ClipPath = masking.ClipPath;
 const MaskMode = masking.MaskMode;
 const MaskClip = masking.MaskClip;
 const GeometryBox = masking.GeometryBox;
@@ -254,8 +232,6 @@ const Position = position.Position;
 
 const Result = css.Result;
 
-const BabyList = bun.BabyList;
-const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
@@ -10376,3 +10352,11 @@ pub const PropertyIdTag = enum(u16) {
         };
     }
 };
+
+const properties_impl = @import("./properties_impl.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const bits = bun.bits;

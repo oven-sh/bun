@@ -1,15 +1,15 @@
 //! Implements prompt, alert, and confirm Web API
 comptime {
-    const js_alert = JSC.toJSHostFn(alert);
+    const js_alert = jsc.toJSHostFn(alert);
     @export(&js_alert, .{ .name = "WebCore__alert" });
-    const js_prompt = JSC.toJSHostFn(prompt.call);
+    const js_prompt = jsc.toJSHostFn(prompt.call);
     @export(&js_prompt, .{ .name = "WebCore__prompt" });
-    const js_confirm = JSC.toJSHostFn(confirm);
+    const js_confirm = jsc.toJSHostFn(confirm);
     @export(&js_confirm, .{ .name = "WebCore__confirm" });
 }
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -31,14 +31,14 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
             // 5. Show message to the user, treating U+000A LF as a line break.
             output.writeAll(message.slice()) catch {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return .undefined;
+                return .js_undefined;
             };
         }
     }
 
     output.writeAll(if (has_message) " [Enter] " else "Alert [Enter] ") catch {
         // 1. If we cannot show simple dialogs for this, then return.
-        return .undefined;
+        return .js_undefined;
     };
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -56,10 +56,10 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
 
-    return .undefined;
+    return .js_undefined;
 }
 
-fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -195,9 +195,9 @@ pub const prompt = struct {
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     pub fn call(
-        globalObject: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+        globalObject: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
         const arguments = callframe.arguments_old(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
@@ -331,7 +331,7 @@ pub const prompt = struct {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        var result = JSC.ZigString.init(input.items);
+        var result = jsc.ZigString.init(input.items);
         result.markUTF8();
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
@@ -344,7 +344,8 @@ pub const prompt = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const c = bun.c;
 const Environment = bun.Environment;
-const JSC = bun.jsc;
+const c = bun.c;
+const jsc = bun.jsc;

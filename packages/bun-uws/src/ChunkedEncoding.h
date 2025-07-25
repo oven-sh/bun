@@ -29,53 +29,110 @@
 
 namespace uWS {
 
-    constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x80000000;
-    constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x40000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(3ull << (sizeof(uint64_t) * 8 - 2));//0x3FFFFFFF;
-    constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFF;
-    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F000000;
+    constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x8000000000000000;
+    constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x4000000000000000;
+    constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x2000000000000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION);//0x1FFFFFFFFFFFFFFF;
+    constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
 
     inline unsigned int chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
     }
 
+    inline bool isParsingChunkedExtension(uint64_t state) {
+        return (state & STATE_IS_CHUNKED_EXTENSION) != 0;
+    }
+
     /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
     inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
-        /* Consume everything higher than 32 */
-        while (data.length() && data[0] > 32) {
 
-            unsigned char digit = (unsigned char)data[0];
-            if (digit >= 'a') {
-                digit = (unsigned char) (digit - ('a' - ':'));
-            } else if (digit >= 'A') {
-                digit = (unsigned char) (digit - ('A' - ':'));
+        /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed \r, \n ; depending on context)*/
+
+        if(!isParsingChunkedExtension(state)){
+            /* Consume everything higher than 32 and not ; (extension)*/
+            while (data.length() && data[0] > 32 && data[0] != ';') {
+
+                unsigned char digit = (unsigned char)data[0];
+                if (digit >= 'a') {
+                    digit = (unsigned char) (digit - ('a' - ':'));
+                } else if (digit >= 'A') {
+                    digit = (unsigned char) (digit - ('A' - ':'));
+                }
+
+                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
+
+                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
+                    state = STATE_IS_ERROR;
+                    return;
+                }
+
+                // extract state bits
+                uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
+
+                state = (state & STATE_SIZE_MASK) * 16ull + number;
+
+                state |= bits;
+                data.remove_prefix(1);
             }
+        }
 
-            unsigned int number = ((unsigned int) digit - (unsigned int) '0');
+        auto len = data.length();
+        if(len) {
+            // consume extension
+            if(data[0] == ';' || isParsingChunkedExtension(state)) {
+                // mark that we are parsing chunked extension
+                state |= STATE_IS_CHUNKED_EXTENSION;
+                /* we got chunk extension lets remove it*/
+                while(data.length()) {
+                    if(data[0] == '\r') {
+                        // we are done parsing extension
+                        state &= ~STATE_IS_CHUNKED_EXTENSION;
+                        break;
+                    }
+                    /* RFC 9110: Token format (TLDR; anything bellow 32 is not allowed)
+                    * TODO: add support for quoted-strings values (RFC 9110: 3.2.6. Quoted-String)
+                    * Example of chunked encoding with extensions:
+                    *
+                    * 4;key=value\r\n
+                    * Wiki\r\n
+                    * 5;foo=bar;baz=quux\r\n
+                    * pedia\r\n
+                    * 0\r\n
+                    * \r\n
+                    *
+                    * The chunk size is in hex (4, 5, 0), followed by optional
+                    * semicolon-separated extensions. Extensions consist of a key
+                    * (token) and optional value. The value may be a token or a
+                    * quoted string. The chunk data follows the CRLF after the
+                    * extensions and must be exactly the size specified.
+                    *
+                    * RFC 7230 Section 4.1.1 defines chunk extensions as:
+                    * chunk-ext = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
+                    * chunk-ext-name = token
+                    * chunk-ext-val = token / quoted-string
+                    */
+                    if(data[0] <= 32) {
+                        state = STATE_IS_ERROR;
+                        return;
+                    }
 
-            if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
-                state = STATE_IS_ERROR;
-                return;
+                    data.remove_prefix(1);
+                }
             }
+            if(data.length() >= 2) {
+                /* Consume \r\n */
+                if((data[0] != '\r' || data[1] != '\n')) {
+                    state = STATE_IS_ERROR;
+                    return;
+                }
+                state += 2; // include the two last /r/n
+                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
 
-            // extract state bits
-            uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
-
-            state = (state & STATE_SIZE_MASK) * 16ull + number;
-
-            state |= bits;
-            data.remove_prefix(1);
+                data.remove_prefix(2);
+            }
         }
-        /* Consume everything not /n */
-        while (data.length() && data[0] != '\n') {
-            data.remove_prefix(1);
-        }
-        /* Now we stand on \n so consume it and enable size */
-        if (data.length()) {
-            state += 2; // include the two last /r/n
-            state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
-            data.remove_prefix(1);
-        }
+        // short read
     }
 
     inline void decChunkSize(uint64_t &state, unsigned int by) {

@@ -1,16 +1,8 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 
 const Length = css.css_values.length.Length;
 const CSSNumber = css.css_values.number.CSSNumber;
-const Integer = css.css_values.number.Integer;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
@@ -24,7 +16,6 @@ const DashedIdentFns = css.css_values.ident.DashedIdentFns;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const PrintResult = css.PrintResult;
 const Result = css.Result;
 
 pub fn ValidQueryCondition(comptime T: type) void {
@@ -968,7 +959,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return parseValueFirst(input);
                 },
             }
-            return Result(This).success;
+            return .success;
         }
 
         pub fn parseNameFirst(input: *css.Parser) Result(This) {
@@ -1576,3 +1567,9 @@ fn writeMinMax(
 
     return dest.writeChar(')');
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

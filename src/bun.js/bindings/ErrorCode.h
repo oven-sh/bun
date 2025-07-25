@@ -9,6 +9,18 @@
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
 
+#define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
+    do {                                                                                                           \
+        SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm();                                                     \
+        EXCEPTION_ASSERT(!!(scope__).exception() == vm.traps().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
+        if (vm.traps().maybeNeedHandling()) [[unlikely]] {                                                         \
+            if (vm.hasExceptionsAfterHandlingTraps()) {                                                            \
+                scope__.release();                                                                                 \
+                return value__;                                                                                    \
+            }                                                                                                      \
+        }                                                                                                          \
+    } while (false)
+
 namespace Bun {
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
@@ -134,6 +146,7 @@ JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCII
 JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
 JSC::EncodedJSValue CLOSED_MESSAGE_PORT(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType);
+JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
 
 // URL
 
@@ -146,7 +159,7 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
 
 }
 
-void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode);
+void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);
 
 }

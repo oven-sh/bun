@@ -1,5 +1,6 @@
 import { DebugSession, OutputEvent } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import {
@@ -67,7 +68,7 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
   );
 
   if (getConfig("debugTerminal.enabled")) {
-    injectDebugTerminal2().then(context.subscriptions.push)
+    injectDebugTerminal2().then(context.subscriptions.push);
   }
 }
 
@@ -136,15 +137,17 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
 }
 
 async function injectDebugTerminal2() {
-  const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
+  const jsDebugExt =
+    vscode.extensions.getExtension("ms-vscode.js-debug-nightly") ||
+    vscode.extensions.getExtension("ms-vscode.js-debug");
   if (!jsDebugExt) {
-    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal);
   }
 
-  await jsDebugExt.activate()
-  const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
+  await jsDebugExt.activate();
+  const jsDebug: import("@vscode/js-debug").IExports = jsDebugExt.exports;
   if (!jsDebug) {
-    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal);
   }
 
   return jsDebug.registerDebugTerminalOptionsProvider({
@@ -218,7 +221,7 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
     session: vscode.DebugSession,
   ): Promise<vscode.ProviderResult<vscode.DebugAdapterDescriptor>> {
     const { configuration } = session;
-    const { request, url, __untitledName } = configuration;
+    const { request, url, __untitledName, localRoot, remoteRoot } = configuration;
 
     if (request === "attach") {
       for (const [adapterUrl, adapter] of adapters) {
@@ -228,7 +231,10 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
       }
     }
 
-    const adapter = new FileDebugSession(session.id, __untitledName);
+    const adapter = new FileDebugSession(session.id, __untitledName, {
+      localRoot,
+      remoteRoot,
+    });
     await adapter.initialize();
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
@@ -273,6 +279,11 @@ interface RuntimeExceptionThrownEvent {
   };
 }
 
+interface PathMapping {
+  localRoot?: string;
+  remoteRoot?: string;
+}
+
 class FileDebugSession extends DebugSession {
   // If these classes are moved/published, we should make sure
   // we remove these non-null assertions so consumers of
@@ -281,16 +292,58 @@ class FileDebugSession extends DebugSession {
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
+  localRoot?: string;
+  remoteRoot?: string;
+  #isWindowsRemote = false;
 
-  constructor(sessionId?: string, untitledDocPath?: string) {
+  constructor(sessionId?: string, untitledDocPath?: string, mapping?: PathMapping) {
     super();
     this.sessionId = sessionId;
     this.untitledDocPath = untitledDocPath;
+
+    if (mapping) {
+      this.localRoot = mapping.localRoot;
+      this.remoteRoot = mapping.remoteRoot;
+      if (typeof mapping.remoteRoot === "string") {
+        this.#isWindowsRemote = mapping.remoteRoot.includes("\\");
+      }
+    }
 
     if (untitledDocPath) {
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath ?? process.cwd();
       this.bunEvalPath = join(cwd, "[eval]");
     }
+  }
+
+  mapRemoteToLocal(p: string | undefined): string | undefined {
+    if (!p || !this.remoteRoot || !this.localRoot) return p;
+    const remoteModule = this.#isWindowsRemote ? path.win32 : path.posix;
+    let remoteRoot = remoteModule.normalize(this.remoteRoot);
+    if (!remoteRoot.endsWith(remoteModule.sep)) remoteRoot += remoteModule.sep;
+    let target = remoteModule.normalize(p);
+    const starts = this.#isWindowsRemote
+      ? target.toLowerCase().startsWith(remoteRoot.toLowerCase())
+      : target.startsWith(remoteRoot);
+    if (starts) {
+      const rel = target.slice(remoteRoot.length);
+      const localRel = rel.split(remoteModule.sep).join(path.sep);
+      return path.join(this.localRoot, localRel);
+    }
+    return p;
+  }
+
+  mapLocalToRemote(p: string | undefined): string | undefined {
+    if (!p || !this.remoteRoot || !this.localRoot) return p;
+    let localRoot = path.normalize(this.localRoot);
+    if (!localRoot.endsWith(path.sep)) localRoot += path.sep;
+    let localPath = path.normalize(p);
+    if (localPath.startsWith(localRoot)) {
+      const rel = localPath.slice(localRoot.length);
+      const remoteModule = this.#isWindowsRemote ? path.win32 : path.posix;
+      const remoteRel = rel.split(path.sep).join(remoteModule.sep);
+      return remoteModule.join(this.remoteRoot, remoteRel);
+    }
+    return p;
   }
 
   async initialize() {
@@ -305,14 +358,20 @@ class FileDebugSession extends DebugSession {
 
     if (untitledDocPath) {
       this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
-        if (response.body?.source?.path === bunEvalPath) {
-          response.body.source.path = untitledDocPath;
+        if (response.body?.source?.path) {
+          if (response.body.source.path === bunEvalPath) {
+            response.body.source.path = untitledDocPath;
+          } else {
+            response.body.source.path = this.mapRemoteToLocal(response.body.source.path);
+          }
         }
         if (Array.isArray(response.body?.breakpoints)) {
           for (const bp of response.body.breakpoints) {
             if (bp.source?.path === bunEvalPath) {
               bp.source.path = untitledDocPath;
               bp.verified = true;
+            } else if (bp.source?.path) {
+              bp.source.path = this.mapRemoteToLocal(bp.source.path);
             }
           }
         }
@@ -320,18 +379,39 @@ class FileDebugSession extends DebugSession {
       });
 
       this.adapter.on("Adapter.event", (event: DebugProtocolEvent) => {
-        if (event.body?.source?.path === bunEvalPath) {
-          event.body.source.path = untitledDocPath;
+        if (event.body?.source?.path) {
+          if (event.body.source.path === bunEvalPath) {
+            event.body.source.path = untitledDocPath;
+          } else {
+            event.body.source.path = this.mapRemoteToLocal(event.body.source.path);
+          }
         }
         this.sendEvent(event);
       });
     } else {
-      this.adapter.on("Adapter.response", response => this.sendResponse(response));
-      this.adapter.on("Adapter.event", event => this.sendEvent(event));
+      this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
+        if (response.body?.source?.path) {
+          response.body.source.path = this.mapRemoteToLocal(response.body.source.path);
+        }
+        if (Array.isArray(response.body?.breakpoints)) {
+          for (const bp of response.body.breakpoints) {
+            if (bp.source?.path) {
+              bp.source.path = this.mapRemoteToLocal(bp.source.path);
+            }
+          }
+        }
+        this.sendResponse(response);
+      });
+      this.adapter.on("Adapter.event", (event: DebugProtocolEvent) => {
+        if (event.body?.source?.path) {
+          event.body.source.path = this.mapRemoteToLocal(event.body.source.path);
+        }
+        this.sendEvent(event);
+      });
     }
 
     this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => { }),
+      this.sendRequest(command, args, 5000, () => {}),
     );
 
     adapters.set(url, this);
@@ -343,11 +423,15 @@ class FileDebugSession extends DebugSession {
     if (type === "request") {
       const { untitledDocPath, bunEvalPath } = this;
       const { command } = message;
-      if (untitledDocPath && (command === "setBreakpoints" || command === "breakpointLocations")) {
+      if (command === "setBreakpoints" || command === "breakpointLocations") {
         const args = message.arguments as any;
-        if (args.source?.path === untitledDocPath) {
+        if (untitledDocPath && args.source?.path === untitledDocPath) {
           args.source.path = bunEvalPath;
+        } else if (args.source?.path) {
+          args.source.path = this.mapLocalToRemote(args.source.path);
         }
+      } else if (command === "source" && message.arguments?.source?.path) {
+        message.arguments.source.path = this.mapLocalToRemote(message.arguments.source.path);
       }
 
       this.adapter.emit("Adapter.request", message);
@@ -365,7 +449,7 @@ class TerminalDebugSession extends FileDebugSession {
   signal!: TCPSocketSignal | UnixSignal;
 
   constructor() {
-    super();
+    super(undefined, undefined);
   }
 
   async initialize() {

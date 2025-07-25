@@ -97,7 +97,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
 // }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    if (LIKELY(!global->isAsyncContextTrackingEnabled())) {
+    if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
@@ -105,7 +105,7 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    if (LIKELY(!global->isAsyncContextTrackingEnabled())) {
+    if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
     }
 
@@ -120,4 +120,10 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
     return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
 }
 
+JSC::JSValue AsyncContextFrame::run(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
+{
+    ASSERT(global->isAsyncContextTrackingEnabled());
+
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+}
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

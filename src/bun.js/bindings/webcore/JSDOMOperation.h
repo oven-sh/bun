@@ -52,7 +52,7 @@ public:
 
         auto* thisObject = cast(lexicalGlobalObject, callFrame);
         if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-            if (UNLIKELY(!thisObject))
+            if (!thisObject) [[unlikely]]
                 return throwThisTypeError(lexicalGlobalObject, throwScope, JSClass::info()->className, operationName);
         } else
             ASSERT(thisObject);

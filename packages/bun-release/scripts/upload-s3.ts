@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
-import { getBuild, getRelease, getSemver, getSha } from "../src/github";
 import { join, tmp } from "../src/fs";
+import { getBuild, getRelease, getSemver, getSha } from "../src/github";
 
 // The source of truth for the git sha is what's in the local build, extracted from features.json
 // NOT the git tag revision.

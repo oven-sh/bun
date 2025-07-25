@@ -10,8 +10,5 @@
     "strict": true,
     "resolveJsonModule": true
   },
-  "include": [
-    "src",
-    "scripts"
-  ]
+  "include": ["src", "scripts"]
 }

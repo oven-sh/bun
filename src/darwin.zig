@@ -25,6 +25,8 @@ pub const nocancel = struct {
     pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
     pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32) isize;
     pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"poll$NOCANCEL"(fds: [*]std.posix.pollfd, nfds: c_int, timeout: c_int) isize;
+    pub extern "c" fn @"ppoll$NOCANCEL"(fds: [*]std.posix.pollfd, nfds: c_int, timeout: ?*const std.posix.timespec, sigmask: ?*const std.posix.sigset_t) isize;
 };
 
 pub const OSLog = opaque {
@@ -99,5 +101,5 @@ pub const OSLog = opaque {
     };
 };
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

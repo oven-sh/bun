@@ -3,18 +3,20 @@
 //! Windows uses a mix of `libuv`, `kernel32` and `ntdll`. macOS uses `libc`.
 //!
 //! Sometimes this namespace is referred to as "Syscall", prefer "bun.sys"/"sys"
+
+const This = @This();
+
 //
 // TODO: Split and organize this file. It is likely worth moving many functions
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
-const sys = @This(); // to avoid ambiguous references.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("errno/windows_errno.zig"),
-    .linux => @import("errno/linux_errno.zig"),
-    .mac => @import("errno/darwin_errno.zig"),
+    .windows => @import("./errno/windows_errno.zig"),
+    .linux => @import("./errno/linux_errno.zig"),
+    .mac => @import("./errno/darwin_errno.zig"),
     .wasm => {},
 };
-pub const workaround_symbols = @import("workaround_missing_symbols.zig").current;
+pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;
 /// Enum of `errno` values
 pub const E = platform_defs.E;
 /// Namespace of (potentially polyfilled) libuv `errno` values.
@@ -35,30 +37,6 @@ comptime {
     _ = &workaround_symbols; // execute comptime logic to export any needed symbols
 }
 
-const std = @import("std");
-const builtin = @import("builtin");
-
-const bun = @import("bun");
-const c = bun.c; // translated c headers
-const posix = std.posix;
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const default_allocator = bun.default_allocator;
-const kernel32 = bun.windows.kernel32;
-const ntdll = bun.windows.ntdll;
-const mem = std.mem;
-const page_size_min = std.heap.page_size_min;
-const mode_t = posix.mode_t;
-const libc = std.posix.system;
-
-const windows = bun.windows;
-
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const PathString = bun.PathString;
-const SystemError = JSC.SystemError;
-
 const linux = syscall;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;
@@ -77,8 +55,6 @@ pub const syscall = switch (Environment.os) {
     .mac => std.c,
     else => @compileError("not implemented"),
 };
-
-const darwin_nocancel = bun.darwin.nocancel;
 
 fn toPackedO(number: anytype) std.posix.O {
     return @bitCast(number);
@@ -216,6 +192,7 @@ pub const Tag = enum(u8) {
     chmod,
     chown,
     clonefile,
+    clonefileat,
     close,
     copy_file_range,
     copyfile,
@@ -272,6 +249,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    ppoll,
     watch,
     scandir,
 
@@ -318,7 +296,7 @@ pub const Tag = enum(u8) {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
     }
 
-    pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
+    pub var strings = std.EnumMap(Tag, jsc.C.JSStringRef).initFull(null);
 };
 
 pub const Error = struct {
@@ -331,7 +309,7 @@ pub const Error = struct {
 
     const todo_errno = std.math.maxInt(Int) - 1;
 
-    pub const Int = if (Environment.isWindows) u16 else u8; // @TypeOf(@intFromEnum(E.BADF));
+    pub const Int = u16;
 
     /// TODO: convert to function
     pub const oom = fromCode(E.NOMEM, .read);
@@ -343,10 +321,10 @@ pub const Error = struct {
     syscall: sys.Tag = sys.Tag.TODO,
     dest: []const u8 = "",
 
-    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
         var copy = this.*;
-        copy.path = try allocator.dupe(u8, copy.path);
-        copy.dest = try allocator.dupe(u8, copy.dest);
+        copy.path = allocator.dupe(u8, copy.path) catch bun.outOfMemory();
+        copy.dest = allocator.dupe(u8, copy.dest) catch bun.outOfMemory();
         return copy;
     }
 
@@ -372,8 +350,8 @@ pub const Error = struct {
         var that = self.withoutPath().toShellSystemError();
         bun.debugAssert(that.path.tag != .WTFStringImpl);
         bun.debugAssert(that.dest.tag != .WTFStringImpl);
-        that.path = bun.String.fromUTF8(self.path);
-        that.dest = bun.String.fromUTF8(self.dest);
+        that.path = bun.String.borrowUTF8(self.path);
+        that.dest = bun.String.borrowUTF8(self.dest);
         bun.debugAssert(that.path.tag != .WTFStringImpl);
         bun.debugAssert(that.dest.tag != .WTFStringImpl);
 
@@ -422,6 +400,22 @@ pub const Error = struct {
             .syscall = syscall_,
             .path = bun.span(path),
         };
+    }
+
+    pub fn deinit(this: *Error) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
+        if (this.path.len > 0) {
+            allocator.free(this.path);
+            this.path = "";
+        }
+        if (this.dest.len > 0) {
+            allocator.free(this.dest);
+            this.dest = "";
+        }
     }
 
     pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
@@ -507,12 +501,24 @@ pub const Error = struct {
         return null;
     }
 
+    pub fn msg(this: Error) ?[]const u8 {
+        if (this.getErrorCodeTagName()) |resolved_errno| {
+            const code, const system_errno = resolved_errno;
+            if (coreutils_error_map.get(system_errno)) |label| {
+                return label;
+            }
+            return code;
+        }
+        return null;
+    }
+
     /// Simpler formatting which does not allocate a message
     pub fn toShellSystemError(this: Error) SystemError {
         @setEvalBranchQuota(1_000_000);
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label
@@ -525,11 +531,11 @@ pub const Error = struct {
         }
 
         if (this.path.len > 0) {
-            err.path = bun.String.createUTF8(this.path);
+            err.path = bun.String.cloneUTF8(this.path);
         }
 
         if (this.dest.len > 0) {
-            err.dest = bun.String.createUTF8(this.dest);
+            err.dest = bun.String.cloneUTF8(this.dest);
         }
 
         if (this.fd.unwrapValid()) |valid| {
@@ -548,6 +554,7 @@ pub const Error = struct {
         var err = SystemError{
             .errno = -%@as(c_int, this.errno),
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label
@@ -561,7 +568,7 @@ pub const Error = struct {
 
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
-        var message_buf: [4096]u8 = undefined;
+        var message_buf: [4096]u8 = @splat(0);
         const message = message: {
             var stream = std.io.fixedBufferStream(&message_buf);
             const writer = stream.writer();
@@ -587,14 +594,14 @@ pub const Error = struct {
             }
             break :message stream.getWritten();
         };
-        err.message = bun.String.createUTF8(message);
+        err.message = bun.String.cloneUTF8(message);
 
         if (this.path.len > 0) {
-            err.path = bun.String.createUTF8(this.path);
+            err.path = bun.String.cloneUTF8(this.path);
         }
 
         if (this.dest.len > 0) {
-            err.dest = bun.String.createUTF8(this.dest);
+            err.dest = bun.String.cloneUTF8(this.dest);
         }
 
         if (this.fd.unwrapValid()) |valid| {
@@ -614,11 +621,7 @@ pub const Error = struct {
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
 
-    pub fn toJS(this: Error, ctx: *JSC.JSGlobalObject) JSC.C.JSObjectRef {
-        return this.toSystemError().toErrorInstance(ctx).asObjectRef();
-    }
-
-    pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
         return this.toSystemError().toErrorInstance(ptr);
     }
 };
@@ -640,8 +643,8 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     buf[0] = 0;
 
     if (comptime Environment.isWindows) {
-        var wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
+        var wbuf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(wbuf);
         const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, wbuf);
         if (Result.errnoSysP(len, .getcwd, buf)) |err| return err;
         return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
@@ -656,7 +659,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
 
 const syscall_or_c = if (Environment.isLinux) syscall else bun.c;
 
-pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) Maybe(void) {
+pub fn fchown(fd: bun.FileDescriptor, uid: jsc.Node.uid_t, gid: jsc.Node.gid_t) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchown(fd, uid, gid);
     }
@@ -668,7 +671,7 @@ pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) 
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -686,7 +689,7 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -702,7 +705,7 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -720,29 +723,32 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
             return err;
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
 }
 
-pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.stringZ else bun.string) Maybe(void) {
+pub fn chdirOSPath(
+    path: [:0]const u8,
+    destination: if (Environment.isPosix) [:0]const u8 else []const u8,
+) Maybe(void) {
     if (comptime Environment.isPosix) {
         const rc = syscall.chdir(destination);
-        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse Maybe(void).success;
+        return Maybe(void).errnoSysPD(rc, .chdir, path, destination) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
+        const wbuf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(wbuf);
         if (c.SetCurrentDirectoryW(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
             log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
-            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
+            return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse .success;
         }
 
         log("SetCurrentDirectory({s}) = {d}", .{ destination, 0 });
 
-        return Maybe(void).success;
+        return .success;
     }
 
     @compileError("Not implemented yet");
@@ -771,10 +777,10 @@ pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (comptime Type == *[*:0]u16) {
             if (kernel32.SetCurrentDirectory(destination) != 0) {
-                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
+                return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse .success;
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         if (comptime Type == bun.OSPathSliceZ or Type == [:0]u16) {
@@ -872,7 +878,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
 }
-pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.lutimes(path, atime, mtime);
     }
@@ -881,15 +887,15 @@ pub fn lutimes(path: [:0]const u8, atime: JSC.Node.TimeLike, mtime: JSC.Node.Tim
 }
 
 pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
-    const buf = bun.WPathBufferPool.get();
-    defer bun.WPathBufferPool.put(buf);
+    const buf = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(buf);
     return mkdiratW(dir_fd, bun.strings.toWPathNormalized(buf, file_path));
 }
 
 pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode_t) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
-        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
+        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
         else => @compileError("mkdir is not implemented on this platform"),
     };
 }
@@ -907,13 +913,13 @@ pub const mkdirat = if (Environment.isWindows)
 else
     mkdiratPosix;
 
-pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Maybe(void) {
+pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: [:0]const u16, _: i32) Maybe(void) {
     const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .create = true });
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
     dir_to_make.result.close();
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
@@ -938,18 +944,18 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
 
 pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
-        .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
         .windows => {
-            const wbuf = bun.WPathBufferPool.get();
-            defer bun.WPathBufferPool.put(wbuf);
+            const wbuf = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(wbuf);
             return Maybe(void).errnoSysP(
                 bun.windows.CreateDirectoryW(bun.strings.toKernel32Path(wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
-            ) orelse Maybe(void).success;
+            ) orelse .success;
         },
 
         else => @compileError("mkdir is not implemented on this platform"),
@@ -963,7 +969,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
                 .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
-        }), flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse .success;
     }
 
     if (comptime Environment.isLinux) {
@@ -972,19 +978,19 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
                 .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
-        }), flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
+        const wbuf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(wbuf);
         const wpath = bun.strings.toKernel32Path(wbuf, file_path);
         assertIsValidWindowsPath(u16, wpath);
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
             file_path,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 }
 
@@ -1002,7 +1008,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
             }
 
             log("CreateDirectoryW({}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
-            return Maybe(void).success;
+            return .success;
         },
     };
 }
@@ -1026,8 +1032,6 @@ pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     unreachable;
 }
 
-const w = std.os.windows;
-
 /// Normalizes for ntdll.dll APIs. Replaces long-path prefixes with nt object
 /// prefixes, which may not function properly in kernel32 APIs.
 // TODO: Rename to normalizePathWindowsForNtdll
@@ -1041,8 +1045,8 @@ pub fn normalizePathWindows(
     if (comptime T != u8 and T != u16) {
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
-    const wbuf = if (T != u16) bun.WPathBufferPool.get();
-    defer if (T != u16) bun.WPathBufferPool.put(wbuf);
+    const wbuf = if (T != u16) bun.w_path_buffer_pool.get();
+    defer if (T != u16) bun.w_path_buffer_pool.put(wbuf);
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
@@ -1112,8 +1116,8 @@ pub fn normalizePathWindows(
         path = path[2..];
     }
 
-    const buf1 = bun.WPathBufferPool.get();
-    defer bun.WPathBufferPool.put(buf1);
+    const buf1 = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(buf1);
     @memcpy(buf1[0..base_path.len], base_path);
     buf1[base_path.len] = '\\';
     @memcpy(buf1[base_path.len + 1 .. base_path.len + 1 + path.len], path);
@@ -1267,8 +1271,8 @@ fn openDirAtWindowsT(
     path: []const T,
     options: WindowsOpenDirOptions,
 ) Maybe(bun.FileDescriptor) {
-    const wbuf = bun.WPathBufferPool.get();
-    defer bun.WPathBufferPool.put(wbuf);
+    const wbuf = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(wbuf);
 
     const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
@@ -1586,8 +1590,8 @@ pub fn openFileAtWindowsT(
     path: []const T,
     options: NtCreateFileOptions,
 ) Maybe(bun.FileDescriptor) {
-    const wbuf = bun.WPathBufferPool.get();
-    defer bun.WPathBufferPool.put(wbuf);
+    const wbuf = bun.w_path_buffer_pool.get();
+    defer bun.w_path_buffer_pool.put(wbuf);
 
     const norm = switch (normalizePathWindows(T, dirFd, path, wbuf, .{})) {
         .err => |err| return .{ .err = err },
@@ -1753,7 +1757,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
             !(attrs.is_readonly) or
             (attrs.is_directory))
         {
-            return .{ .result = {} };
+            return .success;
         } else {
             return .{ .err = .{
                 .errno = @intFromEnum(E.PERM),
@@ -1762,7 +1766,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
         }
     }
     // TODO: fix that bun's std library fork has a different parameter type.
-    return Maybe(void).errnoSysP(syscall.access(path, @bitCast(mode)), .access, path) orelse .{ .result = {} };
+    return Maybe(void).errnoSysP(syscall.access(path, @bitCast(mode)), .access, path) orelse .success;
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1773,7 +1777,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, pe
     }
 }
 
-pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.JSC.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.jsc.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         const f = flags.toWindows() catch return .{ .err = .{
             .errno = @intFromEnum(E.INVAL),
@@ -2203,6 +2207,36 @@ pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return recv(fd, buf, socket_flags_nonblock);
 }
 
+pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
+            .linux => linux.poll(fds.ptr, fds.len, timeout),
+            else => @compileError("poll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .poll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+}
+
+pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
+            .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
+            else => @compileError("ppoll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+}
+
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     const debug_timer = bun.Output.DebugTimer.start();
@@ -2236,6 +2270,18 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
+}
+
+pub fn kevent(fd: bun.FileDescriptor, changelist: []const std.c.Kevent, eventlist: []std.c.Kevent, timeout: ?*std.posix.timespec) Maybe(usize) {
+    while (true) {
+        const rc = std.c.kevent(fd.cast(), changelist.ptr, @intCast(changelist.len), eventlist.ptr, @intCast(eventlist.len), timeout);
+        if (Maybe(usize).errnoSysFd(rc, .kevent, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+    unreachable;
 }
 
 pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
@@ -2342,7 +2388,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
             .FileEndOfFileInformation,
         );
 
-        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse Maybe(void).success;
+        return Maybe(void).errnoSysFd(rc, .ftruncate, fd) orelse .success;
     }
 
     return while (true) {
@@ -2350,7 +2396,7 @@ pub fn ftruncate(fd: bun.FileDescriptor, size: isize) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     };
 }
 
@@ -2360,7 +2406,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2393,7 +2439,7 @@ pub fn renameatConcurrently(
     comptime opts: struct { move_fallback: bool = false },
 ) Maybe(void) {
     switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
-        .result => return Maybe(void).success,
+        .result => return .success,
         .err => |e| {
             if (opts.move_fallback and e.getErrno() == E.XDEV) {
                 bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
@@ -2459,7 +2505,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
 pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
@@ -2482,17 +2528,17 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         }
         if (comptime Environment.allow_assert)
             log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
 pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     if (Environment.isWindows) {
-        const w_buf_from = bun.WPathBufferPool.get();
-        const w_buf_to = bun.WPathBufferPool.get();
+        const w_buf_from = bun.w_path_buffer_pool.get();
+        const w_buf_to = bun.w_path_buffer_pool.get();
         defer {
-            bun.WPathBufferPool.put(w_buf_from);
-            bun.WPathBufferPool.put(w_buf_to);
+            bun.w_path_buffer_pool.put(w_buf_from);
+            bun.w_path_buffer_pool.put(w_buf_to);
         }
 
         const rc = bun.windows.renameAtW(
@@ -2514,7 +2560,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         }
         if (comptime Environment.allow_assert)
             log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2524,7 +2570,7 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2532,9 +2578,11 @@ pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("symlink({s}, {s}) = {s}", .{ target, dest, @tagName(err.getErrno()) });
             return err;
         }
-        return Maybe(void).success;
+        log("symlink({s}, {s}) = 0", .{ target, dest });
+        return .success;
     }
 }
 
@@ -2542,9 +2590,11 @@ pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]cons
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("symlinkat({s}, {}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
             return err;
         }
-        return Maybe(void).success;
+        log("symlinkat({s}, {}, {s}) = 0", .{ target, dirfd, dest });
+        return .success;
     }
 }
 
@@ -2567,31 +2617,49 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
-    if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
+/// Symlinks on Windows can be relative or absolute, and junctions can
+/// only be absolute. Passing `null` for `abs_fallback_junction_target`
+/// is saying `target` is already absolute.
+pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8, abs_fallback_junction_target: ?[:0]const u8) Maybe(void) {
+    if (comptime !Environment.isWindows) {
+        // return symlink(target, dest);
+        @compileError("windows only plz!!");
+    }
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
-        const sym16 = bun.WPathBufferPool.get();
-        const target16 = bun.WPathBufferPool.get();
+        const sym16 = bun.w_path_buffer_pool.get();
+        const target16 = bun.w_path_buffer_pool.get();
         defer {
-            bun.WPathBufferPool.put(sym16);
-            bun.WPathBufferPool.put(target16);
+            bun.w_path_buffer_pool.put(sym16);
+            bun.w_path_buffer_pool.put(target16);
         }
         const sym_path = bun.strings.toWPathNormalizeAutoExtend(sym16, dest);
         const target_path = bun.strings.toWPathNormalizeAutoExtend(target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
-                return Maybe(void).success;
+                return .success;
             },
             .err => |err| {
-                if (err.getErrno() == .EXIST) {
-                    return .{ .err = err };
+                switch (err.getErrno()) {
+                    .EXIST, .NOENT => {
+                        // if the destination already exists, or a component
+                        // of the destination doesn't exist, return the error
+                        // without trying junctions.
+                        return .{ .err = err };
+                    },
+                    else => {
+                        // fallthrough to junction
+                    },
                 }
             },
         }
     }
 
-    return sys_uv.symlinkUV(target, dest, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(
+        abs_fallback_junction_target orelse target,
+        dest,
+        bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
+    );
 }
 
 pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
@@ -2617,6 +2685,20 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
 
             if (errno.toSystemErrno()) |err| {
+                switch (err) {
+                    .ENOENT,
+                    .EEXIST,
+                    => {
+                        return .{
+                            .err = .{
+                                .errno = @intFromEnum(err),
+                                .syscall = .symlink,
+                            },
+                        };
+                    },
+
+                    else => {},
+                }
                 WindowsSymlinkOptions.has_failed_to_create_symlink = true;
                 return .{
                     .err = .{
@@ -2633,7 +2715,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             flags,
         });
 
-        return Maybe(void).success;
+        return .success;
     }
 
     unreachable;
@@ -2645,9 +2727,43 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(c.clonefile(from, to, 0), .clonefile)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("clonefile({s}, {s}) = {s}", .{ from, to, @tagName(err.getErrno()) });
             return err;
         }
-        return Maybe(void).success;
+        log("clonefile({s}, {s}) = 0", .{ from, to });
+        return .success;
+    }
+}
+
+pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isMac) {
+        @compileError("macOS only");
+    }
+
+    while (true) {
+        if (Maybe(void).errnoSys(c.clonefileat(from.cast(), from_path, to.cast(), to_path, 0), .clonefileat)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log(
+                \\clonefileat(
+                \\  {},
+                \\  {s},
+                \\  {},
+                \\  {s},
+                \\) = {s}
+                \\
+            , .{ from, from_path, to, to_path, @tagName(err.getErrno()) });
+            return err;
+        }
+        log(
+            \\clonefileat(
+            \\  {},
+            \\  {s},
+            \\  {},
+            \\  {s},
+            \\) = 0
+            \\
+        , .{ from, from_path, to, to_path });
+        return .success;
     }
 }
 
@@ -2659,7 +2775,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: posix.system.COPYFI
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2671,34 +2787,42 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: p
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
 pub fn unlinkW(from: [:0]const u16) Maybe(void) {
-    if (windows.DeleteFileW(from.ptr) != 0) {
-        return .{ .err = Error.fromCode(bun.windows.getLastErrno(), .unlink) };
+    const ret = windows.DeleteFileW(from);
+    if (Maybe(void).errnoSys(ret, .unlink)) |err| {
+        log("DeleteFileW({s}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
+        return err;
     }
 
-    return Maybe(void).success;
+    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
+    return .success;
 }
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     if (comptime Environment.isWindows) {
-        const w_buf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(w_buf);
-        return unlinkW(bun.strings.toNTPath(w_buf, from));
+        const w_buf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(w_buf);
+        return unlinkW(bun.strings.toWPathNormalizeAutoExtend(w_buf, from));
     }
 
     while (true) {
         if (Maybe(void).errnoSysP(syscall.unlink(from), .unlink, from)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("unlink({s}) = {s}", .{ from, @tagName(err.getErrno()) });
             return err;
         }
 
         log("unlink({s}) = 0", .{from});
-        return Maybe(void).success;
+        return .success;
     }
+}
+
+pub fn rmdir(to: anytype) Maybe(void) {
+    return rmdirat(FD.cwd(), to);
 }
 
 pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
@@ -2708,8 +2832,8 @@ pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) Maybe(void) {
     if (Environment.isWindows) {
         if (comptime std.meta.Elem(@TypeOf(to)) == u8) {
-            const w_buf = bun.WPathBufferPool.get();
-            defer bun.WPathBufferPool.put(w_buf);
+            const w_buf = bun.w_path_buffer_pool.get();
+            defer bun.w_path_buffer_pool.put(w_buf);
             return unlinkatWithFlags(dirfd, bun.strings.toNTPath(w_buf, bun.span(to)), flags);
         }
 
@@ -2723,12 +2847,12 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
             log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
-        return Maybe(void).success;
+        return .success;
     }
     unreachable;
 }
@@ -2741,12 +2865,12 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
             log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -2848,12 +2972,12 @@ pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
         .err => |err| return .{ .err = err },
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
     while (true) {
-        const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
+        const rc = syscall.setsockopt(fd.cast(), level, optname, std.mem.asBytes(&value), @sizeOf(i32));
         if (Maybe(i32).errnoSysFd(rc, .setsockopt, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });
@@ -2868,23 +2992,60 @@ pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32
 
 pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
+        log("setNoSigpipe({})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
-            .result => .{ .result = {} },
+            .result => .success,
             .err => |err| .{ .err = err },
         };
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 const socketpair_t = if (Environment.isLinux) i32 else c_uint;
+const NonblockingStatus = enum { blocking, nonblocking };
 
 /// libc socketpair() except it defaults to:
 /// - SOCK_CLOEXEC on Linux
 /// - SO_NOSIGPIPE on macOS
 ///
 /// On POSIX it otherwise makes it do O_CLOEXEC.
-pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: enum { blocking, nonblocking }) Maybe([2]bun.FileDescriptor) {
+pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, false);
+}
+
+/// We can't actually use SO_NOSIGPIPE for the stdout of a
+/// subprocess we don't control because they have different
+/// semantics.
+///
+/// For example, when running the shell script:
+/// `grep hi src/js_parser/zig | echo hi`,
+///
+/// The `echo hi` command will terminate first and close its
+/// end of the socketpair.
+///
+/// With SO_NOSIGPIPE, when `grep` continues and tries to write to
+/// stdout, `ESIGPIPE` is returned and then `grep` handles this
+/// and prints `grep: stdout: Broken pipe`
+///
+/// So the solution is to NOT set SO_NOGSIGPIPE in that scenario.
+///
+/// I think this only applies to stdout/stderr, not stdin. `read(...)`
+/// and `recv(...)` do not return EPIPE as error codes.
+pub fn socketpairForShell(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, true);
+}
+
+pub const ShellSigpipeConfig = enum {
+    /// Only SO_NOSIGPIPE for the socket in the pair
+    /// that *we're* going to use, don't touch the one
+    /// we hand off to the subprocess
+    spawn,
+    /// off completely
+    pipeline,
+};
+
+pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, for_shell: bool) Maybe([2]bun.FileDescriptor) {
     if (comptime !Environment.isPosix) @compileError("linux only!");
 
     var fds_i: [2]syscall.fd_t = .{ 0, 0 };
@@ -2926,10 +3087,15 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
             }
 
             if (comptime Environment.isMac) {
-                inline for (0..2) |i| {
-                    switch (setNoSigpipe(.fromNative(fds_i[i]))) {
-                        .err => |err| break :err err,
-                        else => {},
+                if (for_shell) {
+                    // see the comment on `socketpairForShell` for why we don't
+                    // set SO_NOSIGPIPE here
+                } else {
+                    inline for (0..2) |i| {
+                        switch (setNoSigpipe(.fromNative(fds_i[i]))) {
+                            .err => |err| break :err err,
+                            else => {},
+                        }
                     }
                 }
             }
@@ -2966,7 +3132,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
 pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
-    } else return Maybe(void).success;
+    } else return .success;
 }
 
 pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
@@ -3123,8 +3289,8 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
         const attributes: WindowsFileAttributes = @bitCast(dword);
         return attributes;
     } else {
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
+        const wbuf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(wbuf);
         const path_to_use = bun.strings.toKernel32Path(wbuf, path);
         return getFileAttributes(path_to_use);
     }
@@ -3187,11 +3353,11 @@ pub fn existsZ(path: [:0]const u8) bool {
     }
 }
 
-pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
+pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return JSC.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        const path = std.os.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
         return faccessat(dir_fd, path);
     }
 
@@ -3200,23 +3366,23 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
         syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
-            return JSC.Maybe(bool){ .result = true };
+            return bun.sys.Maybe(bool){ .result = true };
         }
 
-        return JSC.Maybe(bool){ .result = false };
+        return bun.sys.Maybe(bool){ .result = false };
     }
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
     syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
-        return JSC.Maybe(bool){ .result = true };
+        return bun.sys.Maybe(bool){ .result = true };
     }
 
-    return JSC.Maybe(bool){ .result = false };
+    return bun.sys.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
+pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(bool) {
     return switch (existsAtType(dir, subpath)) {
         //
         .err => |err| if (err.getErrno() == .NOENT)
@@ -3227,7 +3393,7 @@ pub fn directoryExistsAt(dir: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bo
     };
 }
 
-pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn futimens(fd: bun.FileDescriptor, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("TODO: futimes");
 
     while (true) {
@@ -3239,7 +3405,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Nod
         log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
-            return Maybe(void).success;
+            return .success;
         }
 
         switch (getErrno(rc)) {
@@ -3251,7 +3417,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Nod
     unreachable;
 }
 
-fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike, flags: u32) Maybe(void) {
+fn utimensWithFlags(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike, flags: u32) Maybe(void) {
     if (comptime Environment.isWindows) @compileError("TODO: utimens");
 
     while (true) {
@@ -3270,7 +3436,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
         log("utimensat({d}, atime=({d}, {d}), mtime=({d}, {d})) = {d}", .{ std.fs.cwd().fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
-            return Maybe(void).success;
+            return .success;
         }
 
         switch (getErrno(rc)) {
@@ -3293,7 +3459,7 @@ pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
     };
 }
 
-pub fn utimens(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC.Node.TimeLike) Maybe(void) {
+pub fn utimens(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     return utimensWithFlags(path, atime, mtime, 0);
 }
 
@@ -3316,7 +3482,7 @@ pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) 
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
 pub const ExistsAtType = enum {
@@ -3325,12 +3491,18 @@ pub const ExistsAtType = enum {
 };
 pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType) {
     if (comptime Environment.isWindows) {
-        const wbuf = bun.WPathBufferPool.get();
-        defer bun.WPathBufferPool.put(wbuf);
-        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+        const wbuf = bun.w_path_buffer_pool.get();
+        defer bun.w_path_buffer_pool.put(wbuf);
+        var path = if (std.meta.Child(@TypeOf(subpath)) == u16)
             bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
+
+        // trim leading .\
+        // NtQueryAttributesFile expects relative paths to not start with .\
+        if (path.len > 2 and path[0] == '.' and path[1] == '\\') {
+            path = path[2..];
+        }
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
@@ -3353,7 +3525,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         };
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
-        if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
+        if (bun.sys.Maybe(bool).errnoSys(rc, .access)) |err| {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
@@ -3381,8 +3553,8 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
     }
 
     if (std.meta.sentinel(@TypeOf(subpath)) == null) {
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         @memcpy(path_buf[0..subpath.len], subpath);
         path_buf[subpath.len] = 0;
         const slice: [:0]const u8 = @ptrCast(path_buf);
@@ -3477,7 +3649,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             linux.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 
     if (comptime Environment.isMac) {
@@ -3485,7 +3657,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             std.c.lseek(fd.cast(), @intCast(offset), posix.SEEK.SET),
             .lseek,
             fd,
-        ) orelse Maybe(void).success;
+        ) orelse .success;
     }
 
     if (comptime Environment.isWindows) {
@@ -3499,9 +3671,9 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             windows.FILE_BEGIN,
         );
         if (rc == windows.FALSE) {
-            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse Maybe(void).success;
+            return Maybe(void).errnoSysFd(0, .lseek, fd) orelse .success;
         }
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -3571,8 +3743,13 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
     const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
-        .err => |err| return .{ .err = err },
+        .err => |err| {
+            log("dup({}) = {}", .{ fd, err });
+            return .{ .err = err };
+        },
     };
+
+    log("dup({}) = {}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
 
     return .initResult(.fromNative(@intCast(out)));
 }
@@ -3581,28 +3758,62 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     return dupWithFlags(fd, 0);
 }
 
-pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun.FileDescriptor, dest_name: []const u8) Maybe(void) {
-    return Maybe(void).errnoSysP(
-        std.c.linkat(
-            @intCast(dir_fd),
-            &(std.posix.toPosixPath(basename) catch return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
-                    .syscall = .open,
-                },
-            }),
-            @intCast(dest_dir_fd),
-            &(std.posix.toPosixPath(dest_name) catch return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
-                    .syscall = .open,
-                },
-            }),
-            0,
-        ),
-        .link,
-        basename,
-    ) orelse Maybe(void).success;
+pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        if (T == u8) {
+            return sys_uv.link(src, dest);
+        }
+
+        if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
+            return Maybe(void).errno(bun.windows.getLastErrno(), .link);
+        }
+        log("CreateHardLinkW({s}, {s}) = 0", .{
+            bun.fmt.fmtPath(T, dest, .{}),
+            bun.fmt.fmtPath(T, src, .{}),
+        });
+        return .success;
+    }
+
+    if (T == u16) {
+        @compileError("unexpected path type");
+    }
+
+    const ret = std.c.link(src, dest);
+    if (Maybe(void).errnoSysPD(ret, .link, src, dest)) |err| {
+        log("link({s}, {s}) = {s}", .{ src, dest, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("link({s}, {s}) = 0", .{ src, dest });
+    return .success;
+}
+
+pub fn linkat(src: bun.FileDescriptor, src_path: []const u8, dest: bun.FileDescriptor, dest_path: []const u8) Maybe(void) {
+    return linkatZ(
+        src,
+        &(std.posix.toPosixPath(src_path) catch return .{
+            .err = .{
+                .errno = @intFromEnum(E.NOMEM),
+                .syscall = .link,
+            },
+        }),
+        dest,
+        &(std.posix.toPosixPath(dest_path) catch return .{
+            .err = .{
+                .errno = @intFromEnum(E.NOMEM),
+                .syscall = .link,
+            },
+        }),
+    );
+}
+
+pub fn linkatZ(src: FD, src_path: [:0]const u8, dest: FD, dest_path: [:0]const u8) Maybe(void) {
+    const ret = std.c.linkat(src.cast(), src_path, dest.cast(), dest_path, 0);
+    if (Maybe(void).errnoSysP(ret, .link, src_path)) |err| {
+        log("linkat({}, {s}, {}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("linkat({}, {s}, {}, {s}) = 0", .{ src, src_path, dest, dest_path });
+    return .success;
 }
 
 pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name: [:0]const u8) Maybe(void) {
@@ -3662,7 +3873,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
             CAP_DAC_READ_SEARCH.status.store(1, .monotonic);
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -3795,10 +4006,9 @@ pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
 }
 
 pub fn isPollable(mode: mode_t) bool {
+    if (comptime bun.Environment.isWindows) return false;
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
-
-const This = @This();
 
 /// TODO: make these all methods on `bun.FD`, and define them as methods `bun.FD`
 pub const File = struct {
@@ -3898,14 +4108,14 @@ pub const File = struct {
                 .err => |err| return .{ .err = err },
                 .result => |amt| {
                     if (amt == 0) {
-                        return .{ .result = {} };
+                        return .success;
                     }
                     remain = remain[amt..];
                 },
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn writeFile(
@@ -3922,7 +4132,7 @@ pub const File = struct {
             .err => |err| return .{ .err = err },
             .result => {},
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub const ReadError = anyerror;
@@ -4041,7 +4251,7 @@ pub const File = struct {
 
         pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
             if (self.err) |err| {
-                try (JSC.Maybe(void){ .err = err }).unwrap();
+                try (bun.sys.Maybe(void){ .err = err }).unwrap();
             }
             return self.bytes.items;
         }
@@ -4611,9 +4821,12 @@ export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
     return @tagName(SystemErrno.init(err) orelse return null);
 }
 
+/// Small "fire and forget" wrapper around unlink for c usage that handles EINTR, windows path conversion, etc.
+export fn Bun__unlink(ptr: [*:0]const u8, len: usize) void {
+    _ = unlink(ptr[0..len :0]);
+}
+
 // TODO: this is wrong on Windows
-const libc_stat = bun.Stat;
-const Stat = std.fs.File.Stat;
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
@@ -4778,7 +4991,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = bun.c.fchown(out_handle.cast(), stat_.uid, stat_.gid);
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 }
 
@@ -5019,3 +5232,33 @@ pub const umask = switch (Environment.os) {
     // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
+
+const builtin = @import("builtin");
+const sys = @This(); // to avoid ambiguous references.
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const c = bun.c; // translated c headers
+const default_allocator = bun.default_allocator;
+const libc_stat = bun.Stat;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const darwin_nocancel = bun.darwin.nocancel;
+
+const jsc = bun.jsc;
+const SystemError = jsc.SystemError;
+
+const windows = bun.windows;
+const kernel32 = bun.windows.kernel32;
+const ntdll = bun.windows.ntdll;
+
+const std = @import("std");
+const mem = std.mem;
+const page_size_min = std.heap.page_size_min;
+const w = std.os.windows;
+const Stat = std.fs.File.Stat;
+
+const posix = std.posix;
+const libc = std.posix.system;
+const mode_t = posix.mode_t;

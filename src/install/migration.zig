@@ -1,40 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const logger = bun.logger;
-const File = bun.sys.File;
-
-const Install = @import("./install.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
-const Npm = @import("./npm.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-const ExternalString = Semver.ExternalString;
-const stringHash = String.Builder.stringHash;
-
-const Lockfile = @import("./lockfile.zig");
-const LoadResult = Lockfile.LoadResult;
-
-const JSAst = bun.JSAst;
-const Expr = JSAst.Expr;
-const B = JSAst.B;
-const E = JSAst.E;
-const G = JSAst.G;
-const S = JSAst.S;
-
 const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfile(
@@ -132,7 +95,7 @@ pub fn migrateNPMLockfile(
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(abs_path, data);
-    const json = bun.JSON.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.json.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -148,7 +111,7 @@ pub fn migrateNPMLockfile(
         return error.InvalidNPMLockfile;
     }
 
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.analytics.Features.lockfile_migration_from_package_lock += 1;
 
     // Count pass
 
@@ -186,8 +149,7 @@ pub fn migrateNPMLockfile(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
-                &workspaces,
+            const workspace_packages_count = try workspaces.processNamesArray(
                 allocator,
                 &manager.workspace_package_json_cache,
                 log,
@@ -759,8 +721,6 @@ pub fn migrateNPMLockfile(
 
                             const id = found.new_package_id;
 
-                            const is_workspace = resolutions[id].tag == .workspace;
-
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,
                                 .name_hash = name_hash,
@@ -770,7 +730,7 @@ pub fn migrateNPMLockfile(
                                     .optional = dep_key == .optionalDependencies,
                                     .dev = dep_key == .devDependencies,
                                     .peer = dep_key == .peerDependencies,
-                                    .workspace = is_workspace,
+                                    .workspace = false,
                                 },
                             };
                             resolutions_buf[0] = id;
@@ -825,6 +785,10 @@ pub fn migrateNPMLockfile(
 
                                     break :resolved switch (res_version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+
+                                        // npm does not support catalogs
+                                        .catalog => return error.InvalidNPMLockfile,
+
                                         .npm, .dist_tag => res: {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
                                             // an npm dependency, but that case is so convoluted that it is not worth handling.
@@ -1054,3 +1018,32 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
 
     return pkg_path[pkg_name_start..];
 }
+
+const string = []const u8;
+
+const Dependency = @import("./dependency.zig");
+const Install = @import("./install.zig");
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const Bin = @import("./bin.zig").Bin;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+const Allocator = std.mem.Allocator;
+
+const Lockfile = @import("./lockfile.zig");
+const LoadResult = Lockfile.LoadResult;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+const stringHash = String.Builder.stringHash;
+
+const JSAst = bun.ast;
+const E = JSAst.E;

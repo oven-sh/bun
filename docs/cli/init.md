@@ -40,3 +40,32 @@ At the end, it runs `bun install` to install `@types/bun`.
 {% /details %}
 
 {% bunCLIUsage command="init" /%}
+
+## React
+
+The `--react` flag will scaffold a React project:
+
+```bash
+$ bun init --react
+```
+
+The `--react` flag accepts the following values:
+
+- `tailwind` - Scaffold a React project with Tailwind CSS
+- `shadcn` - Scaffold a React project with Shadcn/UI and Tailwind CSS
+
+### React + TailwindCSS
+
+This will create a React project with Tailwind CSS configured with Bun's bundler and dev server.
+
+```bash
+$ bun init --react=tailwind
+```
+
+### React + @shadcn/ui
+
+This will create a React project with shadcn/ui and Tailwind CSS configured with Bun's bundler and dev server.
+
+```bash
+$ bun init --react=shadcn
+```

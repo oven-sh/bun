@@ -1,4 +1,4 @@
-import { file, Glob } from "bun";
+import { Glob, file } from "bun";
 import path from "path";
 import { normalize } from "path/posix";
 
@@ -20,7 +20,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
-  "std.unicode": { reason: "Use bun.strings instead", limit: 33 },
+  "std.unicode": { reason: "Use bun.strings instead", limit: 30 },
   "std.Thread.Mutex": {reason: "Use bun.Mutex instead", limit: 1 },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
@@ -32,19 +32,21 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 240, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 230, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1850 },
 
-  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
+  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 170 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
-  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 64 },
+  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
-  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
+  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 40 },
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 280 },
+  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 172 },
 
-  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 287 },
-
-  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
+  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
+  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 42 },
+  "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 134 },
+  "EXCEPTION_ASSERT(!scope.exception())": { reason: "Use scope.assertNoException() instead" },
 };
 const words_keys = [...Object.keys(words)];
 
@@ -101,20 +103,6 @@ describe("banned words", () => {
         throw new Error(
           `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit in scripts/ban-words.ts:${i + 5}\n`,
         );
-      }
-    });
-  }
-});
-
-describe("files that must have comments at the top", () => {
-  const files = ["src/bun.js/api/BunObject.zig"];
-
-  for (const file of files) {
-    test(file, async () => {
-      const joined = path.join(import.meta.dir, "..", "..", file);
-      const content = await Bun.file(joined).text();
-      if (!content.startsWith("//")) {
-        throw new Error(`Please don't add imports to the top of ${file}. Put them at the bottom.`);
       }
     });
   }

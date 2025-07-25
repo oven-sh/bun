@@ -1,12 +1,12 @@
-import type { BunPlugin, BuildConfig, OnLoadResult } from "bun";
+import type { BuildConfig, BunPlugin, OnLoadResult } from "bun";
 import { basename } from "node:path";
 import { compile, compileModule } from "svelte/compiler";
 import {
   getBaseCompileOptions,
+  getBaseModuleCompileOptions,
+  hash,
   validateOptions,
   type SvelteOptions,
-  hash,
-  getBaseModuleCompileOptions,
 } from "./options";
 
 const kEmptyObject = Object.create(null);

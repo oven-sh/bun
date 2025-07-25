@@ -206,13 +206,11 @@ Understanding how `mock.module()` works helps you use it more effectively:
 2. **Lazy Evaluation**: The mock factory callback is only evaluated when the module is actually imported or required.
 
 3. **Path Resolution**: Bun automatically resolves the module specifier as though you were doing an import, supporting:
-
    - Relative paths (`'./module'`)
    - Absolute paths (`'/path/to/module'`)
    - Package names (`'lodash'`)
 
 4. **Import Timing Effects**:
-
    - When mocking before first import: No side effects from the original module occur
    - When mocking after import: The original module's side effects have already happened
    - For this reason, using `--preload` is recommended for mocks that need to prevent side effects

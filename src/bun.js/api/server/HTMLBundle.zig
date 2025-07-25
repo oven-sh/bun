@@ -2,7 +2,7 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
-pub const js = JSC.Codegen.JSHTMLBundle;
+pub const js = jsc.Codegen.JSHTMLBundle;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -34,7 +34,7 @@ fn deinit(this: *HTMLBundle) void {
     bun.destroy(this);
 }
 
-pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
@@ -63,6 +63,11 @@ pub const Route = struct {
     dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
+
+    method: union(enum) {
+        any: void,
+        method: bun.http.Method.Set,
+    } = .any,
 
     pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
@@ -211,7 +216,7 @@ pub const Route = struct {
         }
     }
 
-    pub fn onPluginsResolved(this: *Route, plugins: ?*JSC.API.JSBundler.Plugin) !void {
+    pub fn onPluginsResolved(this: *Route, plugins: ?*jsc.API.JSBundler.Plugin) !void {
         const global = this.bundle.data.global;
         const server = this.server.?;
         const development = server.config().development;
@@ -245,25 +250,25 @@ pub const Route = struct {
         config.target = .browser;
         const is_development = development.isDevelopment();
 
-        if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
+        if (bun.cli.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
             config.minify.identifiers = minify_identifiers;
         } else if (!is_development) {
             config.minify.identifiers = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
+        if (bun.cli.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
             config.minify.whitespace = minify_whitespace;
         } else if (!is_development) {
             config.minify.whitespace = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
+        if (bun.cli.Command.get().args.serve_minify_syntax) |minify_syntax| {
             config.minify.syntax = minify_syntax;
         } else if (!is_development) {
             config.minify.syntax = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_define) |define| {
+        if (bun.cli.Command.get().args.serve_define) |define| {
             bun.assert(define.keys.len == define.values.len);
             try config.define.map.ensureUnusedCapacity(define.keys.len);
             config.define.map.unmanaged.entries.len = define.keys.len;
@@ -355,7 +360,7 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    const blob = jsc.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
                     var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
                         bun.debugAssert(false); // should be populated by `output_file.toBlob`
@@ -405,7 +410,7 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }) catch bun.outOfMemory();
+                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
@@ -499,19 +504,21 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSValueRef = JSC.JSValueRef;
-const JSBundler = JSC.API.JSBundler;
-const HTTPResponse = bun.uws.AnyResponse;
-const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const debug = bun.Output.scoped(.HTMLBundle, true);
+
 const StaticRoute = @import("./StaticRoute.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
 const RefPtr = bun.ptr.RefPtr;
 
-const debug = bun.Output.scoped(.HTMLBundle, true);
-const strings = bun.strings;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
+const AnyServer = jsc.API.AnyServer;
+const JSBundler = jsc.API.JSBundler;
+
+const uws = bun.uws;
+const HTTPResponse = bun.uws.AnyResponse;

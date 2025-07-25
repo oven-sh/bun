@@ -11,7 +11,7 @@ type FileIndex = number;
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
  * as well as use the async primitives provided by the language.
  */
-export function renderRoutesForProdStatic(
+export async function renderRoutesForProdStatic(
   outBase: string,
   allServerFiles: string[],
   // Indexed by router type index
@@ -44,17 +44,18 @@ export function renderRoutesForProdStatic(
 
   async function doGenerateRoute(
     type: number,
+    noClient: boolean,
     i: number,
     layouts: any[],
     pageModule: any,
-    params: Record<string, string> | null,
+    params: Record<string, string | string[]> | null,
   ) {
     // Call the framework's rendering function
     const callback = renderStatic[type];
     $assert(callback != null && $isCallable(callback));
     let client = clientEntryUrl[type];
     const results = await callback({
-      modules: client ? [client] : [],
+      modules: client && !noClient ? [client] : [],
       modulepreload: [],
       styles: styles[i],
       layouts,
@@ -73,13 +74,14 @@ export function renderRoutesForProdStatic(
     if (files == null) {
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
+
     await Promise.all(
       Object.entries(files).map(([key, value]) => {
         if (params != null) {
           $assert(patterns[i].includes(`:`));
-          // replace the :paramName part of patterns[i] with the value of params[paramName]
-          // use a regex in replace with a callback
-          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) => params[p1]);
+          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) =>
+            typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
+          );
           return Bun.write(pathJoin(outBase, newKey + key), value);
         }
         return Bun.write(pathJoin(outBase, patterns[i] + key), value);
@@ -89,37 +91,42 @@ export function renderRoutesForProdStatic(
 
   function callRouteGenerator(
     type: number,
+    noClient: boolean,
     i: number,
     layouts: any[],
     pageModule: any,
-    params: Record<string, string>,
+    params: Record<string, string | string[]>,
   ) {
     for (const param of paramInformation[i]!) {
-      if (!params[param]) {
+      if (params[param] === undefined) {
         throw new Error(`Missing param ${param} for route ${JSON.stringify(sourceRouteFiles[i])}`);
       }
     }
-    return doGenerateRoute(type, i, layouts, pageModule, params);
+    return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
+  }
+
+  let modulesForFiles = [];
+  for (const fileList of files) {
+    $assert(fileList.length > 0);
+    if (fileList.length > 1) {
+      let anyPromise = false;
+      let loaded = fileList.map(
+        x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
+      );
+      modulesForFiles.push(anyPromise ? await Promise.all(loaded) : loaded);
+    } else {
+      const id = fileList[0];
+      modulesForFiles.push([loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]))]);
+    }
   }
 
   return Promise.all(
-    files.map(async (fileList, i) => {
+    modulesForFiles.map(async (modules, i) => {
       const typeAndFlag = typeAndFlags[i];
       const type = typeAndFlag & 0xff;
+      const noClient = (typeAndFlag & 0b100000000) !== 0;
 
-      var pageModule: any, layouts: any[];
-      $assert(fileList.length > 0);
-      if (fileList.length > 1) {
-        let anyPromise = false;
-        let loaded = fileList.map(
-          x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
-        );
-        [pageModule, ...layouts] = anyPromise ? await Promise.all(loaded) : loaded;
-      } else {
-        const id = fileList[0];
-        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]));
-        layouts = [];
-      }
+      let [pageModule, ...layouts] = modules;
 
       if (paramInformation[i] != null) {
         const getParam = getParams[type];
@@ -128,23 +135,30 @@ export function renderRoutesForProdStatic(
           pageModule,
           layouts,
         });
+        let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
-            callRouteGenerator(type, i, layouts, pageModule, params);
+            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
+            if ($isPromise(result) && $isPromisePending(result)) {
+              await result;
+            }
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter) {
-            callRouteGenerator(type, i, layouts, pageModule, params);
+            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
+            if ($isPromise(result) && $isPromisePending(result)) {
+              await result;
+            }
           }
         } else {
           await Promise.all(
             paramGetter.pages.map(params => {
-              callRouteGenerator(type, i, layouts, pageModule, params);
+              callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             }),
           );
         }
       } else {
-        await doGenerateRoute(type, i, layouts, pageModule, null);
+        await doGenerateRoute(type, noClient, i, layouts, pageModule, null);
       }
     }),
   );

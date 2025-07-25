@@ -75,7 +75,7 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
         { "wrapKey"_s, CryptoKeyUsage::WrapKey },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
-    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))
+    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
     return std::nullopt;
 }

@@ -374,7 +374,12 @@ pub fn deinit(this: *@This()) void {
         this.pending_buffer = &.{};
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };
-        this.pending.run();
+        if (this.pending.state == .pending and this.pending.future == .promise) {
+            // We must never run JavaScript inside of a GC finalizer.
+            this.pending.runOnNextTick();
+        } else {
+            this.pending.run();
+        }
     }
     if (this.buffer_action) |*action| {
         action.deinit();
@@ -448,12 +453,16 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Output = bun.Output;
-const webcore = bun.webcore;
-const streams = webcore.streams;
+
 const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const Pipe = webcore.Pipe;
+
+const streams = webcore.streams;
 const BufferAction = streams.BufferAction;
-const JSValue = jsc.JSValue;

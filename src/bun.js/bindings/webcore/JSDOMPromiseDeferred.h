@@ -68,7 +68,12 @@ public:
         ASSERT(globalObject());
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
         JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value)));
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto value_js = toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
+        RETURN_IF_EXCEPTION(scope, );
+        resolve(*lexicalGlobalObject, value_js);
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     void resolveWithJSValue(JSC::JSValue resolution)
@@ -154,7 +159,7 @@ public:
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         resolve(*lexicalGlobalObject, callback(*globalObject()));
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             handleUncaughtException(scope, *lexicalGlobalObject);
     }
 
@@ -171,7 +176,7 @@ public:
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         reject(*lexicalGlobalObject, callback(*globalObject()), rejectAsHandled);
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             handleUncaughtException(scope, *lexicalGlobalObject);
     }
 

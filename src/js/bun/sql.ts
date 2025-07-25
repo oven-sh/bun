@@ -280,13 +280,13 @@ function normalizeQuery(strings, values, binding_idx = 1) {
             binding_values.push(sub_values[j]);
           }
           binding_idx += sub_values.length;
-        } else if (value instanceof SQLArrayParameter) {
+        } else if (value instanceof SQLHelper) {
           const command = detectCommand(query);
           // only selectIn, insert, update, updateSet are allowed
           if (command === SQLCommand.none || command === SQLCommand.where) {
-            throw new SyntaxError("Helper are only allowed for INSERT, UPDATE and WHERE IN commands");
+            throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
           }
-          const { columns, value: items } = value as SQLArrayParameter;
+          const { columns, value: items } = value as SQLHelper;
           const columnCount = columns.length;
           if (columnCount === 0 && command !== SQLCommand.whereIn) {
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
@@ -794,6 +794,7 @@ class PooledConnection {
     // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
   }
+
   #doRetry() {
     if (this.pool.closed) {
       return;
@@ -855,6 +856,7 @@ class ConnectionPool {
 
   poolStarted: boolean = false;
   closed: boolean = false;
+  totalQueries: number = 0;
   onAllQueriesFinished: (() => void) | null = null;
   constructor(connectionInfo) {
     this.connectionInfo = connectionInfo;
@@ -862,57 +864,48 @@ class ConnectionPool {
     this.readyConnections = new Set();
   }
 
+  maxDistribution() {
+    if (!this.waitingQueue.length) return 0;
+    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
+    return result ? result : 1;
+  }
+
   flushConcurrentQueries() {
-    if (this.waitingQueue.length === 0) {
+    const maxDistribution = this.maxDistribution();
+    if (maxDistribution === 0) {
       return;
     }
-    while (this.waitingQueue.length > 0) {
-      let endReached = true;
-      // no need to filter for reserved connections because there are not in the readyConnections
-      // preReserved only shows that we wanna avoiding adding more queries to it
+
+    while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved),
+        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
       }
-      // kinda balance the load between connections
       const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
-      const leastQueries = orderedConnections[0].queryCount;
-
       for (const connection of orderedConnections) {
-        if (connection.queryCount > leastQueries) {
-          endReached = false;
-          break;
-        }
-
         const pending = this.waitingQueue.shift();
-        if (pending) {
-          connection.queryCount++;
-          pending(null, connection);
+        if (!pending) {
+          return;
         }
+        connection.queryCount++;
+        this.totalQueries++;
+        pending(null, connection);
       }
-      const halfPoolSize = Math.ceil(this.connections.length / 2);
-      if (endReached || orderedConnections.length < halfPoolSize) {
-        // we are able to distribute the load between connections but the connection pool is less than half of the pool size
-        // so we can stop here and wait for the next tick to flush the waiting queue
-        break;
-      }
-    }
-    if (this.waitingQueue.length > 0) {
-      // we still wanna to flush the waiting queue but lets wait for the next tick because some connections might be released
-      // this is better for query performance
-      process.nextTick(this.flushConcurrentQueries.bind(this));
     }
   }
 
   release(connection: PooledConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
       connection.queryCount--;
+      this.totalQueries--;
     }
-    const was_reserved = connection.flags & PooledConnectionFlags.reserved;
-    connection.flags &= ~PooledConnectionFlags.reserved;
-    connection.flags &= ~PooledConnectionFlags.preReserved;
+    const currentQueryCount = connection.queryCount;
+    if (currentQueryCount == 0) {
+      connection.flags &= ~PooledConnectionFlags.reserved;
+      connection.flags &= ~PooledConnectionFlags.preReserved;
+    }
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
       if (!this.hasPendingQueries()) {
@@ -945,36 +938,19 @@ class ConnectionPool {
       return;
     }
 
-    if (was_reserved) {
-      if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) {
-        const pendingReserved = this.reservedQueue.shift();
-        if (pendingReserved) {
-          connection.flags |= PooledConnectionFlags.reserved;
-          connection.queryCount++;
-          // we have a connection waiting for a reserved connection lets prioritize it
-          pendingReserved(connection.storedError, connection);
-          return;
-        }
-      }
-
-      this.readyConnections.add(connection);
-      this.flushConcurrentQueries();
-      return;
-    }
-    if (connection.queryCount === 0) {
+    if (currentQueryCount == 0) {
       // ok we can actually bind reserved queries to it
       const pendingReserved = this.reservedQueue.shift();
       if (pendingReserved) {
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
+        this.totalQueries++;
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
         return;
       }
     }
-
     this.readyConnections.add(connection);
-
     this.flushConcurrentQueries();
   }
 
@@ -992,16 +968,11 @@ class ConnectionPool {
     }
     return false;
   }
+
   hasPendingQueries() {
     if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) return true;
     if (this.poolStarted) {
-      const pollSize = this.connections.length;
-      for (let i = 0; i < pollSize; i++) {
-        const connection = this.connections[i];
-        if (connection.queryCount > 0) {
-          return true;
-        }
-      }
+      return this.totalQueries > 0;
     }
     return false;
   }
@@ -1215,11 +1186,12 @@ class ConnectionPool {
           if (queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
-            continue;
           }
+          continue;
         }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
+        this.totalQueries++;
         this.readyConnections.delete(connection);
         onConnected(null, connection);
         return;
@@ -1300,7 +1272,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
-class SQLArrayParameter {
+class SQLHelper {
   value: any;
   columns: string[];
   constructor(value, keys) {
@@ -1339,7 +1311,7 @@ function decodeIfValid(value) {
   }
   return null;
 }
-function loadOptions(o) {
+function loadOptions(o: Bun.SQL.Options) {
   var hostname,
     port,
     username,
@@ -1453,6 +1425,8 @@ function loadOptions(o) {
   idleTimeout ??= o.idle_timeout;
   connectionTimeout ??= o.connectionTimeout;
   connectionTimeout ??= o.connection_timeout;
+  connectionTimeout ??= o.connectTimeout;
+  connectionTimeout ??= o.connect_timeout;
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;
@@ -1746,14 +1720,10 @@ function SQL(o, e = {}) {
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-          return new SQLArrayParameter(strings, values);
+          return new SQLHelper(strings, values);
         }
-      } else if (
-        typeof strings === "object" &&
-        !(strings instanceof Query) &&
-        !(strings instanceof SQLArrayParameter)
-      ) {
-        return new SQLArrayParameter([strings], values);
+      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+        return new SQLHelper([strings], values);
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -2079,14 +2049,10 @@ function SQL(o, e = {}) {
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-          return new SQLArrayParameter(strings, values);
+          return new SQLHelper(strings, values);
         }
-      } else if (
-        typeof strings === "object" &&
-        !(strings instanceof Query) &&
-        !(strings instanceof SQLArrayParameter)
-      ) {
-        return new SQLArrayParameter([strings], values);
+      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+        return new SQLHelper([strings], values);
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -2313,10 +2279,10 @@ function SQL(o, e = {}) {
     if ($isArray(strings)) {
       // detect if is tagged template
       if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-        return new SQLArrayParameter(strings, values);
+        return new SQLHelper(strings, values);
       }
-    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
-      return new SQLArrayParameter([strings], values);
+    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+      return new SQLHelper([strings], values);
     }
 
     return queryFromPool(strings, values);

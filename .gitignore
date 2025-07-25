@@ -36,6 +36,7 @@
 *.out.refresh.js
 *.pdb
 *.sqlite
+*.swp
 *.tmp
 *.trace
 *.wat

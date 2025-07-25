@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
-
+#include <span>
 #include <iostream>
 
 #include "MoveOnlyFunction.h"
@@ -278,7 +278,7 @@ public:
     }
 
     /* Adds the corresponding entires in matching tree and handler list */
-    void add(const std::vector<std::string> &methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
+    void add(const std::span<const std::string> &methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
 

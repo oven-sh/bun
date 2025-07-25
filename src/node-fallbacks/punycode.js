@@ -1,6 +1,2 @@
-/**
- * Browser polyfill for the `"punycode"` module.
- *
- * Imported on usage in `bun build --target=browser`
- */
-export * from "punycode";
+export * from "./node_modules/punycode";
+export { default } from "./node_modules/punycode";

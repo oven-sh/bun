@@ -1,19 +1,7 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const debug = bun.Output.scoped(.CssModules, false);
 
 pub const CssModule = struct {
     config: *const Config,
@@ -161,7 +149,7 @@ pub const CssModule = struct {
             return .{ .err = css.PrinterErrorKind.invalid_composes_selector };
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn addDashed(this: *CssModule, allocator: Allocator, local: []const u8, source_index: u32) void {
@@ -436,3 +424,9 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
 
     return base64_encoded_hash;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,9 +1,3 @@
-/**
- * Browser polyfill for the `"url"` module.
- *
- * Imported on usage in `bun build --target=browser`
- */
-// -----------------------------------------------------------------------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,7 +20,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const { URL, URLSearchParams } = globalThis;
+const URL = /* @__PURE__ */ globalThis.URL;
+const URLSearchParams = /* @__PURE__ */ globalThis.URLSearchParams;
 
 function util_isString(arg) {
   return typeof arg === "string";
@@ -39,9 +34,6 @@ function util_isNull(arg) {
 }
 function util_isNullOrUndefined(arg) {
   return arg == null;
-}
-function util_isUndefined(arg) {
-  return arg === void 0;
 }
 
 function Url() {

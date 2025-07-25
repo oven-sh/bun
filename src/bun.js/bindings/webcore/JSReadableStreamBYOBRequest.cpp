@@ -163,7 +163,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSReadableStreamBYOBRequestPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStreamBYOBRequest::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

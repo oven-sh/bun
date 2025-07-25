@@ -328,7 +328,7 @@ const IncomingMessagePrototype = {
         stream?.cancel?.().catch(nop);
       }
 
-      const socket = this[fakeSocketSymbol];
+      const socket = this.socket;
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
@@ -460,6 +460,16 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   }
 }
 
-export default {
-  IncomingMessage,
-};
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable) {
+    socket.resume();
+  }
+}
+
+function readStop(socket) {
+  if (socket) {
+    socket.pause();
+  }
+}
+
+export { IncomingMessage, readStart, readStop };

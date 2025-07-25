@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,

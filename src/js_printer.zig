@@ -525,6 +525,7 @@ pub const RequireOrImportMeta = struct {
 pub const PrintResult = union(enum) {
     result: struct {
         code: []u8,
+        code_allocator: ?std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
     },
     err: anyerror,
@@ -537,6 +538,7 @@ pub const PrintResult = union(enum) {
             .result => PrintResult{
                 .result = .{
                     .code = try allocator.dupe(u8, this.result.code),
+                    .code_allocator = allocator,
                     .source_map = this.result.source_map,
                 },
             },
@@ -6056,9 +6058,12 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
+    const buffer: *MutableString = printer.writer.ctx.getMutableBuffer();
+
     return .{
         .result = .{
-            .code = written,
+            .code = buffer.toOwnedSlice(),
+            .code_allocator = buffer.allocator,
             .source_map = source_map,
         },
     };

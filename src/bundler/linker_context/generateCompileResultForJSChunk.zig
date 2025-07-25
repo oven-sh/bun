@@ -64,8 +64,8 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 
     return .{
         .javascript = .{
-            .result = result,
             .source_index = part_range.source_index.get(),
+            .result = result,
         },
     };
 }

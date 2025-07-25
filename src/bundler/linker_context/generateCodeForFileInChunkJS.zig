@@ -604,6 +604,7 @@ pub fn generateCodeForFileInChunkJS(
         return .{
             .result = .{
                 .code = &[_]u8{},
+                .code_allocator = null,
                 .source_map = null,
             },
         };

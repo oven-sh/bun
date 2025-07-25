@@ -2416,13 +2416,16 @@ pub fn finalizeBundle(
             }).receiveChunk(
                 &ctx,
                 index,
-                .{ .js = .{
-                    .code = compile_result.code(),
-                    .source_map = .{
-                        .chunk = source_map,
-                        .escaped_source = @constCast(@ptrCast(quoted_contents)),
+                .{
+                    .js = .{
+                        .code = compile_result.code(),
+                        .code_allocator = compile_result.javascript.allocator(),
+                        .source_map = .{
+                            .chunk = source_map,
+                            .escaped_source = @constCast(@ptrCast(quoted_contents)),
+                        },
                     },
-                } },
+                },
                 graph == .ssr,
             ),
         }
@@ -2508,6 +2511,7 @@ pub fn finalizeBundle(
             index,
             .{ .js = .{
                 .code = generated_js,
+                .code_allocator = dev.allocator,
                 .source_map = null,
             } },
             false,
@@ -3320,7 +3324,9 @@ pub const PackedMap = struct {
     ref_count: RefCount,
     /// Allocated by `dev.allocator`. Access with `.vlq()`
     /// This is stored to allow lazy construction of source map files.
-    vlq_str: bun.MutableString,
+    vlq_ptr: [*]u8,
+    vlq_len: u32,
+
     /// The bundler runs quoting on multiple threads, so it only makes
     /// sense to preserve that effort for concatenation and
     /// re-concatenation.
@@ -3341,11 +3347,12 @@ pub const PackedMap = struct {
     /// already counted for.
     bits_used_for_memory_cost_dedupe: u32 = 0,
 
-    pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
+    pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8, dev_allocator: std.mem.Allocator) bun.ptr.RefPtr(PackedMap) {
         assert(chunk.buffer.list.items.len > 0);
         return .new(.{
             .ref_count = .init(),
-            .vlq_str = chunk.buffer,
+            .vlq_ptr = (dev_allocator.dupe(u8, chunk.buffer.list.items) catch bun.outOfMemory()).ptr,
+            .vlq_len = @intCast(chunk.buffer.list.items.len),
             .quoted_contents_ptr = quoted_contents.ptr,
             .quoted_contents_len = @intCast(quoted_contents.len),
             .end_state = .{
@@ -3355,13 +3362,13 @@ pub const PackedMap = struct {
         });
     }
 
-    fn destroy(self: *@This(), _: *DevServer) void {
-        self.vlq_str.deinit();
+    fn destroy(self: *@This(), dev: *DevServer) void {
+        dev.allocator.free(self.vlq_ptr[0..self.vlq_len]);
         bun.destroy(self);
     }
 
     pub fn memoryCost(self: *const @This()) usize {
-        return self.vlq_str.len() + self.quoted_contents_len + @sizeOf(@This());
+        return self.vlq_len + self.quoted_contents_len + @sizeOf(@This());
     }
 
     /// When DevServer iterates everything to calculate memory usage, it passes
@@ -3376,7 +3383,7 @@ pub const PackedMap = struct {
     }
 
     pub fn vlq(self: *const @This()) []u8 {
-        return self.vlq_str.list.items;
+        return self.vlq_ptr[0..self.vlq_len];
     }
 
     // TODO: rename to `escapedSource`
@@ -3866,6 +3873,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             content: union(enum) {
                 js: struct {
                     code: []const u8,
+                    code_allocator: ?std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
                         escaped_source: *?[]u8,
@@ -3964,6 +3972,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
                                             source_map.escaped_source.*.?,
+                                            dev.allocator,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;
@@ -3985,7 +3994,24 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 } };
                             };
 
-                            gop.value_ptr.* = .initJavaScript(js.code, flags, source_map);
+                            var dev_code = js.code;
+                            if (js.code_allocator) |js_allocator| {
+                                if (js_allocator.ptr != dev.allocator.ptr or js_allocator.vtable != dev.allocator.vtable) {
+                                    // We need to transfer ownership to the DevServer's AllocationScope.
+                                    // I could've avoided this copy if DevServer.IncrementalGraph(.client).File.content
+                                    // weren't extern, because then I could've put the allocator there and used it later.
+                                    // As it is we have no way of knowing what the allocator is so we have to default
+                                    // to the DevServer's allocator.
+                                    dev_code = try dev.allocator.dupe(u8, js.code);
+                                    js_allocator.free(js.code);
+                                } else {
+                                    // Allocators match; duping would be pointless
+                                }
+                            } else {
+                                // js.code is a static empty string or otherwise not allocated
+                            }
+
+                            gop.value_ptr.* = .initJavaScript(dev_code, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator, file_index);

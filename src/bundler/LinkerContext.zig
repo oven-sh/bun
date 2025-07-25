@@ -2397,6 +2397,7 @@ pub const LinkerContext = struct {
             return .{ .joiner = j.* };
 
         var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        errdefer pieces.deinit();
         const complete_output = try j.done(allocator);
         var output = complete_output;
 

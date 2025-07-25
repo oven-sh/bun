@@ -127,8 +127,8 @@ pub extern fn mi_reserve_huge_os_pages_at(pages: usize, numa_node: c_int, timeou
 pub extern fn mi_reserve_os_memory(size: usize, commit: bool, allow_large: bool) c_int;
 pub extern fn mi_manage_os_memory(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int) bool;
 pub extern fn mi_debug_show_arenas() void;
-pub const ArenaID = c_int;
-pub extern fn mi_arena_area(arena_id: ArenaID, size: [*c]usize) ?*anyopaque;
+pub const ArenaID = ?*anyopaque;
+pub extern fn mi_arena_area(arena_id: ArenaID, size: *usize) ?*anyopaque;
 pub extern fn mi_reserve_huge_os_pages_at_ex(pages: usize, numa_node: c_int, timeout_msecs: usize, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_reserve_os_memory_ex(size: usize, commit: bool, allow_large: bool, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_manage_os_memory_ex(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int, exclusive: bool, arena_id: *ArenaID) bool;

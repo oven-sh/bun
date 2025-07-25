@@ -600,16 +600,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const arguments = callframe.arguments();
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
             }
 
-            if (arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
+            if (arguments[0].isEmptyOrUndefinedOrNull()) {
                 return globalThis.throwInvalidArguments("subscriberCount requires a topic name as a string", .{});
             }
 
-            var topic = try arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
+            var topic = try arguments[0].toSlice(globalThis, bun.default_allocator);
             defer topic.deinit();
 
             if (topic.len == 0) {

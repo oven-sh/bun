@@ -2578,7 +2578,7 @@ pub const Resolver = struct {
     }
 
     pub fn resolve(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(3);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolve", 3, arguments.len);
         }
@@ -2586,7 +2586,7 @@ pub const Resolver = struct {
         const record_type: RecordType = if (arguments.len <= 1)
             RecordType.default
         else brk: {
-            const record_type_value = arguments.ptr[1];
+            const record_type_value = arguments[1];
             if (record_type_value.isEmptyOrUndefinedOrNull() or !record_type_value.isString()) {
                 break :brk RecordType.default;
             }
@@ -2601,7 +2601,7 @@ pub const Resolver = struct {
             };
         };
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolve", "name", "string");
@@ -2658,12 +2658,12 @@ pub const Resolver = struct {
     }
 
     pub fn reverse(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("reverse", 1, arguments.len);
         }
 
-        const ip_value = arguments.ptr[0];
+        const ip_value = arguments[0];
         if (ip_value.isEmptyOrUndefinedOrNull() or !ip_value.isString()) {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "string");
         }
@@ -2715,12 +2715,12 @@ pub const Resolver = struct {
     }
 
     pub fn globalLookup(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("lookup", 2, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
@@ -2734,8 +2734,8 @@ pub const Resolver = struct {
         var options = GetAddrInfo.Options{};
         var port: u16 = 0;
 
-        if (arguments.len > 1 and arguments.ptr[1].isCell()) {
-            const optionsObject = arguments.ptr[1];
+        if (arguments.len > 1 and arguments[1].isCell()) {
+            const optionsObject = arguments[1];
 
             if (try optionsObject.getTruthy(globalThis, "port")) |port_value| {
                 port = try port_value.toPortNumber(globalThis);
@@ -2796,12 +2796,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveSrv(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSrv", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "string");
@@ -2823,12 +2823,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveSoa(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveSoa", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "string");
@@ -2846,12 +2846,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveCaa(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCaa", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "string");
@@ -2873,12 +2873,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveNs(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNs", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveNs", "hostname", "string");
@@ -2897,12 +2897,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolvePtr(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolvePtr", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "string");
@@ -2924,12 +2924,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveCname(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveCname", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "string");
@@ -2951,12 +2951,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveMx(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveMx", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "string");
@@ -2978,12 +2978,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveNaptr(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveNaptr", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "string");
@@ -3005,12 +3005,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveTxt(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(1);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveTxt", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "string");
@@ -3032,12 +3032,12 @@ pub const Resolver = struct {
     }
 
     pub fn resolveAny(this: *Resolver, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(1);
+        const arguments = callframe.arguments();
         if (arguments.len < 1) {
             return globalThis.throwNotEnoughArguments("resolveAny", 1, arguments.len);
         }
 
-        const name_value = arguments.ptr[0];
+        const name_value = arguments[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "string");
@@ -3390,12 +3390,12 @@ pub const Resolver = struct {
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
     pub fn globalLookupService(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len < 2) {
             return globalThis.throwNotEnoughArguments("lookupService", 2, arguments.len);
         }
 
-        const addr_value = arguments.ptr[0];
+        const addr_value = arguments[0];
         if (addr_value.isEmptyOrUndefinedOrNull() or !addr_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "string");
         }
@@ -3406,7 +3406,7 @@ pub const Resolver = struct {
         }
         const addr_s = addr_str.getZigString(globalThis).slice();
 
-        const port_value = arguments.ptr[1];
+        const port_value = arguments[1];
         const port: u16 = try port_value.toPortNumber(globalThis);
 
         var sa: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);

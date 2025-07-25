@@ -645,14 +645,13 @@ fn transformOptionsFromJSC(globalObject: *jsc.JSGlobalObject, temp_allocator: st
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*JSTranspiler {
     var temp = bun.ArenaAllocator.init(bun.default_allocator);
-    const arguments = callframe.arguments_old(3);
     var args = jsc.CallFrame.ArgumentsSlice.init(
         globalThis.bunVM(),
-        arguments.slice(),
+        callframe.arguments(),
     );
 
     defer temp.deinit();
-    const transpiler_options: TranspilerOptions = if (arguments.len > 0)
+    const transpiler_options: TranspilerOptions = if (args.all.len > 0)
         try transformOptionsFromJSC(globalThis, temp.allocator(), &args)
     else
         TranspilerOptions{ .log = logger.Log.init(bun.default_allocator) };
@@ -769,8 +768,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
 
 pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
     const code_arg = args.next() orelse {
         return globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
@@ -840,8 +838,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
 
 pub fn transform(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
@@ -888,9 +885,8 @@ pub fn transformSync(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
 
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
@@ -903,8 +899,8 @@ pub fn transformSync(
     };
     defer code_holder.deinit();
     const code = code_holder.slice();
-    arguments.ptr[0].ensureStillAlive();
-    defer arguments.ptr[0].ensureStillAlive();
+    code_arg.ensureStillAlive();
+    defer code_arg.ensureStillAlive();
 
     args.eat();
     var js_ctx_value: jsc.JSValue = jsc.JSValue.zero;
@@ -1044,8 +1040,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
 }
 
 pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(2);
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
 
     const code_arg = args.next() orelse {

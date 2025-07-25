@@ -288,12 +288,12 @@ pub fn jsGetUnpackedSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
     jsc.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
-    const args_list = callframe.arguments_old(1);
+    const args_list = callframe.arguments();
     if (args_list.len < 1) {
         return settings.toJS(globalObject);
     }
 
-    const data_arg = args_list.ptr[0];
+    const data_arg = args_list[0];
 
     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
         var payload = array_buffer.byteSlice();
@@ -318,13 +318,13 @@ pub fn jsGetUnpackedSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
 }
 
 pub fn jsAssertSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args_list = callframe.arguments_old(1);
+    const args_list = callframe.arguments();
     if (args_list.len < 1) {
         return globalObject.throw("Expected settings to be a object", .{});
     }
 
-    if (args_list.len > 0 and !args_list.ptr[0].isEmptyOrUndefinedOrNull()) {
-        const options = args_list.ptr[0];
+    if (args_list.len > 0 and !args_list[0].isEmptyOrUndefinedOrNull()) {
+        const options = args_list[0];
         if (!options.isObject()) {
             return globalObject.throw("Expected settings to be a object", .{});
         }

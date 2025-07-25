@@ -20,7 +20,7 @@ pub fn gcAggressionLevel(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
-    const value = callframe.arguments_old(1).ptr[0];
+    const value = callframe.argumentsAsArray(1)[0];
 
     if (!value.isEmptyOrUndefinedOrNull()) {
         switch (try value.coerce(i32, globalThis)) {

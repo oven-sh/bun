@@ -19,7 +19,7 @@ cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
-global_dns_data: ?*bun.api.DNS.GlobalData = null,
+global_dns_data: ?*bun.api.dns.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
@@ -34,7 +34,7 @@ temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
 
-s3_default_client: JSC.Strong.Optional = .empty,
+s3_default_client: jsc.Strong.Optional = .empty,
 default_csrf_secret: []const u8 = "",
 
 valkey_context: ValkeyContext = .{},
@@ -147,13 +147,13 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
 pub const HotMap = struct {
     _map: bun.StringArrayHashMap(Entry),
 
-    const HTTPServer = JSC.API.HTTPServer;
-    const HTTPSServer = JSC.API.HTTPSServer;
-    const DebugHTTPServer = JSC.API.DebugHTTPServer;
-    const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
-    const TCPSocket = JSC.API.TCPSocket;
-    const TLSSocket = JSC.API.TLSSocket;
-    const Listener = JSC.API.Listener;
+    const HTTPServer = jsc.API.HTTPServer;
+    const HTTPSServer = jsc.API.HTTPSServer;
+    const DebugHTTPServer = jsc.API.DebugHTTPServer;
+    const DebugHTTPSServer = jsc.API.DebugHTTPSServer;
+    const TCPSocket = jsc.API.TCPSocket;
+    const TLSSocket = jsc.API.TLSSocket;
+    const Listener = jsc.API.Listener;
     const Entry = bun.TaggedPointerUnion(.{
         HTTPServer,
         HTTPSServer,
@@ -199,7 +199,7 @@ pub const HotMap = struct {
     }
 };
 
-pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
+pub fn filePolls(this: *RareData, vm: *jsc.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
         this.file_polls_.?.* = Async.FilePoll.Store.init();
@@ -268,7 +268,7 @@ pub const EntropyCache = struct {
 pub const CleanupHook = struct {
     ctx: ?*anyopaque,
     func: Function,
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
 
     pub fn eql(self: CleanupHook, other: CleanupHook) bool {
         return self.ctx == other.ctx and self.func == other.func and self.globalThis == other.globalThis;
@@ -279,7 +279,7 @@ pub const CleanupHook = struct {
     }
 
     pub fn init(
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         ctx: ?*anyopaque,
         func: CleanupHook.Function,
     ) CleanupHook {
@@ -295,7 +295,7 @@ pub const CleanupHook = struct {
 
 pub fn pushCleanupHook(
     this: *RareData,
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
@@ -310,7 +310,7 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 }
 
 pub fn stderr(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stderr" += 1;
+    bun.analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(2);
@@ -342,7 +342,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdout(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stdout" += 1;
+    bun.analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(1);
@@ -372,7 +372,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 }
 
 pub fn stdin(rare: *RareData) *Blob.Store {
-    bun.Analytics.Features.@"Bun.stdin" += 1;
+    bun.analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(0);
@@ -405,7 +405,7 @@ const StdinFdType = enum(i32) {
     socket = 2,
 };
 
-pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) StdinFdType {
+pub export fn Bun__Process__getStdinFdType(vm: *jsc.VirtualMachine, fd: i32) StdinFdType {
     const mode = switch (fd) {
         0 => vm.rareData().stdin().data.file.mode,
         1 => vm.rareData().stdout().data.file.mode,
@@ -421,7 +421,7 @@ pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) Std
     }
 }
 
-pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
+pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
         return ctx;
     }
@@ -432,28 +432,28 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
     return ctx;
 }
 
-pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *api.DNS.DNSResolver {
+pub fn globalDNSResolver(rare: *RareData, vm: *jsc.VirtualMachine) *api.dns.Resolver {
     if (rare.global_dns_data == null) {
-        rare.global_dns_data = api.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data = api.dns.GlobalData.init(vm.allocator, vm);
         rare.global_dns_data.?.resolver.ref(); // live forever
     }
 
     return &rare.global_dns_data.?.resolver;
 }
 
-pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) bun.ptr.RefPtr(StatWatcherScheduler) {
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *jsc.VirtualMachine) bun.ptr.RefPtr(StatWatcherScheduler) {
     return (rare.node_fs_stat_watcher_scheduler orelse init: {
         rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm);
         break :init rare.node_fs_stat_watcher_scheduler.?;
     }).dupeRef();
 }
 
-pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     return rare.s3_default_client.get() orelse {
         const vm = globalThis.bunVM();
         var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch bun.outOfMemory();
         defer aws_options.deinit();
-        const client = JSC.WebCore.S3Client.new(.{
+        const client = jsc.WebCore.S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
             .options = aws_options.options,
             .acl = aws_options.acl,
@@ -518,11 +518,11 @@ const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
 
 const bun = @import("bun");
 const Async = bun.Async;
-const JSC = bun.JSC;
 const Output = bun.Output;
 const Syscall = bun.sys;
 const api = bun.api;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
-const Blob = JSC.WebCore.Blob;
+const Blob = jsc.WebCore.Blob;

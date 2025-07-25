@@ -282,4 +282,4 @@ pub const BrotliCompressionStream = struct {
 const std = @import("std");
 
 const bun = @import("bun");
-const mimalloc = bun.Mimalloc;
+const mimalloc = bun.mimalloc;

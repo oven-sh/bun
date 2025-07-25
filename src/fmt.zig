@@ -1742,7 +1742,7 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
+    pub fn fmtString(global: *bun.jsc.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
@@ -1878,12 +1878,13 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
     });
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const js_lexer = bun.js_lexer;
 const sha = bun.sha;
-const string = bun.string;
 const strings = bun.strings;
 
 const std = @import("std");

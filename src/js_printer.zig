@@ -389,10 +389,10 @@ pub const Options = struct {
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
-    css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    css_import_behavior: api.CssInJsBehavior = api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
-    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
     input_files_for_dev_server: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
@@ -6058,6 +6058,8 @@ pub fn printCommonJS(
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
+const string = []const u8;
+
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 const fs = @import("./fs.zig");
 const importRecord = @import("./import_record.zig");
@@ -6065,9 +6067,6 @@ const options = @import("./options.zig");
 const rename = @import("./renamer.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const Ref = @import("./ast/base.zig").Ref;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -6081,19 +6080,22 @@ const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.string;
-const strings = bun.strings;
+const api = bun.schema.api;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const Ast = js_ast.Ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const G = js_ast.G;
+const Ref = bun.ast.Ref;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
 const Symbol = js_ast.Symbol;
 
 const Op = js_ast.Op;
 const Level = js_ast.Op.Level;
+
+const strings = bun.strings;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;

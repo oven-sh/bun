@@ -55,7 +55,7 @@ comptime {
 }
 
 pub const PathOrFileDescriptor = union(enum) {
-    path: JSC.ZigString.Slice,
+    path: jsc.ZigString.Slice,
     fd: bun.FileDescriptor,
 
     pub fn deinit(this: *const PathOrFileDescriptor) void {
@@ -123,4 +123,4 @@ const WebSocketHTTPClient = @import("../http/websocket_http_client.zig").WebSock
 const WebSocketHTTPSClient = @import("../http/websocket_http_client.zig").WebSocketHTTPSClient;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;

@@ -1,14 +1,13 @@
 const std = @import("std");
 const bun = @import("bun");
-const string = bun.string;
+const string = []const u8;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
+const stringZ = [:0]const u8;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/url.zig").URL;

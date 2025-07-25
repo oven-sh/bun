@@ -2076,7 +2076,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
-            .Eq => "`+`",
+            .Eq => "`=`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
             // Comment,

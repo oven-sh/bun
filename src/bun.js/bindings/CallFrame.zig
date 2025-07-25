@@ -36,11 +36,6 @@ pub const CallFrame = opaque {
         return self.asUnsafeJSValueArray()[offset_callee];
     }
 
-    /// Return a basic iterator.
-    pub fn iterate(call_frame: *const CallFrame) Iterator {
-        return .{ .rest = call_frame.arguments() };
-    }
-
     /// From JavaScriptCore/interpreter/CallFrame.h
     ///
     ///   |          ......            |   |
@@ -192,16 +187,6 @@ pub const CallFrame = opaque {
     pub fn describeFrame(self: *const CallFrame) [:0]const u8 {
         return std.mem.span(Bun__CallFrame__describeFrame(self));
     }
-
-    pub const Iterator = struct {
-        rest: []const JSValue,
-        pub fn next(it: *Iterator) ?JSValue {
-            if (it.rest.len == 0) return null;
-            const current = it.rest[0];
-            it.rest = it.rest[1..];
-            return current;
-        }
-    };
 
     /// This is an advanced iterator struct which is used by various APIs. In
     /// Node.fs, `will_be_async` is set to true which allows string/path APIs to

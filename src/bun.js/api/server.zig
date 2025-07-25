@@ -755,7 +755,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
                 if (nodeHttpResponse.flags.ended or nodeHttpResponse.flags.socket_closed) {
-                    return jsc.jsBoolean(false);
+                    return .jsBoolean(false);
                 }
 
                 var data_value = jsc.JSValue.zero;
@@ -832,21 +832,21 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     }
                 }
-                return jsc.jsBoolean(nodeHttpResponse.upgrade(data_value, sec_websocket_protocol, sec_websocket_extensions));
+                return .jsBoolean(nodeHttpResponse.upgrade(data_value, sec_websocket_protocol, sec_websocket_extensions));
             }
 
             var request = object.as(Request) orelse {
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
-            var upgrader = request.request_context.get(RequestContext) orelse return jsc.jsBoolean(false);
+            var upgrader = request.request_context.get(RequestContext) orelse return .jsBoolean(false);
 
             if (upgrader.isAbortedOrEnded()) {
-                return jsc.jsBoolean(false);
+                return .jsBoolean(false);
             }
 
             if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
-                return jsc.jsBoolean(false);
+                return .jsBoolean(false);
             }
 
             const resp = upgrader.resp.?;
@@ -878,7 +878,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (sec_websocket_key_str.len == 0) {
-                return jsc.jsBoolean(false);
+                return .jsBoolean(false);
             }
 
             if (sec_websocket_protocol.len > 0) {
@@ -1002,7 +1002,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 ctx,
             );
 
-            return jsc.jsBoolean(true);
+            return .jsBoolean(true);
         }
 
         pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {

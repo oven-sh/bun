@@ -3156,9 +3156,9 @@ pub const StringOrUndefined = union(enum) {
     string: bun.String,
     none: void,
 
-    pub fn toJS(this: *const StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this.*) {
-            .string => this.string.toJS(globalObject),
+            .string => this.string.transferToJS(globalObject),
             .none => .js_undefined,
         };
     }
@@ -3286,11 +3286,11 @@ const Return = struct {
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return jsc.toJS(globalObject, []Buffer, this.buffers);
+                    return .fromAny(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return jsc.toJS(globalObject, []const bun.String, this.files);
+                    return .fromAny(globalObject, []const bun.String, this.files);
                 },
             }
         }

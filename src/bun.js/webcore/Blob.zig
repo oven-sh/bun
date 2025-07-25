@@ -913,7 +913,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
                     const this: *@This() = @ptrCast(@alignCast(opaque_this));
                     switch (result) {
-                        .success => this.promise.resolve(this.global, jsc.jsNumber(0)),
+                        .success => this.promise.resolve(this.global, .jsNumber(0)),
                         .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                     }
                     this.deinit();
@@ -1102,7 +1102,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
                             const this: *@This() = @ptrCast(@alignCast(opaque_self));
                             switch (result) {
-                                .success => this.promise.resolve(this.global, jsc.jsNumber(this.store.data.bytes.len)),
+                                .success => this.promise.resolve(this.global, .jsNumber(this.store.data.bytes.len)),
                                 .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                             }
                             this.deinit();
@@ -3041,13 +3041,13 @@ pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
         }
         this.resolveSize();
         if (this.size == Blob.max_size and this.store != null) {
-            return jsc.jsNumber(std.math.inf(f64));
+            return .jsNumber(std.math.inf(f64));
         } else if (this.size == 0 and this.store != null) {
             if (this.store.?.data == .file and
                 (this.store.?.data.file.seekable orelse true) == false and
                 this.store.?.data.file.max_size == Blob.max_size)
             {
-                return jsc.jsNumber(std.math.inf(f64));
+                return .jsNumber(std.math.inf(f64));
             }
         }
     }

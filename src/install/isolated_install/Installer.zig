@@ -13,8 +13,8 @@ pub const Installer = struct {
 
     store: *const Store,
 
-    tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: Task.Preallocated,
+    task_queue: bun.UnboundedQueue(Task, .next) = .{},
+    tasks: []Task,
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -25,12 +25,9 @@ pub const Installer = struct {
     }
 
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = this.preallocated_tasks.get();
-        task.* = .{
-            .entry_id = entry_id,
-            .installer = this,
-        };
-
+        const task = &this.tasks[entry_id.get()];
+        bun.debugAssert(task.result == .none or task.result == .blocked);
+        task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));
     }
 
@@ -255,15 +252,13 @@ pub const Installer = struct {
     }
 
     pub const Task = struct {
-        const Preallocated = bun.HiveArray(Task, 128).Fallback;
-
         entry_id: Store.Entry.Id,
         installer: *Installer,
 
-        task: ThreadPool.Task = .{ .callback = &callback },
-        next: ?*Task = null,
+        task: ThreadPool.Task,
+        next: ?*Task,
 
-        result: Result = .none,
+        result: Result,
 
         const Result = union(enum) {
             none,
@@ -1028,7 +1023,7 @@ pub const Installer = struct {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .blocked => {
@@ -1036,7 +1031,7 @@ pub const Installer = struct {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .fail => |err| {
@@ -1045,7 +1040,7 @@ pub const Installer = struct {
                     }
                     this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
                     this.result = .{ .err = err.clone(bun.default_allocator) };
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
             }

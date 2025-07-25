@@ -111,18 +111,12 @@ fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: 
 fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []const u8, bin: []const u8, check_windows_extensions: bool) ?[:0]u16 {
     if (path.len == 0) return null;
     const segment = if (std.fs.path.isAbsolute(path)) (PosixToWinNormalizer.resolveCWDWithExternalBuf(path_buf, path) catch return null) else path;
-    const segment_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, segment);
+    const segment_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, bun.strings.withoutTrailingSlash(segment));
 
-    var segment_len = segment.len;
-    var segment_utf16_len = segment_utf16.len;
-    if (buf[segment.len - 1] != std.fs.path.sep) {
-        buf[segment.len] = std.fs.path.sep;
-        segment_len += 1;
-        segment_utf16_len += 1;
-    }
+    buf[segment_utf16.len] = std.fs.path.sep;
 
-    const bin_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf[segment_len..], bin);
-    const path_size = segment_utf16_len + bin_utf16.len;
+    const bin_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf[segment_utf16.len + 1 ..], bin);
+    const path_size = segment_utf16.len + 1 + bin_utf16.len;
     buf[path_size] = 0;
 
     return searchBin(buf, path_size, check_windows_extensions);

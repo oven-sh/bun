@@ -286,8 +286,8 @@ pub fn init(
     } else {
         TimeoutObject.js.argumentsSetCached(timer, global, arguments);
         TimeoutObject.js.callbackSetCached(timer, global, callback);
-        TimeoutObject.js.idleTimeoutSetCached(timer, global, jsc.jsNumber(interval));
-        TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) jsc.jsNumber(interval) else .null);
+        TimeoutObject.js.idleTimeoutSetCached(timer, global, .jsNumber(interval));
+        TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) .jsNumber(interval) else .null);
 
         // this increments the refcount
         this.reschedule(timer, vm);

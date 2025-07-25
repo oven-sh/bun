@@ -80,7 +80,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var err = this.stream.init();
     if (err.isError()) {
         try impl.emitError(this, globalThis, this_value, err);
-        return jsc.jsBoolean(false);
+        return .jsBoolean(false);
     }
 
     const params_ = arguments[0].asArrayBuffer(globalThis).?.asU32();
@@ -93,10 +93,10 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         err = this.stream.setParams(@intCast(i), d);
         if (err.isError()) {
             // try impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
-            return jsc.jsBoolean(false);
+            return .jsBoolean(false);
         }
     }
-    return jsc.jsBoolean(true);
+    return .jsBoolean(true);
 }
 
 pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

@@ -68,7 +68,7 @@ pub const JSObject = opaque {
             cell.put(
                 global,
                 field.name,
-                try jsc.toJS(global, @TypeOf(property), property),
+                try .fromAny(global, @TypeOf(property), property),
             );
         }
 

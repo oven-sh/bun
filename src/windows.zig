@@ -3644,6 +3644,7 @@ pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
 
 pub const rescle = struct {
     extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
+    extern fn rescle__applyRCFile([*:0]const u16, [*:0]const u16) c_int;
 
     pub fn setIcon(exe_path: [*:0]const u16, icon: [*:0]const u16) !void {
         comptime bun.assert(bun.Environment.isWindows);
@@ -3651,6 +3652,18 @@ pub const rescle = struct {
         return switch (status) {
             0 => {},
             else => error.IconEditError,
+        };
+    }
+    
+    pub fn applyRCFile(exe_path: [*:0]const u16, rc_path: [*:0]const u16) !void {
+        comptime bun.assert(bun.Environment.isWindows);
+        const status = rescle__applyRCFile(exe_path, rc_path);
+        return switch (status) {
+            0 => {},
+            -1 => error.ExeLoadError,
+            -2 => error.RCFileNotFound,
+            -3 => error.CommitError,
+            else => error.RCEditError,
         };
     }
 };

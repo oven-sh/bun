@@ -833,6 +833,7 @@ pub const StandaloneModuleGraph = struct {
         output_format: bun.options.Format,
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
+        windows_rc: ?[]const u8,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
@@ -882,6 +883,19 @@ pub const StandaloneModuleGraph = struct {
                 const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
                 bun.windows.rescle.setIcon(outfile_slice, icon) catch {
                     Output.warn("Failed to set executable icon", .{});
+                };
+            }
+            
+            if (windows_rc) |rc_utf8| {
+                var rc_buf: bun.OSPathBuffer = undefined;
+                const rc = bun.strings.toWPathNormalized(&rc_buf, rc_utf8);
+                bun.windows.rescle.applyRCFile(outfile_slice, rc) catch |err| {
+                    switch (err) {
+                        error.RCFileNotFound => Output.warn("Custom RC file not found: {s}", .{rc_utf8}),
+                        error.ExeLoadError => Output.warn("Failed to load executable for RC processing", .{}),
+                        error.CommitError => Output.warn("Failed to commit RC file changes to executable", .{}),
+                        else => Output.warn("Failed to apply custom RC file", .{}),
+                    }
                 };
             }
             return;

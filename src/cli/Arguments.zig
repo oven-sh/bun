@@ -171,6 +171,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-rc <STR>               When using --compile targeting Windows, use a custom Windows resource (.rc) file") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -904,6 +905,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.windows_icon = path;
+        }
+        if (args.option("--windows-rc")) |path| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-rc is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-rc requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows_rc = path;
         }
 
         if (args.option("--outdir")) |outdir| {

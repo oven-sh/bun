@@ -2324,3 +2324,179 @@ it("should add multiple dependencies specified on command line", async () => {
   });
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should add dependency to specific workspace using --filter", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {},
+    }),
+  );
+  
+  // Set up root package.json with workspaces
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }),
+  );
+  
+  // Create workspace packages
+  await mkdir(join(package_dir, "packages", "pkg1"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      version: "0.0.1",
+    }),
+  );
+  
+  await mkdir(join(package_dir, "packages", "pkg2"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg2", "package.json"),
+    JSON.stringify({
+      name: "pkg2", 
+      version: "0.0.1",
+    }),
+  );
+  
+  // Add dependency to specific workspace using --filter
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bar", "--filter", "pkg1"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe", 
+    stderr: "pipe",
+    env,
+  });
+  
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  
+  const out = await stdout.text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed bar@0.0.2",
+    "",
+    "3 packages installed",
+  ]);
+  
+  expect(await exited).toBe(0);
+  
+  // Verify dependency was added only to pkg1
+  const pkg1Json = await file(join(package_dir, "packages", "pkg1", "package.json")).json();
+  expect(pkg1Json).toMatchObject({
+    name: "pkg1",
+    version: "0.0.1",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  
+  // Verify dependency was NOT added to pkg2
+  const pkg2Json = await file(join(package_dir, "packages", "pkg2", "package.json")).json();
+  expect(pkg2Json).toEqual({
+    name: "pkg2",
+    version: "0.0.1",
+  });
+  
+  // Verify dependency was NOT added to root
+  const rootJson = await file(join(package_dir, "package.json")).json();
+  expect(rootJson).toEqual({
+    name: "root", 
+    version: "1.0.0",
+    workspaces: ["packages/*"],
+  });
+  
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should add dependency to multiple workspaces using path filter", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {},
+    }),
+  );
+  
+  // Set up root package.json with workspaces
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }),
+  );
+  
+  // Create workspace packages
+  await mkdir(join(package_dir, "packages", "app"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "app", "package.json"),
+    JSON.stringify({
+      name: "@workspace/app",
+      version: "0.0.1",
+    }),
+  );
+  
+  await mkdir(join(package_dir, "packages", "lib"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "lib", "package.json"),
+    JSON.stringify({
+      name: "@workspace/lib",
+      version: "0.0.1",
+    }),
+  );
+  
+  // Add to specific workspace using path pattern filter
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bar", "--filter", "./packages/app"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  
+  const out = await stdout.text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed bar@0.0.2",
+    "",
+    "3 packages installed",
+  ]);
+  
+  expect(await exited).toBe(0);
+  
+  // Verify dependency was added only to app
+  const appJson = await file(join(package_dir, "packages", "app", "package.json")).json();
+  expect(appJson).toMatchObject({
+    name: "@workspace/app",
+    version: "0.0.1",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  
+  // Verify dependency was NOT added to lib
+  const libJson = await file(join(package_dir, "packages", "lib", "package.json")).json();
+  expect(libJson).toEqual({
+    name: "@workspace/lib",
+    version: "0.0.1",
+  });
+  
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  await access(join(package_dir, "bun.lockb"));
+});

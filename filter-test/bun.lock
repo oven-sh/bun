@@ -1,0 +1,26 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "lodash": "^4.17.21",
+      },
+    },
+    "packages/pkg1": {
+      "name": "pkg1",
+      "version": "0.0.1",
+    },
+    "packages/pkg2": {
+      "name": "pkg2",
+      "version": "0.0.1",
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "pkg1": ["pkg1@workspace:packages/pkg1"],
+
+    "pkg2": ["pkg2@workspace:packages/pkg2"],
+  }
+}

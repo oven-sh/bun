@@ -1,0 +1,8 @@
+{
+  "name": "root",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

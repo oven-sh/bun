@@ -858,6 +858,25 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
+      function unsafeBashEscape(str) {
+        if (!str) return "";
+        if (str.includes(" ")) return JSON.stringify(str);
+        return str;
+      }
+      if (process.env.SHOW_SPAWN_COMMANDS) {
+        console.log(
+          "SPAWNING COMMAND:\n" +
+            [
+              "echo -n | " +
+                Object.entries(env)
+                  .map(([key, value]) => `${unsafeBashEscape(key)}=${unsafeBashEscape(value)}`)
+                  .join(" "),
+              unsafeBashEscape(command),
+              ...args.map(unsafeBashEscape),
+            ].join(" ") +
+            " | cat",
+        );
+      }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,

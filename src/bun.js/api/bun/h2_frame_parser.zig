@@ -406,10 +406,10 @@ pub fn jsAssertSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallF
 
 pub fn jsGetPackedSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var settings: FullSettingsPayload = .{};
-    const args_list = callframe.arguments_old(1);
+    const args_list = callframe.arguments();
 
-    if (args_list.len > 0 and !args_list.ptr[0].isEmptyOrUndefinedOrNull()) {
-        const options = args_list.ptr[0];
+    if (args_list.len > 0 and !args_list[0].isEmptyOrUndefinedOrNull()) {
+        const options = args_list[0];
 
         if (!options.isObject()) {
             return globalObject.throw("Expected settings to be a object", .{});
@@ -2586,11 +2586,11 @@ pub const H2FrameParser = struct {
 
     pub fn setEncoding(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected encoding argument", .{});
         }
-        this.handlers.binary_type = BinaryType.fromJSValue(globalObject, args_list.ptr[0]) orelse {
+        this.handlers.binary_type = BinaryType.fromJSValue(globalObject, args_list[0]) orelse {
             const err = jsc.toInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject).asObjectRef();
             return globalObject.throwValue(err);
         };
@@ -2688,12 +2688,12 @@ pub const H2FrameParser = struct {
 
     pub fn updateSettings(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected settings argument", .{});
         }
 
-        const options = args_list.ptr[0];
+        const options = args_list[0];
 
         try this.loadSettingsFromJSValue(globalObject, options);
 
@@ -2702,11 +2702,11 @@ pub const H2FrameParser = struct {
 
     pub fn setLocalWindowSize(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throwInvalidArguments("Expected windowSize argument", .{});
         }
-        const windowSize = args_list.ptr[0];
+        const windowSize = args_list[0];
         if (!windowSize.isNumber()) {
             return globalObject.throwInvalidArguments("Expected windowSize to be a number", .{});
         }
@@ -2746,12 +2746,12 @@ pub const H2FrameParser = struct {
     }
     pub fn goaway(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(3);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected errorCode argument", .{});
         }
 
-        const error_code_arg = args_list.ptr[0];
+        const error_code_arg = args_list[0];
 
         if (!error_code_arg.isNumber()) {
             return globalObject.throw("Expected errorCode to be a number", .{});
@@ -2763,7 +2763,7 @@ pub const H2FrameParser = struct {
 
         var lastStreamID = this.lastStreamID;
         if (args_list.len >= 2) {
-            const last_stream_arg = args_list.ptr[1];
+            const last_stream_arg = args_list[1];
             if (!last_stream_arg.isEmptyOrUndefinedOrNull()) {
                 if (!last_stream_arg.isNumber()) {
                     return globalObject.throw("Expected lastStreamId to be a number", .{});
@@ -2775,7 +2775,7 @@ pub const H2FrameParser = struct {
                 lastStreamID = @intCast(id);
             }
             if (args_list.len >= 3) {
-                const opaque_data_arg = args_list.ptr[2];
+                const opaque_data_arg = args_list[2];
                 if (!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         const slice = array_buffer.byteSlice();
@@ -2792,7 +2792,7 @@ pub const H2FrameParser = struct {
 
     pub fn ping(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected payload argument", .{});
         }
@@ -2802,7 +2802,7 @@ pub const H2FrameParser = struct {
             return globalObject.throwValue(exception);
         }
 
-        if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
+        if (args_list[0].asArrayBuffer(globalObject)) |array_buffer| {
             const slice = array_buffer.slice();
             this.sendPing(false, slice);
             return .js_undefined;
@@ -2952,11 +2952,11 @@ pub const H2FrameParser = struct {
 
     pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected stream argument", .{});
         }
-        const stream_arg = args_list.ptr[0];
+        const stream_arg = args_list[0];
 
         if (!stream_arg.isNumber()) {
             return globalObject.throw("Invalid stream id", .{});
@@ -2976,11 +2976,11 @@ pub const H2FrameParser = struct {
 
     pub fn isStreamAborted(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected stream argument", .{});
         }
-        const stream_arg = args_list.ptr[0];
+        const stream_arg = args_list[0];
 
         if (!stream_arg.isNumber()) {
             return globalObject.throw("Invalid stream id", .{});
@@ -3003,11 +3003,11 @@ pub const H2FrameParser = struct {
     }
     pub fn getStreamState(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected stream argument", .{});
         }
-        const stream_arg = args_list.ptr[0];
+        const stream_arg = args_list[0];
 
         if (!stream_arg.isNumber()) {
             return globalObject.throw("Invalid stream id", .{});
@@ -3036,12 +3036,12 @@ pub const H2FrameParser = struct {
 
     pub fn setStreamPriority(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(2);
+        const args_list = callframe.arguments();
         if (args_list.len < 2) {
             return globalObject.throw("Expected stream and options arguments", .{});
         }
-        const stream_arg = args_list.ptr[0];
-        const options = args_list.ptr[1];
+        const stream_arg = args_list[0];
+        const options = args_list[1];
 
         if (!stream_arg.isNumber()) {
             return globalObject.throw("Invalid stream id", .{});
@@ -3133,7 +3133,7 @@ pub const H2FrameParser = struct {
     pub fn rstStream(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("rstStream", .{});
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(2);
+        const args_list = callframe.arguments();
         if (args_list.len < 2) {
             return globalObject.throw("Expected stream and code arguments", .{});
         }
@@ -3284,12 +3284,12 @@ pub const H2FrameParser = struct {
     }
     pub fn noTrailers(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected stream, headers and sensitiveHeaders arguments", .{});
         }
 
-        const stream_arg = args_list.ptr[0];
+        const stream_arg = args_list[0];
 
         if (!stream_arg.isNumber()) {
             return globalObject.throw("Expected stream to be a number", .{});
@@ -3359,7 +3359,7 @@ pub const H2FrameParser = struct {
 
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        const args_list = callframe.arguments_old(3);
+        const args_list = callframe.arguments();
         if (args_list.len < 3) {
             return globalObject.throw("Expected stream, headers and sensitiveHeaders arguments", .{});
         }

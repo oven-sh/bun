@@ -4684,7 +4684,7 @@ pub const Expect = struct {
 
                         // Check for pass condition only if not already passed
                         if (!pass) {
-                            if (try result_value.deepEquals(expected, globalThis)) {
+                            if (try result_value.jestDeepEquals(expected, globalThis)) {
                                 pass = true;
                             }
                         }
@@ -4824,7 +4824,7 @@ pub const Expect = struct {
                     if (type_str.eqlComptime("return")) {
                         last_return_value = try last_result.get(globalThis, "value") orelse .js_undefined;
 
-                        if (try last_return_value.deepEquals(expected, globalThis)) {
+                        if (try last_return_value.jestDeepEquals(expected, globalThis)) {
                             pass = true;
                         }
                     } else if (type_str.eqlComptime("throw")) {
@@ -4912,7 +4912,7 @@ pub const Expect = struct {
                     defer type_str.deref();
                     if (type_str.eqlComptime("return")) {
                         nth_return_value = try nth_result.get(globalThis, "value") orelse .js_undefined;
-                        if (try nth_return_value.deepEquals(expected, globalThis)) {
+                        if (try nth_return_value.jestDeepEquals(expected, globalThis)) {
                             pass = true;
                         }
                     } else if (type_str.eqlComptime("throw")) {

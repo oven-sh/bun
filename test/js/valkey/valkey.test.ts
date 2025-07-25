@@ -67,6 +67,54 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(decrementedValue).toBe(10);
     });
 
+    test("should increment and decrement counters by a specific amount", async () => {
+      const redis = ctx.redis;
+      const counterKey = "counter";
+      await redis.set(counterKey, "10");
+
+      // INCRBY should increment by a specific amount
+      const incrementedValue = await redis.incrby(counterKey, 5);
+      expect(incrementedValue).toBeDefined();
+      expect(typeof incrementedValue).toBe("number");
+      expect(incrementedValue).toBe(15);
+
+      // INCRBY (with negative amount) should decrement by a specific amount
+      const decrementedValue = await redis.incrby(counterKey, -3);
+      expect(decrementedValue).toBeDefined();
+      expect(typeof decrementedValue).toBe("number");
+      expect(decrementedValue).toBe(12);
+
+      // DECRBY should decrement by a specific amount
+      const decrementedValue2 = await redis.decrby(counterKey, 3);
+      expect(decrementedValue2).toBeDefined();
+      expect(typeof decrementedValue2).toBe("number");
+      expect(decrementedValue2).toBe(9);
+
+      // DECRBY (with negative amount) should increment by a specific amount
+      const incrementedValue2 = await redis.decrby(counterKey, -3);
+      expect(incrementedValue2).toBeDefined();
+      expect(typeof incrementedValue2).toBe("number");
+      expect(incrementedValue2).toBe(12);
+    });
+
+    test("should increment and decrement counters by a specific amount with floats", async () => {
+      const redis = ctx.redis;
+      const counterKey = "counter";
+      await redis.set(counterKey, "10");
+
+      // INCRBYFLOAT should increment by a specific amount
+      const incrementedValue = await redis.incrbyfloat(counterKey, 2.5);
+      expect(incrementedValue).toBeDefined();
+      expect(typeof incrementedValue).toBe("string");
+      expect(incrementedValue).toBe("12.5");
+
+      // INCRBYFLOAT (with negative amount) should decrement by a specific amount
+      const decrementedValue = await redis.incrbyfloat(counterKey, -1.5);
+      expect(decrementedValue).toBeDefined();
+      expect(typeof decrementedValue).toBe("string");
+      expect(decrementedValue).toBe("11");
+    });
+
     test("should manage key expiration", async () => {
       const redis = ctx.redis;
       // Set a key first

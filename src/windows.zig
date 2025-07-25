@@ -3904,7 +3904,7 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     return if (rc == .SUCCESS)
         .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
@@ -3967,7 +3967,7 @@ pub fn moveOpenedFileAt(
     return if (rc == .SUCCESS)
         .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.

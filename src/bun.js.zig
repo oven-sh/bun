@@ -265,6 +265,32 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
+        this.startInner() catch |err| switch (err) {
+            error.JSExecutionTerminated => {},
+        };
+
+        vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+        vm.global.handleRejectedPromises();
+        vm.onExit();
+
+        if (this.any_unhandled) {
+            this.vm.exit_handler.exit_code = 1;
+
+            bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
+            Output.prettyErrorln(
+                "<r>\n<d>{s}<r>",
+                .{Global.unhandled_error_bun_version_string},
+            );
+        }
+
+        bun.api.napi.fixDeadCodeElimination();
+        bun.crash_handler.fixDeadCodeElimination();
+        vm.globalExit();
+    }
+
+    fn startInner(this: *Run) bun.JSExecutionTerminated!void {
+        var vm = this.vm;
         this.addConditionalGlobals();
         do_redis_preconnect: {
             // This must happen within the API lock, which is why it's not in the "doPreconnect" function
@@ -329,8 +355,8 @@ pub const Run = struct {
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
-                    vm.eventLoop().tick() catch {}; // ??
-                    vm.eventLoop().tickPossiblyForever() catch {}; // ??
+                    try vm.eventLoop().tick();
+                    try vm.eventLoop().tickPossiblyForever();
                 } else {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
@@ -385,7 +411,7 @@ pub const Run = struct {
             vm.global.vm().releaseWeakRefs();
             _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
-            vm.tick() catch {}; // ??
+            try vm.tick();
         }
 
         {
@@ -394,24 +420,24 @@ pub const Run = struct {
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
-                        vm.tick() catch {}; // ??
+                        try vm.tick();
 
                         // Report exceptions in hot-reloaded modules
                         vm.handlePendingInternalPromiseRejection();
 
-                        vm.eventLoop().autoTickActive() catch {}; // ??
+                        try vm.eventLoop().autoTickActive();
                     }
 
-                    vm.onBeforeExit() catch {}; // ??
+                    try vm.onBeforeExit();
 
                     vm.handlePendingInternalPromiseRejection();
 
-                    vm.eventLoop().tickPossiblyForever() catch {}; // ??
+                    try vm.eventLoop().tickPossiblyForever();
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
-                    vm.tick() catch {}; // ??
-                    vm.eventLoop().autoTickActive() catch {}; // ??
+                    try vm.tick();
+                    try vm.eventLoop().autoTickActive();
                 }
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
@@ -422,12 +448,12 @@ pub const Run = struct {
                                 .pending => {
                                     result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
-                                    vm.tick() catch {}; // ??
-                                    vm.eventLoop().autoTickActive() catch {}; // ??
+                                    try vm.tick();
+                                    try vm.eventLoop().autoTickActive();
 
                                     while (vm.isEventLoopAlive()) {
-                                        vm.tick() catch {}; // ??
-                                        vm.eventLoop().autoTickActive() catch {}; // ??
+                                        try vm.tick();
+                                        try vm.eventLoop().autoTickActive();
                                     }
 
                                     break :brk result;
@@ -442,7 +468,7 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit() catch {}; // ??
+                try vm.onBeforeExit();
             }
 
             if (vm.log.msgs.items.len > 0) {
@@ -450,25 +476,6 @@ pub const Run = struct {
                 Output.flush();
             }
         }
-
-        vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
-        vm.global.handleRejectedPromises();
-        vm.onExit();
-
-        if (this.any_unhandled and !printed_sourcemap_warning_and_version) {
-            this.vm.exit_handler.exit_code = 1;
-
-            bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.print();
-
-            Output.prettyErrorln(
-                "<r>\n<d>{s}<r>",
-                .{Global.unhandled_error_bun_version_string},
-            );
-        }
-
-        bun.api.napi.fixDeadCodeElimination();
-        bun.crash_handler.fixDeadCodeElimination();
-        vm.globalExit();
     }
 
     fn addConditionalGlobals(this: *Run) void {

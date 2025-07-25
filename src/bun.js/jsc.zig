@@ -150,8 +150,6 @@ pub const WorkPool = EventLoop.WorkPool;
 pub const WorkPoolTask = EventLoop.WorkPoolTask;
 pub const WorkTask = EventLoop.WorkTask;
 
-/// Deprecated: Use `bun.sys.Maybe`
-pub const Maybe = bun.sys.Maybe;
 /// Deprecated: Avoid using this in new code.
 pub const C = @import("./javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.

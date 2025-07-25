@@ -15,7 +15,7 @@ pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
     this.signal = signal;
 }
 
-pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) jsc.Maybe(void) {
+pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) bun.sys.Maybe(void) {
     this.bytes.len = 0;
     var list = this.bytes.listManaged(this.allocator);
     list.clearRetainingCapacity();
@@ -36,14 +36,14 @@ pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) jsc.Maybe(void
     this.done = false;
 
     this.signal.start();
-    return .{ .result = {} };
+    return .success;
 }
 
-pub fn flush(_: *ArrayBufferSink) jsc.Maybe(void) {
-    return .{ .result = {} };
+pub fn flush(_: *ArrayBufferSink) bun.sys.Maybe(void) {
+    return .success;
 }
 
-pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) jsc.Maybe(JSValue) {
+pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
     if (this.streaming) {
         const value: JSValue = switch (this.as_uint8array) {
             true => jsc.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array) catch .zero, // TODO: properly propagate exception upwards
@@ -113,12 +113,12 @@ pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable 
     return .{ .owned = len };
 }
 
-pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) jsc.Maybe(void) {
+pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) bun.sys.Maybe(void) {
     if (this.next) |*next| {
         return next.end(err);
     }
     this.signal.close(err);
-    return .{ .result = {} };
+    return .success;
 }
 pub fn destroy(this: *ArrayBufferSink) void {
     this.bytes.deinitWithAllocator(this.allocator);
@@ -145,7 +145,7 @@ pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: 
     ).toJS(globalThis, null);
 }
 
-pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) jsc.Maybe(ArrayBuffer) {
+pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) bun.sys.Maybe(ArrayBuffer) {
     if (this.done) {
         return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
     }

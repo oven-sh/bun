@@ -207,7 +207,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             this.receive_pending_chunk_len = 0;
-            this.receive_body_remain = 0;
+            // Don't modify this.receive_body_remain here as it's managed by the caller (handleData)
         }
 
         fn clearSendBuffers(this: *WebSocket, free: bool) void {

@@ -4645,7 +4645,7 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
@@ -4791,7 +4791,7 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastReturnedWith", "<green>expected<r>");
@@ -4868,7 +4868,7 @@ pub const Expect = struct {
     pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(2).slice();
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>");
 

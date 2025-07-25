@@ -1747,22 +1747,24 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     };
 
-                    route_ptr.data.server = AnyServer.from(srv);
                     const server_any = AnyServer.from(srv);
                     route_ptr.data.server = server_any;
 
-                    if (server_any.devServer()) |dev| {
-                        bake.DevServer.registerCatchAllHtmlRoute(dev, route_ptr.data) catch bun.outOfMemory();
-                    } else if (srv.config.development.isHMREnabled()) {
-                        const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
-                        jsc.ConsoleObject.messageWithTypeAndLevel(
-                            undefined,
-                            jsc.ConsoleObject.MessageType.Log,
-                            jsc.ConsoleObject.MessageLevel.Warning,
-                            globalThis,
-                            &[_]jsc.JSValue{msg},
-                            1,
-                        );
+                    if (srv.config.development.isHMREnabled()) {
+                        const dev = server_any.ensureDevServer() catch null;
+                        if (dev) |d| {
+                            bake.DevServer.registerCatchAllHtmlRoute(d, route_ptr.data) catch bun.outOfMemory();
+                        } else {
+                            const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
+                            jsc.ConsoleObject.messageWithTypeAndLevel(
+                                undefined,
+                                jsc.ConsoleObject.MessageType.Log,
+                                jsc.ConsoleObject.MessageLevel.Warning,
+                                globalThis,
+                                &[_]jsc.JSValue{msg},
+                                1,
+                            );
+                        }
                     }
 
                     const resp_ptr = this.resp.?;

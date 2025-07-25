@@ -21,12 +21,12 @@ pub const FileSystemRouter = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*FileSystemRouter {
-        const argument_ = callframe.arguments_old(1);
-        if (argument_.len == 0) {
+        const arguments = callframe.arguments();
+        if (arguments.len == 0) {
             return globalThis.throwInvalidArguments("Expected object", .{});
         }
 
-        const argument = argument_.ptr[0];
+        const argument = arguments[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isObject()) {
             return globalThis.throwInvalidArguments("Expected object", .{});
         }
@@ -259,12 +259,12 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn match(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        const argument_ = callframe.arguments_old(2);
-        if (argument_.len == 0) {
+        const arguments = callframe.arguments();
+        if (arguments.len == 0) {
             return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
-        const argument = argument_.ptr[0];
+        const argument = arguments[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isCell()) {
             return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }

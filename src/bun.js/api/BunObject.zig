@@ -197,12 +197,12 @@ pub const BunObject = struct {
 };
 
 pub fn shellEscape(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalThis.throw("shell escape expected at least 1 argument", .{});
     }
 
-    const jsval = arguments.ptr[0];
+    const jsval = arguments[0];
     const bunstr = try jsval.toBunString(globalThis);
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
@@ -284,10 +284,9 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 }
 
 pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments_ = callframe.arguments_old(2);
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         return globalThis.throw("which: expected 1 argument, got 0", .{});
@@ -518,8 +517,7 @@ pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVal
 }
 
 pub fn registerMacro(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    const arguments = callframe.arguments();
     if (arguments.len != 2 or !arguments[0].isNumber()) {
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid args", .{});
     }
@@ -653,8 +651,7 @@ pub fn getArgv(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
 
 pub fn openInEditor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
-    const args = callframe.arguments_old(4);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -766,14 +763,14 @@ pub fn getPublicPathWithAssetPrefix(
 }
 
 pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
 
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("sleepSync", 1, 0);
     }
-    const arg = arguments.slice()[0];
+    const arg = arguments[0];
 
     // The argument must be a number
     if (!arg.isNumber()) {
@@ -890,8 +887,7 @@ pub fn resolveSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame)
 }
 
 pub fn resolve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(3);
-    const value = doResolve(globalObject, arguments.slice()) catch |e| {
+    const value = doResolve(globalObject, callframe.arguments()) catch |e| {
         const err = globalObject.takeError(e);
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
@@ -971,8 +967,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
 }
 
 pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    const arguments = callframe.arguments();
     if (arguments.len == 0) {
         return jsc.JSValue.jsNumberFromInt32(-1);
     }
@@ -1198,8 +1193,8 @@ comptime {
 }
 
 pub fn allocUnsafe(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
-    const size = arguments.ptr[0];
+    const arguments = callframe.argumentsAsArray(1);
+    const size = arguments[0];
     if (!size.isUInt32AsAnyInt()) {
         return globalThis.throwInvalidArguments("Expected a positive number", .{});
     }
@@ -1211,8 +1206,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         return globalThis.throwTODO("mmapFile is not supported on Windows");
     }
 
-    const arguments_ = callframe.arguments_old(2);
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
 
     var buf: bun.PathBuffer = undefined;
@@ -2016,12 +2010,12 @@ pub const JSZstd = struct {
 
 // const InternalTestingAPIs = struct {
 //     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-//         const args = callframe.arguments_old(1);
+//         const args = callframe.arguments();
 //         if (args.len < 1) {
 //             globalThis.throwNotEnoughArguments("code", 1, 0);
 //         }
 
-//         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+//         const code = args[0].toSliceOrNull(globalThis) orelse return .zero;
 //         defer code.deinit();
 //         var buffer = MutableString.initEmpty(bun.default_allocator);
 //         defer buffer.deinit();

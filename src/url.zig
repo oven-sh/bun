@@ -996,9 +996,7 @@ pub const FormData = struct {
     ) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
 
-        const args_ = callframe.arguments_old(2);
-
-        const args = args_.ptr[0..2];
+        const args = callframe.argumentsAsArray(2);
 
         const input_value = args[0];
         const boundary_value = args[1];

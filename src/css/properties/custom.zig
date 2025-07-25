@@ -305,7 +305,7 @@ pub const TokenList = struct {
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn parseInto(
@@ -591,7 +591,7 @@ pub const TokenList = struct {
             last_is_whitespace = false;
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {

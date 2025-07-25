@@ -959,7 +959,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return parseValueFirst(input);
                 },
             }
-            return Result(This).success;
+            return .success;
         }
 
         pub fn parseNameFirst(input: *css.Parser) Result(This) {

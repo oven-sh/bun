@@ -2702,7 +2702,14 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
     source: "buildkite",
     level: "error",
   });
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorContent, attempt: attempt + 1 });
+  reportAnnotationToBuildKite({
+    context,
+    label: `${label}-error`,
+    content: errorContent,
+    style,
+    priority,
+    attempt: attempt + 1,
+  });
 }
 
 /**

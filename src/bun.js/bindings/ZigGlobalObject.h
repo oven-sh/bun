@@ -643,6 +643,9 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
+    // Store the napi module struct to defer calling nm_register_func until after dlopen completes
+    std::optional<napi_module> m_pendingNapiModule = {};
+
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("lexer should not crash on single # character", () => {
@@ -15,10 +15,10 @@ test("lexer should not crash on single # character", () => {
   });
 
   // The main fix is preventing a bounds check crash
-  // Before the fix, this would potentially crash with a bounds error  
+  // Before the fix, this would potentially crash with a bounds error
   // After the fix, it should exit cleanly with a syntax error (exit code 1)
   expect(exitCode).toBe(1);
-  
+
   const output = stdout.toString() + stderr.toString();
   expect(output).toContain("error: Syntax Error");
 });

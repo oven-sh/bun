@@ -253,10 +253,10 @@ pub fn create(
     return this;
 }
 
-pub fn setup(this: *FileSink, options: *const FileSink.Options) jsc.Maybe(void) {
+pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(void) {
     if (this.readable_stream.has()) {
         // Already started.
-        return .{ .result = {} };
+        return .success;
     }
 
     const result = bun.io.openForWriting(
@@ -302,7 +302,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) jsc.Maybe(void) 
                     this.writer.updateRef(this.eventLoop(), false);
                 },
             }
-            return .{ .result = {} };
+            return .success;
         }
     }
 
@@ -332,7 +332,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) jsc.Maybe(void) 
         },
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn loop(this: *FileSink) *bun.Async.Loop {
@@ -347,7 +347,7 @@ pub fn connect(this: *FileSink, signal: streams.Signal) void {
     this.signal = signal;
 }
 
-pub fn start(this: *FileSink, stream_start: streams.Start) jsc.Maybe(void) {
+pub fn start(this: *FileSink, stream_start: streams.Start) bun.sys.Maybe(void) {
     switch (stream_start) {
         .FileSink => |*file| {
             switch (this.setup(file)) {
@@ -363,7 +363,7 @@ pub fn start(this: *FileSink, stream_start: streams.Start) jsc.Maybe(void) {
     this.done = false;
     this.started = true;
     this.signal.start();
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn runPendingLater(this: *FileSink) void {
@@ -411,11 +411,11 @@ pub fn onAutoFlush(this: *FileSink) bool {
     return is_registered;
 }
 
-pub fn flush(_: *FileSink) jsc.Maybe(void) {
-    return .{ .result = {} };
+pub fn flush(_: *FileSink) bun.sys.Maybe(void) {
+    return .success;
 }
 
-pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) jsc.Maybe(JSValue) {
+pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
     _ = wait;
 
     if (this.pending.state == .pending) {
@@ -495,16 +495,16 @@ pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable 
     return this.toResult(this.writer.writeUTF16(data.slice16()));
 }
 
-pub fn end(this: *FileSink, _: ?bun.sys.Error) jsc.Maybe(void) {
+pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
     if (this.done) {
-        return .{ .result = {} };
+        return .success;
     }
 
     switch (this.writer.flush()) {
         .done => |written| {
             this.written += @truncate(written);
             this.writer.end();
-            return .{ .result = {} };
+            return .success;
         },
         .err => |e| {
             this.writer.close();
@@ -517,12 +517,12 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) jsc.Maybe(void) {
                 this.ref();
             }
             this.done = true;
-            return .{ .result = {} };
+            return .success;
         },
         .wrote => |written| {
             this.written += @truncate(written);
             this.writer.end();
-            return .{ .result = {} };
+            return .success;
         },
     }
 }
@@ -545,7 +545,7 @@ pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destruct
     return JSSink.createObject(globalThis, this, if (destructor) |dest| @intFromPtr(dest.ptr()) else 0);
 }
 
-pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) jsc.Maybe(JSValue) {
+pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
     if (this.done) {
         if (this.pending.state == .pending) {
             return .{ .result = this.pending.future.promise.strong.value() };

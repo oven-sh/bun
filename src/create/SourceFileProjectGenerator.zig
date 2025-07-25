@@ -79,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 }
 
 // Create a file with given contents, returns if file was newly created
-fn createFile(filename: []const u8, contents: []const u8) bun.jsc.Maybe(bool) {
+fn createFile(filename: []const u8, contents: []const u8) bun.sys.Maybe(bool) {
     // Check if file exists and has same contents
     if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);

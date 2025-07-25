@@ -59,6 +59,11 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
+    // For compiled/standalone executables, execArgv should be empty
+    if (vm.standalone_module_graph != null) {
+        return try jsc.JSValue.createEmptyArray(globalObject, 0);
+    }
+
     var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();

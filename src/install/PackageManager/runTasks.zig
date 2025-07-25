@@ -929,7 +929,7 @@ pub fn flushDependencyQueue(this: *PackageManager) void {
 pub fn scheduleTasks(manager: *PackageManager) usize {
     const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
 
-    manager.incrementPendingTasks(@truncate(count));
+    manager.incrementPendingTasks(@intCast(count));
     manager.thread_pool.schedule(manager.patch_apply_batch);
     manager.thread_pool.schedule(manager.patch_calc_hash_batch);
     manager.thread_pool.schedule(manager.task_batch);

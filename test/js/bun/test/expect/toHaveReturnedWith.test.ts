@@ -209,6 +209,186 @@ describe("toHaveReturnedWith Examples", () => {
       expect(mockFunctionFactory).toHaveReturnedWith(expect.any(Function));
       expect(result(5)).toBe(10);
     });
+
+    test("should work with expect.any() for various types", () => {
+      const mockString = jest.fn(() => "hello");
+      const mockNumber = jest.fn(() => 42);
+      const mockBoolean = jest.fn(() => true);
+      const mockArray = jest.fn(() => [1, 2, 3]);
+      const mockObject = jest.fn(() => ({ foo: "bar" }));
+      const mockDate = jest.fn(() => new Date("2024-01-01"));
+      const mockRegex = jest.fn(() => /test/);
+      const mockError = jest.fn(() => new Error("test error"));
+
+      mockString();
+      mockNumber();
+      mockBoolean();
+      mockArray();
+      mockObject();
+      mockDate();
+      mockRegex();
+      mockError();
+
+      expect(mockString).toHaveReturnedWith(expect.any(String));
+      expect(mockNumber).toHaveReturnedWith(expect.any(Number));
+      expect(mockBoolean).toHaveReturnedWith(expect.any(Boolean));
+      expect(mockArray).toHaveReturnedWith(expect.any(Array));
+      expect(mockObject).toHaveReturnedWith(expect.any(Object));
+      expect(mockDate).toHaveReturnedWith(expect.any(Date));
+      expect(mockRegex).toHaveReturnedWith(expect.any(RegExp));
+      expect(mockError).toHaveReturnedWith(expect.any(Error));
+    });
+
+    test("should work with expect.anything()", () => {
+      const mockReturningString = jest.fn(() => "hello");
+      const mockReturningNumber = jest.fn(() => 42);
+      const mockReturningObject = jest.fn(() => ({ key: "value" }));
+      const mockReturningNull = jest.fn(() => null);
+      const mockReturningUndefined = jest.fn(() => undefined);
+
+      mockReturningString();
+      mockReturningNumber();
+      mockReturningObject();
+      mockReturningNull();
+      mockReturningUndefined();
+
+      expect(mockReturningString).toHaveReturnedWith(expect.anything());
+      expect(mockReturningNumber).toHaveReturnedWith(expect.anything());
+      expect(mockReturningObject).toHaveReturnedWith(expect.anything());
+      
+      // anything() should not match null or undefined
+      expect(() => {
+        expect(mockReturningNull).toHaveReturnedWith(expect.anything());
+      }).toThrow();
+      
+      expect(() => {
+        expect(mockReturningUndefined).toHaveReturnedWith(expect.anything());
+      }).toThrow();
+    });
+
+    test("should work with expect.stringContaining()", () => {
+      const mockGreeting = jest.fn((name: string) => `Hello, ${name}!`);
+      
+      mockGreeting("Alice");
+      mockGreeting("Bob");
+
+      expect(mockGreeting).toHaveReturnedWith(expect.stringContaining("Hello"));
+      expect(mockGreeting).toHaveReturnedWith(expect.stringContaining("Alice"));
+      expect(mockGreeting).toHaveReturnedWith(expect.stringContaining("Bob"));
+      expect(mockGreeting).toHaveReturnedWith(expect.stringContaining("!"));
+    });
+
+    test("should work with expect.stringMatching()", () => {
+      const mockEmail = jest.fn(() => "user@example.com");
+      const mockPhone = jest.fn(() => "+1-555-123-4567");
+      
+      mockEmail();
+      mockPhone();
+
+      expect(mockEmail).toHaveReturnedWith(expect.stringMatching(/^[\w.]+@[\w.]+\.com$/));
+      expect(mockEmail).toHaveReturnedWith(expect.stringMatching("example"));
+      expect(mockPhone).toHaveReturnedWith(expect.stringMatching(/^\+\d-\d{3}-\d{3}-\d{4}$/));
+    });
+
+    test("should work with expect.arrayContaining()", () => {
+      const mockArrayFunction = jest.fn(() => [1, 2, 3, 4, 5]);
+      
+      mockArrayFunction();
+
+      expect(mockArrayFunction).toHaveReturnedWith(expect.arrayContaining([1, 3, 5]));
+      expect(mockArrayFunction).toHaveReturnedWith(expect.arrayContaining([2, 4]));
+      expect(mockArrayFunction).toHaveReturnedWith(expect.arrayContaining([5]));
+      
+      // Should fail if array doesn't contain all elements
+      expect(() => {
+        expect(mockArrayFunction).toHaveReturnedWith(expect.arrayContaining([6]));
+      }).toThrow();
+    });
+
+    test("should work with expect.objectContaining()", () => {
+      const mockUser = jest.fn(() => ({
+        id: 1,
+        name: "Alice",
+        email: "alice@example.com",
+        metadata: {
+          created: "2024-01-01",
+          role: "admin"
+        }
+      }));
+      
+      mockUser();
+
+      expect(mockUser).toHaveReturnedWith(expect.objectContaining({
+        name: "Alice",
+        email: "alice@example.com"
+      }));
+      
+      expect(mockUser).toHaveReturnedWith(expect.objectContaining({
+        id: 1,
+        metadata: expect.objectContaining({
+          role: "admin"
+        })
+      }));
+    });
+
+    test("should work with nested asymmetric matchers", () => {
+      const mockComplexData = jest.fn(() => ({
+        users: [
+          { id: 1, name: "Alice", age: 30 },
+          { id: 2, name: "Bob", age: 25 }
+        ],
+        timestamp: new Date(),
+        metadata: {
+          version: "1.0.0",
+          features: ["feature1", "feature2"]
+        }
+      }));
+      
+      mockComplexData();
+
+      expect(mockComplexData).toHaveReturnedWith(expect.objectContaining({
+        users: expect.arrayContaining([
+          expect.objectContaining({ name: "Alice" }),
+          expect.objectContaining({ name: "Bob" })
+        ]),
+        timestamp: expect.any(Date),
+        metadata: expect.objectContaining({
+          version: expect.stringMatching(/^\d+\.\d+\.\d+$/),
+          features: expect.arrayContaining(["feature1"])
+        })
+      }));
+    });
+
+    test("should work with custom asymmetric matchers", () => {
+      const isEven = {
+        asymmetricMatch: (received: any) => typeof received === 'number' && received % 2 === 0,
+        toString: () => 'Even Number'
+      };
+
+      const isPositive = {
+        asymmetricMatch: (received: any) => typeof received === 'number' && received > 0,
+        toString: () => 'Positive Number'
+      };
+
+      const mockEven = jest.fn(() => 42);
+      const mockOdd = jest.fn(() => 43);
+      const mockNegative = jest.fn(() => -10);
+      
+      mockEven();
+      mockOdd();
+      mockNegative();
+
+      expect(mockEven).toHaveReturnedWith(isEven);
+      expect(mockEven).toHaveReturnedWith(isPositive);
+      
+      expect(() => {
+        expect(mockOdd).toHaveReturnedWith(isEven);
+      }).toThrow();
+      
+      expect(() => {
+        expect(mockNegative).toHaveReturnedWith(isPositive);
+      }).toThrow();
+    });
   });
 
   describe("Common Mistakes and How to Avoid Them", () => {

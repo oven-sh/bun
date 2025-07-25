@@ -141,7 +141,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (try checkError(this, global, this_value)) return;
+            if (!(try checkError(this, global, this_value))) return;
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
@@ -249,9 +249,9 @@ pub fn CompressionStream(comptime T: type) type {
         /// returns true if no error was detected/emitted
         fn checkError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) bun.JSError!bool {
             const err = this.stream.getErrorInfo();
-            if (!err.isError()) return false;
+            if (!err.isError()) return true;
             try emitError(this, globalThis, this_value, err);
-            return true;
+            return false;
         }
 
         pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) bun.JSError!void {

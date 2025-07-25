@@ -328,6 +328,7 @@ pub fn installHoistedPackages(
             installer.installAvailablePackages(log_level, force);
         }
 
+        // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, .monotonic);
         if (log_level.showProgress()) {
             scripts_node.activate();
@@ -342,6 +343,7 @@ pub fn installHoistedPackages(
         installer.linkRemainingBins(log_level);
         installer.completeRemainingScripts(log_level);
 
+        // .monotonic is okay because this value is only accessed on this thread.
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 

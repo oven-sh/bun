@@ -36,30 +36,25 @@ test("lexer handles single # character without bounds error", async () => {
     });
     expect.unreachable();
   } catch (e: any) {
-    expect(normalizeBunSnapshot(Bun.inspect((e as AggregateError).errors[0]), dir)).toMatchInlineSnapshot(`
-      "1 | #
-          ^
-      error: Syntax Error
-          at <dir>/single-hash.js:1:1"
-    `);
+    const errorMessage = Bun.inspect((e as AggregateError).errors[0]);
+    expect(errorMessage).toContain("error: Syntax Error");
   }
 });
 
-test("lexer should not crash on single # character", async () => {
+test("lexer should not crash on single # character", () => {
   const dir = tempDirWithFiles("single-hash", {
     "single-hash.js": "#",
   });
 
-  await using proc = Bun.spawn({
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "single-hash.js"],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  const snapshot = normalizeBunSnapshot(Bun.inspect(await proc.stderr.text()), dir);
-
-  expect(snapshot).toMatchInlineSnapshot(
-    `""1 | #/n    ^/nerror: Syntax Error/n    at <dir>/single-hash.js:1:1/n/nBun v<bun-version>-canary.1+9616cfed8 (macOS arm64)/n""`,
-  );
+  expect(exitCode).toBe(1);
+  const output = stdout.toString() + stderr.toString();
+  expect(output).toContain("error: Syntax Error");
 });

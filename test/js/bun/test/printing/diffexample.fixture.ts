@@ -272,8 +272,8 @@ test("example 16 - zig indentation change diff", () => {
 });
 
 test("example 17 - zig very long string", () => {
-  const receivedLines = [];
-  const expectedLines = [];
+  const receivedLines: string[] = [];
+  const expectedLines: string[] = [];
   for (let i = 0; i < 1000; i++) {
     if (i === 100) {
       receivedLines.push(`line ${i} - inserted`);
@@ -311,4 +311,12 @@ test("example 18 - very long single line string", () => {
   const expected = "a".repeat(1000000);
   const received = "a".repeat(1000001);
   expect(received).toEqual(expected);
+});
+
+test("not", () => {
+  expect("Hello, World!").not.toEqual("Hello, World!");
+});
+
+test("has end newline vs doesn't", () => {
+  expect("Hello, World!\n").toEqual("Hello, World!");
 });

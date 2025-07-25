@@ -499,11 +499,43 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 18 - very long single line string [DURATION]
+    312 |   const received = "a".repeat(1000001);
+    313 |   expect(received).toEqual(expected);
+    314 | });
+    315 | 
+    316 | test("not", () => {
+    317 |   expect("Hello, World!").not.toEqual("Hello, World!");
+                                        ^
+    error: expect(received).not.toEqual(expected)
+
+    Expected: not "Hello, World!"
+
+          at <anonymous> (FILE:LINE)
+    (fail) not [DURATION]
+    316 | test("not", () => {
+    317 |   expect("Hello, World!").not.toEqual("Hello, World!");
+    318 | });
+    319 | 
+    320 | test("has end newline vs doesn't", () => {
+    321 |   expect("Hello, World!\\n").toEqual("Hello, World!");
+                                      ^
+    error: expect(received).toEqual(expected)
+
+    - "Hello, World!"
+    + "Hello, World!
+    + "
+
+    - Expected  - 0
+    + Received  + 1
+
+
+          at <anonymous> (FILE:LINE)
+    (fail) has end newline vs doesn't [DURATION]
 
      1 pass
-     17 fail
-     18 expect() calls
-    Ran 18 tests across 1 file. [DURATION]
+     19 fail
+     20 expect() calls
+    Ran 20 tests across 1 file. [DURATION]
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

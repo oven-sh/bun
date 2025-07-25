@@ -534,11 +534,11 @@ fn initSubproc(this: *Cmd) Yield {
     if (did_exit_immediately) {
         if (subproc.process.hasExited()) {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
-            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage)) catch return .failed;
+            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage)) catch return .terminated;
         } else {
             // process has already exited, but we haven't called wait4() yet
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            subproc.process.wait(false) catch return .failed;
+            subproc.process.wait(false) catch return .terminated;
         }
     }
 

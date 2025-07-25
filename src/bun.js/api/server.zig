@@ -2041,7 +2041,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 prepared.request_object.request_context.detachRequest();
             }
 
-            ctx.onResponse(this, prepared.js_request, response_value) catch return; // TODO: properly propagate exception upwards
+            ctx.onResponse(this, prepared.js_request, response_value) catch {}; // TODO: properly propagate exception upwards
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
 
@@ -2117,7 +2117,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
-            ctx.onResponse(this, prepared.js_request, response_value) catch return; // TODO: properly propagate exception upwards
+            ctx.onResponse(this, prepared.js_request, response_value) catch {}; // TODO: properly propagate exception upwards
             ctx.defer_deinit_until_callback_completes = original_state;
 
             // Reference in the stack here in case it is not for whatever reason

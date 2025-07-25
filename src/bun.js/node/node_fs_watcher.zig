@@ -454,7 +454,7 @@ pub const FSWatcher = struct {
     pub fn emitAbort(this: *FSWatcher, err: jsc.JSValue) void {
         if (this.closed) return;
         _ = this.pending_activity_count.fetchAdd(1, .monotonic);
-        defer this.close() catch {};
+        defer this.close() catch {}; // TODO: properly propagate exception upwards
         defer this.unrefTask();
 
         err.ensureStillAlive();

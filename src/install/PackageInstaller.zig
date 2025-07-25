@@ -442,7 +442,7 @@ pub const PackageInstaller = struct {
         for (this.pending_lifecycle_scripts.items) |entry| {
             const package_name = entry.list.package_name;
             while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
-                this.manager.sleep() catch return; // TODO:
+                this.manager.sleep() catch return; // TODO: properly propagate exception upwards
             }
 
             const optional = entry.optional;
@@ -482,7 +482,7 @@ pub const PackageInstaller = struct {
                 }
             }
 
-            this.manager.sleep() catch return; // TODO:
+            this.manager.sleep() catch return; // TODO: properly propagate exception upwards
         }
     }
 

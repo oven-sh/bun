@@ -147,9 +147,8 @@ pub const VM = opaque {
         return JSC__VM__isEntered(vm);
     }
 
-    extern fn JSC__VM__isTerminationException(vm: *VM, exception: *bun.jsc.Exception) bool;
     pub fn isTerminationException(vm: *VM, exception: *bun.jsc.Exception) bool {
-        return JSC__VM__isTerminationException(vm, exception);
+        return bun.cpp.JSC__VM__isTerminationException(vm, exception);
     }
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;

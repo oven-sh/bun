@@ -5390,6 +5390,7 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
+[[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 {
     return vm->isTerminationException(exception);

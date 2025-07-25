@@ -211,10 +211,10 @@ pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config:
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: this in defer is bad
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: properly propagate exception upwards
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: this in defer is bad
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: properly propagate exception upwards
             },
             .none => {},
         }
@@ -231,10 +231,10 @@ pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?j
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: this in defer is bad
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: properly propagate exception upwards
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: this in defer is bad
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {}; // TODO: properly propagate exception upwards
             },
             .none => {},
         }

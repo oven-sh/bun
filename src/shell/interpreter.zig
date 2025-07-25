@@ -926,6 +926,7 @@ pub const Interpreter = struct {
             },
             .result => |i| i,
         };
+        defer interp.deinitEverything();
 
         const exit_code: ExitCode = 1;
 
@@ -943,7 +944,6 @@ pub const Interpreter = struct {
         interp.exit_code = exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
@@ -952,7 +952,6 @@ pub const Interpreter = struct {
         }
         try mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
         return code;
     }
 
@@ -1155,7 +1154,7 @@ pub const Interpreter = struct {
                         JSValue.jsNumberFromU16(exit_code),
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
-                    }) catch |err| (globalThis.reportActiveExceptionAsUnhandled(err) catch return .failed);
+                    }) catch |err| (globalThis.reportActiveExceptionAsUnhandled(err) catch return .terminated);
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
                 }

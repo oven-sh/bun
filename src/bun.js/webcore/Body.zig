@@ -670,6 +670,7 @@ pub const Value = union(Tag) {
 
             if (locked.promise) |promise_| {
                 const promise = promise_.asAnyPromise().?;
+                defer promise_.unprotect();
                 locked.promise = null;
 
                 switch (locked.action) {
@@ -740,7 +741,6 @@ pub const Value = union(Tag) {
                         return promise.resolve(global, blob.toJS(global));
                     },
                 }
-                promise_.unprotect();
             }
         }
     }

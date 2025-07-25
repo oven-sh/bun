@@ -916,7 +916,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                     return switch (result) {
                         .success => this.promise.resolve(this.global, .jsNumber(0)),
                         .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
-                    } catch return; //TODO:
+                    } catch return;
                 }
 
                 fn deinit(this: *@This()) void {
@@ -1105,7 +1105,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             return switch (result) {
                                 .success => this.promise.resolve(this.global, .jsNumber(this.store.data.bytes.len)),
                                 .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
-                            } catch return; //TODO:
+                            } catch return;
                         }
 
                         fn deinit(this: *@This()) void {

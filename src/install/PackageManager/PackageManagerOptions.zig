@@ -71,6 +71,8 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+disable_default_trusted_dependencies: bool = false,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -243,6 +245,9 @@ pub fn load(
         }
         if (config.link_workspace_packages) |link_workspace_packages| {
             this.link_workspace_packages = link_workspace_packages;
+        }
+        if (config.disable_default_trusted_dependencies) |disable_default_trusted_dependencies| {
+            this.disable_default_trusted_dependencies = disable_default_trusted_dependencies;
         }
     }
 

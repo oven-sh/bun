@@ -1974,13 +1974,13 @@ pub const default_trusted_dependencies = brk: {
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8, check_default: bool) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);
     }
 
-    return default_trusted_dependencies.has(name);
+    return if (check_default) default_trusted_dependencies.has(name) else false;
 }
 
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);

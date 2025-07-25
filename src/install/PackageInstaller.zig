@@ -1090,7 +1090,7 @@ pub const PackageInstaller = struct {
                     const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                     const is_trusted, const is_trusted_through_update_request = brk: {
                         if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
-                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items))) break :brk .{ true, false };
+                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), !this.options.disable_default_trusted_dependencies)) break :brk .{ true, false };
                         break :brk .{ false, false };
                     };
 
@@ -1321,6 +1321,7 @@ pub const PackageInstaller = struct {
             package_path,
             folder_name,
             resolution,
+            !this.options.disable_default_trusted_dependencies,
         ) catch |err| {
             if (log_level != .silent) {
                 const fmt = "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n";

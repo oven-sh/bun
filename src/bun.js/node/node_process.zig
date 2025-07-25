@@ -317,8 +317,14 @@ comptime {
     }
 }
 
-pub export fn Bun__NODE_NO_WARNINGS() callconv(.C) bool {
+pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+}
+
+pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+        bun.crash_handler.suppressReporting();
+    }
 }
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

@@ -810,23 +810,29 @@ const WaiterThreadPosix = struct {
                     }
                 }
 
-                var queue: []*T = this.active.items;
                 var i: usize = 0;
-                while (queue.len > 0 and i < queue.len) {
-                    const process = queue[i];
+                while (i < this.active.items.len) {
+                    var remove = false;
+                    defer {
+                        if (remove) {
+                            _ = this.active.orderedRemove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    const process = this.active.items[i];
                     const pid = process.pid;
                     // this case shouldn't really happen
                     if (pid == 0) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
                         continue;
                     }
 
                     var rusage = std.mem.zeroes(Rusage);
                     const result = PosixSpawn.wait4(pid, std.posix.W.NOHANG, &rusage);
                     if (result == .err or (result == .result and result.result.pid == pid)) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
 
                         switch (process.event_loop) {
                             .js => |event_loop| {
@@ -856,8 +862,6 @@ const WaiterThreadPosix = struct {
                             },
                         }
                     }
-
-                    i += 1;
                 }
             }
         };

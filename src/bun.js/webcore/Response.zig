@@ -360,9 +360,8 @@ pub fn constructJSON(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args_list = callframe.arguments_old(2);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
 
     var response = Response{
         .body = Body{
@@ -428,9 +427,8 @@ pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    var args_list = callframe.arguments_old(4);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
 
     var url_string_slice = ZigString.Slice.empty;
     defer url_string_slice.deinit();

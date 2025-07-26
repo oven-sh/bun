@@ -373,8 +373,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments_old(4);
-            const args = args_list.ptr[0..args_list.len];
+            const args = callframe.arguments();
 
             if (args.len == 0) {
                 return globalThis.throwValue(globalThis.toTypeError(.MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
@@ -431,8 +430,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments_old(4);
-            const args = args_list.ptr[0..args_list.len];
+            const args = callframe.arguments();
             if (args.len == 0 or !args[0].isString()) {
                 const err = globalThis.toTypeError(
                     if (args.len == 0) .MISSING_ARGS else .INVALID_ARG_TYPE,

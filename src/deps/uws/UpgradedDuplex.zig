@@ -145,12 +145,12 @@ fn onReceivedData(
     log("onReceivedData", .{});
 
     const function = callframe.callee();
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
 
     if (jsc.host_fn.getFunctionData(function)) |self| {
         const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
         if (args.len >= 1) {
-            const data_arg = args.ptr[0];
+            const data_arg = args[0];
             if (this.origin.has()) {
                 if (data_arg.isEmptyOrUndefinedOrNull()) {
                     return .js_undefined;

@@ -534,8 +534,8 @@ pub fn getBucket(this: *Blob, globalThis: *jsc.JSGlobalObject) callconv(jsc.conv
     return .js_undefined;
 }
 pub fn getPresignUrl(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
-    return getPresignUrlFrom(this, globalThis, if (args.len > 0) args.ptr[0] else null);
+    const args = callframe.arguments();
+    return getPresignUrlFrom(this, globalThis, if (args.len > 0) args[0] else null);
 }
 
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) callconv(jsc.conv) JSValue {
@@ -543,8 +543,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) 
 }
 
 pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
 
     // accept a path or a blob

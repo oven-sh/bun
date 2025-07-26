@@ -1987,16 +1987,16 @@ comptime {
 pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(1);
-
-    if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
-    }
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
     const script_ctx = globalThis.bunVM();
-    var args = jsc.CallFrame.ArgumentsSlice.init(script_ctx, arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(script_ctx, callframe.arguments());
+
+    if (args.all.len == 0) {
+        return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
+    }
+
     const addr_arg = args.nextEat().?;
 
     const addr = try bun.String.fromJS(addr_arg, globalThis);

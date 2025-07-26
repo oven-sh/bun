@@ -686,9 +686,9 @@ pub const OperatingSystem = enum(u16) {
 
     const jsc = bun.jsc;
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
+        const arg0 = callframe.argumentsAsArray(1)[0];
         var operating_system = negatable(.none);
-        var iter = try args.ptr[0].arrayIterator(globalObject);
+        var iter = try arg0.arrayIterator(globalObject);
         while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
@@ -728,9 +728,9 @@ pub const Libc = enum(u8) {
 
     const jsc = bun.jsc;
     pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
+        const arg0 = callframe.argumentsAsArray(1)[0];
         var libc = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
+        var iter = arg0.arrayIterator(globalObject);
         while (iter.next()) |item| {
             const slice = item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
@@ -803,9 +803,9 @@ pub const Architecture = enum(u16) {
 
     const jsc = bun.jsc;
     pub fn jsFunctionArchitectureIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(1);
+        const arg0 = callframe.argumentsAsArray(1)[0];
         var architecture = negatable(.none);
-        var iter = try args.ptr[0].arrayIterator(globalObject);
+        var iter = try arg0.arrayIterator(globalObject);
         while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();

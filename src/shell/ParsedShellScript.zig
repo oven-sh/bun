@@ -49,8 +49,7 @@ pub fn finalize(
 }
 
 pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments_ = callframe.arguments_old(2);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     const str_js = arguments.nextEat() orelse {
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };
@@ -105,8 +104,7 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
 pub fn createParsedShellScript(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var shargs = ShellArgs.init();
 
-    const arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    const arguments = callframe.arguments();
     if (arguments.len < 2) {
         return globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
     }

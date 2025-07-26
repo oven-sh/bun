@@ -644,8 +644,7 @@ pub const Interpreter = struct {
 
     pub fn createShellInterpreter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
-        const arguments_ = callframe.arguments_old(3);
-        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 

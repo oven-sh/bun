@@ -285,8 +285,8 @@ pub fn setMode(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callf
 }
 
 pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    var arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    const arguments = callframe.arguments();
+    if (arguments.len < 1) return globalObject.throwNotEnoughArguments("doRun", 1, arguments.len);
     const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
         return globalObject.throw("connection must be a PostgresSQLConnection", .{});
     };

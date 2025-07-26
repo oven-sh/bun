@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     libuv/libuv
   COMMIT
-    da527d8d2a908b824def74382761566371439003
+    5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b
 )
 
 if(WIN32)

@@ -175,6 +175,11 @@ pub const CallFrame = opaque {
         return std.mem.span(Bun__CallFrame__describeFrame(self));
     }
 
+    pub fn iterate(self: *const CallFrame) ArgumentsSlice {
+        const args = self.arguments();
+        return .{ .remaining = args, .all = args };
+    }
+
     /// This is an advanced iterator struct which is used by various APIs. In
     /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
     /// know if they have to do threadsafe clones.
@@ -190,7 +195,12 @@ pub const CallFrame = opaque {
         pub fn init(_: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{
                 .remaining = slice,
-                // .vm = vm,
+                .all = slice,
+            };
+        }
+        pub fn init2(slice: []const jsc.JSValue) ArgumentsSlice {
+            return ArgumentsSlice{
+                .remaining = slice,
                 .all = slice,
             };
         }

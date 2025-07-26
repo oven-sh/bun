@@ -261,7 +261,7 @@ fn makeGlobWalker(
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Glob {
     const alloc = bun.default_allocator;
 
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
     const pat_arg: JSValue = arguments.nextEat() orelse {
         return globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
     };
@@ -304,7 +304,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const alloc = bun.default_allocator;
 
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
@@ -325,7 +325,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFram
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const alloc = bun.default_allocator;
 
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
@@ -351,7 +351,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     var arena = Arena.init(alloc);
     defer arena.deinit();
 
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
     const str_arg = arguments.nextEat() orelse {
         return globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
     };

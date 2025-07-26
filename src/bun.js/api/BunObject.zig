@@ -286,7 +286,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
     const path_arg = arguments.nextEat() orelse {
         return globalThis.throw("which: expected 1 argument, got 0", .{});
     };
@@ -1021,7 +1021,7 @@ pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
     var config: jsc.API.ServerConfig = brk: {
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalObject.bunVM(), arguments);
+        var args = jsc.CallFrame.ArgumentsSlice.init2(arguments);
         var config: jsc.API.ServerConfig = .{};
 
         try jsc.API.ServerConfig.fromJS(

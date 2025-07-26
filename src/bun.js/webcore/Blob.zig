@@ -2219,7 +2219,7 @@ const S3BlobDownloadTask = struct {
 
 pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.ArgumentsSlice.init2(arguments);
 
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
@@ -2270,7 +2270,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.ArgumentsSlice.init2(arguments);
     const store = this.store orelse {
         return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
     };
@@ -2792,7 +2792,7 @@ pub fn getSlice(
         args.len = 3;
     }
 
-    var args_iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args);
+    var args_iter = jsc.CallFrame.ArgumentsSlice.init2(args);
     if (args_iter.nextEat()) |start_| {
         if (start_.isNumber()) {
             const start = start_.toInt64();

@@ -161,10 +161,6 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
-    ["fail-on-coredump-or-report"]: {
-      type: "boolean",
-      default: false, // STAB-861
-    },
   },
 });
 
@@ -858,6 +854,25 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
+      function unsafeBashEscape(str) {
+        if (!str) return "";
+        if (str.includes(" ")) return JSON.stringify(str);
+        return str;
+      }
+      if (process.env.SHOW_SPAWN_COMMANDS) {
+        console.log(
+          "SPAWNING COMMAND:\n" +
+            [
+              "echo -n | " +
+                Object.entries(env)
+                  .map(([key, value]) => `${unsafeBashEscape(key)}=${unsafeBashEscape(value)}`)
+                  .join(" "),
+              unsafeBashEscape(command),
+              ...args.map(unsafeBashEscape),
+            ].join(" ") +
+            " | cat",
+        );
+      }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,
@@ -1074,7 +1089,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         crashes += `main process killed by ${result.signalCode} but no core file found\n`;
       }
 
-      if (options["fail-on-coredump-or-report"] && newCores.length > 0) {
+      if (newCores.length > 0) {
         result.ok = false;
         if (!isAlwaysFailure(result.error)) result.error = "core dumped";
       }
@@ -1116,15 +1131,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
         // When Bun crashes, it exits before the subcommand it runs to upload the crash report has necessarily finished.
         // So wait a little bit to make sure that the crash report has at least started uploading
         // (once the server sees the /ack request then /traces will wait for any crashes to finish processing)
+        // There is a bug that if a test causes crash reports but exits with code 0, the crash reports will instead
+        // be attributed to the next test that fails. I'm not sure how to fix this without adding a sleep in between
+        // all tests (which would slow down CI a lot).
         await setTimeoutPromise(500);
         const response = await fetch(`http://localhost:${remapPort}/traces`);
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
         const traces = await response.json();
         if (traces.length > 0) {
-          if (options["fail-on-coredump-or-report"]) {
-            result.ok = false;
-            if (!isAlwaysFailure(result.error)) result.error = "crash reported";
-          }
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "crash reported";
+
           crashes += `${traces.length} crashes reported during this test\n`;
           for (const t of traces) {
             if (t.failed_parse) {
@@ -1586,20 +1603,30 @@ async function getVendorTests(cwd) {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          await spawnSafe({
+          const { ok, error } = await spawnSafe({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
             cwd,
           });
+          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
         }
 
-        await spawnSafe({
+        let { ok, error } = await spawnSafe({
           command: "git",
           args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
           cwd: vendorPath,
         });
+        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
+
+        ({ ok, error } = await spawnSafe({
+          command: "git",
+          args: ["checkout", tag],
+          timeout: testTimeout,
+          cwd: vendorPath,
+        }));
+        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {

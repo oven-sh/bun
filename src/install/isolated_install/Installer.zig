@@ -24,6 +24,7 @@ pub const Installer = struct {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
+    /// Called from main thread
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
         const task = &this.tasks[entry_id.get()];
         bun.debugAssert(task.result == .none or task.result == .blocked);
@@ -40,6 +41,7 @@ pub const Installer = struct {
         }
     }
 
+    /// Called from main thread
     pub fn onTaskFail(this: *Installer, entry_id: Store.Entry.Id, err: Task.Error) void {
         const string_buf = this.lockfile.buffers.string_bytes.items;
 
@@ -112,21 +114,20 @@ pub const Installer = struct {
 
         this.summary.fail += 1;
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
     }
 
-    pub fn decrementPendingTasks(this: *Installer, entry_id: Store.Entry.Id) void {
-        _ = entry_id;
+    pub fn decrementPendingTasks(this: *Installer) void {
         this.manager.decrementPendingTasks();
     }
 
+    /// Called from main thread
     pub fn onTaskBlocked(this: *Installer, entry_id: Store.Entry.Id) void {
-
-        // race: task decides it is blocked because one of it's dependencies has not finished.
-        // before the task can mark itself as blocked, the dependency finishes it's install,
-        // causing the task to never finish because resumeUnblockedTasks is called before
-        // it's state is set to blocked.
+        // race condition (fixed now): task decides it is blocked because one of its dependencies
+        // has not finished. before the task can mark itself as blocked, the dependency finishes its
+        // install, causing the task to never finish because resumeUnblockedTasks is called before
+        // its state is set to blocked.
         //
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
@@ -134,41 +135,46 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        if (this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+        if (!this.isTaskBlocked(entry_id, &parent_dedupe)) {
+            // .monotonic is okay because the task isn't running right now.
             this.store.entries.items(.step)[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
             return;
         }
 
+        // .monotonic is okay because the task isn't running right now.
         this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
     }
 
-    fn isTaskUnblocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
+    /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
+    /// task thread (via `run`). `parent_dedupe` should not be shared between threads.
+    fn isTaskBlocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
         const entries = this.store.entries.slice();
         const entry_deps = entries.items(.dependencies);
         const entry_steps = entries.items(.step);
 
         const deps = entry_deps[entry_id.get()];
         for (deps.slice()) |dep| {
-            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+            if (entry_steps[dep.entry_id.get()].load(.acquire) != .done) {
                 parent_dedupe.clearRetainingCapacity();
                 if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
                     continue;
                 }
-
-                return false;
+                return true;
             }
         }
-
-        return true;
+        return false;
     }
 
+    /// Called from main thread
     pub fn onTaskComplete(this: *Installer, entry_id: Store.Entry.Id, state: enum { success, skipped, fail }) void {
         if (comptime Environment.ci_assert) {
+            // .monotonic is okay because we should have already synchronized with the completed
+            // task thread by virtue of popping from the `UnboundedQueue`.
             bun.assertWithLocation(this.store.entries.items(.step)[entry_id.get()].load(.monotonic) == .done, @src());
         }
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
 
         if (this.install_node) |node| {
@@ -234,18 +240,20 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        for (0..this.store.entries.len) |_entry_id| {
-            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+        for (0..this.store.entries.len) |id_int| {
+            const entry_id: Store.Entry.Id = .from(@intCast(id_int));
 
+            // .monotonic is okay because only the main thread sets this to `.blocked`.
             const entry_step = entry_steps[entry_id.get()].load(.monotonic);
             if (entry_step != .blocked) {
                 continue;
             }
 
-            if (!this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+            if (this.isTaskBlocked(entry_id, &parent_dedupe)) {
                 continue;
             }
 
+            // .monotonic is okay because the task isn't running right now.
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
         }
@@ -318,6 +326,7 @@ pub const Installer = struct {
             blocked,
         };
 
+        /// Called from task thread
         fn nextStep(this: *Task, comptime current_step: Step) Step {
             const next_step: Step = switch (comptime current_step) {
                 .link_package => .symlink_dependencies,
@@ -333,7 +342,7 @@ pub const Installer = struct {
                 => @compileError("unexpected step"),
             };
 
-            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .monotonic);
+            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .release);
 
             return next_step;
         }
@@ -349,6 +358,7 @@ pub const Installer = struct {
             }
         };
 
+        /// Called from task thread
         fn run(this: *Task) OOM!Yield {
             const installer = this.installer;
             const manager = installer.manager;
@@ -379,7 +389,7 @@ pub const Installer = struct {
             const pkg_name_hash = pkg_name_hashes[pkg_id];
             const pkg_res = pkg_resolutions[pkg_id];
 
-            return next_step: switch (entry_steps[this.entry_id.get()].load(.monotonic)) {
+            return next_step: switch (entry_steps[this.entry_id.get()].load(.acquire)) {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -536,6 +546,9 @@ pub const Installer = struct {
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
 
+                    // .monotonic access of `supported_backend` is okay because it's an
+                    // optimization. It's okay if another thread doesn't see an update to this
+                    // value "in time".
                     backend: switch (installer.supported_backend.load(.monotonic)) {
                         .clonefile => {
                             if (comptime !Environment.isMac) {
@@ -752,7 +765,7 @@ pub const Installer = struct {
                     var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
                     defer parent_dedupe.deinit();
 
-                    if (!installer.isTaskUnblocked(this.entry_id, &parent_dedupe)) {
+                    if (installer.isTaskBlocked(this.entry_id, &parent_dedupe)) {
                         return .blocked;
                     }
 
@@ -1010,6 +1023,7 @@ pub const Installer = struct {
             };
         }
 
+        /// Called from task thread
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
 
@@ -1021,6 +1035,7 @@ pub const Installer = struct {
                 .yield => {},
                 .done => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
@@ -1029,6 +1044,7 @@ pub const Installer = struct {
                 },
                 .blocked => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
@@ -1037,9 +1053,10 @@ pub const Installer = struct {
                 },
                 .fail => |err| {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
                     }
-                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
+                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
                     this.result = .{ .err = err.clone(bun.default_allocator) };
                     this.installer.task_queue.push(this);
                     this.installer.manager.wake();

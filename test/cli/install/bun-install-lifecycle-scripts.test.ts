@@ -27,6 +27,10 @@ afterAll(() => {
   verdaccio.stop();
 });
 
+function splitErrLines(err: string): string[] {
+  return err.split(/\r?\n/).filter(s => !s.startsWith("WARNING: ASAN interferes"));
+}
+
 beforeEach(async () => {
   ({ packageDir, packageJson } = await verdaccio.createTestDir());
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
@@ -3021,7 +3025,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "No packages! Deleted empty lockfile",
         "",
         `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
@@ -3074,7 +3078,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "Resolving dependencies",
         expect.stringContaining("Resolved, downloaded and extracted "),
         "Saved lockfile",

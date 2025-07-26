@@ -59,6 +59,11 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
+    // For compiled/standalone executables, execArgv should be empty
+    if (vm.standalone_module_graph != null) {
+        return try jsc.JSValue.createEmptyArray(globalObject, 0);
+    }
+
     var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();
@@ -312,8 +317,14 @@ comptime {
     }
 }
 
-pub export fn Bun__NODE_NO_WARNINGS() callconv(.C) bool {
+pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+}
+
+pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+        bun.crash_handler.suppressReporting();
+    }
 }
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

@@ -57,6 +57,11 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
+/// Prevents crash reports from being uploaded to any server. Reports will still be printed and
+/// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
+/// things that affect crash reporting. See suppressReporting() for intended usage.
+var suppress_reporting: bool = false;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -1350,6 +1355,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 }
 
 fn isReportingEnabled() bool {
+    if (suppress_reporting) return false;
+
     // If trying to test the crash handler backend, implicitly enable reporting
     if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
         return value.len > 0;
@@ -1703,6 +1710,29 @@ pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimit
     dumpStackTrace(stack, limits);
 }
 
+/// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
+/// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
+/// with core dumps.
+fn suppressCoreDumpsIfNecessary() void {
+    if (bun.Environment.isPosix) {
+        var existing_limit = std.posix.getrlimit(.CORE) catch return;
+        if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
+            existing_limit.cur = 0;
+            std.posix.setrlimit(.CORE, existing_limit) catch {};
+        }
+    }
+}
+
+/// From now on, prevent crashes from being reported to bun.report or the URL overridden in
+/// BUN_CRASH_REPORT_URL. Should only be used for tests that are going to intentionally crash,
+/// so that they do not fail CI due to having a crash reported. And those cases should guard behind
+/// a feature flag and call right before the crash, in order to make sure that crashes other than
+/// the expected one are not suppressed.
+pub fn suppressReporting() void {
+    suppressCoreDumpsIfNecessary();
+    suppress_reporting = true;
+}
+
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
 /// instead of being a pointer. This allows storing captured stack traces
 /// for later printing.
@@ -1787,6 +1817,7 @@ pub const js_bindings = struct {
 
     pub fn jsSegfault(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         @setRuntimeSafety(false);
+        suppressCoreDumpsIfNecessary();
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
@@ -1794,6 +1825,7 @@ pub const js_bindings = struct {
     }
 
     pub fn jsPanic(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
@@ -1802,10 +1834,12 @@ pub const js_bindings = struct {
     }
 
     pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.outOfMemory();
     }
 
     pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
@@ -2166,6 +2200,9 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+        suppressReporting();
+    }
     std.debug.panic("unsupported uv function: {s}", .{name.?});
 }
 

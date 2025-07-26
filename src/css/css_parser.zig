@@ -5350,15 +5350,18 @@ const Tokenizer = struct {
                     if (single_quote) break;
                 },
                 '\\' => {
-                    this.advance(1);
+                    // keep the backslash as normal text
+                    string_bytes.append(this.allocator, &[_]u8{'\\'});
+
+                    this.advance(1); // consome backslash
+
                     if (!this.isEof()) {
-                        switch (this.nextByteUnchecked()) {
-                            // Escaped newline
-                            '\n', FORM_FEED_BYTE, '\r' => this.consumeNewline(),
-                            else => this.consumeEscapeAndWrite(&string_bytes),
-                        }
+                        // also preserves the next byte literally
+                        const _b = this.nextByteUnchecked();
+                        string_bytes.append(this.allocator, &[_]u8{_b});
+                        this.advance(1);
                     }
-                    // else: escaped EOF, do nothing.
+
                     continue;
                 },
                 0 => {
@@ -6954,7 +6957,6 @@ pub const serializer = struct {
                 for (str, 0..) |b, i| {
                     const escaped = switch (b) {
                         '"' => "\\\"",
-                        '\\' => "\\\\",
                         // replacement character
                         0 => bun.strings.encodeUTF8Comptime(0xFFD),
                         0x01...0x1F, 0x7F => null,

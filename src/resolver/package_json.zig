@@ -795,7 +795,9 @@ pub const PackageJSON = struct {
             if (side_effects_field.asBool()) |boolean| {
                 if (!boolean)
                     package_json.side_effects = .{ .false = {} };
-            } else if (side_effects_field.asArray()) |array_| {
+            } else if (side_effects_field.data == .e_array) {
+                // Handle arrays, including empty arrays
+                if (side_effects_field.asArray()) |array_| {
                 var array = array_;
                 var map = SideEffects.Map{};
                 var glob_list = SideEffects.GlobList{};
@@ -816,7 +818,10 @@ pub const PackageJSON = struct {
                 // Reset array for second pass
                 array = array_;
 
-                if (has_globs and has_exact) {
+                // If the array is empty, treat it as false (no side effects)
+                if (!has_globs and !has_exact) {
+                    package_json.side_effects = .{ .false = {} };
+                } else if (has_globs and has_exact) {
                     // Mixed patterns - use both exact and glob matching
                     map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                     glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
@@ -885,6 +890,10 @@ pub const PackageJSON = struct {
                         }
                     }
                     package_json.side_effects = .{ .map = map };
+                }
+                } else {
+                    // Empty array - treat as false (no side effects)
+                    package_json.side_effects = .{ .false = {} };
                 }
             }
         }
@@ -2147,6 +2156,7 @@ const MainFieldMap = bun.StringMap;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
+const glob = bun.glob;
 const js_ast = bun.ast;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;

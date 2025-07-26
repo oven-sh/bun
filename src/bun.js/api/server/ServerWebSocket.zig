@@ -471,9 +471,9 @@ pub fn publishText(
     const ssl = flags.ssl;
     const publish_to_self = flags.publish_to_self;
 
-    const topic_value = args.ptr[0];
-    const message_value = args.ptr[1];
-    const compress_value = args.ptr[2];
+    const topic_value = args[0];
+    const message_value: JSValue = if (args.len > 1) args[1] else .js_undefined;
+    const compress_value: JSValue = if (args.len > 2) args[2] else .js_undefined;
 
     if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
         log("publish() topic invalid", .{});

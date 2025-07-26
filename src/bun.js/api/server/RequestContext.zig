@@ -97,7 +97,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onResolve(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onResolve", .{});
 
-            const ctxJsvalue, const result = callframe.argumentsAsArray(2);
+            const result, const ctxJsvalue = callframe.argumentsAsArray(2);
             var ctx = ctxJsvalue.asPromisePtr(@This());
             defer ctx.deref();
 
@@ -249,7 +249,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onReject(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onReject", .{});
 
-            const ctxJsvalue, const err = callframe.argumentsAsArray(2);
+            const err, const ctxJsvalue = callframe.argumentsAsArray(2);
             const ctx = ctxJsvalue.asPromisePtr(@This());
             defer ctx.deref();
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);

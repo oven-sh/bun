@@ -6,7 +6,7 @@ pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     const data: ZigString.Slice = blk: {
         const data: jsc.JSValue = dataArg;
 
-        if (data == .zero) {
+        if (data == .zero or data.isUndefined()) {
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .js_undefined);
         }
         if (data.isString()) {
@@ -23,7 +23,7 @@ pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     const value: u32 = blk: {
         const value: jsc.JSValue = valueArg;
-        if (value == .zero) {
+        if (value == .zero or value.isUndefined()) {
             break :blk 0;
         }
         if (!value.isNumber()) {

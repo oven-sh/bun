@@ -10,7 +10,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
 
   '@import("bun").': { reason: "Only import 'bun' once" },
-  "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
+  "std.debug.assert": { reason: "Use bun.assert instead", limit: 25 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
   "std.log": { reason: "Don't let this be committed", limit: 1 },

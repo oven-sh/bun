@@ -2156,8 +2156,7 @@ pub const EachData = struct {
 fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
     const callee = callframe.callee();
-    const arguments = callframe.arguments_old(3);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     if (args.len < 2) {
         return globalThis.throwPretty("{s} a description and callback function", .{signature});
@@ -2373,8 +2372,7 @@ inline fn createEach(
     comptime signature: string,
     comptime is_test: bool,
 ) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(1);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     if (args.len == 0) {
         return globalThis.throwPretty("{s} expects an array", .{signature});

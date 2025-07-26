@@ -1458,16 +1458,18 @@ pub const ValueBufferer = struct {
     }
 
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var args = callframe.arguments_old(2);
-        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const args = callframe.arguments();
+        bun.assert(args.len >= 1);
+        var sink: *@This() = args[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return .js_undefined;
     }
 
     pub fn onRejectStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callframe.arguments_old(2);
-        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
-        const err = args.ptr[0];
+        const args = callframe.arguments();
+        bun.assert(args.len >= 2);
+        var sink = args[args.len - 1].asPromisePtr(@This());
+        const err = args[0];
         sink.handleRejectStream(err, true);
         return .js_undefined;
     }

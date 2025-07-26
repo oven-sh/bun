@@ -89,11 +89,11 @@ comptime {
     @export(&Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
 }
 fn Bun__createObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
     }
-    const blob = arguments.ptr[0].as(jsc.WebCore.Blob) orelse {
+    const blob = arguments[0].as(jsc.WebCore.Blob) orelse {
         return globalObject.throwInvalidArguments("createObjectURL expects a Blob object", .{});
     };
     const registry = ObjectURLRegistry.singleton();
@@ -107,14 +107,14 @@ comptime {
     @export(&Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
 }
 fn Bun__revokeObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
     }
-    if (!arguments.ptr[0].isString()) {
+    if (!arguments[0].isString()) {
         return globalObject.throwInvalidArguments("revokeObjectURL expects a string", .{});
     }
-    const str = arguments.ptr[0].toBunString(globalObject) catch @panic("unreachable");
+    const str = arguments[0].toBunString(globalObject) catch @panic("unreachable");
     if (!str.hasPrefixComptime("blob:")) {
         return .js_undefined;
     }
@@ -136,7 +136,7 @@ comptime {
     @export(&jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
 }
 fn jsFunctionResolveObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
 
     // Errors are ignored.
     // Not thrown.
@@ -144,7 +144,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *js
     if (arguments.len < 1) {
         return .js_undefined;
     }
-    const str = try arguments.ptr[0].toBunString(globalObject);
+    const str = try arguments[0].toBunString(globalObject);
     defer str.deref();
 
     if (globalObject.hasException()) {

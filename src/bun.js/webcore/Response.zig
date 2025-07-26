@@ -58,8 +58,7 @@ pub fn getBodyValue(
 
 pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     _ = globalObject; // autofix
-    const arguments = callframe.arguments_old(1);
-    const this_value = arguments.ptr[0];
+    const this_value = callframe.argumentsAsArray(1)[0];
     if (this_value.isEmptyOrUndefinedOrNull()) {
         return .false;
     }
@@ -74,8 +73,7 @@ pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *jsc.JSGloba
 }
 
 pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
-    const this_value = arguments.ptr[0];
+    const this_value = callframe.argumentsAsArray(1)[0];
     if (this_value.isEmptyOrUndefinedOrNull()) {
         return .js_undefined;
     }

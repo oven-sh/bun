@@ -766,8 +766,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Request {
-    const arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.ptr[0..arguments_.len];
+    const arguments = callframe.arguments();
 
     const request = try constructInto(globalThis, arguments);
     return Request.new(request);

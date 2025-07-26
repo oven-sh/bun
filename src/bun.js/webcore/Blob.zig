@@ -1693,8 +1693,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     jsc.markBinding(@src());
     const allocator = bun.default_allocator;
     var blob: Blob = undefined;
-    var arguments = callframe.arguments_old(3);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     if (args.len < 2) {
         return globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
@@ -1955,8 +1954,7 @@ pub fn getStream(
         return cached;
     }
     var recommended_chunk_size: SizeType = 0;
-    var arguments_ = callframe.arguments_old(2);
-    var arguments = arguments_.ptr[0..arguments_.len];
+    const arguments = callframe.arguments();
     if (arguments.len > 0) {
         if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
             return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
@@ -2313,8 +2311,9 @@ pub const FileStreamWrapper = struct {
 };
 
 pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    var args = callframe.arguments_old(2);
-    var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+    const args = callframe.arguments();
+    bun.assert(args.len >= 1);
+    var this = args[args.len - 1].asPromisePtr(FileStreamWrapper);
     defer this.deinit();
     var strong = this.readable_stream_ref;
     defer strong.deinit();
@@ -2327,10 +2326,11 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(2);
-    var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+    const args = callframe.arguments();
+    bun.assert(args.len >= 2);
+    var this = args[args.len - 1].asPromisePtr(FileStreamWrapper);
     defer this.sink.deref();
-    const err = args.ptr[0];
+    const err = args[0];
 
     var strong = this.readable_stream_ref;
     defer strong.deinit();
@@ -2562,10 +2562,10 @@ pub fn getWriter(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    var arguments_ = callframe.arguments_old(1);
-    var arguments = arguments_.ptr[0..arguments_.len];
+    const arguments = callframe.arguments();
+    const argZero: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
-    if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
+    if (!argZero.isEmptyOrUndefinedOrNull() and !argZero.isObject()) {
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
@@ -2578,7 +2578,7 @@ pub fn getWriter(
         const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
         const proxy_url = if (proxy) |p| p.href else null;
         if (arguments.len > 0) {
-            const options = arguments.ptr[0];
+            const options = argZero;
             if (options.isObject()) {
                 if (try options.getTruthy(globalThis, "type")) |content_type| {
                     //override the content type
@@ -2767,8 +2767,8 @@ pub fn getSlice(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     const allocator = bun.default_allocator;
-    var arguments_ = callframe.arguments_old(3);
-    var args = arguments_.ptr[0..arguments_.len];
+    var arguments_ = callframe.argumentsAsArray(3);
+    var args: []JSValue = arguments_[0..callframe.argumentsCount()];
 
     if (this.size == 0) {
         const empty = Blob.initEmpty(globalThis);
@@ -2783,14 +2783,14 @@ pub fn getSlice(
     // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
     var relativeEnd: i64 = @as(i64, @intCast(this.size));
 
-    if (args.ptr[0].isString()) {
-        args.ptr[2] = args.ptr[0];
-        args.ptr[1] = .zero;
-        args.ptr[0] = .zero;
+    if (args[0].isString()) {
+        args[2] = args[0];
+        args[1] = .zero;
+        args[0] = .zero;
         args.len = 3;
-    } else if (args.ptr[1].isString()) {
-        args.ptr[2] = args.ptr[1];
-        args.ptr[1] = .zero;
+    } else if (args[1].isString()) {
+        args[2] = args[1];
+        args[1] = .zero;
         args.len = 3;
     }
 
@@ -3124,8 +3124,7 @@ fn resolveFileStat(store: *Store) void {
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Blob {
     const allocator = bun.default_allocator;
     var blob: Blob = undefined;
-    var arguments = callframe.arguments_old(2);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     switch (args.len) {
         0 => {

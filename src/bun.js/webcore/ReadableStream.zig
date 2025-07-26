@@ -613,15 +613,14 @@ pub fn NewSource(
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
                 jsc.markBinding(@src());
                 const this_jsvalue = callFrame.this();
-                const arguments = callFrame.arguments_old(2);
-                const view = arguments.ptr[0];
+                const view, const flags = callFrame.argumentsAsArray(2);
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;
                 var buffer = view.asArrayBuffer(globalThis) orelse return .js_undefined;
                 return processResult(
                     this_jsvalue,
                     globalThis,
-                    arguments.ptr[1],
+                    flags,
                     this.onPullFromJS(buffer.slice(), view),
                 );
             }

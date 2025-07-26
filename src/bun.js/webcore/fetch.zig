@@ -1481,7 +1481,7 @@ pub fn Bun__fetch_(
 ) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
     const globalThis = ctx;
-    const arguments = callframe.arguments_old(2);
+    const argumentsSlice = callframe.arguments();
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
@@ -1496,7 +1496,7 @@ pub fn Bun__fetch_(
         if (is_error) bun.default_allocator.destroy(memory_reporter);
     }
 
-    if (arguments.len == 0) {
+    if (argumentsSlice.len == 0) {
         const err = ctx.toTypeError(.MISSING_ARGS, fetch_error_no_args, .{});
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
     }
@@ -1504,7 +1504,7 @@ pub fn Bun__fetch_(
     var headers: ?Headers = null;
     var method = Method.GET;
 
-    var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
+    var args = jsc.CallFrame.ArgumentsSlice.init(vm, argumentsSlice);
 
     var url = ZigURL{};
     var first_arg = args.nextEat().?;

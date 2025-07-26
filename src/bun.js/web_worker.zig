@@ -482,10 +482,8 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs();
     log("[{d}] event loop start", .{this.execution_context_id});
-    // TODO(@190n) call dispatchOnline earlier (basically as soon as spin() starts, before
-    // we start running JS)
-    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
-    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
+    // dispatchOnline and fireEarlyMessages are now called earlier in loadEntryPointForWebWorker
+    // to allow message processing even with top-level await
     this.setStatus(.running);
 
     // don't run the GC if we don't actually need to

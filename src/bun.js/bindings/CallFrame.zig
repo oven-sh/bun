@@ -182,18 +182,15 @@ pub const CallFrame = opaque {
     /// Prefer `Iterator` for a simpler iterator.
     pub const ArgumentsSlice = struct {
         remaining: []const jsc.JSValue,
-        vm: *jsc.VirtualMachine,
         all: []const jsc.JSValue,
-        threw: bool = false,
-        will_be_async: bool = false,
 
         pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
             return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
         }
-        pub fn init(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
+        pub fn init(_: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{
                 .remaining = slice,
-                .vm = vm,
+                // .vm = vm,
                 .all = slice,
             };
         }

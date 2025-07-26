@@ -386,7 +386,7 @@ pub fn fromJS(
     arguments: *jsc.CallFrame.ArgumentsSlice,
     opts: FromJSOptions,
 ) bun.JSError!void {
-    const vm = arguments.vm;
+    const vm = global.bunVM();
     const env = vm.transpiler.env;
 
     args.* = .{
@@ -417,7 +417,7 @@ pub fn fromJS(
         args.development = .production;
     }
 
-    if (arguments.vm.transpiler.options.production) {
+    if (vm.transpiler.options.production) {
         args.development = .production;
     }
 
@@ -432,7 +432,7 @@ pub fn fromJS(
             }
         }
 
-        if (arguments.vm.transpiler.options.transform_options.port) |port| {
+        if (vm.transpiler.options.transform_options.port) |port| {
             break :brk port;
         }
 
@@ -440,7 +440,7 @@ pub fn fromJS(
     };
     var port = args.address.tcp.port;
 
-    if (arguments.vm.transpiler.options.transform_options.origin) |origin| {
+    if (vm.transpiler.options.transform_options.origin) |origin| {
         args.base_uri = try bun.default_allocator.dupeZ(u8, origin);
     }
 

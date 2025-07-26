@@ -543,6 +543,8 @@ function spawnSync(file, args, options) {
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
+      uid: options.uid,
+      gid: options.gid,
     });
   } catch (err) {
     error = err;
@@ -1321,6 +1323,8 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+        uid: options.uid,
+        gid: options.gid,
       });
       this.pid = this.#handle.pid;
 

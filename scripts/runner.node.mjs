@@ -161,6 +161,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    ["leaksan"]: {
+      type: "boolean",
+      default: false, // turn this true when more passes
+    },
   },
 });
 
@@ -264,8 +268,18 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipArray = (() => {
+const skipsForExceptionValidation = (() => {
   const path = join(cwd, "test/no-validate-exceptions.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
+const skipsForLeaksan = (() => {
+  const path = join(cwd, "test/no-validate-leaksan.txt");
   if (!existsSync(path)) {
     return [];
   }
@@ -280,7 +294,16 @@ const skipArray = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+};
+
+/**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateLeakSan = test => {
+  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
 };
 
 /**
@@ -522,6 +545,13 @@ async function runTests() {
             };
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
+            }
+            if (
+              (basename(execPath).includes("asan") || (!isCI && options["leaksan"])) &&
+              shouldValidateLeakSan(testPath)
+            ) {
+              env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
+              env["ASAN_OPTIONS=detect_leaks"] = "1";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1206,17 +1236,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  *
  * @param {string} execPath
  * @param {string} testPath
- * @param {object} [options]
- * @param {string} [options.cwd]
- * @param {string[]} [options.args]
+ * @param {object} [opts]
+ * @param {string} [opts.cwd]
+ * @param {string[]} [opts.args]
  * @returns {Promise<TestResult>}
  */
-async function spawnBunTest(execPath, testPath, options = { cwd }) {
+async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
-  const absPath = join(options["cwd"], testPath);
+  const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
-  const args = options["args"] ?? [];
+  const args = opts["args"] ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
 
@@ -1246,10 +1276,14 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
+  if ((basename(execPath).includes("asan") || (!isCI && options["leaksan"])) && shouldValidateLeakSan(testPath)) {
+    env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
+    env["ASAN_OPTIONS=detect_leaks"] = "1";
+  }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
-    cwd: options["cwd"],
+    cwd: opts["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,
     stdout: options.stdout,

@@ -830,6 +830,49 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
     }
 }
 
+pub const RemoteFileSystem = enum {
+    overlayfs,
+    remote,
+    none,
+
+    const remote_fs_magic = [_]u32{
+        0xadf5, // ADFS_SUPER_MAGIC
+        0xadff, // AFFS_SUPER_MAGIC
+        0x5346414f, // AFS_SUPER_MAGIC
+        0x09041934, // ANON_INODE_FS_MAGIC
+        0x0187, // AUTOFS_SUPER_MAGIC
+        0x6969, // NFS_SUPER_MAGIC
+        0x6e736673, // NSFS_MAGIC
+        0x564c, // NCP_SUPER_MAGIC
+        0x517b, // SMB_SUPER_MAGIC
+        0xfe534d42, // SMB2_MAGIC_NUMBER
+        0x65735546, // FUSE_SUPER_MAGIC
+        0x6165676c, // PSTOREFS_MAGIC
+        0x68191122, // QNX6_SUPER_MAGIC
+        0x62646576, // BDEVFS_MAGIC
+        0x62656572, // SYSFS_MAGIC
+        0x63677270, // CGROUP2_SUPER_MAGIC
+        0x63637275, // CRAMFS_MAGIC
+        0x64626720, // DEBUGFS_MAGIC
+    };
+
+    const OVERLAYFS_MAGIC = 0x794c7630;
+
+    pub fn get(stat_fs: *const bun.StatFS) RemoteFileSystem {
+        if (stat_fs.f_type == OVERLAYFS_MAGIC) {
+            return .overlayfs;
+        }
+
+        for (remote_fs_magic) |magic| {
+            if (stat_fs.f_type == magic) {
+                return .remote;
+            }
+        }
+
+        return .none;
+    }
+};
+
 pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
     if (Environment.isWindows) {
         return .{ .err = Error.fromCode(.ENOSYS, .statfs) };
@@ -846,6 +889,21 @@ pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
             log("statfs({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
         if (Maybe(bun.StatFS).errnoSysP(rc, .statfs, path)) |err| return err;
+        return Maybe(bun.StatFS){ .result = statfs_ };
+    }
+}
+
+pub fn fstatfs(fd: bun.FileDescriptor) Maybe(bun.StatFS) {
+    if (Environment.isWindows) {
+        return .{ .err = Error.fromCode(.ENOSYS, .fstatfs) };
+    } else {
+        var statfs_ = mem.zeroes(bun.StatFS);
+        const rc = c.fstatfs(fd.cast(), &statfs_);
+
+        if (comptime Environment.allow_assert)
+            log("fstatfs({}) = {d}", .{ fd, rc });
+
+        if (Maybe(bun.StatFS).errnoSysFd(rc, .fstatfs, fd)) |err| return err;
         return Maybe(bun.StatFS){ .result = statfs_ };
     }
 }

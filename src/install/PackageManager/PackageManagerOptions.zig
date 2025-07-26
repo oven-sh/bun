@@ -565,6 +565,7 @@ pub fn load(
 
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
+            this.do.auto_choose_backend = false;
         }
 
         this.do.update_to_latest = cli.latest;
@@ -666,7 +667,8 @@ pub const Do = packed struct(u16) {
     trust_dependencies_from_args: bool = false,
     update_to_latest: bool = false,
     analyze: bool = false,
-    _: u4 = 0,
+    auto_choose_backend: bool = true,
+    _: u3 = 0,
 };
 
 pub const Enable = packed struct(u16) {

@@ -83,6 +83,7 @@ pub fn installHoistedPackages(
     var summary = PackageInstall.Summary{};
 
     {
+        this.useCopyfileBackendIfFaster();
         var iterator = Lockfile.Tree.Iterator(.node_modules).init(this.lockfile);
         if (comptime Environment.isPosix) {
             Bin.Linker.ensureUmask();

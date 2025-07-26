@@ -621,6 +621,8 @@ pub fn installIsolatedPackages(
         var seen_workspace_ids: std.AutoHashMapUnmanaged(PackageID, void) = .empty;
         defer seen_workspace_ids.deinit(lockfile.allocator);
 
+        manager.useCopyfileBackendIfFaster();
+
         const tasks = try manager.allocator.alloc(Store.Installer.Task, store.entries.len);
         defer manager.allocator.free(tasks);
 

@@ -1793,10 +1793,6 @@ pub const Chunk = struct {
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
-            pub fn deinit(this: *ThisBuilder) void {
-                this.source_map.deinit();
-            }
-
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
                 var buffer = b.source_map.getBuffer();

@@ -855,10 +855,6 @@ fn NewPrinter(
             }
         };
 
-        pub fn deinit(self: *Printer) void {
-            self.source_map_builder.deinit();
-        }
-
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
         }
@@ -5811,7 +5807,6 @@ pub fn printAst(
         if (comptime generate_source_map) {
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
-        printer.deinit();
     }
     printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -5902,7 +5897,6 @@ pub fn printJSON(
         renamer.toRenamer(),
         undefined,
     );
-    defer printer.deinit();
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -6008,7 +6002,6 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
-    defer printer.deinit();
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -6093,7 +6086,6 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
-    defer printer.deinit();
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();

@@ -499,6 +499,11 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 if (this.lockfile.catalogs.get(this.lockfile, dependency.version.value.catalog, name)) |catalog_dep| {
                     name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
 
+                    // CRITICAL FIX: Update the original dependency in the buffer to store the resolved version
+                    // instead of the catalog reference. This ensures that verifyResolutions() can properly
+                    // validate the dependency and that the lockfile contains the resolved versions.
+                    this.lockfile.buffers.dependencies.items[id].version = catalog_dep.version;
+
                     break :version catalog_dep.version;
                 }
             }

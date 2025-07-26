@@ -1,10 +1,10 @@
 const debug = bun.Output.scoped(.zlib, true);
 
 pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(2).ptr;
+    const dataArg, const valueArg = callframe.argumentsAsArray(2);
 
     const data: ZigString.Slice = blk: {
-        const data: jsc.JSValue = arguments[0];
+        const data: jsc.JSValue = dataArg;
 
         if (data == .zero) {
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .js_undefined);
@@ -22,7 +22,7 @@ pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     defer data.deinit();
 
     const value: u32 = blk: {
-        const value: jsc.JSValue = arguments[1];
+        const value: jsc.JSValue = valueArg;
         if (value == .zero) {
             break :blk 0;
         }

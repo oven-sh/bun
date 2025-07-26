@@ -70,10 +70,10 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
 pub fn onInternalMessageChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     log("onInternalMessageChild", .{});
-    const arguments = callframe.arguments_old(2).ptr;
+    const arg0, const arg1 = callframe.argumentsAsArray(2);
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    child_singleton.worker = .create(arguments[0], globalThis);
-    child_singleton.cb = .create(arguments[1], globalThis);
+    child_singleton.worker = .create(arg0, globalThis);
+    child_singleton.cb = .create(arg1, globalThis);
     try child_singleton.flush(globalThis);
     return .js_undefined;
 }

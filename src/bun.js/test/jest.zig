@@ -320,12 +320,12 @@ pub const Jest = struct {
                     return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 };
 
-                const arguments = callframe.arguments_old(2);
+                const arguments = callframe.arguments();
                 if (arguments.len < 1) {
                     return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
 
-                const function = arguments.ptr[0];
+                const function = arguments[0];
                 if (function.isEmptyOrUndefinedOrNull() or !function.isCallable()) {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
@@ -638,10 +638,9 @@ pub const TestScope = struct {
 
     pub fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         debug("onReject", .{});
-        const arguments = callframe.arguments_old(2);
-        const err = arguments.ptr[0];
+        const err, const taskJsvalue = callframe.argumentsAsArray(2);
         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-        var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
+        var task: *TestRunnerTask = taskJsvalue.asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
@@ -650,8 +649,8 @@ pub const TestScope = struct {
 
     pub fn onResolve(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         debug("onResolve", .{});
-        const arguments = callframe.arguments_old(2);
-        var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
+        _, const taskJsvalue = callframe.argumentsAsArray(2);
+        var task: *TestRunnerTask = taskJsvalue.asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
@@ -663,7 +662,7 @@ pub const TestScope = struct {
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const function = callframe.callee();
-        const args = callframe.arguments_old(1);
+        const args = callframe.arguments();
         defer globalThis.bunVM().autoGarbageCollect();
 
         if (jsc.host_fn.getFunctionData(function)) |data| {
@@ -677,7 +676,7 @@ pub const TestScope = struct {
 
             jsc.host_fn.setFunctionData(function, null);
             if (args.len > 0) {
-                const err = args.ptr[0];
+                const err = args[0];
                 if (err.isEmptyOrUndefinedOrNull()) {
                     debug("done()", .{});
                     task.handleResult(no_err_result, .callback);
@@ -922,12 +921,12 @@ pub const DescribeScope = struct {
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
         return struct {
             pub fn run(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!jsc.JSValue {
-                const arguments = callframe.arguments_old(2);
+                const arguments = callframe.arguments();
                 if (arguments.len < 1) {
                     return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
 
-                const cb = arguments.ptr[0];
+                const cb = arguments[0];
                 if (!cb.isObject() or !cb.isCallable()) {
                     return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
@@ -944,14 +943,14 @@ pub const DescribeScope = struct {
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const function = callframe.callee();
-        const args = callframe.arguments_old(1);
+        const args = callframe.arguments();
         defer ctx.bunVM().autoGarbageCollect();
 
         if (jsc.host_fn.getFunctionData(function)) |data| {
             var scope = bun.cast(*DescribeScope, data);
             jsc.host_fn.setFunctionData(function, null);
             if (args.len > 0) {
-                const err = args.ptr[0];
+                const err = args[0];
                 if (!err.isEmptyOrUndefinedOrNull()) {
                     _ = ctx.bunVM().uncaughtException(ctx.bunVM().global, err, true);
                 }
@@ -1802,8 +1801,7 @@ inline fn createScope(
     comptime tag: Tag,
 ) bun.JSError!JSValue {
     const this = callframe.this();
-    const arguments = callframe.arguments_old(3);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     if (args.len == 0) {
         return globalThis.throwPretty("{s} expects a description or function", .{signature});
@@ -1997,8 +1995,7 @@ inline fn createIfScope(
     comptime Scope: type,
     comptime tag: Tag,
 ) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(1);
-    const args = arguments.slice();
+    const args = callframe.arguments();
 
     if (args.len == 0) {
         return globalThis.throwPretty("{s} expects a condition", .{signature});

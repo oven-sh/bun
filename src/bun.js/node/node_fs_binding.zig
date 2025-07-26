@@ -210,7 +210,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
 }
 
 pub fn createMemfdForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callFrame.arguments_old(1);
+    const arguments = callFrame.arguments();
 
     if (arguments.len < 1) {
         return .js_undefined;
@@ -220,7 +220,7 @@ pub fn createMemfdForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.
         return globalObject.throw("memfd_create is not implemented on this platform", .{});
     }
 
-    const size = arguments.ptr[0].toInt64();
+    const size = arguments[0].toInt64();
     switch (bun.sys.memfd_create("my_memfd", std.os.linux.MFD.CLOEXEC)) {
         .result => |fd| {
             _ = bun.sys.ftruncate(fd, size);

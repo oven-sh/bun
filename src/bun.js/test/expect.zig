@@ -394,8 +394,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         var _msg: ZigString = ZigString.Empty;
 
@@ -439,8 +438,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         var _msg: ZigString = ZigString.Empty;
 
@@ -480,8 +478,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments_old(2);
-        const arguments = arguments_.slice();
+        const arguments = callframe.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBe() takes 1 argument", .{});
@@ -543,8 +540,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callframe.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
@@ -610,8 +606,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
@@ -693,8 +688,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toContain() takes 1 argument", .{});
@@ -788,8 +782,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toContainKey() takes 1 argument", .{});
@@ -837,8 +830,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
@@ -903,8 +895,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
@@ -968,8 +959,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
@@ -1029,8 +1019,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
@@ -1084,8 +1073,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwInvalidArguments("toContainValues() takes 1 argument", .{});
@@ -1148,8 +1136,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwInvalidArguments("toContainAllValues() takes 1 argument", .{});
@@ -1218,8 +1205,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwInvalidArguments("toContainAnyValues() takes 1 argument", .{});
@@ -1282,8 +1268,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
@@ -1564,8 +1549,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toEqual() requires 1 argument", .{});
@@ -1603,8 +1587,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toStrictEqual() requires 1 argument", .{});
@@ -1637,8 +1620,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
@@ -1779,8 +1761,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeGreaterThan() requires 1 argument", .{});
@@ -1839,8 +1820,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeGreaterThanOrEqual() requires 1 argument", .{});
@@ -1899,8 +1879,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeLessThan() requires 1 argument", .{});
@@ -1959,8 +1938,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeLessThanOrEqual() requires 1 argument", .{});
@@ -2019,8 +1997,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const thisArguments = callFrame.arguments_old(2);
-        const arguments = thisArguments.ptr[0..thisArguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
@@ -2508,8 +2485,7 @@ pub const Expect = struct {
     pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         incrementExpectCallCounter();
 
@@ -2562,8 +2538,7 @@ pub const Expect = struct {
     pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         incrementExpectCallCounter();
 
@@ -2603,8 +2578,7 @@ pub const Expect = struct {
     pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         incrementExpectCallCounter();
 
@@ -2823,8 +2797,7 @@ pub const Expect = struct {
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         incrementExpectCallCounter();
 
@@ -3102,8 +3075,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
@@ -3169,8 +3141,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeTypeOf() requires 1 argument", .{});
@@ -3467,8 +3438,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(2);
-        const arguments = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
@@ -3526,8 +3496,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
@@ -3736,8 +3705,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
@@ -3790,8 +3758,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(2);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 2) {
             return globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
@@ -3892,8 +3859,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
@@ -3944,8 +3910,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
@@ -3998,8 +3963,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
@@ -4052,8 +4016,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
@@ -4098,8 +4061,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("toMatch() requires 1 argument", .{});
@@ -4217,8 +4179,7 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments_old(1);
-        const arguments: []const JSValue = arguments_.slice();
+        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>");
 
@@ -4889,8 +4850,7 @@ pub const Expect = struct {
     pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer globalThis.bunVM().autoGarbageCollect();
 
-        const arguments_ = callFrame.arguments_old(1);
-        const arguments = arguments_.slice();
+        const arguments = callFrame.arguments();
 
         if (arguments.len < 1) {
             return globalThis.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
@@ -4939,7 +4899,7 @@ pub const Expect = struct {
     }
 
     pub fn doUnreachable(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arg = callframe.arguments_old(1).ptr[0];
+        const arg = callframe.argumentsAsArray(1)[0];
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
@@ -5247,8 +5207,7 @@ pub const ExpectAny = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.arguments();
 
         if (arguments.len == 0) {
             return globalThis.throw("any() expects to be passed a constructor function. Please pass one or use anything() to match any object.", .{});
@@ -5507,12 +5466,11 @@ pub const ExpectMatcherContext = struct {
     }
 
     pub fn equals(_: *ExpectMatcherContext, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        var arguments = callframe.arguments_old(3);
+        const arguments = callframe.arguments();
         if (arguments.len < 2) {
             return globalThis.throw("expect.extends matcher: this.util.equals expects at least 2 arguments", .{});
         }
-        const args = arguments.slice();
-        return JSValue.jsBoolean(try args[0].jestDeepEquals(args[1], globalThis));
+        return JSValue.jsBoolean(try arguments[0].jestDeepEquals(arguments[1], globalThis));
     }
 };
 

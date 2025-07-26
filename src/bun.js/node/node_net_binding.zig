@@ -16,11 +16,11 @@ pub fn getDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
 pub fn setDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
     return jsc.JSFunction.create(global, "setDefaultAutoSelectFamily", (struct {
         fn setter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const arguments = callframe.arguments();
             if (arguments.len < 1) {
                 return globalThis.throw("missing argument", .{});
             }
-            const arg = arguments.slice()[0];
+            const arg = arguments[0];
             if (!arg.isBoolean()) {
                 return globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
             }
@@ -53,11 +53,11 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc
 pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc.JSValue {
     return jsc.JSFunction.create(global, "setDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn setter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const arguments = callframe.arguments();
             if (arguments.len < 1) {
                 return globalThis.throw("missing argument", .{});
             }
-            const arg = arguments.slice()[0];
+            const arg = arguments[0];
             var value = try validators.validateInt32(globalThis, arg, "value", .{}, 1, null);
             if (value < 10) value = 10;
             autoSelectFamilyAttemptTimeoutDefault = @intCast(value);

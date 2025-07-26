@@ -170,18 +170,18 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn setKeepAlive(this: *This, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            const args = callframe.arguments_old(2);
+            const args = callframe.arguments();
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].toBoolean();
+                    break :brk args[0].toBoolean();
                 }
                 break :brk false;
             };
 
             const initialDelay: u32 = brk: {
                 if (args.len > 1) {
-                    break :brk @intCast(try globalThis.validateIntegerRange(args.ptr[1], i32, 0, .{ .min = 0, .field_name = "initialDelay" }));
+                    break :brk @intCast(try globalThis.validateIntegerRange(args[1], i32, 0, .{ .min = 0, .field_name = "initialDelay" }));
                 }
                 break :brk 0;
             };
@@ -194,10 +194,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             _ = globalThis;
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.arguments();
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].toBoolean();
+                    break :brk args[0].toBoolean();
                 }
                 break :brk true;
             };
@@ -709,12 +709,12 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn timeout(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            const args = callframe.arguments_old(1);
+            const args = callframe.arguments();
             if (this.socket.isDetached()) return .js_undefined;
             if (args.len == 0) {
                 return globalObject.throw("Expected 1 argument, got 0", .{});
             }
-            const t = try args.ptr[0].coerce(i32, globalObject);
+            const t = try args[0].coerce(i32, globalObject);
             if (t < 0) {
                 return globalObject.throw("Timeout must be a positive integer", .{});
             }
@@ -1222,8 +1222,8 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn shutdown(this: *This, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            const args = callframe.arguments_old(1);
-            if (args.len > 0 and args.ptr[0].toBoolean()) {
+            const args = callframe.arguments();
+            if (args.len > 0 and args[0].toBoolean()) {
                 this.socket.shutdownRead();
             } else {
                 this.socket.shutdown();
@@ -1322,7 +1322,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn reload(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-            const args = callframe.arguments_old(1);
+            const args = callframe.arguments();
 
             if (args.len < 1) {
                 return globalObject.throw("Expected 1 argument", .{});
@@ -1332,7 +1332,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .js_undefined;
             }
 
-            const opts = args.ptr[0];
+            const opts = args[0];
             if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
                 return globalObject.throw("Expected options object", .{});
             }
@@ -1369,7 +1369,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return .js_undefined;
             }
-            const args = callframe.arguments_old(1);
+            const args = callframe.arguments();
 
             if (args.len < 1) {
                 return globalObject.throw("Expected 1 arguments", .{});
@@ -1377,7 +1377,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             var success = false;
 
-            const opts = args.ptr[0];
+            const opts = args[0];
             if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
                 return globalObject.throw("Expected options object", .{});
             }
@@ -1913,17 +1913,17 @@ pub const DuplexUpgradeContext = struct {
 pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
     if (args.len < 2) {
         return globalObject.throw("Expected 2 arguments", .{});
     }
-    const duplex = args.ptr[0];
+    const duplex = args[0];
     // TODO: do better type checking
     if (duplex.isEmptyOrUndefinedOrNull()) {
         return globalObject.throw("Expected a Duplex instance", .{});
     }
 
-    const opts = args.ptr[1];
+    const opts = args[1];
     if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
         return globalObject.throw("Expected options object", .{});
     }
@@ -2021,11 +2021,11 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
     }
-    const socket = arguments.ptr[0];
+    const socket = arguments[0];
     if (socket.as(TCPSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     } else if (socket.as(TLSSocket)) |this| {
@@ -2037,11 +2037,11 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.arguments();
     if (arguments.len < 1) {
         return global.throwNotEnoughArguments("getBufferedAmount", 1, arguments.len);
     }
-    const socket = arguments.ptr[0];
+    const socket = arguments[0];
     if (socket.as(TCPSocket)) |this| {
         return jsc.JSValue.jsNumber(this.buffered_data_for_node_net.len);
     } else if (socket.as(TLSSocket)) |this| {

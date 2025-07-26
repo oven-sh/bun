@@ -3994,24 +3994,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 } };
                             };
 
-                            var dev_code = js.code;
-                            if (js.code_allocator) |js_allocator| {
-                                if (js_allocator.ptr != dev.allocator.ptr or js_allocator.vtable != dev.allocator.vtable) {
-                                    // We need to transfer ownership to the DevServer's AllocationScope.
-                                    // I could've avoided this copy if DevServer.IncrementalGraph(.client).File.content
-                                    // weren't extern, because then I could've put the allocator there and used it later.
-                                    // As it is we have no way of knowing what the allocator is so we have to default
-                                    // to the DevServer's allocator.
-                                    dev_code = try dev.allocator.dupe(u8, js.code);
-                                    js_allocator.free(js.code);
-                                } else {
-                                    // Allocators match; duping would be pointless
-                                }
-                            } else {
-                                // js.code is a static empty string or otherwise not allocated
-                            }
-
-                            gop.value_ptr.* = .initJavaScript(dev_code, flags, source_map);
+                            gop.value_ptr.* = .initJavaScript(js.code, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator, file_index);

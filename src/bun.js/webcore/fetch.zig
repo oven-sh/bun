@@ -1504,7 +1504,7 @@ pub fn Bun__fetch_(
     var headers: ?Headers = null;
     var method = Method.GET;
 
-    var args = jsc.CallFrame.ArgumentsSlice.init2(argumentsSlice);
+    var args = jsc.CallFrame.ArgumentsSlice.init(argumentsSlice);
 
     var url = ZigURL{};
     var first_arg = args.nextEat().?;

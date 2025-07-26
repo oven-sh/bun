@@ -1021,7 +1021,7 @@ pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
     var config: jsc.API.ServerConfig = brk: {
-        var args = jsc.CallFrame.ArgumentsSlice.init2(arguments);
+        var args = jsc.CallFrame.ArgumentsSlice.init(arguments);
         var config: jsc.API.ServerConfig = .{};
 
         try jsc.API.ServerConfig.fromJS(

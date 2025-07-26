@@ -189,10 +189,7 @@ pub const CallFrame = opaque {
         remaining: []const jsc.JSValue,
         all: []const jsc.JSValue,
 
-        pub fn from(_: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
-            return init2(@as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
-        }
-        pub fn init2(slice: []const jsc.JSValue) ArgumentsSlice {
+        pub fn init(slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{
                 .remaining = slice,
                 .all = slice,

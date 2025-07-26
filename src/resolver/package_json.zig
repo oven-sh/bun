@@ -798,99 +798,99 @@ pub const PackageJSON = struct {
             } else if (side_effects_field.data == .e_array) {
                 // Handle arrays, including empty arrays
                 if (side_effects_field.asArray()) |array_| {
-                var array = array_;
-                var map = SideEffects.Map{};
-                var glob_list = SideEffects.GlobList{};
-                var has_globs = false;
-                var has_exact = false;
+                    var array = array_;
+                    var map = SideEffects.Map{};
+                    var glob_list = SideEffects.GlobList{};
+                    var has_globs = false;
+                    var has_exact = false;
 
-                // First pass: check if we have glob patterns and exact patterns
-                while (array.next()) |item| {
-                    if (item.asString(allocator)) |name| {
-                        if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
-                            has_globs = true;
-                        } else {
-                            has_exact = true;
-                        }
-                    }
-                }
-
-                // Reset array for second pass
-                array = array_;
-
-                // If the array is empty, treat it as false (no side effects)
-                if (!has_globs and !has_exact) {
-                    package_json.side_effects = .{ .false = {} };
-                } else if (has_globs and has_exact) {
-                    // Mixed patterns - use both exact and glob matching
-                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                    glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-
+                    // First pass: check if we have glob patterns and exact patterns
                     while (array.next()) |item| {
                         if (item.asString(allocator)) |name| {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
-                                continue;
-
-                            // Store the pattern relative to the package directory
-                            var joined = [_]string{
-                                json_source.path.name.dirWithTrailingSlash(),
-                                name,
-                            };
-
-                            const pattern = r.fs.join(&joined);
-
                             if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
-                                glob_list.appendAssumeCapacity(normalized_pattern);
+                                has_globs = true;
                             } else {
-                                _ = map.getOrPutAssumeCapacity(
-                                    bun.StringHashMapUnowned.Key.init(pattern),
-                                );
+                                has_exact = true;
                             }
                         }
                     }
-                    package_json.side_effects = .{ .mixed = .{ .exact = map, .globs = glob_list } };
-                } else if (has_globs) {
-                    // Only glob patterns
-                    glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                    while (array.next()) |item| {
-                        if (item.asString(allocator)) |name| {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
-                                continue;
 
-                            // Store the pattern relative to the package directory
-                            var joined = [_]string{
-                                json_source.path.name.dirWithTrailingSlash(),
-                                name,
-                            };
+                    // Reset array for second pass
+                    array = array_;
 
-                            const pattern = r.fs.join(&joined);
-                            // Normalize pattern to use forward slashes for cross-platform compatibility
-                            const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
-                            glob_list.appendAssumeCapacity(normalized_pattern);
+                    // If the array is empty, treat it as false (no side effects)
+                    if (!has_globs and !has_exact) {
+                        package_json.side_effects = .{ .false = {} };
+                    } else if (has_globs and has_exact) {
+                        // Mixed patterns - use both exact and glob matching
+                        map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                // Skip CSS files as they're not relevant for tree-shaking
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
+
+                                // Store the pattern relative to the package directory
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                const pattern = r.fs.join(&joined);
+
+                                if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
+                                    // Normalize pattern to use forward slashes for cross-platform compatibility
+                                    const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                    glob_list.appendAssumeCapacity(normalized_pattern);
+                                } else {
+                                    _ = map.getOrPutAssumeCapacity(
+                                        bun.StringHashMapUnowned.Key.init(pattern),
+                                    );
+                                }
+                            }
                         }
-                    }
-                    package_json.side_effects = .{ .glob = glob_list };
-                } else {
-                    // Only exact matches
-                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                    while (array.next()) |item| {
-                        if (item.asString(allocator)) |name| {
-                            var joined = [_]string{
-                                json_source.path.name.dirWithTrailingSlash(),
-                                name,
-                            };
+                        package_json.side_effects = .{ .mixed = .{ .exact = map, .globs = glob_list } };
+                    } else if (has_globs) {
+                        // Only glob patterns
+                        glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                // Skip CSS files as they're not relevant for tree-shaking
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
 
-                            _ = map.getOrPutAssumeCapacity(
-                                bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
-                            );
+                                // Store the pattern relative to the package directory
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                const pattern = r.fs.join(&joined);
+                                // Normalize pattern to use forward slashes for cross-platform compatibility
+                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                glob_list.appendAssumeCapacity(normalized_pattern);
+                            }
                         }
+                        package_json.side_effects = .{ .glob = glob_list };
+                    } else {
+                        // Only exact matches
+                        map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                _ = map.getOrPutAssumeCapacity(
+                                    bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                                );
+                            }
+                        }
+                        package_json.side_effects = .{ .map = map };
                     }
-                    package_json.side_effects = .{ .map = map };
-                }
                 } else {
                     // Empty array - treat as false (no side effects)
                     package_json.side_effects = .{ .false = {} };

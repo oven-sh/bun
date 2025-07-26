@@ -185,5 +185,9 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
     }
 }
 
+pub fn isInstance(allocator_: std.mem.Allocator) bool {
+    return allocator_.vtable == AllocatorInterface.VTable;
+}
+
 const bun = @import("bun");
 const std = @import("std");

@@ -99,6 +99,18 @@ pub const PackageJSON = struct {
     exports: ?ExportsMap = null,
     imports: ?ExportsMap = null,
 
+    /// Normalize path separators to forward slashes for glob matching
+    /// This is needed because glob patterns use forward slashes but Windows uses backslashes
+    fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const normalized = try allocator.dupe(u8, path);
+        for (normalized) |*char| {
+            if (char.* == '\\') {
+                char.* = '/';
+            }
+        }
+        return normalized;
+    }
+
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
@@ -107,8 +119,10 @@ pub const PackageJSON = struct {
         false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
-        // /// "sideEffects": ["side_effects/*.js"]
-        // glob: TODO,
+        /// "sideEffects": ["side_effects/*.js"]
+        glob: GlobList,
+        /// "sideEffects": ["file.js", "side_effects/*.js"] - mixed patterns
+        mixed: MixedPatterns,
 
         pub const Map = std.HashMapUnmanaged(
             bun.StringHashMapUnowned.Key,
@@ -117,11 +131,46 @@ pub const PackageJSON = struct {
             80,
         );
 
+        pub const GlobList = std.ArrayListUnmanaged([]const u8);
+
+        pub const MixedPatterns = struct {
+            exact: Map,
+            globs: GlobList,
+        };
+
         pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
             return switch (side_effects) {
                 .unspecified => true,
                 .false => false,
                 .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
+                .glob => |glob_list| {
+                    // Normalize path for cross-platform glob matching
+                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
+                    defer bun.default_allocator.free(normalized_path);
+
+                    for (glob_list.items) |pattern| {
+                        if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                },
+                .mixed => |mixed| {
+                    // First check exact matches
+                    if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(path))) {
+                        return true;
+                    }
+                    // Then check glob patterns with normalized path
+                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
+                    defer bun.default_allocator.free(normalized_path);
+
+                    for (mixed.globs.items) |pattern| {
+                        if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
+                            return true;
+                        }
+                    }
+                    return false;
+                },
             };
         }
     };
@@ -742,47 +791,110 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.get("sideEffects")) |side_effects_field| outer: {
+        if (json.get("sideEffects")) |side_effects_field| {
             if (side_effects_field.asBool()) |boolean| {
                 if (!boolean)
                     package_json.side_effects = .{ .false = {} };
-            } else if (side_effects_field.asArray()) |array_| {
-                var array = array_;
-                // TODO: switch to only storing hashes
-                var map = SideEffects.Map{};
-                map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                while (array.next()) |item| {
-                    if (item.asString(allocator)) |name| {
-                        // TODO: support RegExp using JavaScriptCore <> C++ bindings
-                        if (strings.containsChar(name, '*')) {
-                            // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
-                            // a lot of these seem to be css files which we don't care about for now anyway
-                            // so we can just skip them in here
-                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
-                                continue;
+            } else if (side_effects_field.data == .e_array) {
+                // Handle arrays, including empty arrays
+                if (side_effects_field.asArray()) |array_| {
+                    var array = array_;
+                    var map = SideEffects.Map{};
+                    var glob_list = SideEffects.GlobList{};
+                    var has_globs = false;
+                    var has_exact = false;
 
-                            r.log.addWarning(
-                                &json_source,
-                                item.loc,
-                                "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
-                            ) catch unreachable;
-                            map.deinit(allocator);
-
-                            package_json.side_effects = .{ .unspecified = {} };
-                            break :outer;
+                    // First pass: check if we have glob patterns and exact patterns
+                    while (array.next()) |item| {
+                        if (item.asString(allocator)) |name| {
+                            if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
+                                has_globs = true;
+                            } else {
+                                has_exact = true;
+                            }
                         }
-
-                        var joined = [_]string{
-                            json_source.path.name.dirWithTrailingSlash(),
-                            name,
-                        };
-
-                        _ = map.getOrPutAssumeCapacity(
-                            bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
-                        );
                     }
+
+                    // Reset array for second pass
+                    array = array_;
+
+                    // If the array is empty, treat it as false (no side effects)
+                    if (!has_globs and !has_exact) {
+                        package_json.side_effects = .{ .false = {} };
+                    } else if (has_globs and has_exact) {
+                        // Mixed patterns - use both exact and glob matching
+                        map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                // Skip CSS files as they're not relevant for tree-shaking
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
+
+                                // Store the pattern relative to the package directory
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                const pattern = r.fs.join(&joined);
+
+                                if (strings.containsChar(name, '*') or strings.containsChar(name, '?') or strings.containsChar(name, '[') or strings.containsChar(name, '{')) {
+                                    // Normalize pattern to use forward slashes for cross-platform compatibility
+                                    const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                    glob_list.appendAssumeCapacity(normalized_pattern);
+                                } else {
+                                    _ = map.getOrPutAssumeCapacity(
+                                        bun.StringHashMapUnowned.Key.init(pattern),
+                                    );
+                                }
+                            }
+                        }
+                        package_json.side_effects = .{ .mixed = .{ .exact = map, .globs = glob_list } };
+                    } else if (has_globs) {
+                        // Only glob patterns
+                        glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                // Skip CSS files as they're not relevant for tree-shaking
+                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                    continue;
+
+                                // Store the pattern relative to the package directory
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                const pattern = r.fs.join(&joined);
+                                // Normalize pattern to use forward slashes for cross-platform compatibility
+                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
+                                glob_list.appendAssumeCapacity(normalized_pattern);
+                            }
+                        }
+                        package_json.side_effects = .{ .glob = glob_list };
+                    } else {
+                        // Only exact matches
+                        map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                        while (array.next()) |item| {
+                            if (item.asString(allocator)) |name| {
+                                var joined = [_]string{
+                                    json_source.path.name.dirWithTrailingSlash(),
+                                    name,
+                                };
+
+                                _ = map.getOrPutAssumeCapacity(
+                                    bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                                );
+                            }
+                        }
+                        package_json.side_effects = .{ .map = map };
+                    }
+                } else {
+                    // Empty array - treat as false (no side effects)
+                    package_json.side_effects = .{ .false = {} };
                 }
-                package_json.side_effects = .{ .map = map };
             }
         }
 
@@ -2044,6 +2156,7 @@ const MainFieldMap = bun.StringMap;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
+const glob = bun.glob;
 const js_ast = bun.ast;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;

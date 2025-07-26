@@ -822,11 +822,11 @@ pub const JSGlobalObject = opaque {
     extern fn JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler: *anyopaque, bytes_ptr: [*]const u8, bytes_len: usize) void;
 
     fn getBodyStreamOrBytesForWasmStreaming(
-        this: *JSC.JSGlobalObject,
-        response_value: JSC.JSValue,
+        this: *jsc.JSGlobalObject,
+        response_value: jsc.JSValue,
         streaming_compiler: *anyopaque,
-    ) bun.JSError!JSC.JSValue {
-        const response = JSC.WebCore.Response.fromJS(response_value) orelse return this.throwInvalidArgumentTypeValue2(
+    ) bun.JSError!jsc.JSValue {
+        const response = jsc.WebCore.Response.fromJS(response_value) orelse return this.throwInvalidArgumentTypeValue2(
             "source",
             "an instance of Response or an Promise resolving to Response",
             response_value,
@@ -872,7 +872,7 @@ pub const JSGlobalObject = opaque {
                 defer blob.detach();
 
                 blob.resolveSize();
-                return JSC.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.size);
+                return jsc.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.size);
             }
         }
 
@@ -942,7 +942,7 @@ pub const JSGlobalObject = opaque {
         @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
         @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
         @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
-        @export(&JSC.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
+        @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };
 

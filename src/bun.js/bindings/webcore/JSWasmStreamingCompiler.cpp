@@ -132,7 +132,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
             }
         }
 
-        impl.addBytes({ static_cast<const uint8_t*>(arrayBufferView->vector()), arrayBufferView->byteLength() });
+        impl.addBytes(arrayBufferView->span());
         return encodedJSUndefined();
     } else if (auto arrayBuffer = jsDynamicCast<JSArrayBuffer*>(chunkValue)) {
         auto arrayBufferImpl = arrayBuffer->impl();
@@ -141,17 +141,17 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
             return {};
         }
 
-        impl.addBytes({ static_cast<const uint8_t*>(arrayBufferImpl->data()), arrayBufferImpl->byteLength() });
+        impl.addBytes(arrayBufferImpl->span());
         return encodedJSUndefined();
     } else [[unlikely]] {
         // See WasmStreamingObject::Push in Node.js's node_wasm_web_api.cc
-        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "chunk must be an ArrayBufferView or an ArrayBuffer");
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "chunk must be an ArrayBufferView or an ArrayBuffer"_s);
     }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_addBytesBody>(*lexicalGlobalObject, *callFrame, "addBytes");
+    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_addBytesBody>(*lexicalGlobalObject, *callFrame, "addBytes"_s);
 }
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_finalizeBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
@@ -162,7 +162,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_finalizeBo
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_finalize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_finalizeBody>(*lexicalGlobalObject, *callFrame, "finalize");
+    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_finalizeBody>(*lexicalGlobalObject, *callFrame, "finalize"_s);
 }
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_failBody(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
@@ -175,7 +175,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_failBody(J
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_fail, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_failBody>(*lexicalGlobalObject, *callFrame, "fail");
+    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_failBody>(*lexicalGlobalObject, *callFrame, "fail"_s);
 }
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_cancelBody(JSGlobalObject*, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
@@ -186,7 +186,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_cancelBody
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_cancel, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_cancelBody>(*lexicalGlobalObject, *callFrame, "cancel");
+    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_cancelBody>(*lexicalGlobalObject, *callFrame, "cancel"_s);
 }
 
 GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)

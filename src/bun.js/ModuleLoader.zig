@@ -778,7 +778,7 @@ pub const AsyncModule = struct {
 
         return ResolvedSource{
             .allocator = null,
-            .source_code = bun.String.cloneLatin1(printer.ctx.getWritten()),
+            .source_code = bun.String.cloneUTF8(printer.ctx.getWritten()),
             .specifier = String.init(specifier),
             .source_url = String.init(path.text),
             .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
@@ -1120,7 +1120,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.cloneLatin1(source.contents),
+                    .source_code = bun.String.cloneUTF8(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -1289,7 +1289,7 @@ pub fn transpileSourceCode(
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
+                    const result = cache.output_code orelse bun.String.cloneUTF8(written);
 
                     if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                         printer.ctx.buffer.deinit();
@@ -2514,7 +2514,7 @@ pub const RuntimeTranspilerStore = struct {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.cloneLatin1(parse_result.source.contents),
+                    .source_code = bun.String.cloneUTF8(parse_result.source.contents),
                     .already_bundled = true,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,

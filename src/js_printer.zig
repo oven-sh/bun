@@ -5,8 +5,6 @@ const first_high_surrogate = 0xD800;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 
-/// For support JavaScriptCore
-const ascii_only_always_on_unless_minifying = true;
 
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
@@ -26,11 +24,11 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
 
-pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime ascii_only: bool) bool {
+pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, prefers_ascii: bool) bool {
     if (c <= last_ascii) {
         return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
-        return !ascii_only and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
+        return !prefers_ascii and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
     }
 }
 
@@ -109,7 +107,7 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
+pub fn estimateLengthForUTF8(input: []const u8, comptime prefers_ascii: bool, comptime quote_char: u8) usize {
     var remaining = input;
     var len: usize = 2; // for quotes
 
@@ -130,7 +128,7 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
             i32,
             0,
         );
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
+        if (canPrintWithoutEscape(i32, c, prefers_ascii)) {
             len += @as(usize, char_len);
         } else if (c <= 0xFFFF) {
             len += 6;
@@ -145,13 +143,13 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     return len;
 }
 
-pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
+pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime prefers_ascii: bool) !MutableString {
     var bytes = output_;
-    try quoteForJSONBuffer(text, &bytes, ascii_only);
+    try quoteForJSONBuffer(text, &bytes, prefers_ascii);
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, prefers_ascii: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
@@ -192,7 +190,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 break :brk @as(i32, text[i]);
             },
         };
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
+        if (canPrintWithoutEscape(i32, c, prefers_ascii)) {
             const remain = text[i + clamped_width ..];
 
             switch (encoding) {
@@ -347,12 +345,12 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
         }
     }
 }
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime prefers_ascii: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.growIfNeeded(estimateLengthForUTF8(text, prefers_ascii, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', prefers_ascii, true, .utf8);
     bytes.appendChar('"') catch unreachable;
 }
 
@@ -609,7 +607,6 @@ const ImportVariant = enum {
 };
 
 fn NewPrinter(
-    comptime ascii_only: bool,
     comptime Writer: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
@@ -631,6 +628,7 @@ fn NewPrinter(
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         writer: Writer,
+        prefers_ascii: bool,
 
         has_printed_bundled_import_statement: bool = false,
 
@@ -1553,9 +1551,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf8),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1564,9 +1562,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf16),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1917,72 +1915,14 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn canPrintIdentifierUTF16(_: *Printer, name: []const u16) bool {
-            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
+        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
+            if (p.prefers_ascii) {
                 return js_lexer.isLatin1Identifier([]const u16, name);
             } else {
                 return js_lexer.isIdentifierUTF16(name);
             }
         }
 
-        fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
-            if (comptime is_json or !ascii_only) {
-                p.print(bytes);
-                return;
-            }
-
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            var ascii_start: usize = 0;
-            var is_ascii = false;
-            var iter = CodepointIterator.init(bytes);
-            var cursor = CodepointIterator.Cursor{};
-
-            while (iter.next(&cursor)) {
-                switch (cursor.c) {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0...last_ascii => {
-                        if (!is_ascii) {
-                            ascii_start = cursor.i;
-                            is_ascii = true;
-                        }
-                    },
-                    else => {
-                        if (is_ascii) {
-                            p.print(bytes[ascii_start..cursor.i]);
-                            is_ascii = false;
-                        }
-
-                        switch (cursor.c) {
-                            0...0xFFFF => {
-                                p.print([_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
-                                });
-                            },
-                            else => {
-                                p.print("\\u{");
-                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                p.print("}");
-                            },
-                        }
-                    },
-                }
-            }
-
-            if (is_ascii) {
-                p.print(bytes[ascii_start..]);
-            }
-        }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
             var flags = in_flags;
@@ -2806,7 +2746,10 @@ fn NewPrinter(
 
                     p.print("`");
                     switch (e.head) {
-                        .raw => |raw| p.printRawTemplateLiteral(raw),
+                        .raw => |raw| {
+                            if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
+                            p.print(raw);
+                        },
                         .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
@@ -2820,7 +2763,10 @@ fn NewPrinter(
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
                         switch (part.tail) {
-                            .raw => |raw| p.printRawTemplateLiteral(raw),
+                            .raw => |raw| {
+                            if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
+                            p.print(raw);
+                        },
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);
@@ -3170,70 +3116,11 @@ fn NewPrinter(
                 p.print(" ");
             }
 
-            if (comptime is_bun_platform) {
-                // Translate any non-ASCII to unicode escape sequences
-                var ascii_start: usize = 0;
-                var is_ascii = false;
-                var iter = CodepointIterator.init(e.value);
-                var cursor = CodepointIterator.Cursor{};
-                while (iter.next(&cursor)) {
-                    switch (cursor.c) {
-                        first_ascii...last_ascii => {
-                            if (!is_ascii) {
-                                ascii_start = cursor.i;
-                                is_ascii = true;
-                            }
-                        },
-                        else => {
-                            if (is_ascii) {
-                                p.print(e.value[ascii_start..cursor.i]);
-                                is_ascii = false;
-                            }
-
-                            switch (cursor.c) {
-                                0...0xFFFF => {
-                                    p.print([_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[cursor.c >> 12],
-                                        hex_chars[(cursor.c >> 8) & 15],
-                                        hex_chars[(cursor.c >> 4) & 15],
-                                        hex_chars[cursor.c & 15],
-                                    });
-                                },
-
-                                else => |c| {
-                                    const k = c - 0x10000;
-                                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
-
-                                    p.print(&[_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[lo >> 12],
-                                        hex_chars[(lo >> 8) & 15],
-                                        hex_chars[(lo >> 4) & 15],
-                                        hex_chars[lo & 15],
-                                        '\\',
-                                        'u',
-                                        hex_chars[hi >> 12],
-                                        hex_chars[(hi >> 8) & 15],
-                                        hex_chars[(hi >> 4) & 15],
-                                        hex_chars[hi & 15],
-                                    });
-                                },
-                            }
-                        },
-                    }
-                }
-
-                if (is_ascii) {
-                    p.print(e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                p.print(e.value);
+            // RegExp literals cannot be printed ascii only because they expose a `.source` property
+            if (p.prefers_ascii and !strings.isAllASCII(e.value)) {
+                p.prefers_ascii = false;
             }
+            p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;
@@ -5013,7 +4900,7 @@ fn NewPrinter(
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
-            if (comptime ascii_only) {
+            if (p.prefers_ascii) {
                 p.printIdentifierAsciiOnly(identifier);
             } else {
                 p.print(identifier);
@@ -5065,7 +4952,7 @@ fn NewPrinter(
                     i += 1;
                 }
 
-                if ((comptime ascii_only) and c > last_ascii) {
+                if (p.prefers_ascii and c > last_ascii) {
                     switch (c) {
                         0...0xFFFF => {
                             p.print(
@@ -5188,6 +5075,7 @@ fn NewPrinter(
             opts: Options,
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
+            prefers_ascii: bool,
         ) Printer {
             var printer = Printer{
                 .import_records = import_records,
@@ -5195,6 +5083,7 @@ fn NewPrinter(
                 .writer = writer,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
+                .prefers_ascii = prefers_ascii,
             };
             if (comptime generate_source_map) {
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
@@ -5671,7 +5560,7 @@ pub fn printAst(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    comptime ascii_only: bool,
+    comptime is_bun_platform: bool,
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
@@ -5750,11 +5639,9 @@ pub fn printAst(
     }
 
     const PrinterType = NewPrinter(
-        ascii_only,
         Writer,
         false,
-        // if it's ascii_only, it is also bun
-        ascii_only,
+        is_bun_platform,
         false,
         generate_source_map,
     );
@@ -5765,7 +5652,8 @@ pub fn printAst(
         tree.import_records.slice(),
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, is_bun_platform, opts, source, &tree),
+        is_bun_platform,
     );
     defer {
         if (comptime generate_source_map) {
@@ -5837,7 +5725,7 @@ pub fn printJSON(
     source: *const logger.Source,
     opts: Options,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, false, false, true, false);
+    const PrinterType = NewPrinter(Writer, false, false, true, false);
     const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -5856,6 +5744,7 @@ pub fn printJSON(
         opts,
         renamer.toRenamer(),
         undefined,
+        false,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -5947,8 +5836,6 @@ pub fn printWithWriterAndPlatform(
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
     const PrinterType = NewPrinter(
-        // if it's bun, it is also ascii_only
-        is_bun_platform,
         Writer,
         false,
         is_bun_platform,
@@ -5961,6 +5848,7 @@ pub fn printWithWriterAndPlatform(
         opts,
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
+        is_bun_platform,
     );
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -6025,7 +5913,7 @@ pub fn printCommonJS(
     tree: Ast,
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
-    comptime ascii_only: bool,
+    comptime prefers_ascii: bool,
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
@@ -6033,7 +5921,7 @@ pub fn printCommonJS(
     defer bun.crash_handler.current_action = prev_action;
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
-    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
+    const PrinterType = NewPrinter(Writer, true, false, false, generate_source_map);
     const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
@@ -6042,6 +5930,7 @@ pub fn printCommonJS(
         opts,
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
+        prefers_ascii,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());

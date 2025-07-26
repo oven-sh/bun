@@ -26,6 +26,6 @@ test("vite build works", async () => {
 
   expect(await exited).toBe(0);
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
   expect(out).toContain("done");
 }, 60_000);

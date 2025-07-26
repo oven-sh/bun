@@ -241,12 +241,12 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSObject* modValue = callFrame->argument(0).getObject();
     if (!modValue) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
-        return JSC::JSValue::encode({});
+        return {};
     }
     Bun::JSCommonJSModule* mod = jsDynamicCast<Bun::JSCommonJSModule*>(modValue);
     if (!mod) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
-        return JSC::JSValue::encode({});
+        return {};
     }
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
@@ -283,7 +283,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
         if (returnedException) [[unlikely]] {
             throwException(globalObject, scope, returnedException->value());
-            return JSC::JSValue::encode({});
+            return {};
         }
     }
 

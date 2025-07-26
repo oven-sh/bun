@@ -1,8 +1,6 @@
 ARG LLVM_VERSION="19"
 ARG REPORTED_LLVM_VERSION="19.1.7"
 ARG OLD_BUN_VERSION="1.1.38"
-ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables"
-ARG DEFAULT_CXXFLAGS="-flto=full -fwhole-program-vtables -fforce-emit-vtables"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
@@ -12,8 +10,6 @@ FROM base-$TARGETARCH as base
 ARG LLVM_VERSION
 ARG OLD_BUN_VERSION
 ARG TARGETARCH
-ARG DEFAULT_CXXFLAGS
-ARG DEFAULT_CFLAGS
 ARG REPORTED_LLVM_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -64,9 +60,7 @@ RUN echo "ARCH_PATH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-linux-gnu" ||
 ENV LD_LIBRARY_PATH=/usr/lib/gcc/${ARCH_PATH}/13:/usr/lib/${ARCH_PATH} \
    LIBRARY_PATH=/usr/lib/gcc/${ARCH_PATH}/13:/usr/lib/${ARCH_PATH} \
    CPLUS_INCLUDE_PATH=/usr/include/c++/13:/usr/include/${ARCH_PATH}/c++/13 \
-   C_INCLUDE_PATH=/usr/lib/gcc/${ARCH_PATH}/13/include \
-   CFLAGS=${DEFAULT_CFLAGS} \
-   CXXFLAGS="${DEFAULT_CFLAGS} ${DEFAULT_CXXFLAGS}"
+   C_INCLUDE_PATH=/usr/lib/gcc/${ARCH_PATH}/13/include
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
        export ARCH_PATH="aarch64-linux-gnu"; \

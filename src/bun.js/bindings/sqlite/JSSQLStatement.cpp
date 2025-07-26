@@ -178,6 +178,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 #define DO_REBIND(param)                                                                                                \
     if (param.isObject()) {                                                                                             \
         JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, param, true, castedThis->version_db->db);            \
+        RETURN_IF_EXCEPTION(scope, {});                                                                                 \
         if (!reb.isNumber()) [[unlikely]] {                                                                             \
             return JSValue::encode(reb); /* this means an error */                                                      \
         }                                                                                                               \
@@ -520,7 +521,9 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         size_t len = sqlite3_column_bytes(stmt, i);
         const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
         if (len > 0 && blob != nullptr) [[likely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
+            RETURN_IF_EXCEPTION(scope, {});
             memcpy(array->vector(), blob, len);
             return array;
         }
@@ -1803,7 +1806,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
 
     // TODO: use LazyClassStructure?
     auto* instanceObject = JSSQLStatement::create(reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
-    JSValue proto = instanceObject->getPrototype(vm, globalObject());
+    JSValue proto = instanceObject->getPrototype(globalObject());
 
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 

@@ -19,6 +19,10 @@ test_get_value_string_any_encoding(const Napi::CallbackInfo &info) {
   std::array<Element, BUFSIZE> buf;
   napi_value string = info[0];
 
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   size_t full_length;
   NODE_API_CALL(env,
                 get_value_string_fn(env, string, nullptr, 0, &full_length));

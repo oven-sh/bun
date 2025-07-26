@@ -38,7 +38,7 @@ HeaderFieldTokenizer::HeaderFieldTokenizer(const String& headerField)
     skipSpaces();
 }
 
-bool HeaderFieldTokenizer::consume(UChar c)
+bool HeaderFieldTokenizer::consume(char16_t c)
 {
     ASSERT(!isTabOrSpace(c));
 
@@ -106,7 +106,7 @@ void HeaderFieldTokenizer::skipSpaces()
         ++m_index;
 }
 
-void HeaderFieldTokenizer::consumeBeforeAnyCharMatch(const Vector<UChar>& chars)
+void HeaderFieldTokenizer::consumeBeforeAnyCharMatch(const Vector<char16_t>& chars)
 {
     ASSERT(chars.size() > 0U && chars.size() < 3U);
 

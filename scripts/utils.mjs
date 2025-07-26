@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
@@ -1370,13 +1370,16 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
- * @param {string} filename
- * @param {string} [cwd]
+ * @param {string} filename Absolute path to file to upload
  */
-export async function uploadArtifact(filename, cwd) {
+export async function uploadArtifact(filename) {
   if (isBuildkite) {
-    const relativePath = relative(cwd ?? process.cwd(), filename);
-    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
+      cwd: dirname(filename),
+      stdio: "inherit",
+    });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 
@@ -2699,7 +2702,14 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
     source: "buildkite",
     level: "error",
   });
-  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorContent, attempt: attempt + 1 });
+  reportAnnotationToBuildKite({
+    context,
+    label: `${label}-error`,
+    content: errorContent,
+    style,
+    priority,
+    attempt: attempt + 1,
+  });
 }
 
 /**
@@ -2838,6 +2848,36 @@ export function printEnvironment() {
         const shell = which(["sh", "bash"]);
         if (shell) {
           spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Disk (df)", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
+        }
+      });
+    }
+    if (isLinux) {
+      startGroup("Memory", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+    }
+    if (isWindows) {
+      startGroup("Disk (win)", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Memory", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "Get-Counter '\\Memory\\Available MBytes'"], { stdio: "inherit" });
+          console.log();
+          spawnSync([shell, "-c", "Get-CimInstance Win32_PhysicalMemory"], { stdio: "inherit" });
         }
       });
     }

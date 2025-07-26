@@ -1,3 +1,5 @@
+const EnvMap = @This();
+
 map: MapType,
 
 pub const Iterator = MapType.Iterator;
@@ -35,6 +37,8 @@ pub fn deinit(this: *EnvMap) void {
     this.map.deinit();
 }
 
+/// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
+/// before handing it to this function!!!
 pub fn insert(this: *EnvMap, key: EnvStr, val: EnvStr) void {
     const result = this.map.getOrPut(key) catch bun.outOfMemory();
     if (!result.found_existing) {
@@ -98,8 +102,7 @@ fn derefStrings(this: *EnvMap) void {
     }
 }
 
-const EnvMap = @This();
 const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const EnvStr = bun.shell.EnvStr;

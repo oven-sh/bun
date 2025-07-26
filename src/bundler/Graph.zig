@@ -1,7 +1,7 @@
 const Graph = @This();
 
 pool: *ThreadPool,
-heap: ThreadlocalArena = .{},
+heap: ThreadLocalArena = .{},
 /// This allocator is thread-local to the Bundler thread
 /// .allocator == .heap.allocator()
 allocator: std.mem.Allocator = undefined,
@@ -98,27 +98,33 @@ pub fn drainDeferredTasks(this: *Graph, transpiler: *BundleV2) bool {
     return false;
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
+pub const Index = bun.ast.Index;
+
+const string = []const u8;
+
 const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const BabyList = @import("../baby_list.zig").BabyList;
 const _resolver = @import("../resolver/resolver.zig");
-const allocators = @import("../allocators.zig");
+const std = @import("std");
 
-const JSAst = js_ast.BundledAst;
+const options = @import("../options.zig");
 const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
+
+const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
-const ThreadPool = bun.bundle_v2.ThreadPool;
+const default_allocator = bun.default_allocator;
+const BabyList = bun.collections.BabyList;
+
+const allocators = bun.allocators;
+const ThreadLocalArena = bun.allocators.MimallocArena;
+
+const js_ast = bun.ast;
+const JSAst = js_ast.BundledAst;
+const ServerComponentBoundary = js_ast.ServerComponentBoundary;
+
+const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const BundleV2 = bun.bundle_v2.BundleV2;
 const ParseTask = bun.bundle_v2.ParseTask;
 const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
-const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-const BundleV2 = bun.bundle_v2.BundleV2;
-const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const ThreadPool = bun.bundle_v2.ThreadPool;

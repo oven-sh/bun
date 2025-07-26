@@ -820,4 +820,80 @@ describe("bundler", () => {
       },
     };
   });
+
+  itBundled("plugin/FileLoaderWithCustomContents", {
+    files: {
+      "index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Test</title>
+          </head>
+          <body>
+            <img src="./image.jpeg" />
+            <script src="./script.js"></script>
+          </body>
+        </html>
+      `,
+      "script.js": /* js */ `
+        console.log("Script loaded");
+      `,
+      "image.jpeg": "actual image data would be here",
+    },
+    entryPoints: ["./index.html"],
+    outdir: "/out",
+    plugins(build) {
+      // This plugin intercepts .jpeg files and returns them with custom contents
+      // This previously caused a crash because additional_files wasn't populated
+      build.onLoad({ filter: /\.jpe?g$/ }, async args => {
+        return {
+          loader: "file",
+          contents: "custom image contents",
+        };
+      });
+    },
+    onAfterBundle(api) {
+      // Verify the build succeeded and files were created
+      api.assertFileExists("index.html");
+      // The image should be copied with a hashed name
+      const html = api.readFile("index.html");
+      expect(html).toContain('src="');
+      expect(html).toContain('.jpeg"');
+    },
+  });
+
+  itBundled("plugin/FileLoaderMultipleAssets", {
+    files: {
+      "index.js": /* js */ `
+        import imgUrl from "./image.png";
+        import wasmUrl from "./module.wasm";
+        console.log(imgUrl, wasmUrl);
+      `,
+      "image.png": "png data",
+      "module.wasm": "wasm data",
+    },
+    entryPoints: ["./index.js"],
+    outdir: "/out",
+    plugins(build) {
+      // Test multiple file types with custom contents
+      build.onLoad({ filter: /\.(png|wasm)$/ }, async args => {
+        const ext = args.path.split(".").pop();
+        return {
+          loader: "file",
+          contents: `custom ${ext} contents`,
+        };
+      });
+    },
+    run: {
+      stdout: /\.(png|wasm)/,
+    },
+    onAfterBundle(api) {
+      // Verify the build succeeded and files were created
+      api.assertFileExists("index.js");
+      const js = api.readFile("index.js");
+      // Should contain references to the copied files
+      expect(js).toContain('.png"');
+      expect(js).toContain('.wasm"');
+    },
+  });
 });

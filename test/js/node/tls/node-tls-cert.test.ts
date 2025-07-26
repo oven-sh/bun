@@ -532,7 +532,7 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     });
 
     expect(await proc.exited).toBe(1);
-    const stderr = await Bun.readableStreamToText(proc.stderr);
+    const stderr = await proc.stderr.text();
     expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
   }
 });
@@ -564,7 +564,7 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     });
 
     expect(await proc.exited).toBe(1);
-    const stderr = await Bun.readableStreamToText(proc.stderr);
+    const stderr = await proc.stderr.text();
     expect(stderr).toContain("ignoring extra certs");
   }
 });

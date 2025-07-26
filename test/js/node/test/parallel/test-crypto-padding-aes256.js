@@ -19,10 +19,6 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-/*
-Skipped test
-https://github.com/electron/electron/blob/bf1d377e083380b4849c5f42aacf3762176eac07/script/node-disabled-tests.json#L25
-
 'use strict';
 const common = require('../common');
 if (!common.hasCrypto)
@@ -62,5 +58,3 @@ plaintext = '0123456789abcdef0123456789abcde'; // not a multiple
 encrypted = encrypt(plaintext, true);
 decrypted = decrypt(encrypted, true);
 assert.strictEqual(decrypted, plaintext);
-
-*/

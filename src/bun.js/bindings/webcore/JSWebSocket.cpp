@@ -213,30 +213,42 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
         const auto& builtinnames = WebCore::builtinNames(vm);
-        if (JSValue headersValue = options->getIfPropertyExists(globalObject, builtinnames.headersPublicName())) {
+        auto headersValue = options->getIfPropertyExists(globalObject, builtinnames.headersPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (headersValue) {
             if (!headersValue.isUndefinedOrNull()) {
                 headersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, headersValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
 
-        if (JSValue protocolsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocols"_s)))) {
+        auto protocolsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocols"_s)));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (protocolsValue) {
             if (!protocolsValue.isUndefinedOrNull()) {
                 protocols = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, protocolsValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
-        } else if (JSValue protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)))) {
-            if (!protocolValue.isUndefinedOrNull()) {
-                protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
-                RETURN_IF_EXCEPTION(throwScope, {});
+        } else {
+            auto protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (protocolValue) {
+                if (!protocolValue.isUndefinedOrNull()) {
+                    protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                }
             }
         }
 
-        if (JSValue tlsOptionsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "tls"_s)))) {
+        auto tlsOptionsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "tls"_s)));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (tlsOptionsValue) {
             if (!tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
                 if (JSC::JSObject* tlsOptions = tlsOptionsValue.getObject()) {
 
-                    if (JSValue rejectUnauthorizedValue = tlsOptions->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)))) {
+                    auto rejectUnauthorizedValue = tlsOptions->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (rejectUnauthorizedValue) {
                         if (!rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
                             rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
                         }
@@ -246,7 +258,6 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         }
     }
 
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit)) : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false);
 
     if constexpr (IsExceptionOr<decltype(object)>)

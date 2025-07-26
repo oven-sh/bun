@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const ExtractData = Install.ExtractData;
-const PackageManager = Install.PackageManager;
-const Semver = bun.Semver;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const GitSHA = String;
-const Path = bun.path;
-const File = bun.sys.File;
-const OOM = bun.OOM;
-
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
@@ -293,10 +274,51 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
     }
+
+    pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
+        return .{
+            .repo = this,
+            .label = label,
+            .string_buf = string_buf,
+        };
+    }
+
+    pub const StorePathFormatter = struct {
+        repo: *const Repository,
+        label: string,
+        string_buf: string,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+
+            if (!this.repo.owner.isEmpty()) {
+                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
+                try writer.writeByte('+');
+            } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
+                // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
+                try writer.writeAll("ssh:++");
+            }
+
+            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+
+            if (!this.repo.resolved.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                var resolved = this.repo.resolved.slice(this.string_buf);
+                if (strings.lastIndexOfChar(resolved, '-')) |i| {
+                    resolved = resolved[i + 1 ..];
+                }
+                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+            } else if (!this.repo.committish.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+            }
+        }
+    };
 
     pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
         return .{
@@ -310,7 +332,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
@@ -458,14 +480,14 @@ pub const Repository = extern struct {
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
-        task_id: u64,
+        task_id: Install.Task.Id,
         name: string,
         url: string,
         attempt: u8,
     ) !std.fs.Dir {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
@@ -523,10 +545,10 @@ pub const Repository = extern struct {
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
-        task_id: u64,
+        task_id: Install.Task.Id,
     ) !string {
         const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
         _ = repo_dir;
@@ -560,7 +582,7 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
     ) !ExtractData {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
@@ -658,3 +680,26 @@ pub const Repository = extern struct {
         };
     }
 };
+
+const string = []const u8;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+const FileSystem = @import("../fs.zig").FileSystem;
+
+const Install = @import("./install.zig");
+const ExtractData = Install.ExtractData;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Path = bun.path;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const GitSHA = String;
+const String = Semver.String;

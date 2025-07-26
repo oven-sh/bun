@@ -50,7 +50,7 @@ describe("parseArgs default args", () => {
     const exitCode = await subprocess.exited;
     exited = true;
     clearTimeout(timer);
-    const stdout = await new Response(subprocess.stdout).text();
+    const stdout = await subprocess.stdout.text();
     expect(exitCode).toBe(0);
     return { stdout };
   }

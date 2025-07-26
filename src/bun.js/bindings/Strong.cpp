@@ -48,6 +48,6 @@ extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot)
 {
     // The write barrier must be called *before* the value is cleared
     // to correctly remove the handle from the strong list if it held a cell.
-    JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, JSC::JSValue());
-    *handleSlot = JSC::JSValue();
+    JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, {});
+    *handleSlot = {};
 }

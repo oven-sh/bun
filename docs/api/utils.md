@@ -234,7 +234,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig).
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -582,11 +582,11 @@ Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
 const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
-buf; // => Uint8Array(25)
-compressed; // => Uint8Array(10)
+buf; // => Buffer(500)
+compressed; // => Uint8Array(12)
 ```
 
-The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bungzipsync).
+The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun-gzipsync).
 
 ## `Bun.inflateSync()`
 
@@ -704,7 +704,7 @@ Bun.nanoseconds();
 Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.
 
 ```ts
-const stream = (await fetch("https://bun.sh")).body;
+const stream = (await fetch("https://bun.com")).body;
 stream; // => ReadableStream
 
 await Bun.readableStreamToArrayBuffer(stream);
@@ -787,7 +787,7 @@ const buffer = Buffer.alloc(1024 * 1024);
 estimateShallowMemoryUsageOf(buffer);
 // => 1048624
 
-const req = new Request("https://bun.sh");
+const req = new Request("https://bun.com");
 estimateShallowMemoryUsageOf(req);
 // => 167
 

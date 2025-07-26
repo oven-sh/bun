@@ -1,5 +1,5 @@
 pub const Installer = struct {
-    trusted_dependencies_mutex: bun.Mutex,
+    trusted_dependencies_mutex: Mutex,
     // this is not const for `lockfile.trusted_dependencies`
     lockfile: *Lockfile,
 
@@ -13,8 +13,8 @@ pub const Installer = struct {
 
     store: *const Store,
 
-    tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: Task.Preallocated,
+    task_queue: bun.UnboundedQueue(Task, .next) = .{},
+    tasks: []Task,
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -24,14 +24,11 @@ pub const Installer = struct {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
+    /// Called from main thread
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = this.preallocated_tasks.get();
-
-        task.* = .{
-            .entry_id = entry_id,
-            .installer = this,
-        };
-
+        const task = &this.tasks[entry_id.get()];
+        bun.debugAssert(task.result == .none or task.result == .blocked);
+        task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));
     }
 
@@ -44,6 +41,7 @@ pub const Installer = struct {
         }
     }
 
+    /// Called from main thread
     pub fn onTaskFail(this: *Installer, entry_id: Store.Entry.Id, err: Task.Error) void {
         const string_buf = this.lockfile.buffers.string_bytes.items;
 
@@ -116,21 +114,20 @@ pub const Installer = struct {
 
         this.summary.fail += 1;
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
     }
 
-    pub fn decrementPendingTasks(this: *Installer, entry_id: Store.Entry.Id) void {
-        _ = entry_id;
+    pub fn decrementPendingTasks(this: *Installer) void {
         this.manager.decrementPendingTasks();
     }
 
+    /// Called from main thread
     pub fn onTaskBlocked(this: *Installer, entry_id: Store.Entry.Id) void {
-
-        // race: task decides it is blocked because one of it's dependencies has not finished.
-        // before the task can mark itself as blocked, the dependency finishes it's install,
-        // causing the task to never finish because resumeUnblockedTasks is called before
-        // it's state is set to blocked.
+        // race condition (fixed now): task decides it is blocked because one of its dependencies
+        // has not finished. before the task can mark itself as blocked, the dependency finishes its
+        // install, causing the task to never finish because resumeUnblockedTasks is called before
+        // its state is set to blocked.
         //
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
@@ -138,41 +135,46 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        if (this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+        if (!this.isTaskBlocked(entry_id, &parent_dedupe)) {
+            // .monotonic is okay because the task isn't running right now.
             this.store.entries.items(.step)[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
             return;
         }
 
+        // .monotonic is okay because the task isn't running right now.
         this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
     }
 
-    fn isTaskUnblocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
+    /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
+    /// task thread (via `run`). `parent_dedupe` should not be shared between threads.
+    fn isTaskBlocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
         const entries = this.store.entries.slice();
         const entry_deps = entries.items(.dependencies);
         const entry_steps = entries.items(.step);
 
         const deps = entry_deps[entry_id.get()];
         for (deps.slice()) |dep| {
-            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+            if (entry_steps[dep.entry_id.get()].load(.acquire) != .done) {
                 parent_dedupe.clearRetainingCapacity();
                 if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
                     continue;
                 }
-
-                return false;
+                return true;
             }
         }
-
-        return true;
+        return false;
     }
 
+    /// Called from main thread
     pub fn onTaskComplete(this: *Installer, entry_id: Store.Entry.Id, state: enum { success, skipped, fail }) void {
         if (comptime Environment.ci_assert) {
+            // .monotonic is okay because we should have already synchronized with the completed
+            // task thread by virtue of popping from the `UnboundedQueue`.
             bun.assertWithLocation(this.store.entries.items(.step)[entry_id.get()].load(.monotonic) == .done, @src());
         }
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
 
         if (this.install_node) |node| {
@@ -238,33 +240,33 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        for (0..this.store.entries.len) |_entry_id| {
-            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+        for (0..this.store.entries.len) |id_int| {
+            const entry_id: Store.Entry.Id = .from(@intCast(id_int));
 
+            // .monotonic is okay because only the main thread sets this to `.blocked`.
             const entry_step = entry_steps[entry_id.get()].load(.monotonic);
             if (entry_step != .blocked) {
                 continue;
             }
 
-            if (!this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+            if (this.isTaskBlocked(entry_id, &parent_dedupe)) {
                 continue;
             }
 
+            // .monotonic is okay because the task isn't running right now.
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
         }
     }
 
     pub const Task = struct {
-        const Preallocated = bun.HiveArray(Task, 128).Fallback;
-
         entry_id: Store.Entry.Id,
         installer: *Installer,
 
-        task: ThreadPool.Task = .{ .callback = &callback },
-        next: ?*Task = null,
+        task: ThreadPool.Task,
+        next: ?*Task,
 
-        result: Result = .none,
+        result: Result,
 
         const Result = union(enum) {
             none,
@@ -324,6 +326,7 @@ pub const Installer = struct {
             blocked,
         };
 
+        /// Called from task thread
         fn nextStep(this: *Task, comptime current_step: Step) Step {
             const next_step: Step = switch (comptime current_step) {
                 .link_package => .symlink_dependencies,
@@ -339,7 +342,7 @@ pub const Installer = struct {
                 => @compileError("unexpected step"),
             };
 
-            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .monotonic);
+            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .release);
 
             return next_step;
         }
@@ -355,6 +358,7 @@ pub const Installer = struct {
             }
         };
 
+        /// Called from task thread
         fn run(this: *Task) OOM!Yield {
             const installer = this.installer;
             const manager = installer.manager;
@@ -385,7 +389,7 @@ pub const Installer = struct {
             const pkg_name_hash = pkg_name_hashes[pkg_id];
             const pkg_res = pkg_resolutions[pkg_id];
 
-            return next_step: switch (entry_steps[this.entry_id.get()].load(.monotonic)) {
+            return next_step: switch (entry_steps[this.entry_id.get()].load(.acquire)) {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -424,9 +428,9 @@ pub const Installer = struct {
 
                             backend: switch (PackageInstall.Method.hardlink) {
                                 .hardlink => {
-                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDir();
+                                    var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
                                     defer src.deinit();
-                                    src.append(pkg_res.value.folder.slice(string_buf));
+                                    src.appendJoin(pkg_res.value.folder.slice(string_buf));
 
                                     var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
@@ -444,6 +448,23 @@ pub const Installer = struct {
                                         .err => |err| {
                                             if (err.getErrno() == .XDEV) {
                                                 continue :backend .copyfile;
+                                            }
+
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to hardlink package folder
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
                                             }
                                             return .failure(.{ .link_package = err });
                                         },
@@ -486,6 +507,22 @@ pub const Installer = struct {
                                     switch (try file_copier.copy(&.{})) {
                                         .result => {},
                                         .err => |err| {
+                                            if (PackageManager.verbose_install) {
+                                                Output.prettyErrorln(
+                                                    \\<red><b>error<r><d>:<r>Failed to copy package
+                                                    \\{}
+                                                    \\<d>From: {s}<r>
+                                                    \\<d>  To: {}<r>
+                                                    \\<r>
+                                                ,
+                                                    .{
+                                                        err,
+                                                        bun.fmt.fmtOSPath(src_path.slice(), .{ .path_sep = .auto }),
+                                                        bun.fmt.fmtOSPath(dest.slice(), .{ .path_sep = .auto }),
+                                                    },
+                                                );
+                                                Output.flush();
+                                            }
                                             return .failure(.{ .link_package = err });
                                         },
                                     }
@@ -509,6 +546,9 @@ pub const Installer = struct {
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
 
+                    // .monotonic access of `supported_backend` is okay because it's an
+                    // optimization. It's okay if another thread doesn't see an update to this
+                    // value "in time".
                     backend: switch (installer.supported_backend.load(.monotonic)) {
                         .clonefile => {
                             if (comptime !Environment.isMac) {
@@ -553,13 +593,22 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            "Failed to open cache directory for hardlink: {s}",
+                                            .{
+                                                pkg_cache_dir_subpath.slice(),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
 
-                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(cache_dir_path.slice());
+                            var src: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .fromLongPath(cache_dir_path.slice());
                             defer src.deinit();
-                            src.append(pkg_cache_dir_subpath.slice());
+                            src.appendJoin(pkg_cache_dir_subpath.slice());
 
                             var hardlinker: Hardlinker = .{
                                 .src_dir = cached_package_dir.?,
@@ -574,6 +623,22 @@ pub const Installer = struct {
                                         installer.supported_backend.store(.copyfile, .monotonic);
                                         continue :backend .copyfile;
                                     }
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to hardlink package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }
@@ -586,6 +651,22 @@ pub const Installer = struct {
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             };
@@ -603,6 +684,22 @@ pub const Installer = struct {
                             switch (try file_copier.copy(&.{})) {
                                 .result => {},
                                 .err => |err| {
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln(
+                                            \\<red><b>error<r><d>:<r>Failed to copy package
+                                            \\{}
+                                            \\<d>From: {s}<r>
+                                            \\<d>  To: {}<r>
+                                            \\<r>
+                                        ,
+                                            .{
+                                                err,
+                                                pkg_cache_dir_subpath.slice(),
+                                                bun.fmt.fmtOSPath(dest_subpath.slice(), .{ .path_sep = .auto }),
+                                            },
+                                        );
+                                        Output.flush();
+                                    }
                                     return .failure(.{ .link_package = err });
                                 },
                             }
@@ -616,9 +713,7 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_node_id = entry_node_ids[dep.entry_id.get()];
-                        const dep_dep_id = node_dep_ids[dep_node_id.get()];
-                        const dep_name = dependencies[dep_dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name;
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
@@ -670,7 +765,7 @@ pub const Installer = struct {
                     var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
                     defer parent_dedupe.deinit();
 
-                    if (!installer.isTaskUnblocked(this.entry_id, &parent_dedupe)) {
+                    if (installer.isTaskBlocked(this.entry_id, &parent_dedupe)) {
                         return .blocked;
                     }
 
@@ -927,6 +1022,7 @@ pub const Installer = struct {
             };
         }
 
+        /// Called from task thread
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
 
@@ -938,27 +1034,30 @@ pub const Installer = struct {
                 .yield => {},
                 .done => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .blocked => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .fail => |err| {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
                     }
-                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
+                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
                     this.result = .{ .err = err.clone(bun.default_allocator) };
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
             }
@@ -1184,11 +1283,11 @@ pub const Installer = struct {
     }
 };
 
-// @sortImports
+const string = []const u8;
 
+const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
-const Hardlinker = @import("./Hardlinker.zig").Hardlinker;
 const Symlinker = @import("./Symlinker.zig").Symlinker;
 
 const bun = @import("bun");
@@ -1199,11 +1298,11 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
 const strings = bun.strings;
 const sys = bun.sys;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
+const Mutex = bun.threading.Mutex;
 const String = bun.Semver.String;
 
 const install = bun.install;

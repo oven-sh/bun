@@ -488,19 +488,22 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
     };
 }
-const bun = @import("bun");
-const uws = bun.uws;
-const BoringSSL = bun.BoringSSL.c;
-const strings = bun.strings;
-const Environment = bun.Environment;
-const FeatureFlags = bun.FeatureFlags;
-const assert = bun.assert;
-const HTTPThread = @import("./HTTPThread.zig");
-const HTTPCertError = @import("./HTTPCertError.zig");
-const HTTPClient = bun.http;
-const InitError = HTTPClient.InitError;
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 const log = bun.Output.scoped(.HTTPContext, true);
+
+const HTTPCertError = @import("./HTTPCertError.zig");
+const HTTPThread = @import("./HTTPThread.zig");
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const assert = bun.assert;
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
+const HTTPClient = bun.http;
+const InitError = HTTPClient.InitError;

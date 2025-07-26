@@ -1,3 +1,4 @@
+/// Called from isolated_install.zig on the main thread.
 pub fn runTasks(
     manager: *PackageManager,
     comptime Ctx: type,
@@ -70,10 +71,9 @@ pub fn runTasks(
 
     if (Ctx == *Store.Installer) {
         const installer: *Store.Installer = extract_ctx;
-        const batch = installer.tasks.popBatch();
+        const batch = installer.task_queue.popBatch();
         var iter = batch.iterator();
         while (iter.next()) |task| {
-            defer installer.preallocated_tasks.put(task);
             switch (task.result) {
                 .none => {
                     if (comptime Environment.ci_assert) {
@@ -89,6 +89,8 @@ pub fn runTasks(
                 },
                 .done => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because we should have already synchronized with the
+                        // completed task thread by virtue of popping from the `UnboundedQueue`.
                         const step = installer.store.entries.items(.step)[task.entry_id.get()].load(.monotonic);
                         bun.assertWithLocation(step == .done, @src());
                     }
@@ -589,7 +591,7 @@ pub fn runTasks(
                 }
 
                 manager.extracted_count += 1;
-                bun.Analytics.Features.extracted_packages += 1;
+                bun.analytics.Features.extracted_packages += 1;
 
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     switch (Ctx) {
@@ -861,16 +863,19 @@ pub fn runTasks(
 }
 
 pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
-    return manager.pending_tasks.load(.monotonic);
+    return manager.pending_tasks.load(.acquire);
 }
 
-pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
+pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) void {
     manager.total_tasks += count;
-    return manager.pending_tasks.fetchAdd(count, .monotonic);
+    // .monotonic is okay because the start of a task doesn't carry any side effects that other
+    // threads depend on (but finishing a task does). Note that this method should usually be called
+    // before the task is actually spawned.
+    _ = manager.pending_tasks.fetchAdd(count, .monotonic);
 }
 
 pub inline fn decrementPendingTasks(manager: *PackageManager) void {
-    _ = manager.pending_tasks.fetchSub(1, .monotonic);
+    _ = manager.pending_tasks.fetchSub(1, .release);
 }
 
 pub fn flushNetworkQueue(this: *PackageManager) void {
@@ -924,7 +929,7 @@ pub fn flushDependencyQueue(this: *PackageManager) void {
 pub fn scheduleTasks(manager: *PackageManager) usize {
     const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
 
-    _ = manager.incrementPendingTasks(@truncate(count));
+    manager.incrementPendingTasks(@intCast(count));
     manager.thread_pool.schedule(manager.patch_apply_batch);
     manager.thread_pool.schedule(manager.patch_calc_hash_batch);
     manager.thread_pool.schedule(manager.task_batch);
@@ -1052,7 +1057,7 @@ pub fn generateNetworkTaskForTarball(
     return network_task;
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -1062,7 +1067,6 @@ const Output = bun.Output;
 const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;

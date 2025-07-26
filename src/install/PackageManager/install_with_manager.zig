@@ -839,9 +839,10 @@ pub fn installWithManager(
             const output_in_foreground = true;
             try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
+            // .monotonic is okay because at this point, this value is only accessed from this
+            // thread.
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
-
                 manager.sleep();
             }
         }
@@ -986,7 +987,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
@@ -1000,9 +1001,8 @@ const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

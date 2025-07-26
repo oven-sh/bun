@@ -828,7 +828,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobNoMatches", {
-    todo: true, // TODO: sideEffects for local imports not yet supported
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "./components/comp.js";
@@ -857,7 +857,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    todo: true, // TODO: sideEffects for local imports not yet supported
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"

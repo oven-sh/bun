@@ -330,6 +330,7 @@ pub const Command = struct {
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,
+        no_color: bool = false,
     };
 
     pub const Debugger = union(enum) {

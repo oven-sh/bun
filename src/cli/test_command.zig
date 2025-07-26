@@ -1283,6 +1283,13 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
 
+        // Override color settings if --no-color flag is provided
+        if (ctx.test_options.no_color) {
+            Output.enable_ansi_colors = false;
+            Output.enable_ansi_colors_stderr = false;
+            Output.enable_ansi_colors_stdout = false;
+        }
+
         // print the version so you know its doing stuff if it takes a sec
         Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();

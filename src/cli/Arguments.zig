@@ -45,6 +45,7 @@ pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
+    clap.parseParam("--no-color                        Disable ANSI colors in output") catch unreachable,
 } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
     // This will print more error return traces, as a debug aid
     clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
@@ -191,7 +192,6 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
-    clap.parseParam("--no-color                       Disable ANSI colors in output") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -340,6 +340,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         Global.exit(1);
     };
 
+    if (args.flag("--no-color")) {
+        Output.enable_ansi_colors = false;
+        Output.enable_ansi_colors_stderr = false;
+        Output.enable_ansi_colors_stdout = false;
+    }
+
     const print_help = args.flag("--help");
     if (print_help) {
         cmd.printHelp(true);
@@ -481,7 +487,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
-        ctx.test_options.no_color = args.flag("--no-color");
     }
 
     ctx.args.absolute_working_dir = cwd;

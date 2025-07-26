@@ -617,11 +617,11 @@ pub const PathLike = union(enum) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!?PathLike {
+    pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *NodeFsArgumentsSlice) bun.JSError!?PathLike {
         return fromJSWithAllocator(ctx, arguments, bun.default_allocator);
     }
 
-    pub fn fromJSWithAllocator(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
+    pub fn fromJSWithAllocator(ctx: *jsc.JSGlobalObject, arguments: *NodeFsArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
             .Uint8Array,
@@ -891,7 +891,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?jsc.Node.PathOrFileDescriptor {
+    pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *NodeFsArgumentsSlice, allocator: std.mem.Allocator) bun.JSError!?jsc.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
         if (try bun.FD.fromJSValidated(first, ctx)) |fd| {
@@ -1148,7 +1148,7 @@ pub const PathOrBlob = union(enum) {
 
     const Blob = jsc.WebCore.Blob;
 
-    pub fn fromJSNoCopy(ctx: *jsc.JSGlobalObject, args: *jsc.CallFrame.ArgumentsSlice) bun.JSError!PathOrBlob {
+    pub fn fromJSNoCopy(ctx: *jsc.JSGlobalObject, args: *jsc.CallFrame.NodeFsArgumentsSlice) bun.JSError!PathOrBlob {
         if (try jsc.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
@@ -1180,7 +1180,7 @@ const jsc = bun.jsc;
 const path_handler = bun.path;
 const strings = bun.strings;
 const windows = bun.windows;
-const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const NodeFsArgumentsSlice = jsc.CallFrame.NodeFsArgumentsSlice;
 
 const node = bun.api.node;
 const Buffer = node.Buffer;

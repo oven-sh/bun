@@ -1467,7 +1467,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
 /// `Bun.write(destination, input, options?)`
 pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -1827,7 +1827,7 @@ pub fn constructBunFile(
 ) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(vm, arguments);
     defer args.deinit();
 
     var path = (try jsc.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {

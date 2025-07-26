@@ -800,7 +800,7 @@ pub fn shrink(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!
 }
 
 fn doResolve(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!jsc.JSValue {
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         return globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});

@@ -62,7 +62,7 @@ pub fn writeFormat(s3: *Blob.Store.S3, comptime Formatter: type, formatter: *For
 }
 pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -93,7 +93,7 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
 pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -125,7 +125,7 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
 pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -168,7 +168,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
 pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -201,7 +201,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 }
 pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -543,7 +543,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) 
 }
 
 pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
 
     // accept a path or a blob
@@ -597,7 +597,7 @@ pub fn constructInternal(
 ) bun.JSError!*Blob {
     const vm = globalObject.bunVM();
     const arguments = callframe.arguments();
-    var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments);
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(vm, arguments);
     defer args.deinit();
 
     const path = (try jsc.Node.PathLike.fromJS(globalObject, &args)) orelse {

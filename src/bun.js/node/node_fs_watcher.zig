@@ -329,7 +329,7 @@ pub const FSWatcher = struct {
         encoding: jsc.Node.Encoding,
         verbose: bool,
 
-        pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
+        pub fn fromJS(ctx: *jsc.JSGlobalObject, arguments: *NodeFsArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
@@ -710,6 +710,6 @@ const webcore = bun.webcore;
 const jsc = bun.jsc;
 const EventLoop = jsc.EventLoop;
 const VirtualMachine = jsc.VirtualMachine;
-const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const NodeFsArgumentsSlice = jsc.CallFrame.NodeFsArgumentsSlice;
 const Encoder = jsc.WebCore.encoding;
 const PathLike = jsc.Node.PathLike;

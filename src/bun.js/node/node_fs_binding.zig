@@ -14,7 +14,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
 
     return struct {
         pub fn runSync(this: *Binding, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
+            var slice = NodeFsArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             defer slice.deinit();
 
             const args = if (Arguments != void)
@@ -35,7 +35,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
         }
 
         pub fn runAsync(this: *Binding, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
+            var slice = NodeFsArgumentsSlice.init(globalObject.bunVM(), callframe.arguments());
             slice.will_be_async = true;
             var deinit = false;
 
@@ -237,4 +237,4 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const node = bun.api.node;
-const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const NodeFsArgumentsSlice = jsc.CallFrame.NodeFsArgumentsSlice;

@@ -202,19 +202,6 @@ pub const CallFrame = opaque {
             slice.arena.deinit();
         }
 
-        pub fn protectEat(slice: *ArgumentsSlice) void {
-            if (slice.remaining.len == 0) return;
-            const index = slice.all.len - slice.remaining.len;
-            slice.protected.set(index);
-            slice.all[index].protect();
-            slice.eat();
-        }
-
-        pub fn protectEatNext(slice: *ArgumentsSlice) ?jsc.JSValue {
-            if (slice.remaining.len == 0) return null;
-            return slice.nextEat();
-        }
-
         pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
             return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
         }
@@ -258,6 +245,97 @@ pub const CallFrame = opaque {
         }
 
         pub fn nextEat(slice: *ArgumentsSlice) ?jsc.JSValue {
+            if (slice.remaining.len == 0) {
+                return null;
+            }
+            defer slice.eat();
+            return slice.remaining[0];
+        }
+    };
+
+    /// This is an advanced iterator struct which is used by various APIs. In
+    /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
+    /// know if they have to do threadsafe clones.
+    ///
+    /// Prefer `Iterator` for a simpler iterator.
+    pub const NodeFsArgumentsSlice = struct {
+        remaining: []const jsc.JSValue,
+        vm: *jsc.VirtualMachine,
+        arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
+        all: []const jsc.JSValue,
+        threw: bool = false,
+        protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
+        will_be_async: bool = false,
+
+        pub fn unprotect(slice: *NodeFsArgumentsSlice) void {
+            var iter = slice.protected.iterator(.{});
+            while (iter.next()) |i| {
+                slice.all[i].unprotect();
+            }
+            slice.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
+        }
+
+        pub fn deinit(slice: *NodeFsArgumentsSlice) void {
+            slice.unprotect();
+            slice.arena.deinit();
+        }
+
+        pub fn protectEat(slice: *NodeFsArgumentsSlice) void {
+            if (slice.remaining.len == 0) return;
+            const index = slice.all.len - slice.remaining.len;
+            slice.protected.set(index);
+            slice.all[index].protect();
+            slice.eat();
+        }
+
+        pub fn protectEatNext(slice: *NodeFsArgumentsSlice) ?jsc.JSValue {
+            if (slice.remaining.len == 0) return null;
+            return slice.nextEat();
+        }
+
+        pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) NodeFsArgumentsSlice {
+            return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
+        }
+        pub fn init(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) NodeFsArgumentsSlice {
+            return NodeFsArgumentsSlice{
+                .remaining = slice,
+                .vm = vm,
+                .all = slice,
+                .arena = bun.ArenaAllocator.init(vm.allocator),
+            };
+        }
+
+        pub fn initAsync(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) NodeFsArgumentsSlice {
+            return NodeFsArgumentsSlice{
+                .remaining = bun.default_allocator.dupe(jsc.JSValue, slice),
+                .vm = vm,
+                .all = slice,
+                .arena = bun.ArenaAllocator.init(bun.default_allocator),
+            };
+        }
+
+        pub inline fn len(slice: *const NodeFsArgumentsSlice) u16 {
+            return @as(u16, @truncate(slice.remaining.len));
+        }
+
+        pub fn eat(slice: *NodeFsArgumentsSlice) void {
+            if (slice.remaining.len == 0) {
+                return;
+            }
+
+            slice.remaining = slice.remaining[1..];
+        }
+
+        /// Peek the next argument without eating it
+        pub fn next(slice: *NodeFsArgumentsSlice) ?jsc.JSValue {
+            if (slice.remaining.len == 0) {
+                return null;
+            }
+
+            return slice.remaining[0];
+        }
+
+        pub fn nextEat(slice: *NodeFsArgumentsSlice) ?jsc.JSValue {
             if (slice.remaining.len == 0) {
                 return null;
             }

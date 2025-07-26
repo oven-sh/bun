@@ -238,7 +238,7 @@ pub const StatWatcher = struct {
 
         global_this: *jsc.JSGlobalObject,
 
-        pub fn fromJS(global: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
+        pub fn fromJS(global: *jsc.JSGlobalObject, arguments: *NodeFsArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJSWithAllocator(global, arguments, bun.default_allocator) orelse {
                 return global.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
@@ -514,7 +514,7 @@ const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 const jsc = bun.jsc;
 const EventLoop = jsc.EventLoop;
 const VirtualMachine = jsc.VirtualMachine;
-const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const NodeFsArgumentsSlice = jsc.CallFrame.NodeFsArgumentsSlice;
 
 const PathLike = jsc.Node.PathLike;
 const StatsBig = bun.jsc.Node.StatsBig;

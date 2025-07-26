@@ -125,7 +125,7 @@ pub const S3Client = struct {
     }
     pub fn file(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
@@ -142,7 +142,7 @@ pub const S3Client = struct {
 
     pub fn presign(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
@@ -160,7 +160,7 @@ pub const S3Client = struct {
 
     pub fn exists(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
@@ -177,7 +177,7 @@ pub const S3Client = struct {
 
     pub fn size(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
@@ -194,7 +194,7 @@ pub const S3Client = struct {
 
     pub fn stat(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
@@ -211,7 +211,7 @@ pub const S3Client = struct {
 
     pub fn write(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a path to write to", .{}).throw();
@@ -245,7 +245,7 @@ pub const S3Client = struct {
 
     pub fn unlink(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             return globalThis.ERR(.MISSING_ARGS, "Expected a path to unlink", .{}).throw();
@@ -292,7 +292,7 @@ pub const S3Client = struct {
 
     pub fn staticFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments();
-        var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         const path = (try jsc.Node.PathLike.fromJS(globalThis, &args)) orelse {

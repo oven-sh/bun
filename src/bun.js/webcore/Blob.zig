@@ -2220,7 +2220,6 @@ const S3BlobDownloadTask = struct {
 pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-    defer args.deinit();
 
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
@@ -2272,7 +2271,6 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-    defer args.deinit();
     const store = this.store orelse {
         return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
     };

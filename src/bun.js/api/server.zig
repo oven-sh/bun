@@ -1108,7 +1108,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             var args_slice = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-            defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
             try ServerConfig.fromJS(globalThis, &new_config, &args_slice, .{
@@ -1146,7 +1145,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var headers: ?*WebCore.FetchHeaders = null;
             var method = HTTP.Method.GET;
             var args = jsc.CallFrame.ArgumentsSlice.init(ctx.bunVM(), arguments);
-            defer args.deinit();
 
             var first_arg = args.nextEat().?;
             var body: jsc.WebCore.Body.Value = .{ .Null = {} };

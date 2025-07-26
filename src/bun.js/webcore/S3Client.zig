@@ -92,7 +92,6 @@ pub const S3Client = struct {
     pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.arguments();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-        defer args.deinit();
         var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, globalThis);
         defer aws_options.deinit();
         return S3Client.new(.{

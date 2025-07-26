@@ -185,20 +185,7 @@ pub const CallFrame = opaque {
         vm: *jsc.VirtualMachine,
         all: []const jsc.JSValue,
         threw: bool = false,
-        protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
         will_be_async: bool = false,
-
-        pub fn unprotect(slice: *ArgumentsSlice) void {
-            var iter = slice.protected.iterator(.{});
-            while (iter.next()) |i| {
-                slice.all[i].unprotect();
-            }
-            slice.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
-        }
-
-        pub fn deinit(slice: *ArgumentsSlice) void {
-            slice.unprotect();
-        }
 
         pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
             return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);

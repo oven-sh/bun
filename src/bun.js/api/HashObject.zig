@@ -66,7 +66,6 @@ fn hashWrap(comptime Hasher_: anytype) jsc.JSHostFnZig {
         pub fn hash(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.arguments();
             var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-            defer args.deinit();
 
             var input: []const u8 = "";
             var input_slice = ZigString.Slice.empty;

@@ -5,7 +5,7 @@ pub fn installHoistedPackages(
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
 ) !PackageInstall.Summary {
-    bun.Analytics.Features.hoisted_bun_install += 1;
+    bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
@@ -328,6 +328,7 @@ pub fn installHoistedPackages(
             installer.installAvailablePackages(log_level, force);
         }
 
+        // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, .monotonic);
         if (log_level.showProgress()) {
             scripts_node.activate();
@@ -342,6 +343,7 @@ pub fn installHoistedPackages(
         installer.linkRemainingBins(log_level);
         installer.completeRemainingScripts(log_level);
 
+        // .monotonic is okay because this value is only accessed on this thread.
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 
@@ -365,7 +367,7 @@ const Output = bun.Output;
 const Progress = bun.Progress;
 const strings = bun.strings;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 
 const install = bun.install;

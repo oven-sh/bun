@@ -33,15 +33,15 @@ pub const ZigStackTrace = extern struct {
         allocator: std.mem.Allocator,
         root_path: string,
         origin: ?*const ZigURL,
-    ) !Api.StackTrace {
-        var stack_trace: Api.StackTrace = comptime std.mem.zeroes(Api.StackTrace);
+    ) !api.StackTrace {
+        var stack_trace: api.StackTrace = comptime std.mem.zeroes(api.StackTrace);
         {
             var source_lines_iter = this.sourceLineIterator();
 
             const source_line_len = source_lines_iter.getLength();
 
             if (source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, @as(usize, @intCast(@max(source_lines_iter.i + 1, 0))));
+                var source_lines = try allocator.alloc(api.SourceLine, @as(usize, @intCast(@max(source_lines_iter.i + 1, 0))));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
@@ -65,7 +65,7 @@ pub const ZigStackTrace = extern struct {
         {
             const _frames = this.frames();
             if (_frames.len > 0) {
-                var stack_frames = try allocator.alloc(Api.StackFrame, _frames.len);
+                var stack_frames = try allocator.alloc(api.StackFrame, _frames.len);
                 stack_trace.frames = stack_frames;
 
                 for (_frames, 0..) |frame, i| {
@@ -136,12 +136,13 @@ pub const ZigStackTrace = extern struct {
     }
 };
 
-const bun = @import("bun");
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const ZigURL = @import("../../url.zig").URL;
 
-const JSC = bun.JSC;
-const SourceProvider = JSC.SourceProvider;
-const ZigStackFrame = JSC.ZigStackFrame;
-const ZigString = JSC.ZigString;
+const bun = @import("bun");
+const api = bun.schema.api;
+
+const jsc = bun.jsc;
+const SourceProvider = jsc.SourceProvider;
+const ZigStackFrame = jsc.ZigStackFrame;
+const ZigString = jsc.ZigString;

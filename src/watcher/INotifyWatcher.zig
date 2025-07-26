@@ -62,25 +62,25 @@ pub const Event = extern struct {
     }
 };
 
-pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
-pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
@@ -104,7 +104,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     log("{} init", .{this.fd});
 }
 
-pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
+pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
     bun.assert(this.loaded);
     // This is what replit does as of Jaunary 2023.
     // 1) CREATE .http.ts.3491171321~
@@ -226,14 +226,14 @@ pub fn stop(this: *INotifyWatcher) void {
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     defer Output.flush();
 
     var events = switch (this.platform.read()) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
-    if (events.len == 0) return .{ .result = {} };
+    if (events.len == 0) return .success;
 
     // TODO: is this thread safe?
     var remaining_events = events.len;
@@ -288,7 +288,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
             last_event_index = i;
             last_event_id = all_events[i].index;
         }
-        if (all_events.len == 0) return .{ .result = {} };
+        if (all_events.len == 0) return .success;
 
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -301,7 +301,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         remaining_events -= slice.len;
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {

@@ -57,7 +57,7 @@ manifests: PackageManifestMap = .{},
 folders: FolderResolution.Map = .{},
 git_repositories: RepositoryMap = .{},
 
-network_dedupe_map: NetworkTask.DedupeMap = NetworkTask.DedupeMap.init(bun.default_allocator),
+network_dedupe_map: NetworkTask.DedupeMap = .init(bun.default_allocator),
 async_network_task_queue: AsyncNetworkTaskQueue = .{},
 network_tarball_batch: ThreadPool.Batch = .{},
 network_resolve_batch: ThreadPool.Batch = .{},
@@ -68,8 +68,10 @@ patch_task_fifo: PatchTaskFifo = PatchTaskFifo.init(),
 patch_task_queue: PatchTaskQueue = .{},
 /// We actually need to calculate the patch file hashes
 /// every single time, because someone could edit the patchfile at anytime
-pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+///
+/// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
+pending_pre_calc_hashes: std.atomic.Value(u32) = .init(0),
+pending_tasks: std.atomic.Value(u32) = .init(0),
 total_tasks: u32 = 0,
 preallocated_network_tasks: PreallocatedNetworkTasks,
 preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -77,8 +79,8 @@ preallocated_resolve_tasks: PreallocatedTaskStore,
 /// items are only inserted into this if they took more than 500ms
 lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
 
-pending_lifecycle_script_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-finished_installing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+pending_lifecycle_script_tasks: std.atomic.Value(u32) = .init(0),
+finished_installing: std.atomic.Value(bool) = .init(false),
 total_scripts: usize = 0,
 
 root_lifecycle_scripts: ?Package.Scripts.List = null,
@@ -99,12 +101,12 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
+peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
 
-event_loop: JSC.AnyEventLoop,
+event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust
 // actually have scripts to run, and we add them to this list
@@ -862,7 +864,7 @@ pub fn init(
         .root_package_json_file = root_package_json_file,
         // .progress
         .event_loop = .{
-            .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            .mini = jsc.MiniEventLoop.init(bun.default_allocator),
         },
         .original_package_json_path = original_package_json_path,
         .workspace_package_json_cache = workspace_package_json_cache,
@@ -870,9 +872,9 @@ pub fn init(
         .subcommand = subcommand,
         .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
     };
-    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
+    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
-    JSC.MiniEventLoop.global = &manager.event_loop.mini;
+    jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
         manager.options.enable.manifest_cache_control = false;
@@ -1031,7 +1033,7 @@ pub fn initWithRuntimeOnce(
         .lockfile = undefined,
         .root_package_json_file = undefined,
         .event_loop = .{
-            .js = JSC.VirtualMachine.get().eventLoop(),
+            .js = jsc.VirtualMachine.get().eventLoop(),
         },
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
@@ -1240,6 +1242,9 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const DirInfo = @import("../resolver/dir_info.zig");
 const resolution = @import("./PackageManager/PackageManagerResolution.zig");
 const std = @import("std");
@@ -1252,8 +1257,7 @@ const bun = @import("bun");
 const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
@@ -1262,19 +1266,18 @@ const RunCommand = bun.RunCommand;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
-const Api = bun.Schema.Api;
+const Api = bun.schema.api;
 const File = bun.sys.File;
-
-const BunArguments = bun.CLI.Arguments;
-const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+
+const BunArguments = bun.cli.Arguments;
+const Command = bun.cli.Command;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

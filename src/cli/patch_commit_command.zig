@@ -5,7 +5,7 @@ pub const PatchCommitCommand = struct {
 };
 
 const bun = @import("bun");
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;
 const updatePackageJSONAndInstallCatchError = PackageManager.updatePackageJSONAndInstallCatchError;

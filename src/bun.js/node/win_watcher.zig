@@ -7,12 +7,12 @@ pub const PathWatcherManager = struct {
     const log = Output.scoped(.PathWatcherManager, false);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
     deinit_on_last_watcher: bool = false,
 
     pub const new = bun.TrivialNew(PathWatcherManager);
 
-    pub fn init(vm: *JSC.VirtualMachine) *PathWatcherManager {
+    pub fn init(vm: *jsc.VirtualMachine) *PathWatcherManager {
         return PathWatcherManager.new(.{
             .watchers = .{},
             .vm = vm,
@@ -160,7 +160,7 @@ pub const PathWatcher = struct {
         this.maybeDeinit();
     }
 
-    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.JSC.Maybe(*PathWatcher) {
+    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.sys.Maybe(*PathWatcher) {
         var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
@@ -262,7 +262,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: *anyopaque,
-) bun.JSC.Maybe(*PathWatcher) {
+) bun.sys.Maybe(*PathWatcher) {
     comptime {
         if (callback != onPathUpdateFn) {
             @compileError("callback must be onPathUpdateFn");
@@ -289,21 +289,22 @@ pub fn watch(
     return .{ .result = watcher };
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 
 const bun = @import("bun");
 const Output = bun.Output;
 const Watcher = bun.Watcher;
-const string = bun.string;
 
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;
 
-const FSWatcher = bun.JSC.Node.fs.Watcher;
+const FSWatcher = bun.jsc.Node.fs.Watcher;
 const Event = FSWatcher.Event;
-const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
-const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
+const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;
+const onUpdateEndFn = jsc.Node.fs.Watcher.onUpdateEnd;
 
 const windows = bun.windows;
 const uv = windows.libuv;

@@ -38,7 +38,7 @@ const DirWatcher = struct {
     dirHandle: w.HANDLE,
 
     // invalidates any EventIterators
-    fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
+    fn prepare(this: *DirWatcher) bun.sys.Maybe(void) {
         const filter: w.FileNotifyChangeFilter = .{ .file_name = true, .dir_name = true, .last_write = true, .creation = true };
         if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
             const err = w.kernel32.GetLastError();
@@ -49,7 +49,7 @@ const DirWatcher = struct {
             } };
         }
         log("read directory changes!", .{});
-        return .{ .result = {} };
+        return .success;
     }
 };
 
@@ -140,7 +140,7 @@ const Timeout = enum(w.DWORD) {
 };
 
 // wait until new events are available
-pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
+pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterator) {
     switch (this.watcher.prepare()) {
         .err => |err| {
             log("prepare() returned error", .{});
@@ -197,7 +197,7 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;
 
@@ -244,7 +244,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         }
     }
     if (event_id == 0) {
-        return .{ .result = {} };
+        return .success;
     }
 
     // log("event_id: {d}\n", .{event_id});
@@ -263,14 +263,14 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         last_event_index = i;
         last_event_id = all_events[i].index;
     }
-    if (all_events.len == 0) return .{ .result = {} };
+    if (all_events.len == 0) return .success;
     all_events = all_events[0 .. last_event_index + 1];
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {

@@ -199,7 +199,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `FORCE_COLOR`
-- If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
+- If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set. Can be overridden by setting `--no-color` flag
 
 ---
 

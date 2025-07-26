@@ -88,6 +88,20 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 
+## Build-time constants
+
+Use the `--define` flag to inject build-time constants into your executable, such as version numbers, build timestamps, or configuration values:
+
+```bash
+$ bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/cli.ts --outfile mycli
+```
+
+These constants are embedded directly into your compiled binary at build time, providing zero runtime overhead and enabling dead code elimination optimizations.
+
+{% callout type="info" %}
+For comprehensive examples and advanced patterns, see the [Build-time constants guide](/guides/runtime/build-time-constants).
+{% /callout %}
+
 ## Deploying to production
 
 Compiled executables reduce memory usage and improve Bun's start time.
@@ -125,6 +139,42 @@ The `--minify` argument optimizes the size of the transpiled output code. If you
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
+
+## Act as the Bun CLI
+
+{% note %}
+
+New in Bun v1.2.16
+
+{% /note %}
+
+You can run a standalone executable as if it were the `bun` CLI itself by setting the `BUN_BE_BUN=1` environment variable. When this variable is set, the executable will ignore its bundled entrypoint and instead expose all the features of Bun's CLI.
+
+For example, consider an executable compiled from a simple script:
+
+```sh
+$ cat such-bun.js
+console.log("you shouldn't see this");
+
+$ bun build --compile ./such-bun.js
+ [3ms] bundle 1 modules
+[89ms] compile such-bun
+```
+
+Normally, running `./such-bun` with arguments would execute the script. However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bun` binary:
+
+```sh
+# Executable runs its own entrypoint by default
+$ ./such-bun install
+you shouldn't see this
+
+# With the env var, the executable acts like the `bun` CLI
+$ BUN_BE_BUN=1 ./such-bun install
+bun install v1.2.16-canary.1 (1d1db811)
+Checked 63 installs across 64 packages (no changes) [5.00ms]
+```
+
+This is useful for building CLI tools on top of Bun that may need to install packages, bundle dependencies, run different or local files and more without needing to download a separate binary or install bun.
 
 ## Full-stack executables
 

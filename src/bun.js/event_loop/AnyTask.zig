@@ -1,5 +1,6 @@
 //! This is a slower wrapper around a function pointer.
 //! Prefer adding a task type directly to `Task` instead of using this.
+
 const AnyTask = @This();
 
 ctx: ?*anyopaque,
@@ -32,5 +33,6 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
+
+const jsc = bun.jsc;
+const Task = jsc.Task;

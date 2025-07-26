@@ -70,5 +70,5 @@ test("sleep should keep the event loop alive", async () => {
   });
   await proc.exited;
   expect(proc.exitCode).toBe(0);
-  expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+  expect(await proc.stdout.text()).toContain("event loop was not killed");
 });

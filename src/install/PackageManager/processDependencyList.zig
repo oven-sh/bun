@@ -291,8 +291,8 @@ pub fn processPeerDependencyList(
 pub fn processDependencyList(
     this: *PackageManager,
     dep_list: TaskCallbackList,
-    comptime Context: type,
-    ctx: Context,
+    comptime Ctx: type,
+    ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
 ) !void {
@@ -313,20 +313,19 @@ pub fn processDependencyList(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSAst = bun.JSAst;
-const JSON = bun.JSON;
+const JSAst = bun.ast;
+const JSON = bun.json;
 const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const logger = bun.logger;
-const string = bun.string;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

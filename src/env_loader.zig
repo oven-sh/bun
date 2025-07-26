@@ -1,18 +1,3 @@
-const std = @import("std");
-const logger = bun.logger;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const Analytics = @import("./analytics/analytics_thread.zig");
-const Fs = @import("./fs.zig");
-const URL = @import("./url.zig").URL;
-const Api = @import("./api/schema.zig").Api;
-const which = @import("./which.zig").which;
-const s3 = bun.S3;
-
 const DotEnvFileSuffix = enum {
     development,
     production,
@@ -85,9 +70,7 @@ pub const Loader = struct {
             this.get("bamboo.buildKey")) != null;
     }
 
-    pub fn loadTracy(this: *const Loader) void {
-        _ = this; // autofix
-    }
+    pub fn loadTracy(_: *const Loader) void {}
 
     pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
         if (this.aws_credentials) |credentials| {
@@ -100,6 +83,7 @@ pub const Loader = struct {
         var endpoint: []const u8 = "";
         var bucket: []const u8 = "";
         var session_token: []const u8 = "";
+        var insecure_http: bool = false;
 
         if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
             accessKeyId = access_key;
@@ -118,9 +102,13 @@ pub const Loader = struct {
             region = region_;
         }
         if (this.get("S3_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+            const url = bun.URL.parse(endpoint_);
+            endpoint = url.hostWithPath();
+            insecure_http = url.isHTTP();
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;
@@ -140,6 +128,7 @@ pub const Loader = struct {
             .endpoint = endpoint,
             .bucket = bucket,
             .sessionToken = session_token,
+            .insecure_http = insecure_http,
         };
 
         return this.aws_credentials.?;
@@ -338,8 +327,8 @@ pub const Loader = struct {
         to_json: *JSONStore,
         comptime StringStore: type,
         to_string: *StringStore,
-        framework_defaults: Api.StringMap,
-        behavior: Api.DotEnvBehavior,
+        framework_defaults: api.StringMap,
+        behavior: api.DotEnvBehavior,
         prefix: string,
         allocator: std.mem.Allocator,
     ) !void {
@@ -391,7 +380,7 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
-                const js_ast = bun.JSAst;
+                const js_ast = bun.ast;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
@@ -416,11 +405,11 @@ pub const Loader = struct {
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
-                                .{
+                                .init(.{
                                     .can_be_removed_if_unused = true,
-                                    .call_can_be_unwrapped_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = .if_unused,
                                     .value = expr_data,
-                                },
+                                }),
                             );
                             e_strings = e_strings[1..];
                         } else {
@@ -440,11 +429,11 @@ pub const Loader = struct {
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
-                                    .{
+                                    .init(.{
                                         .can_be_removed_if_unused = true,
-                                        .call_can_be_unwrapped_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = .if_unused,
                                         .value = expr_data,
-                                    },
+                                    }),
                                 );
                                 e_strings = e_strings[1..];
                             }
@@ -466,11 +455,11 @@ pub const Loader = struct {
 
                         _ = try to_string.getOrPutValue(
                             key,
-                            .{
+                            .init(.{
                                 .can_be_removed_if_unused = true,
-                                .call_can_be_unwrapped_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = .if_unused,
                                 .value = expr_data,
-                            },
+                            }),
                         );
                         e_strings = e_strings[1..];
                     }
@@ -562,7 +551,7 @@ pub const Loader = struct {
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
                         try this.loadEnvFileDynamic(file_path, false);
-                        Analytics.Features.dotenv += 1;
+                        analytics.Features.dotenv += 1;
                     }
                 }
             }
@@ -584,19 +573,19 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
                     try this.loadEnvFile(dir_handle, ".env.development.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
                     try this.loadEnvFile(dir_handle, ".env.production.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
                     try this.loadEnvFile(dir_handle, ".env.test.local", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
@@ -604,7 +593,7 @@ pub const Loader = struct {
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
                 try this.loadEnvFile(dir_handle, ".env.local", false);
-                Analytics.Features.dotenv += 1;
+                analytics.Features.dotenv += 1;
             }
         }
 
@@ -612,26 +601,26 @@ pub const Loader = struct {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
                     try this.loadEnvFile(dir_handle, ".env.development", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
                     try this.loadEnvFile(dir_handle, ".env.production", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
                     try this.loadEnvFile(dir_handle, ".env.test", false);
-                    Analytics.Features.dotenv += 1;
+                    analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(dir_handle, ".env", false);
-            Analytics.Features.dotenv += 1;
+            analytics.Features.dotenv += 1;
         }
     }
 
@@ -1339,3 +1328,19 @@ pub const Map = struct {
 pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
+
+const string = []const u8;
+
+const Fs = @import("./fs.zig");
+const std = @import("std");
+const URL = @import("./url.zig").URL;
+const which = @import("./which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const analytics = bun.analytics;
+const logger = bun.logger;
+const s3 = bun.S3;
+const strings = bun.strings;
+const api = bun.schema.api;

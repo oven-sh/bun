@@ -46,4 +46,4 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 
 ---
 
-Refer to [Ecosystem > TypeScript](https://bun.sh/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
+Refer to [Ecosystem > TypeScript](https://bun.com/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.

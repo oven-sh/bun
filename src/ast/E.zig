@@ -66,13 +66,13 @@ pub const Array = struct {
         return ExprNodeList.init(out[0 .. out.len - remain.len]);
     }
 
-    pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+    pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
         const items = this.items.slice();
-        var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
+        var array = try jsc.JSValue.createEmptyArray(globalObject, items.len);
         array.protect();
         defer array.unprotect();
         for (items, 0..) |expr, j| {
-            array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
+            try array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
         }
 
         return array;
@@ -108,8 +108,8 @@ pub const Binary = struct {
 
 pub const Boolean = struct {
     value: bool,
-    pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.value);
+    pub fn toJS(this: @This(), ctx: *jsc.JSGlobalObject) jsc.C.JSValueRef {
+        return jsc.C.JSValueMakeBoolean(ctx, this.value);
     }
 };
 pub const Super = struct {};
@@ -122,7 +122,7 @@ pub const New = struct {
 
     // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
     // this call expression. See the comment inside ECall for more details.
-    can_be_unwrapped_if_unused: bool = false,
+    can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     close_parens_loc: logger.Loc,
 };
@@ -171,7 +171,7 @@ pub const Call = struct {
     // Note that the arguments are not considered to be part of the call. If the
     // call itself is removed due to this annotation, the arguments must remain
     // if they have side effects.
-    can_be_unwrapped_if_unused: bool = false,
+    can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     // Used when printing to generate the source prop on the fly
     was_jsx_element: bool = false,
@@ -181,6 +181,12 @@ pub const Call = struct {
             a.is_direct_eval == b.is_direct_eval and
             a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused);
     }
+};
+
+pub const CallUnwrap = enum(u2) {
+    never,
+    if_unused,
+    if_unused_and_toString_safe,
 };
 
 pub const Dot = struct {
@@ -197,7 +203,7 @@ pub const Dot = struct {
     // If true, this property access is a function that, when called, can be
     // unwrapped if the resulting value is unused. Unwrapping means discarding
     // the call target but keeping any arguments with side effects.
-    call_can_be_unwrapped_if_unused: bool = false,
+    call_can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     pub fn hasSameFlagsAs(a: *Dot, b: *Dot) bool {
         return (a.optional_chain == b.optional_chain and
@@ -460,8 +466,8 @@ pub const Number = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(this: @This()) JSC.JSValue {
-        return JSC.JSValue.jsNumber(this.value);
+    pub fn toJS(this: @This()) jsc.JSValue {
+        return jsc.JSValue.jsNumber(this.value);
     }
 };
 
@@ -474,9 +480,9 @@ pub const BigInt = struct {
         return try writer.write(self.value);
     }
 
-    pub fn toJS(_: @This()) JSC.JSValue {
+    pub fn toJS(_: @This()) jsc.JSValue {
         // TODO:
-        return JSC.JSValue.jsNumber(0);
+        return jsc.JSValue.jsNumber(0);
     }
 };
 
@@ -509,8 +515,8 @@ pub const Object = struct {
         return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
     }
 
-    pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
+    pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
+        var obj = jsc.JSValue.createEmptyObject(globalObject, this.properties.len);
         obj.protect();
         defer obj.unprotect();
         const props: []const G.Property = this.properties.slice();
@@ -949,7 +955,7 @@ pub const String = struct {
         };
     }
 
-    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
+    pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) ![]const u8 {
         if (str.isUTF8()) {
             return allocator.dupe(u8, str.string(allocator) catch unreachable);
         }
@@ -999,7 +1005,7 @@ pub const String = struct {
                         return strings.utf16EqlString(other.slice16(), s.data);
                     }
                 },
-                bun.string => {
+                []const u8 => {
                     return strings.eqlLong(s.data, other, true);
                 },
                 []u16, []const u16 => {
@@ -1018,7 +1024,7 @@ pub const String = struct {
                         return std.mem.eql(u16, other.slice16(), s.slice16());
                     }
                 },
-                bun.string => {
+                []const u8 => {
                     return strings.utf16EqlString(s.slice16(), other);
                 },
                 []u16, []const u16 => {
@@ -1049,7 +1055,7 @@ pub const String = struct {
             strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
     }
 
-    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
+    pub fn string(s: *const String, allocator: std.mem.Allocator) OOM![]const u8 {
         if (s.isUTF8()) {
             return s.data;
         } else {
@@ -1057,7 +1063,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.stringZ {
+    pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM![:0]const u8 {
         if (s.isUTF8()) {
             return allocator.dupeZ(u8, s.data);
         } else {
@@ -1065,7 +1071,7 @@ pub const String = struct {
         }
     }
 
-    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
+    pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM![]const u8 {
         if (s.isUTF8()) {
             return allocator.dupe(u8, s.data);
         } else {
@@ -1085,7 +1091,7 @@ pub const String = struct {
         }
     }
 
-    pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
+    pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) !jsc.JSValue {
         s.resolveRopeIfNeeded(allocator);
         if (!s.isPresent()) {
             var emp = bun.String.empty;
@@ -1109,11 +1115,11 @@ pub const String = struct {
         }
     }
 
-    pub fn toZigString(s: *String, allocator: std.mem.Allocator) JSC.ZigString {
+    pub fn toZigString(s: *String, allocator: std.mem.Allocator) jsc.ZigString {
         if (s.isUTF8()) {
-            return JSC.ZigString.fromUTF8(s.slice(allocator));
+            return jsc.ZigString.fromUTF8(s.slice(allocator));
         } else {
-            return JSC.ZigString.initUTF16(s.slice16());
+            return jsc.ZigString.initUTF16(s.slice16());
         }
     }
 
@@ -1410,7 +1416,10 @@ pub const Import = struct {
     }
 };
 
-// @sortImports
+pub const Class = G.Class;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const std = @import("std");
 
@@ -1418,24 +1427,20 @@ const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
-const JSC = bun.JSC;
 const OOM = bun.OOM;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const Loader = bun.options.Loader;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const Flags = js_ast.Flags;
+const G = js_ast.G;
 const Op = js_ast.Op;
 const OptionalChain = js_ast.OptionalChain;
 const Ref = js_ast.Ref;
 const ToJSError = js_ast.ToJSError;
-
-const G = js_ast.G;
-pub const Class = G.Class;

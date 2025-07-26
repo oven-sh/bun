@@ -545,7 +545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
-        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
     } else if (jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
@@ -627,11 +627,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (options.isObject()) {
         JSC::JSObject* optionsObject = options.getObject();
         JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        RETURN_IF_EXCEPTION(scope, {});
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
             if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (transferListValue.isObject()) {
                         JSC::JSObject* transferListObject = transferListValue.getObject();
                         transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));

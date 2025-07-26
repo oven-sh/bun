@@ -82,6 +82,22 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
+static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
+{
+    ErrorEvent::Init eventInit = {};
+    if (reason.isEmpty()) {
+        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed"_s);
+    } else {
+        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed: "_s, reason);
+    }
+    eventInit.filename = String();
+    eventInit.bubbles = false;
+    eventInit.cancelable = false;
+    eventInit.colno = 0;
+    eventInit.error = JSC::createError(globalObject, eventInit.message);
+    return eventInit;
+}
+
 static size_t getFramingOverhead(size_t payloadSize)
 {
     static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
@@ -458,8 +474,13 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         if (auto* context = scriptExecutionContext()) {
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
-                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, "Failed to connect"_s));
+                auto* globalObject = context.jsGlobalObject();
+
+                auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
+                auto message = eventInit.message;
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTFMove(message)));
+
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1171,17 +1192,11 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
-    if (scriptExecutionContext()) {
+    if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
-            ErrorEvent::Init eventInit = {};
-            eventInit.message = makeString("WebSocket connection to '"_s, m_url.stringCenterEllipsizedToLength(), "' failed: "_s, reason);
-            eventInit.filename = String();
-            eventInit.bubbles = false;
-            eventInit.cancelable = false;
-            eventInit.colno = 0;
-            eventInit.error = {};
-            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, eventInit, EventIsTrusted::Yes));
+            auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
         }
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));

@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const fixtures = std.ComptimeStringMap([]u8, .{
     .{ "package.json", @embedFile("./fixtures/package.json") },
     .{ "tsconfig.json", @embedFile("./fixtures/tsconfig.json") },
@@ -572,3 +570,5 @@ pub const vercel_routes_list = .{
     .@"pages/vercel-live-auth.js" = "// pages/vercel-live-auth.js",
     .@"pages/virtual-event-starter-ki.js" = "// pages/virtual-event-starter-ki.js",
 };
+
+const std = @import("std");

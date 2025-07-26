@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -14,7 +10,6 @@ const CustomIdent = css.css_values.ident.CustomIdent;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
 const CSSInteger = css.css_values.number.CSSInteger;
-const BabyList = bun.BabyList;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
@@ -536,3 +531,9 @@ fn isNameCodepoint(c: u8) bool {
     // alpha numeric, -, _, o
     return c >= 'a' and c <= 'z' or c >= 'A' and c <= 'Z' or c == '_' or c >= '0' and c <= '9' or c == '-' or c >= 0x80; // codepoints larger than ascii;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;

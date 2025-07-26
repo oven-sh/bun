@@ -1,11 +1,4 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Walker = @This();
-const bun = @import("bun");
-const path = std.fs.path;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const OSPathSlice = bun.OSPathSlice;
 
 stack: std.ArrayList(StackItem),
 name_buffer: NameBufferList,
@@ -16,17 +9,16 @@ seed: u64 = 0,
 
 const NameBufferList = std.ArrayList(bun.OSPathChar);
 
-const Dir = std.fs.Dir;
 const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
 pub const WalkerEntry = struct {
     /// The containing directory. This can be used to operate directly on `basename`
     /// rather than `path`, avoiding `error.NameTooLong` for deeply nested paths.
     /// The directory remains open until `next` or `deinit` is called.
-    dir: Dir,
-    basename: OSPathSlice,
-    path: OSPathSlice,
-    kind: Dir.Entry.Kind,
+    dir: FD,
+    basename: OSPathSliceZ,
+    path: OSPathSliceZ,
+    kind: std.fs.Dir.Entry.Kind,
 };
 
 const StackItem = struct {
@@ -37,13 +29,13 @@ const StackItem = struct {
 /// After each call to this function, and on deinit(), the memory returned
 /// from this function becomes invalid. A copy must be made in order to keep
 /// a reference to the path.
-pub fn next(self: *Walker) !?WalkerEntry {
+pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
     while (self.stack.items.len != 0) {
         // `top` becomes invalid after appending to `self.stack`
         var top = &self.stack.items[self.stack.items.len - 1];
         var dirname_len = top.dirname_len;
         switch (top.iter.next()) {
-            .err => |err| return bun.errnoToZigErr(err.errno),
+            .err => |err| return .initErr(err),
             .result => |res| {
                 if (res) |base| {
                     switch (base.kind) {
@@ -79,37 +71,32 @@ pub fn next(self: *Walker) !?WalkerEntry {
 
                     self.name_buffer.shrinkRetainingCapacity(dirname_len);
                     if (self.name_buffer.items.len != 0) {
-                        try self.name_buffer.append(path.sep);
+                        self.name_buffer.append(path.sep) catch bun.outOfMemory();
                         dirname_len += 1;
                     }
-                    try self.name_buffer.appendSlice(base.name.slice());
+                    self.name_buffer.appendSlice(base.name.slice()) catch bun.outOfMemory();
                     const cur_len = self.name_buffer.items.len;
-                    try self.name_buffer.append(0);
-                    self.name_buffer.shrinkRetainingCapacity(cur_len);
+                    self.name_buffer.append(0) catch bun.outOfMemory();
 
                     if (base.kind == .directory) {
-                        var new_dir = (if (Environment.isWindows)
-                            top.iter.iter.dir.openDirW(base.name.sliceAssumeZ(), .{ .iterate = true })
-                        else
-                            top.iter.iter.dir.openDir(base.name.slice(), .{ .iterate = true })) catch |err| switch (err) {
-                            error.NameTooLong => unreachable, // no path sep in base.name
-                            else => |e| return e,
+                        const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
+                            .result => |fd| fd,
+                            .err => |err| return .initErr(err),
                         };
                         {
-                            errdefer new_dir.close();
-                            try self.stack.append(StackItem{
+                            self.stack.append(StackItem{
                                 .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
-                                .dirname_len = self.name_buffer.items.len,
-                            });
+                                .dirname_len = cur_len,
+                            }) catch bun.outOfMemory();
                             top = &self.stack.items[self.stack.items.len - 1];
                         }
                     }
-                    return WalkerEntry{
+                    return .initResult(WalkerEntry{
                         .dir = top.iter.iter.dir,
-                        .basename = self.name_buffer.items[dirname_len..],
-                        .path = self.name_buffer.items,
+                        .basename = self.name_buffer.items[dirname_len..cur_len :0],
+                        .path = self.name_buffer.items[0..cur_len :0],
                         .kind = base.kind,
-                    };
+                    });
                 } else {
                     var item = self.stack.pop().?;
                     if (self.stack.items.len != 0) {
@@ -119,7 +106,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
             },
         }
     }
-    return null;
+    return .initResult(null);
 }
 
 pub fn deinit(self: *Walker) void {
@@ -142,11 +129,11 @@ pub fn deinit(self: *Walker) void {
 /// The order of returned file system entries is undefined.
 /// `self` will not be closed after walking it.
 pub fn walk(
-    self: Dir,
+    self: FD,
     allocator: Allocator,
     skip_filenames: []const OSPathSlice,
     skip_dirnames: []const OSPathSlice,
-) !Walker {
+) OOM!Walker {
     var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 
@@ -182,3 +169,15 @@ pub fn walk(
         .skip_dirnames = skip_dirnames_,
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const path = std.fs.path;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const OSPathSlice = bun.OSPathSlice;
+const OSPathSliceZ = bun.OSPathSliceZ;

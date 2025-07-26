@@ -23,8 +23,15 @@ fn printInstalledWorkspaceSection(
     var printed_section_header = false;
     var printed_update = false;
 
+    // It's possible to have duplicate dependencies with the same version and resolution.
+    // While both are technically installed, only one was chosen and should be printed.
+    var dep_dedupe: std.AutoHashMap(install.PackageNameHash, void) = .init(manager.allocator);
+    defer dep_dedupe.deinit();
+
     // find the updated packages
-    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+
         switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
             .yes, .no, .@"return" => {},
             .update => |update_info| {
@@ -46,7 +53,9 @@ fn printInstalledWorkspaceSection(
         }
     }
 
-    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+    for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+
         switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map, pkg_metas)) {
             .@"return" => return,
             .yes => {},
@@ -55,6 +64,10 @@ fn printInstalledWorkspaceSection(
 
         const dep = dependencies[dep_id];
         const package_id = resolutions[dep_id];
+
+        if ((try dep_dedupe.getOrPut(dep.name_hash)).found_existing) {
+            continue;
+        }
 
         printed_new_install.* = true;
 
@@ -103,7 +116,7 @@ fn shouldPrintPackageInstall(
     const dependency = dependencies[dep_id];
     const package_id = resolutions[dep_id];
 
-    if (dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
+    if (dependency.behavior.isWorkspace() or package_id >= this.lockfile.packages.len) return .no;
 
     if (id_map) |map| {
         for (this.updates, map) |update, *update_dependency_id| {
@@ -445,23 +458,27 @@ pub fn print(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const assert = bun.assert;
-const install = bun.install;
-const PackageID = install.PackageID;
-const Dependency = install.Dependency;
-const Resolution = install.Resolution;
-const Lockfile = install.Lockfile;
-const Printer = Lockfile.Printer;
 const Output = bun.Output;
-const PackageManager = bun.install.PackageManager;
 const Semver = bun.Semver;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const DependencyID = bun.install.DependencyID;
-const invalid_package_id = bun.install.invalid_package_id;
+const assert = bun.assert;
 const default_allocator = bun.default_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+
+const install = bun.install;
 const Bin = bun.install.Bin;
+const Dependency = install.Dependency;
+const DependencyID = bun.install.DependencyID;
+const PackageID = install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const Resolution = install.Resolution;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const string = []const u8;
+const Printer = Lockfile.Printer;

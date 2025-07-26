@@ -1,7 +1,7 @@
 The page primarily documents the Bun-native `Bun.serve` API. Bun also implements [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) and the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
 
 {% callout %}
-These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](https://bun.sh/docs/runtime/nodejs-apis).
+These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](https://bun.com/docs/runtime/nodejs-apis).
 {% /callout %}
 
 To start a high-performance HTTP server with a clean API, the recommended approach is [`Bun.serve`](#start-a-server-bun-serve).
@@ -149,7 +149,7 @@ Bun.serve({
     }),
 
     // Redirects
-    "/blog": Response.redirect("https://bun.sh/blog"),
+    "/blog": Response.redirect("https://bun.com/blog"),
 
     // API responses
     "/api/config": Response.json({
@@ -342,9 +342,9 @@ Bun.serve({
 });
 ```
 
-HTML imports don't just serve HTML — it's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser. You can use this to build full-featured frontends with React, TypeScript, Tailwind CSS, and more.
+HTML imports don't just serve HTML — it's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.com/docs/bundler), JavaScript transpiler and CSS parser. You can use this to build full-featured frontends with React, TypeScript, Tailwind CSS, and more.
 
-For a complete guide on building full-stack applications with HTML imports, including detailed examples and best practices, see [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack).
+For a complete guide on building full-stack applications with HTML imports, including detailed examples and best practices, see [/docs/bundler/fullstack](https://bun.com/docs/bundler/fullstack).
 
 ### Practical example: REST API
 
@@ -605,7 +605,7 @@ Bun.serve({
 ```
 
 {% callout %}
-[Learn more about debugging in Bun](https://bun.sh/docs/runtime/debugger)
+[Learn more about debugging in Bun](https://bun.com/docs/runtime/debugger)
 {% /callout %}
 
 The call to `Bun.serve` returns a `Server` object. To stop the server, call the `.stop()` method.
@@ -772,7 +772,7 @@ Instead of passing the server options into `Bun.serve`, `export default` it. Thi
 $ bun --hot server.ts
 ``` -->
 
-<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](https://bun.sh/docs/runtime/hot). -->
+<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](https://bun.com/docs/runtime/hot). -->
 
 ## Streaming files
 

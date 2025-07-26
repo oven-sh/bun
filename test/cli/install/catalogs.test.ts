@@ -15,21 +15,32 @@ afterAll(() => {
 });
 
 describe("basic", () => {
-  async function createBasicCatalogMonorepo(packageDir: string, name: string) {
-    const packageJson = {
-      name,
-      workspaces: {
-        packages: ["packages/*"],
-        catalog: {
-          "no-deps": "2.0.0",
-        },
-        catalogs: {
-          a: {
-            "a-dep": "1.0.1",
-          },
+  async function createBasicCatalogMonorepo(packageDir: string, name: string, inTopLevelKey: boolean = false) {
+    const catalogs = {
+      catalog: {
+        "no-deps": "2.0.0",
+      },
+      catalogs: {
+        a: {
+          "a-dep": "1.0.1",
         },
       },
     };
+    const packageJson = !inTopLevelKey
+      ? {
+          name,
+          workspaces: {
+            packages: ["packages/*"],
+            ...catalogs,
+          },
+        }
+      : {
+          name,
+          ...catalogs,
+          workspaces: {
+            packages: ["packages/*"],
+          },
+        };
 
     await Promise.all([
       write(join(packageDir, "package.json"), JSON.stringify(packageJson)),
@@ -47,26 +58,29 @@ describe("basic", () => {
 
     return packageJson;
   }
-  test("both catalog and catalogs", async () => {
-    const { packageDir } = await registry.createTestDir();
 
-    await createBasicCatalogMonorepo(packageDir, "catalog-basic-1");
+  for (const isTopLevel of [true, false]) {
+    test(`both catalog and catalogs ${isTopLevel ? "in top-level" : "in workspaces"}`, async () => {
+      const { packageDir } = await registry.createTestDir();
 
-    await runBunInstall(bunEnv, packageDir);
+      await createBasicCatalogMonorepo(packageDir, "catalog-basic-1", isTopLevel);
 
-    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
-      version: "2.0.0",
+      await runBunInstall(bunEnv, packageDir);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+
+      // another install does not save the lockfile
+      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
     });
-
-    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
-      name: "a-dep",
-      version: "1.0.1",
-    });
-
-    // another install does not save the lockfile
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
-  });
+  }
 
   for (const binaryLockfile of [true, false]) {
     test(`detect changes (${binaryLockfile ? "bun.lockb" : "bun.lock"})`, async () => {
@@ -122,7 +136,7 @@ describe("basic", () => {
       });
 
       // update catalogs
-      packageJson.workspaces.catalogs.a["a-dep"] = "1.0.10";
+      packageJson.workspaces!.catalogs!.a["a-dep"] = "1.0.10";
       await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
       ({ err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: true }));
       expect(err).toContain("Saved lockfile");
@@ -181,8 +195,8 @@ describe("errors", () => {
       env: bunEnv,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
-    const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    const out = await stdout.text();
+    const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
     expect(err).toContain("a-dep@catalog:aaaaaaaaaaaaaaaaa failed to resolve");
@@ -213,8 +227,8 @@ describe("errors", () => {
       env: bunEnv,
     });
 
-    const out = await Bun.readableStreamToText(stdout);
-    const err = stderrForInstall(await Bun.readableStreamToText(stderr));
+    const out = await stdout.text();
+    const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
   });

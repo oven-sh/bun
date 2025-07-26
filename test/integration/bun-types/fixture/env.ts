@@ -33,9 +33,9 @@ declare global {
   }
 }
 expectType(Bun.env.BAZ).is<"BAZ">();
-expectType(process.env.BAZ).is<"BAZ">();
+// expectType(process.env.BAZ).is<"BAZ">(); // ProcessEnv does NOT extend ImportMetaEnv
 expectType(import.meta.env.BAZ).is<"BAZ">();
-expectType(node_env.BAZ).is<"BAZ">();
+// expectType(node_env.BAZ).is<"BAZ">(); // ProcessEnv does NOT extend ImportMetaEnv
 expectType(bun_env.BAZ).is<"BAZ">();
 
 expectType(Bun.env.OTHER).is<string | undefined>();
@@ -53,7 +53,7 @@ function isAllSame<T>(a: T, b: T, c: T, d: T, e: T) {
 
   isAllSame              <"FOO"> (process.env.FOO,   Bun.env.FOO,   import.meta.env.FOO,   node_env.FOO,   bun_env.FOO);
   isAllSame              <"BAR"> (process.env.BAR,   Bun.env.BAR,   import.meta.env.BAR,   node_env.BAR,   bun_env.BAR);
-  isAllSame              <"BAZ"> (process.env.BAZ,   Bun.env.BAZ,   import.meta.env.BAZ,   node_env.BAZ,   bun_env.BAZ);
+  isAllSame              <"BAZ"> (          "BAZ",   Bun.env.BAZ,   import.meta.env.BAZ,          "BAZ",   bun_env.BAZ); // ProcessEnv does NOT extend ImportMetaEnv
   isAllSame <string | undefined> (process.env.OTHER, Bun.env.OTHER, import.meta.env.OTHER, node_env.OTHER, bun_env.OTHER);
 
 }

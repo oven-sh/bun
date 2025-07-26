@@ -38,7 +38,7 @@ test("process.stdin - read", async () => {
       }
     }, i * 200);
   }
-  var text = await new Response(stdout).text();
+  var text = await stdout.text();
   expect(text).toBe(lines.join("\n") + "ENDED");
 });
 
@@ -64,7 +64,7 @@ test("process.stdin - resume", async () => {
       }
     }, i * 200);
   }
-  var text = await new Response(stdout).text();
+  var text = await stdout.text();
   expect(text).toBe("RESUMED" + lines.join("\n") + "ENDED");
 });
 
@@ -93,7 +93,7 @@ test("process.stdin - close(#6713)", async () => {
       }
     }, i * 200);
   }
-  var text = await new Response(stdout).text();
+  var text = await stdout.text();
   expect(text).toBe(lines.join("\n") + "ENDED-CLOSE");
 });
 

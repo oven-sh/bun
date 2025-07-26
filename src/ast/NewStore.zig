@@ -34,9 +34,15 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             pub const size = largest_size * count * 2;
             pub const Size = std.math.IntFittingRange(0, size + largest_size);
 
-            buffer: [size]u8 align(largest_align) = undefined,
+            buffer: [size]u8 align(largest_align),
             bytes_used: Size = 0,
             next: ?*Block = null,
+
+            pub inline fn zero(this: *Block) void {
+                // Avoid initializing the entire struct.
+                this.bytes_used = 0;
+                this.next = null;
+            }
 
             pub fn tryAlloc(block: *Block, comptime T: type) ?*T {
                 const start = std.mem.alignForward(usize, block.bytes_used, @alignOf(T));
@@ -57,6 +63,12 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         const PreAlloc = struct {
             metadata: Store,
             first_block: Block,
+
+            pub inline fn zero(this: *PreAlloc) void {
+                // Avoid initializing the entire struct.
+                this.first_block.zero();
+                this.metadata.current = &this.first_block;
+            }
         };
 
         pub fn firstBlock(store: *Store) *Block {
@@ -65,14 +77,9 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
         pub fn init() *Store {
             log("init", .{});
+            // Avoid initializing the entire struct.
             const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
-
-            prealloc.first_block.bytes_used = 0;
-            prealloc.first_block.next = null;
-
-            prealloc.metadata = .{
-                .current = &prealloc.first_block,
-            };
+            prealloc.zero();
 
             return &prealloc.metadata;
         }
@@ -123,8 +130,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             } else brk: {
                 const new_block = backing_allocator.create(Block) catch
                     bun.outOfMemory();
-                new_block.next = null;
-                new_block.bytes_used = 0;
+                new_block.zero();
                 store.current.next = new_block;
                 break :brk new_block;
             };
@@ -157,8 +163,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
     };
 }
-
-// @sortImports
 
 const std = @import("std");
 

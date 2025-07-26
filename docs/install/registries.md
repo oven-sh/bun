@@ -27,4 +27,4 @@ To configure a private registry scoped to a particular organization:
 
 ### `.npmrc`
 
-Bun also reads `.npmrc` files, [learn more](https://bun.sh/docs/install/npmrc).
+Bun also reads `.npmrc` files, [learn more](https://bun.com/docs/install/npmrc).

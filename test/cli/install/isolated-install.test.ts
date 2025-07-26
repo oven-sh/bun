@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
-import { rm } from "fs/promises";
+import { mkdir, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
@@ -637,14 +637,137 @@ test("many transitive dependencies", async () => {
       "alias2": "npm:alias-loop-1@*",
     },
   });
-  // expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules"))).toEqual([
-  //   "alias1",
-  //   "alias-loop-1",
-  // ]);
-  // expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
-  //   join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
-  // );
-  // expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
-  //   join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
-  // );
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules"))).toEqual([
+    "alias-loop-1",
+    "alias1",
+  ]);
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules"))).toEqual([
+    "alias-loop-2",
+    "alias2",
+  ]);
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
+    join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
+  );
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
+    join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  );
+});
+
+test("dependency names are preserved", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-dependency-names",
+      dependencies: {
+        "alias-loop-1": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "alias-loop-1"]);
+  expect(readlinkSync(join(packageDir, "node_modules", "alias-loop-1"))).toBe(
+    join(".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  );
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules"))).toEqual([
+    "alias-loop-1",
+    "alias1",
+  ]);
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules"))).toEqual([
+    "alias-loop-2",
+    "alias2",
+  ]);
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
+    join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
+  );
+  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
+    join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1", "package.json"),
+    ).json(),
+  ).toEqual({
+    name: "alias-loop-1",
+    version: "1.0.0",
+    dependencies: {
+      "alias1": "npm:alias-loop-2@*",
+    },
+  });
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2", "package.json"),
+    ).json(),
+  ).toEqual({
+    name: "alias-loop-2",
+    version: "1.0.0",
+    dependencies: {
+      "alias2": "npm:alias-loop-1@*",
+    },
+  });
+});
+
+test("same resolution, different dependency name", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-same-resolution",
+      dependencies: {
+        "no-deps-1": "npm:no-deps@1.0.0",
+        "no-deps-2": "npm:no-deps@1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps-1", "no-deps-2"]);
+  expect(readlinkSync(join(packageDir, "node_modules", "no-deps-1"))).toBe(
+    join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+  );
+  expect(readlinkSync(join(packageDir, "node_modules", "no-deps-2"))).toBe(
+    join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+    ).json(),
+  ).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
+});
+
+test("successfully removes and corrects symlinks", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  await Promise.all([
+    write(join(packageDir, "old-package", "package.json"), JSON.stringify({ name: "old-package", version: "1.0.0" })),
+    mkdir(join(packageDir, "node_modules")),
+  ]);
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-dangling-symlinks",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+    symlink(join("..", "old-package"), join(packageDir, "node_modules", "no-deps"), "dir"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(existsSync(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
+
+  expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+    join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+  );
 });

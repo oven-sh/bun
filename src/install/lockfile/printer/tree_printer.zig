@@ -458,23 +458,27 @@ pub fn print(
     }
 }
 
+const string = []const u8;
+
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const assert = bun.assert;
-const install = bun.install;
-const PackageID = install.PackageID;
-const Dependency = install.Dependency;
-const Resolution = install.Resolution;
-const Lockfile = install.Lockfile;
-const Printer = Lockfile.Printer;
 const Output = bun.Output;
-const PackageManager = bun.install.PackageManager;
 const Semver = bun.Semver;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const DependencyID = bun.install.DependencyID;
-const invalid_package_id = bun.install.invalid_package_id;
+const assert = bun.assert;
 const default_allocator = bun.default_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+
+const install = bun.install;
 const Bin = bun.install.Bin;
+const Dependency = install.Dependency;
+const DependencyID = bun.install.DependencyID;
+const PackageID = install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const Resolution = install.Resolution;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const string = []const u8;
+const Printer = Lockfile.Printer;

@@ -22,7 +22,7 @@ extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider
     return Bun::toStringView(provider->source());
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
+extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 

@@ -1,9 +1,6 @@
-const std = @import("std");
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 pub const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const SourceMap = struct {
     project_root: []const u8,
@@ -27,3 +24,6 @@ pub const OriginalLocation = struct {
     source: u32,
     name: ?u32,
 };
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

@@ -6,7 +6,7 @@ pub fn deinit(this: *@This()) void {
     _ = this;
 }
 
-pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(_: *@This(), _: usize, _: ?jsc.SystemError) Yield {
     return .done;
 }
 
@@ -16,10 +16,12 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
-const JSC = bun.JSC;
+const bun = @import("bun");
+const jsc = bun.jsc;
+const Yield = bun.shell.Yield;

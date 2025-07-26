@@ -85,7 +85,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var err = this.stream.init(pledged_src_size);
     if (err.isError()) {
         try impl.emitError(this, globalThis, this_value, err);
-        return .jsBoolean(false);
+        return .false;
     }
 
     const params_ = initParamsArray_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("initParamsArray", "Uint32Array", initParamsArray_value);
@@ -96,7 +96,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         if (err_.isError()) return globalThis.ERR(.ZLIB_INITIALIZATION_FAILED, "{s}", .{std.mem.sliceTo(err_.msg.?, 0)}).throw();
     }
 
-    return .jsBoolean(true);
+    return .true;
 }
 
 pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

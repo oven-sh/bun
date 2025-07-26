@@ -22,6 +22,10 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
   "std.unicode": { reason: "Use bun.strings instead", limit: 30 },
   "std.Thread.Mutex": {reason: "Use bun.Mutex instead", limit: 1 },
+  ".jsBoolean(true)": { reason: "Use .true instead" },
+  "JSValue.true": { reason: "Use .true instead" },
+  ".jsBoolean(false)": { reason: "Use .false instead" },
+  "JSValue.false": { reason: "Use .false instead" },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },

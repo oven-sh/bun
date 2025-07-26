@@ -98,7 +98,7 @@ pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callfr
         return globalObject.throw("Expected size to be less than 16385", .{});
     }
 
-    const ssl_ptr = this.socket.ssl() orelse return JSValue.jsBoolean(false);
+    const ssl_ptr = this.socket.ssl() orelse return .false;
     return JSValue.jsBoolean(BoringSSL.SSL_set_max_send_fragment(ssl_ptr, @as(usize, @intCast(size))) == 1);
 }
 
@@ -440,11 +440,11 @@ pub fn getALPNProtocol(this: *This, globalObject: *jsc.JSGlobalObject) bun.JSErr
     var alpn_proto: [*c]const u8 = null;
     var alpn_proto_len: u32 = 0;
 
-    const ssl_ptr = this.socket.ssl() orelse return JSValue.jsBoolean(false);
+    const ssl_ptr = this.socket.ssl() orelse return .false;
 
     BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
     if (alpn_proto == null or alpn_proto_len == 0) {
-        return JSValue.jsBoolean(false);
+        return .false;
     }
 
     const slice = alpn_proto[0..alpn_proto_len];

@@ -1566,7 +1566,7 @@ pub const JSValue = enum(i64) {
     ///
     /// Returns null when the value is:
     /// - JSValue.null
-    /// - JSValue.false
+    /// - .false
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {

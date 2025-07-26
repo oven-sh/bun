@@ -1804,11 +1804,7 @@ pub const BundleV2 = struct {
 
                     const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
                     root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("success"),
-                        jsc.JSValue.jsBoolean(false),
-                    );
+                    root_obj.put(globalThis, jsc.ZigString.static("success"), .false);
                     root_obj.put(
                         globalThis,
                         jsc.ZigString.static("logs"),
@@ -1871,11 +1867,7 @@ pub const BundleV2 = struct {
                     }
 
                     root_obj.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("success"),
-                        jsc.JSValue.jsBoolean(true),
-                    );
+                    root_obj.put(globalThis, jsc.ZigString.static("success"), .true);
                     root_obj.put(
                         globalThis,
                         jsc.ZigString.static("logs"),

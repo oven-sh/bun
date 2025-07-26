@@ -693,12 +693,12 @@ pub const JSPasswordObject = struct {
 
         if (owned_hash.len == 0) {
             bun.default_allocator.free(owned_password);
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, jsc.JSValue.jsBoolean(false));
+            return jsc.JSPromise.resolvedPromiseValue(globalObject, .false);
         }
 
         if (owned_password.len == 0) {
             bun.default_allocator.free(owned_hash);
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, jsc.JSValue.jsBoolean(false));
+            return jsc.JSPromise.resolvedPromiseValue(globalObject, .false);
         }
 
         return verify(globalObject, owned_password, owned_hash, algorithm, false);
@@ -743,11 +743,11 @@ pub const JSPasswordObject = struct {
         defer hash_.deinit();
 
         if (hash_.slice().len == 0) {
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         if (password.slice().len == 0) {
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         return verify(globalObject, password.slice(), hash_.slice(), algorithm, true);

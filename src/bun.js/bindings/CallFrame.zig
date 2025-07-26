@@ -180,11 +180,6 @@ pub const CallFrame = opaque {
         return .{ .remaining = args, .all = args };
     }
 
-    /// This is an advanced iterator struct which is used by various APIs. In
-    /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
-    /// know if they have to do threadsafe clones.
-    ///
-    /// Prefer `Iterator` for a simpler iterator.
     pub const ArgumentsSlice = struct {
         remaining: []const jsc.JSValue,
         all: []const jsc.JSValue,

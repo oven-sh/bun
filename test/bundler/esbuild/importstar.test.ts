@@ -1427,4 +1427,124 @@ describe("bundler", () => {
       stdout: '{"inner":{"b":456},"a":123}',
     },
   });
+
+  itBundled("importstar/ImportDeferStarValid", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from './foo'
+        let foo = 234
+        console.log(foo)
+      `,
+      "/foo.js": `export const foo = "UNUSED"`,
+    },
+    dce: true,
+    run: {
+      stdout: "234",
+    },
+  });
+
+  itBundled("importstar/ImportDeferStarUsed", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from './foo'
+        console.log(ns.foo)
+      `,
+      "/foo.js": `export const foo = 123`,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+
+  itBundled("importstar/ImportDeferNamedImportError", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer { foo } from './foo'
+        console.log(foo)
+      `,
+      "/foo.js": `export const foo = 123`,
+    },
+    bundleErrors: {
+      "/entry.js": ["The 'defer' keyword can only be used with star imports: import defer * as ns from 'module'"],
+    },
+  });
+
+  itBundled("importstar/ImportDeferDefaultImportError", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer foo from './foo'
+        console.log(foo)
+      `,
+      "/foo.js": `export default 123`,
+    },
+    bundleErrors: {
+      "/entry.js": ["The 'defer' keyword can only be used with star imports: import defer * as ns from 'module'"],
+    },
+  });
+
+  itBundled("importstar/ImportDeferReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as reexport from './reexport'
+        console.log(reexport.value)
+      `,
+      "/reexport.js": `export { value } from './foo'`,
+      "/foo.js": `export const value = 123`,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+
+  itBundled("importstar/ImportDeferCircular", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as a from './a'
+        console.log(a.getValue())
+      `,
+      "/a.js": /* js */ `
+        import defer * as b from './b'
+        export const aValue = "a"
+        export function getValue() {
+          return b.bValue
+        }
+      `,
+      "/b.js": /* js */ `
+        import defer * as a from './a'
+        export const bValue = "b"
+        export function getA() {
+          return a.aValue
+        }
+      `,
+    },
+    run: {
+      stdout: "b",
+    },
+  });
+
+  itBundled("importstar/ImportDeferCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from './foo'
+        console.log(ns.foo)
+      `,
+      "/foo.js": `exports.foo = 123`,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+
+  itBundled("importstar/ImportDeferExternalModule", {
+    files: {
+      "/entry.js": `import defer * as ext from 'external'; console.log(ext.value)`,
+    },
+    external: ["external"],
+    runtimeFiles: {
+      "/node_modules/external/index.js": `export const value = "external"`,
+    },
+    run: {
+      stdout: "external",
+    },
+  });
 });

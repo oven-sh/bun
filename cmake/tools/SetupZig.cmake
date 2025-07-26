@@ -20,7 +20,7 @@ else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
-set(ZIG_COMMIT "a207204ee57a061f2fb96c7bae0c491b609e73a5")
+set(ZIG_COMMIT "edc6229b1fafb1701a25fb4e17114cc756991546")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -55,13 +55,13 @@ optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEF
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
-if(CI AND CMAKE_HOST_APPLE)
+if(CI)
   set(ZIG_COMPILER_SAFE_DEFAULT ON)
 else()
   set(ZIG_COMPILER_SAFE_DEFAULT OFF)
 endif()
 
-optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler. Only availble on macos aarch64." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})
+optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})
 
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})

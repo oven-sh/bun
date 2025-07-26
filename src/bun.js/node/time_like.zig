@@ -7,7 +7,7 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 // Node.js docs:
 // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
-pub fn fromJS(globalObject: *JSGlobalObject, value: JSValue) ?TimeLike {
+pub fn fromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSError!?TimeLike {
     // Number is most common case
     if (value.isNumber()) {
         const seconds = value.asNumber();
@@ -26,7 +26,7 @@ pub fn fromJS(globalObject: *JSGlobalObject, value: JSValue) ?TimeLike {
             }
         },
         .String => {
-            const seconds = value.coerceToDouble(globalObject);
+            const seconds = try value.toNumber(globalObject);
             if (std.math.isFinite(seconds)) {
                 return fromSeconds(seconds);
             }
@@ -97,8 +97,10 @@ fn fromNow() TimeLike {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

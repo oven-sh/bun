@@ -249,7 +249,9 @@ export class HMRModule {
   declare builtin: (id: string) => any;
 }
 if (side === "server") {
-  HMRModule.prototype.builtin = import.meta.require;
+  HMRModule.prototype.builtin = (id: string) =>
+    // @ts-expect-error
+    import.meta.bakeBuiltin(import.meta.resolve(id));
 }
 // prettier-ignore
 HMRModule.prototype.indirectHot = new Proxy({}, {

@@ -42,6 +42,7 @@ pub const Task = TaggedPointerUnion(.{
     NapiFinalizerTask,
     NativeBrotli,
     NativeZlib,
+    NativeZstd,
     Open,
     PollPendingModulesTask,
     PosixSignalTask,
@@ -70,6 +71,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellGlobTask,
     ShellIOReaderAsyncDeinit,
     ShellIOWriterAsyncDeinit,
+    ShellIOWriter,
     ShellLsTask,
     ShellMkdirTask,
     ShellMvBatchedTask,
@@ -79,6 +81,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellTouchTask,
     Stat,
     StatFS,
+    StreamPending,
     Symlink,
     ThreadSafeFunction,
     TimeoutObject,
@@ -94,7 +97,7 @@ pub const Task = TaggedPointerUnion(.{
 pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
     var global = this.global;
     const global_vm = global.vm();
-    var counter: usize = 0;
+    var counter: u32 = 0;
 
     if (comptime Environment.isDebug) {
         if (this.debug.js_call_count_outside_tick_queue > this.debug.drain_microtasks_count_outside_tick_queue) {
@@ -142,6 +145,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             @field(Task.Tag, @typeName(ShellIOWriterAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                 shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, @typeName(ShellIOWriter)) => {
+                var shell_io_writer: *ShellIOWriter = task.get(ShellIOWriter).?;
+                shell_io_writer.runFromMainThread();
             },
             @field(Task.Tag, @typeName(ShellIOReaderAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
@@ -217,7 +224,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(bun.api.napi.napi_async_work)) => {
                 const transform_task: *bun.api.napi.napi_async_work = task.get(bun.api.napi.napi_async_work).?;
-                transform_task.*.runFromJS();
+                transform_task.runFromJS(virtual_machine, global);
             },
             @field(Task.Tag, @typeName(ThreadSafeFunction)) => {
                 var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
@@ -230,7 +237,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(JSCDeferredWorkTask)) => {
                 var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
-                JSC.markBinding(@src());
+                jsc.markBinding(@src());
                 jsc_task.run();
             },
             @field(Task.Tag, @typeName(WriteFileTask)) => {
@@ -448,6 +455,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *NativeBrotli = task.get(NativeBrotli).?;
                 any.runFromJSThread();
             },
+            @field(Task.Tag, @typeName(NativeZstd)) => {
+                var any: *NativeZstd = task.get(NativeZstd).?;
+                any.runFromJSThread();
+            },
             @field(Task.Tag, @typeName(ProcessWaiterThreadTask)) => {
                 bun.markPosixOnly();
                 var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
@@ -455,7 +466,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(RuntimeTranspilerStore)) => {
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                any.drain();
+                any.runFromJSThread(this, global, virtual_machine);
             },
             @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                 var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
@@ -479,121 +490,142 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
                 any.runFromJSThread();
             },
+            @field(Task.Tag, @typeName(StreamPending)) => {
+                var any: *StreamPending = task.get(StreamPending).?;
+                any.runFromJSThread();
+            },
 
-            else => {
+            .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
+            },
+            _ => {
+                // handle unnamed variants
+                bun.Output.panic("Unknown tag: {d}", .{@intFromEnum(task.tag())});
             },
         }
 
-        this.drainMicrotasksWithGlobal(global, global_vm);
+        this.drainMicrotasksWithGlobal(global, global_vm) catch return counter;
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
-    return @as(u32, @truncate(counter));
+    return counter;
 }
 
-const TaggedPointerUnion = bun.TaggedPointerUnion;
-const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
-const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
-const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;
-const WriteFileTask = bun.webcore.Blob.write_file.WriteFileTask;
-const napi_async_work = bun.api.napi.napi_async_work;
-const FetchTasklet = Fetch.FetchTasklet;
-const S3 = bun.S3;
-const S3HttpSimpleTask = S3.S3HttpSimpleTask;
-const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
-const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
-
-const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
-const HotReloadTask = JSC.hot_reloader.HotReloader.Task;
-const FSWatchTask = bun.api.node.fs.Watcher.FSWatchTask;
-const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
-const GetAddrInfoRequestTask = bun.api.DNS.GetAddrInfoRequest.Task;
+
+// const ShellIOReaderAsyncDeinit = shell.Interpreter.IOReader.AsyncDeinit;
+const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
+
+const log = bun.Output.scoped(.Task, true);
+
+const Fetch = @import("../webcore/fetch.zig");
+const FetchTasklet = Fetch.FetchTasklet;
+
+const JSCScheduler = @import("./JSCScheduler.zig");
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const TaggedPointerUnion = bun.TaggedPointerUnion;
+const shell = bun.shell;
+const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
+const ServerAllConnectionsClosedTask = bun.api.server.ServerAllConnectionsClosedTask;
+const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
+const GetAddrInfoRequestTask = bun.api.dns.GetAddrInfoRequest.Task;
+const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;
+const WriteFileTask = bun.webcore.Blob.write_file.WriteFileTask;
+const FSWatchTask = bun.api.node.fs.Watcher.FSWatchTask;
+const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
+
+const S3 = bun.S3;
+const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+const S3HttpSimpleTask = S3.S3HttpSimpleTask;
+
+const NapiFinalizerTask = bun.api.napi.NapiFinalizerTask;
+const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
+const napi_async_work = bun.api.napi.napi_async_work;
+
 const AsyncFS = bun.api.node.fs.Async;
-const Stat = AsyncFS.stat;
-const Lstat = AsyncFS.lstat;
-const Fstat = AsyncFS.fstat;
-const Open = AsyncFS.open;
-const ReadFile = AsyncFS.readFile;
-const WriteFile = AsyncFS.writeFile;
-const CopyFile = AsyncFS.copyFile;
-const Read = AsyncFS.read;
-const Write = AsyncFS.write;
-const Truncate = AsyncFS.truncate;
-const FTruncate = AsyncFS.ftruncate;
-const Readdir = AsyncFS.readdir;
-const ReaddirRecursive = AsyncFS.readdir_recursive;
-const Readv = AsyncFS.readv;
-const Writev = AsyncFS.writev;
-const Close = AsyncFS.close;
-const Rm = AsyncFS.rm;
-const Rmdir = AsyncFS.rmdir;
-const Chown = AsyncFS.chown;
-const FChown = AsyncFS.fchown;
-const Utimes = AsyncFS.utimes;
-const Lutimes = AsyncFS.lutimes;
-const Chmod = AsyncFS.chmod;
-const Fchmod = AsyncFS.fchmod;
-const Link = AsyncFS.link;
-const Symlink = AsyncFS.symlink;
-const Readlink = AsyncFS.readlink;
-const Realpath = AsyncFS.realpath;
-const RealpathNonNative = AsyncFS.realpathNonNative;
-const Mkdir = AsyncFS.mkdir;
-const Fsync = AsyncFS.fsync;
-const Rename = AsyncFS.rename;
-const Fdatasync = AsyncFS.fdatasync;
 const Access = AsyncFS.access;
 const AppendFile = AsyncFS.appendFile;
-const Mkdtemp = AsyncFS.mkdtemp;
+const Chmod = AsyncFS.chmod;
+const Chown = AsyncFS.chown;
+const Close = AsyncFS.close;
+const CopyFile = AsyncFS.copyFile;
 const Exists = AsyncFS.exists;
+const FChown = AsyncFS.fchown;
+const FTruncate = AsyncFS.ftruncate;
+const Fchmod = AsyncFS.fchmod;
+const Fdatasync = AsyncFS.fdatasync;
+const Fstat = AsyncFS.fstat;
+const Fsync = AsyncFS.fsync;
 const Futimes = AsyncFS.futimes;
 const Lchmod = AsyncFS.lchmod;
 const Lchown = AsyncFS.lchown;
+const Link = AsyncFS.link;
+const Lstat = AsyncFS.lstat;
+const Lutimes = AsyncFS.lutimes;
+const Mkdir = AsyncFS.mkdir;
+const Mkdtemp = AsyncFS.mkdtemp;
+const Open = AsyncFS.open;
+const Read = AsyncFS.read;
+const ReadFile = AsyncFS.readFile;
+const Readdir = AsyncFS.readdir;
+const ReaddirRecursive = AsyncFS.readdir_recursive;
+const Readlink = AsyncFS.readlink;
+const Readv = AsyncFS.readv;
+const Realpath = AsyncFS.realpath;
+const RealpathNonNative = AsyncFS.realpathNonNative;
+const Rename = AsyncFS.rename;
+const Rm = AsyncFS.rm;
+const Rmdir = AsyncFS.rmdir;
+const Stat = AsyncFS.stat;
 const StatFS = AsyncFS.statfs;
+const Symlink = AsyncFS.symlink;
+const Truncate = AsyncFS.truncate;
 const Unlink = AsyncFS.unlink;
-const NativeZlib = JSC.API.NativeZlib;
-const NativeBrotli = JSC.API.NativeBrotli;
+const Utimes = AsyncFS.utimes;
+const Write = AsyncFS.write;
+const WriteFile = AsyncFS.writeFile;
+const Writev = AsyncFS.writev;
 
-const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
-const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;
-const ShellRmDirTask = shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
+const jsc = bun.jsc;
+const AnyTask = jsc.AnyTask;
+const CppTask = jsc.CppTask;
+const EventLoop = jsc.EventLoop;
+const ManagedTask = jsc.ManagedTask;
+const PosixSignalTask = jsc.PosixSignalTask;
+const VirtualMachine = jsc.VirtualMachine;
+const HotReloadTask = jsc.hot_reloader.HotReloader.Task;
+const StreamPending = jsc.WebCore.streams.Result.Pending;
+
+const NativeBrotli = jsc.API.NativeBrotli;
+const NativeZlib = jsc.API.NativeZlib;
+const NativeZstd = jsc.API.NativeZstd;
+const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
+const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
+
+const Timer = jsc.API.Timer;
+const ImmediateObject = Timer.ImmediateObject;
+const TimeoutObject = Timer.TimeoutObject;
+
+const RuntimeTranspilerStore = jsc.ModuleLoader.RuntimeTranspilerStore;
+const PollPendingModulesTask = jsc.ModuleLoader.AsyncModule.Queue;
+
+const ShellAsync = shell.Interpreter.Async;
+const ShellIOReaderAsyncDeinit = shell.Interpreter.AsyncDeinitReader;
+const ShellIOWriter = shell.Interpreter.IOWriter;
+const ShellIOWriterAsyncDeinit = shell.Interpreter.AsyncDeinitWriter;
+const ShellAsyncSubprocessDone = shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
+const ShellCondExprStatTask = shell.Interpreter.CondExpr.ShellCondExprStatTask;
+const ShellCpTask = shell.Interpreter.Builtin.Cp.ShellCpTask;
 const ShellLsTask = shell.Interpreter.Builtin.Ls.ShellLsTask;
-const ShellMvCheckTargetTask = shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
-const ShellMvBatchedTask = shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellMkdirTask = shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = shell.Interpreter.Builtin.Touch.ShellTouchTask;
-const ShellCpTask = shell.Interpreter.Builtin.Cp.ShellCpTask;
-const ShellCondExprStatTask = shell.Interpreter.CondExpr.ShellCondExprStatTask;
-const ShellAsync = shell.Interpreter.Async;
-// const ShellIOReaderAsyncDeinit = shell.Interpreter.IOReader.AsyncDeinit;
-const ShellIOReaderAsyncDeinit = shell.Interpreter.AsyncDeinitReader;
-const ShellIOWriterAsyncDeinit = shell.Interpreter.AsyncDeinitWriter;
-const TimeoutObject = Timer.TimeoutObject;
-const ImmediateObject = Timer.ImmediateObject;
-const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
-const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
-const ShellAsyncSubprocessDone = shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
-const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
-const ServerAllConnectionsClosedTask = @import("../api/server.zig").ServerAllConnectionsClosedTask;
-const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Async = bun.Async;
-const VirtualMachine = JSC.VirtualMachine;
-const JSCScheduler = @import("./JSCScheduler.zig");
-const Environment = bun.Environment;
-const Timer = JSC.API.Timer;
-const Fetch = @import("../webcore/fetch.zig");
-const AnyTask = JSC.AnyTask;
-const CppTask = JSC.CppTask;
-const ManagedTask = JSC.ManagedTask;
-const PosixSignalTask = JSC.PosixSignalTask;
-const EventLoop = JSC.EventLoop;
-const shell = bun.shell;
-const log = bun.Output.scoped(.Task, true);
+const ShellMvBatchedTask = shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
+const ShellMvCheckTargetTask = shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
+
+const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;
+const ShellRmDirTask = shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;

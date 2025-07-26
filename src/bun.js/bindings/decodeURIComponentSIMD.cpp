@@ -29,7 +29,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
     const uint8_t* end = cursor + input.size();
 
     constexpr size_t stride = SIMD::stride<uint8_t>;
-    constexpr UChar replacementChar = 0xFFFD;
+    constexpr char16_t replacementChar = 0xFFFD;
 
     auto percentVector = SIMD::splat<uint8_t>('%');
 
@@ -110,7 +110,7 @@ slow_path:
                     continue;
                 }
 
-                result.append(static_cast<UChar>(value));
+                result.append(static_cast<char16_t>(value));
             } else if ((byte & 0xF0) == 0xE0) {
                 // 3-byte sequence
                 uint32_t value = byte & 0x0F;
@@ -162,7 +162,7 @@ slow_path:
                     continue;
                 }
 
-                result.append(static_cast<UChar>(value));
+                result.append(static_cast<char16_t>(value));
             } else if ((byte & 0xF8) == 0xF0) {
                 // 4-byte sequence -> surrogate pair
                 uint32_t value = byte & 0x07;
@@ -235,8 +235,8 @@ slow_path:
 
                 // Convert to surrogate pair
                 value -= 0x10000;
-                result.append(static_cast<UChar>(0xD800 | (value >> 10)));
-                result.append(static_cast<UChar>(0xDC00 | (value & 0x3FF)));
+                result.append(static_cast<char16_t>(0xD800 | (value >> 10)));
+                result.append(static_cast<char16_t>(0xDC00 | (value & 0x3FF)));
             } else {
                 result.append(replacementChar);
                 cursor += (cursor + 2 < end) ? 3 : 1;

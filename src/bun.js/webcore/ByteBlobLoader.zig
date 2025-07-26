@@ -7,6 +7,12 @@ remain: Blob.SizeType = 1024 * 1024 * 2,
 done: bool = false,
 pulled: bool = false,
 
+/// https://github.com/oven-sh/bun/issues/14988
+/// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
+/// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
+content_type: []const u8 = "",
+content_type_allocated: bool = false,
+
 pub const tag = webcore.ReadableStream.Tag.Blob;
 pub const Source = webcore.ReadableStream.NewSource(
     @This(),
@@ -33,6 +39,16 @@ pub fn setup(
     blob.store.?.ref();
     var blobe = blob.*;
     blobe.resolveSize();
+    const content_type, const content_type_allocated = brk: {
+        if (blob.content_type_was_set) {
+            if (blob.content_type_allocated) {
+                break :brk .{ bun.default_allocator.dupe(u8, blob.content_type) catch bun.outOfMemory(), true };
+            }
+
+            break :brk .{ blob.content_type, false };
+        }
+        break :brk .{ "", false };
+    };
     this.* = ByteBlobLoader{
         .offset = blobe.offset,
         .store = blobe.store.?,
@@ -42,6 +58,8 @@ pub fn setup(
         ),
         .remain = blobe.size,
         .done = false,
+        .content_type = content_type,
+        .content_type_allocated = content_type_allocated,
     };
 }
 
@@ -63,7 +81,7 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
 
     temporary = temporary[0..@min(buffer.len, @min(temporary.len, this.remain))];
     if (temporary.len == 0) {
-        this.clearStore();
+        this.clearData();
         this.done = true;
         return .{ .done = {} };
     }
@@ -84,7 +102,7 @@ pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSValue) streams.Resul
 pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
     if (this.store) |store| {
         _ = this.detachStore();
-        if (this.offset == 0 and this.remain == store.size()) {
+        if (this.offset == 0 and this.remain == store.size() and this.content_type.len == 0) {
             if (store.toAnyBlob()) |blob| {
                 defer store.deref();
                 return blob;
@@ -94,6 +112,17 @@ pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
         var blob = Blob.initWithStore(store, globalThis);
         blob.offset = this.offset;
         blob.size = this.remain;
+
+        // Make sure to preserve the content-type.
+        // https://github.com/oven-sh/bun/issues/14988
+        if (this.content_type.len > 0) {
+            blob.content_type = this.content_type;
+            blob.content_type_was_set = this.content_type.len > 0;
+            blob.content_type_allocated = this.content_type_allocated;
+            this.content_type = "";
+            this.content_type_allocated = false;
+        }
+
         this.parent().is_closed = true;
         return .{ .Blob = blob };
     }
@@ -110,15 +139,21 @@ pub fn detachStore(this: *ByteBlobLoader) ?*Blob.Store {
 }
 
 pub fn onCancel(this: *ByteBlobLoader) void {
-    this.clearStore();
+    this.clearData();
 }
 
 pub fn deinit(this: *ByteBlobLoader) void {
-    this.clearStore();
+    this.clearData();
     this.parent().deinit();
 }
 
-fn clearStore(this: *ByteBlobLoader) void {
+fn clearData(this: *ByteBlobLoader) void {
+    if (this.content_type_allocated) {
+        bun.default_allocator.free(this.content_type);
+        this.content_type = "";
+        this.content_type_allocated = false;
+    }
+
     if (this.store) |store| {
         this.store = null;
         store.deref();
@@ -131,7 +166,8 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     temporary = temporary[this.offset..];
     temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-    const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
+    var byte_list = bun.ByteList.init(temporary);
+    const cloned = byte_list.listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
     this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
     this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 
@@ -156,9 +192,11 @@ pub fn memoryCost(this: *const ByteBlobLoader) usize {
 }
 
 const bun = @import("bun");
+
 const jsc = bun.jsc;
-const webcore = bun.webcore;
-const streams = webcore.streams;
-const Blob = webcore.Blob;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
+const Blob = webcore.Blob;
+const streams = webcore.streams;

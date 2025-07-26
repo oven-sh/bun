@@ -25,6 +25,17 @@ pub const Request = opaque {
         if (len == 0) return null;
         return ptr[0..len];
     }
+    pub fn dateForHeader(req: *Request, name: []const u8) bun.JSError!?u64 {
+        const value = header(req, name);
+        if (value == null) return null;
+        var string = bun.String.init(value.?);
+        defer string.deref();
+        const date_f64 = try bun.String.parseDate(&string, bun.jsc.VirtualMachine.get().global);
+        if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
+            return @intFromFloat(date_f64);
+        }
+        return null;
+    }
     pub fn query(req: *Request, name: []const u8) []const u8 {
         var ptr: [*]const u8 = undefined;
         return ptr[0..c.uws_req_get_query(req, name.ptr, name.len, &ptr)];

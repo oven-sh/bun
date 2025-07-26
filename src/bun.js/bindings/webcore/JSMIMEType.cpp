@@ -63,13 +63,13 @@ static int findFirstInvalidHTTPTokenChar(const StringView& view)
 
 // Checks if a character is valid within an HTTP quoted string value (excluding DQUOTE and backslash).
 // Equivalent to /[^\t\u0020-\u007E\u0080-\u00FF]/, but we handle quotes/backslash separately.
-static inline bool isHTTPQuotedStringChar(UChar c)
+static inline bool isHTTPQuotedStringChar(char16_t c)
 {
     return c == 0x09 || (c >= 0x20 && c <= 0x7E) || (c >= 0x80 && c <= 0xFF);
 }
 
 // Checks if a character is NOT a valid HTTP quoted string code point.
-static inline bool isNotHTTPQuotedStringChar(UChar c)
+static inline bool isNotHTTPQuotedStringChar(char16_t c)
 {
     return !isHTTPQuotedStringChar(c);
 }
@@ -110,7 +110,7 @@ static size_t findEndBeginningWhitespace(const StringView& view)
     } else {
         const auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
-            UChar c = span[i];
+            char16_t c = span[i];
             if (c != '\t' && c != ' ' && c != '\r' && c != '\n') {
                 return i;
             }
@@ -134,7 +134,7 @@ static size_t findStartEndingWhitespace(const StringView& view)
     } else {
         const auto span = view.span16();
         for (size_t i = span.size(); i > 0; --i) {
-            UChar c = span[i - 1];
+            char16_t c = span[i - 1];
             if (c != '\t' && c != ' ' && c != '\r' && c != '\n') {
                 return i;
             }
@@ -163,7 +163,7 @@ static String removeBackslashes(const StringView& view)
     } else {
         auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
-            UChar c = span[i];
+            char16_t c = span[i];
             if (c == '\\' && i + 1 < span.size()) {
                 builder.append(span[++i]);
             } else {
@@ -176,7 +176,7 @@ static String removeBackslashes(const StringView& view)
 
 static String escapeQuoteOrBackslash(const StringView& view)
 {
-    if (view.find([](UChar c) { return c == '"' || c == '\\'; }) == notFound) {
+    if (view.find([](char16_t c) { return c == '"' || c == '\\'; }) == notFound) {
         return view.toString();
     }
 
@@ -191,7 +191,7 @@ static String escapeQuoteOrBackslash(const StringView& view)
         }
     } else {
         auto span = view.span16();
-        for (UChar c : span) {
+        for (char16_t c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
             }
@@ -560,6 +560,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     auto* jsInputString = inputArg.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto inputString = jsInputString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // 2. Parse type and subtype
     String type, subtype;

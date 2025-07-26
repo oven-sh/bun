@@ -108,7 +108,7 @@ namespace uWS
         }
 
 
-        /* Returns true if there was an error */    
+        /* Returns true if there was an error */
         bool isError() {
             return parserError != HTTP_PARSER_ERROR_NONE;
         }
@@ -403,7 +403,7 @@ namespace uWS
 
         static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
             if (str.empty()) return false;
-             
+
             if (useStrictMethodValidation) {
                 return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
             }
@@ -613,13 +613,13 @@ namespace uWS
                 return HttpParserResult::shortRead();
             }
             postPaddedBuffer = requestLineResult.position;
-            
+
             if(requestLineResult.isAncientHTTP) {
                 isAncientHTTP = true;
             }
             /* No request headers found */
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
-                
+
             /* Check if we can see if headers follow or not */
             if (postPaddedBuffer + 2 > end) {
                 /* Not enough data to check for \r\n */
@@ -711,7 +711,7 @@ namespace uWS
                         }
                     }
                 } else {
-                 
+
                     if(postPaddedBuffer[0] == '\r') {
                         // invalid char after \r
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
@@ -757,7 +757,7 @@ namespace uWS
 
             /* Add all headers to bloom filter */
             req->bf.reset();
-            
+
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
@@ -864,7 +864,7 @@ namespace uWS
                 break;
             }
         }
-        
+
         return HttpParserResult::success(consumedTotal, user);
     }
 
@@ -1000,4 +1000,3 @@ public:
 };
 
 }
-

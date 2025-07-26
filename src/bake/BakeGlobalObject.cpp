@@ -9,6 +9,7 @@
 #include "JavaScriptCore/JSSourceCode.h"
 
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
+extern "C" BunString BakeToWindowsPath(BunString a);
 
 namespace Bake {
 using namespace JSC;
@@ -46,6 +47,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
+    // TODO: make static cast instead of jscast
     // Use Zig::GlobalObject's function
     return jsCast<Zig::GlobalObject*>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, parameters, sourceOrigin);
 }
@@ -72,6 +74,18 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
+    if (auto string = jsDynamicCast<JSC::JSString*>(key)) {
+        auto keyView = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+        if (keyView.startsWith("bake:/"_s)) {
+            BunString result = BakeProdResolve(global, Bun::toString("bake:/"_s), Bun::toString(keyView.substringSharingImpl("bake:"_s.length())));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.transferToWTFString());
+        }
+    }
+
     // Use Zig::GlobalObject's function
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
 }
@@ -94,7 +108,18 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
     return promise;
 }
 
-extern "C" BunString BakeProdLoad(ProductionPerThread* perThreadData, BunString a);
+extern "C" BunString BakeProdLoad(void* perThreadData, BunString a);
+
+extern "C" bool BakeGlobalObject__isBakeGlobalObject(JSC::JSGlobalObject* global)
+{
+    return global->JSCell::inherits(Bake::GlobalObject::info());
+}
+
+extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
+{
+    Bake::GlobalObject* bake = jsCast<Bake::GlobalObject*>(global);
+    return bake->m_perThreadData;
+}
 
 JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
@@ -113,6 +138,7 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             if (source.tag != BunStringTag::Dead) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
+                    globalObject,
                     source.toWTFString(),
                     origin,
                     WTFMove(moduleKey),
@@ -120,12 +146,33 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                     JSC::SourceProviderSourceType::Module));
                 return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
             }
-            return rejectedInternalPromise(globalObject, createTypeError(globalObject, makeString("Bundle does not have \""_s, moduleKey, "\". This is a bug in Bun's bundler."_s)));
+
+            // We unconditionally prefix the key with "bake:" inside
+            // BakeProdResolve in production.zig.
+            //
+            // But if someone does: `await import(resolve(import.meta.dir, "nav.ts"))`
+            // we don't actually want to load it from the Bake production module
+            // map and instead make it go through the normal codepath.
+            auto bakePrefixRemoved = moduleKey.substringSharingImpl("bake:"_s.length());
+
+#ifdef _WIN32
+            // We normalize paths to contain forward slashes in bake so we don't
+            // have to worry about platform paths. Now we have to worry about
+            // it, because `moduleLoaderFetch(...)` may read the path from disk
+            // and so we need to give a Windows path to it.
+            auto temp = BakeToWindowsPath(Bun::toString(bakePrefixRemoved));
+            bakePrefixRemoved = temp.toWTFString();
+#endif
+            JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
+            JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
+            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, parameters, script);
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+    return result;
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
@@ -191,7 +238,16 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 // TODO: remove this entire method
 extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 {
-    JSC::VM& vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
+    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
+    if (!vmPtr) [[unlikely]] {
+        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
+    }
+    // We need to unsafely ref this so it stays alive, later in
+    // `Zig__GlobalObject__destructOnExit` will call
+    // `vm.derefSuppressingSaferCPPChecking()` to free it.
+    vmPtr->refSuppressingSaferCPPChecking();
+    JSC::VM& vm = *vmPtr;
+
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
@@ -211,6 +267,11 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     global->setStackTraceLimit(10); // Node.js defaults to 10
     global->isThreadLocalDefaultGlobalObject = true;
 
+    // if (shouldDisableStopIfNecessaryTimer) {
+    vm.heap.disableStopIfNecessaryTimer();
+    // }
+
+    // if you process.nextTick on a microtask we need thsi
     // TODO: it segfaults! process.nextTick is scoped out for now i guess!
     // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
     // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
@@ -226,7 +287,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     return global;
 }
 
-extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, ProductionPerThread* perThreadData)
+extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData)
 {
     global->m_perThreadData = perThreadData;
 }

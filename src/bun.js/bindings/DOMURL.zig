@@ -1,25 +1,16 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
-const String = bun.String;
-
 pub const DOMURL = opaque {
     pub extern fn WebCore__DOMURL__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMURL;
-    pub extern fn WebCore__DOMURL__href_(arg0: ?*DOMURL, arg1: *ZigString) void;
-    pub extern fn WebCore__DOMURL__pathname_(arg0: ?*DOMURL, arg1: *ZigString) void;
 
     pub fn cast_(value: JSValue, vm: *VM) ?*DOMURL {
         return WebCore__DOMURL__cast_(value, vm);
     }
 
     pub fn cast(value: JSValue) ?*DOMURL {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, jsc.VirtualMachine.get().global.vm());
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
-        return WebCore__DOMURL__href_(this, out);
+        return bun.cpp.WebCore__DOMURL__href_(this, out);
     }
 
     pub fn href(this: *DOMURL) ZigString {
@@ -48,7 +39,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
-        return WebCore__DOMURL__pathname_(this, out);
+        return bun.cpp.WebCore__DOMURL__pathname_(this, out);
     }
 
     pub fn pathname(this: *DOMURL) ZigString {
@@ -57,3 +48,11 @@ pub const DOMURL = opaque {
         return out;
     }
 };
+
+const bun = @import("bun");
+const String = bun.String;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;

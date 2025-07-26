@@ -1,24 +1,4 @@
-const std = @import("std");
-const Progress = bun.Progress;
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = bun.Environment;
-const Command = @import("../cli.zig").Command;
-const Install = @import("../install/install.zig");
-const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
-const PackageID = Install.PackageID;
-const String = bun.Semver.String;
-const PackageManager = Install.PackageManager;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-const Lockfile = Install.Lockfile;
-const Fs = @import("../fs.zig");
-const Global = bun.Global;
-const DependencyID = Install.DependencyID;
-const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
 
 pub const DefaultTrustedCommand = struct {
     pub fn exec() !void {
@@ -73,22 +53,14 @@ pub const UntrustedCommand = struct {
 
         var tree_iterator = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
-        const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
-        var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
-        defer abs_node_modules_path.deinit(ctx.allocator);
-        try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
-        try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
+        var node_modules_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+        defer node_modules_path.deinit();
 
         while (tree_iterator.next(null)) |node_modules| {
-            // + 1 because we want to keep the path separator
-            abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
-            try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
+            const node_modules_path_save = node_modules_path.save();
+            defer node_modules_path_save.restore();
 
-            var node_modules_dir = bun.openDir(std.fs.cwd(), node_modules.relative_path) catch |err| {
-                if (err == error.ENOENT) continue;
-                return err;
-            };
-            defer node_modules_dir.close();
+            node_modules_path.append(node_modules.relative_path);
 
             for (node_modules.dependencies) |dep_id| {
                 if (untrusted_dep_ids.contains(dep_id)) {
@@ -97,12 +69,15 @@ pub const UntrustedCommand = struct {
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-                    var not_lazy: PackageManager.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
+
+                    const folder_name_save = node_modules_path.save();
+                    defer folder_name_save.restore();
+                    node_modules_path.append(alias);
+
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        &not_lazy,
-                        abs_node_modules_path.items,
+                        &node_modules_path,
                         alias,
                         resolution,
                     ) catch |err| {
@@ -148,7 +123,7 @@ pub const UntrustedCommand = struct {
             \\
             \\This means all packages with scripts are in "trustedDependencies" or none of your dependencies have scripts.
             \\
-            \\For more information, visit <magenta>https://bun.sh/docs/install/lifecycle#trusteddependencies<r>
+            \\For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>
             \\
         , .{});
     }
@@ -227,11 +202,8 @@ pub const TrustCommand = struct {
         // in the correct order as they would during a normal install
         var tree_iter = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
-        const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
-        var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
-        defer abs_node_modules_path.deinit(ctx.allocator);
-        try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
-        try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
+        var node_modules_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+        defer node_modules_path.deinit();
 
         var package_names_to_add: bun.StringArrayHashMapUnmanaged(void) = .{};
         var scripts_at_depth: std.AutoArrayHashMapUnmanaged(usize, std.ArrayListUnmanaged(struct {
@@ -243,8 +215,9 @@ pub const TrustCommand = struct {
         var scripts_count: usize = 0;
 
         while (tree_iter.next(null)) |node_modules| {
-            abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
-            try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
+            const node_modules_path_save = node_modules_path.save();
+            defer node_modules_path_save.restore();
+            node_modules_path.append(node_modules.relative_path);
 
             var node_modules_dir = bun.openDir(std.fs.cwd(), node_modules.relative_path) catch |err| {
                 if (err == error.ENOENT) continue;
@@ -262,12 +235,15 @@ pub const TrustCommand = struct {
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-                    var not_lazy = PackageManager.LazyPackageDestinationDir{ .dir = node_modules_dir };
+
+                    var folder_save = node_modules_path.save();
+                    defer folder_save.restore();
+                    node_modules_path.append(alias);
+
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
-                        &not_lazy,
-                        abs_node_modules_path.items,
+                        &node_modules_path,
                         alias,
                         resolution,
                     ) catch |err| {
@@ -344,6 +320,7 @@ pub const TrustCommand = struct {
                         info.scripts_list,
                         optional,
                         output_in_foreground,
+                        null,
                     );
 
                     if (pm.options.log_level.showProgress()) {
@@ -368,7 +345,7 @@ pub const TrustCommand = struct {
 
         const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
 
-        var package_json = bun.JSON.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+        var package_json = bun.json.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.errGeneric("failed to parse package.json: {s}", .{@errorName(err)});
@@ -455,3 +432,26 @@ pub const TrustCommand = struct {
         }
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+
+const Install = @import("../install/install.zig");
+const DependencyID = Install.DependencyID;
+const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
+const Lockfile = Install.Lockfile;
+const PackageID = Install.PackageID;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const ArrayIdentityContext = bun.ArrayIdentityContext;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const logger = bun.logger;
+const strings = bun.strings;
+const String = bun.Semver.String;

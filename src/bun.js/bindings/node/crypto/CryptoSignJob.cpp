@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
 
     if (!ctx->m_verifyResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsBoolean(*ctx->m_verifyResult));
@@ -60,7 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
 
     if (!ctx->m_signResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto& result = ctx->m_signResult.value();
@@ -69,6 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
     memcpy(sigBuf->data(), result.data(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, result.size());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
@@ -121,7 +122,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     switch (m_mode) {
     case Mode::Sign: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
 
@@ -176,11 +177,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
     case Mode::Verify: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
         auto sigBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_signature.data(),
+            .data = m_signature.begin(),
             .len = m_signature.size(),
         };
         m_verifyResult = context.verify(dataBuf, sigBuf);
@@ -198,8 +199,8 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (m_mode) {
     case Mode::Sign: {
@@ -214,6 +215,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, m_signResult->size());
+        RETURN_IF_EXCEPTION(scope, );
 
         Bun__EventLoop__runCallback2(
             lexicalGlobalObject,

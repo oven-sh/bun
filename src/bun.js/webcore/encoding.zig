@@ -50,7 +50,7 @@ export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, inpu
         .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
         else => unreachable,
     };
-    return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
 }
 
 export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
@@ -65,20 +65,20 @@ export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input
         .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
         else => unreachable,
     };
-    return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
 }
 
 // for SQL statement
-export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
+export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject) JSValue {
     return toStringComptime(input[0..len], globalObject, .utf8);
 }
 
-export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject, encoding: u8) JSValue {
+export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject, encoding: u8) JSValue {
     return toString(input[0..len], globalObject, @enumFromInt(encoding));
 }
 
 // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
-//     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len], true).written);
+//     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
 // }
 pub fn toString(input: []const u8, globalObject: *JSGlobalObject, encoding: Encoding) JSValue {
     return switch (encoding) {
@@ -211,7 +211,7 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
 
             // If we get here, it means we can safely assume the string is 100% ASCII characters
             // For this, we rely on WebKit to manage the memory.
-            return bun.String.createLatin1(input);
+            return bun.String.cloneLatin1(input);
         },
         .ucs2, .utf16le => {
             // Avoid incomplete characters
@@ -357,7 +357,12 @@ pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, compt
 
     switch (comptime encoding) {
         .utf8 => {
-            return strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len], allow_partial_write).written;
+            return strings.copyUTF16IntoUTF8Impl(
+                to[0..to_len],
+                []const u16,
+                input[0..len],
+                allow_partial_write,
+            ).written;
         },
         .latin1, .ascii, .buffer => {
             const out = @min(len, to_len);
@@ -503,11 +508,14 @@ comptime {
     _ = &Bun__encoding__constructFromUTF16;
 }
 
+const string = []const u8;
+
 const std = @import("std");
-const JSC = bun.JSC;
-const Encoding = JSC.Node.Encoding;
+
 const bun = @import("bun");
 const strings = bun.strings;
-const string = bun.string;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const Encoding = jsc.Node.Encoding;

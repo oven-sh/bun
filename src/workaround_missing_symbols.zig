@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const linux = struct {
 
     // On linux, bun overrides the libc symbols for various functions.
@@ -81,7 +79,7 @@ pub const darwin = struct {
 };
 pub const windows = struct {
     /// Windows doesn't have memmem, so we need to implement it
-    /// This is used in src/string_immutable.zig
+    /// This is used in src/string/immutable.zig
     pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]const u8, needlelen: usize) ?[*]const u8 {
         // Handle null pointers
         if (haystack == null or needle == null) return null;
@@ -124,3 +122,4 @@ pub const current = switch (bun.Environment.os) {
 };
 
 const bun = @import("bun");
+const std = @import("std");

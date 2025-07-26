@@ -44,4 +44,4 @@ $ $env:FOO="helloworld"; bun run dev
 
 ## {% /codetabs %}
 
-See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.
+See [Docs > Runtime > Environment variables](https://bun.com/docs/runtime/env) for more information on using environment variables with Bun.

@@ -221,7 +221,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     RETURN_IF_EXCEPTION(scope, {});
 
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
+    int mode_ = mode.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int err = Bun__ttySetMode(fdToUse, mode_);
     return JSValue::encode(jsNumber(err));
 #endif
 }
@@ -323,7 +325,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     }
 
     array->putDirectIndex(globalObject, 0, jsNumber(width));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(globalObject, 1, jsNumber(height));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSC::JSValue::encode(jsBoolean(true));
 }

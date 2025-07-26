@@ -69,9 +69,9 @@ using namespace JSC;
 using namespace JSC::DOMJIT;
 
 extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const LChar* stringPtr, size_t stringLen);
-extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const UChar* stringPtr, size_t stringLen);
+extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const char16_t* stringPtr, size_t stringLen);
 extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
-extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
 // extern "C" {

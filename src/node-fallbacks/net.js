@@ -52,3 +52,9 @@ export function isIP(s) {
   if (isIPv6(s)) return 6;
   return 0;
 }
+
+export default {
+  isIPv4,
+  isIPv6,
+  isIP,
+};

@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const Allocator = std.mem.Allocator;
-const strings = bun.strings;
-const js_lexer = bun.js_lexer;
-const string = bun.string;
-
 const MutableString = @This();
 
 allocator: Allocator,
@@ -353,7 +345,7 @@ pub const BufferedWriter = struct {
         return pending.len;
     }
 
-    const E = bun.JSAst.E;
+    const E = bun.ast.E;
 
     /// Write a E.String to the buffer.
     /// This automatically encodes UTF-16 into UTF-8 using
@@ -379,7 +371,6 @@ pub const BufferedWriter = struct {
                 this.remain()[0 .. bytes.len * 2],
                 []const u16,
                 bytes,
-                true,
             );
             this.context.list.items.len += @as(usize, decoded.written);
             return pending.len;
@@ -393,7 +384,6 @@ pub const BufferedWriter = struct {
                 this.remain()[0 .. bytes.len * 2],
                 []const u16,
                 bytes,
-                true,
             );
             this.pos += @as(usize, decoded.written);
         }
@@ -464,3 +454,12 @@ pub fn writeAll(self: *MutableString, bytes: string) Allocator.Error!usize {
     try self.list.appendSlice(self.allocator, bytes);
     return bytes.len;
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const js_lexer = bun.js_lexer;
+const strings = bun.strings;

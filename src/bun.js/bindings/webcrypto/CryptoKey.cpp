@@ -79,7 +79,7 @@ WebCoreOpaqueRoot root(CryptoKey* key)
 Vector<uint8_t> CryptoKey::randomData(size_t size)
 {
     Vector<uint8_t> result(size);
-    RAND_bytes(result.data(), result.size());
+    RAND_bytes(result.begin(), result.size());
     return result;
 }
 

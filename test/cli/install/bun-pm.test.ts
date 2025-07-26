@@ -54,7 +54,7 @@ it("should list top-level dependency", async () => {
       stderr: "pipe",
       env,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
@@ -70,8 +70,8 @@ it("should list top-level dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await new Response(stderr).text()).toBe("");
-  expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules (2)
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
 └── moo@moo
 `);
   expect(await exited).toBe(0);
@@ -112,7 +112,7 @@ it("should list all dependencies", async () => {
       stderr: "pipe",
       env,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
@@ -128,8 +128,8 @@ it("should list all dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await new Response(stderr).text()).toBe("");
-  expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules
 ├── bar@0.0.2
 └── moo@moo
 `);
@@ -171,7 +171,7 @@ it("should list top-level aliased dependency", async () => {
       stderr: "pipe",
       env,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
@@ -187,8 +187,8 @@ it("should list top-level aliased dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await new Response(stderr).text()).toBe("");
-  expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules (2)
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
 └── moo-1@moo
 `);
   expect(await exited).toBe(0);
@@ -229,7 +229,7 @@ it("should list aliased dependencies", async () => {
       stderr: "pipe",
       env,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
@@ -245,8 +245,8 @@ it("should list aliased dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await new Response(stderr).text()).toBe("");
-  expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules
 ├── bar-1@0.0.2
 └── moo-1@moo
 `);
@@ -292,7 +292,7 @@ it("should remove all cache", async () => {
         BUN_INSTALL_CACHE_DIR: cache_dir,
       },
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);

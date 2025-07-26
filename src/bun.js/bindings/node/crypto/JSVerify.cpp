@@ -213,7 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "update"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     JSValue wrappedVerify = callFrame->argument(0);
@@ -221,7 +221,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     // Check that we have at least 1 argument (the data)
     if (callFrame->argumentCount() < 2) {
         throwVMError(globalObject, scope, "Verify.prototype.update requires at least 1 argument"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Get the data argument
@@ -230,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     // if it's a string, using encoding for decode. if it's a buffer, just use the buffer
     if (data.isString()) {
         JSString* dataString = data.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
@@ -241,22 +241,22 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         }
 
         auto dataView = dataString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
 
         // Update the digest context with the buffer data
         if (view->isDetached()) {
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         auto buffer = ncrypto::Buffer<const void> {
@@ -266,7 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return JSValue::encode({});
+            return {};
         }
 
         return JSValue::encode(wrappedVerify);
@@ -280,13 +280,13 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
     if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
         if (view->isDetached()) {
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         auto buffer = ncrypto::Buffer<const void> {
@@ -296,7 +296,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return JSValue::encode({});
+            return {};
         }
 
         return JSValue::encode(wrappedVerify);
@@ -316,13 +316,13 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "verify"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Check if the context is initialized
     if (!thisObject->m_mdCtx) {
         throwTypeError(globalObject, scope, "Verify.prototype.verify cannot be called before Verify.prototype.init"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // This function receives two arguments: options and signature
@@ -331,7 +331,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue sigEncodingValue = callFrame->argument(2);
 
     JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
@@ -371,35 +371,35 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     // Validate DSA parameters
     if (!keyPtr.validateDsaParameters()) {
         throwTypeError(globalObject, scope, "Invalid DSA parameters"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Get the final digest
     auto data = mdCtx.digestFinal(mdCtx.getExpectedSize());
     if (!data) {
         throwTypeError(globalObject, scope, "Failed to finalize digest"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Create verification context
     auto pkctx = keyPtr.newCtx();
     if (!pkctx || pkctx.initForVerify() <= 0) {
         throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to initialize verification context"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Set RSA padding mode and salt length if applicable
     if (keyPtr.isRsaVariant()) {
         if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen)) {
             throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
-            return JSValue::encode({});
+            return {};
         }
     }
 
     // Set signature MD from the digest context
     if (!pkctx.setSignatureMd(mdCtx)) {
         throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Handle P1363 format conversion for EC keys if needed
@@ -414,7 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         if (convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
             // Conversion succeeded, perform verification with the converted signature
             ncrypto::Buffer<const uint8_t> derSigBuf {
-                .data = derBuffer.data(),
+                .data = derBuffer.begin(),
                 .len = derBuffer.size(),
             };
 

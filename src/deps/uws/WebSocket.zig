@@ -1,7 +1,6 @@
 pub fn NewWebSocket(comptime ssl_flag: c_int) type {
-    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
-    return struct {
-        const WebSocket = @This();
+    return opaque {
+        const WebSocket = NewWebSocket(ssl_flag);
 
         pub fn raw(this: *WebSocket) *RawWebSocket {
             return @as(*RawWebSocket, @ptrCast(this));
@@ -340,12 +339,13 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
-const uws = bun.uws;
-const Opcode = uws.Opcode;
-const SendStatus = uws.SendStatus;
-const uws_app_t = @import("./App.zig").uws_app_t;
 const std = @import("std");
+const uws_app_t = @import("./App.zig").uws_app_t;
+
+const uws = bun.uws;
 const NewApp = uws.NewApp;
+const Opcode = uws.Opcode;
 const Request = uws.Request;
-const uws_res = uws.uws_res;
+const SendStatus = uws.SendStatus;
 const SocketContext = uws.SocketContext;
+const uws_res = uws.uws_res;

@@ -1,26 +1,9 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const URL = @import("./url.zig").URL;
-
-const options = @import("./options.zig");
-const logger = bun.logger;
-const js_ast = bun.JSAst;
-const Api = @import("./api/schema.zig").Api;
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const resolver = @import("./resolver/resolver.zig");
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
-const JSONParser = bun.JSON;
-const Command = @import("cli.zig").Command;
-const TOML = @import("./toml/toml_parser.zig").TOML;
 
-// TODO: replace Api.TransformOptions with Bunfig
+// TODO: replace api.TransformOptions with Bunfig
 pub const Bunfig = struct {
     pub const OfflineMode = enum {
         online,
@@ -38,7 +21,7 @@ pub const Bunfig = struct {
         source: *const logger.Source,
         log: *logger.Log,
         allocator: std.mem.Allocator,
-        bunfig: *Api.TransformOptions,
+        bunfig: *api.TransformOptions,
         ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
@@ -59,9 +42,9 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
-        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !api.NpmRegistry {
             const url = URL.parse(str.data);
-            var registry = std.mem.zeroes(Api.NpmRegistry);
+            var registry = std.mem.zeroes(api.NpmRegistry);
 
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
@@ -80,8 +63,8 @@ pub const Bunfig = struct {
             return registry;
         }
 
-        fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
-            var registry = std.mem.zeroes(Api.NpmRegistry);
+        fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !api.NpmRegistry {
+            var registry = std.mem.zeroes(api.NpmRegistry);
 
             if (obj.get("url")) |url| {
                 try this.expectString(url);
@@ -108,7 +91,7 @@ pub const Bunfig = struct {
             return registry;
         }
 
-        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !api.NpmRegistry {
             switch (expr.data) {
                 .e_string => |str| {
                     return this.parseRegistryURLString(str);
@@ -118,7 +101,7 @@ pub const Bunfig = struct {
                 },
                 else => {
                     try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                    return std.mem.zeroes(Api.NpmRegistry);
+                    return std.mem.zeroes(api.NpmRegistry);
                 },
             }
         }
@@ -128,10 +111,10 @@ pub const Bunfig = struct {
             const Matcher = strings.ExactSizeMatcher(8);
 
             this.bunfig.log_level = switch (Matcher.match(expr.asString(this.allocator).?)) {
-                Matcher.case("debug") => Api.MessageLevel.debug,
-                Matcher.case("error") => Api.MessageLevel.err,
-                Matcher.case("warn") => Api.MessageLevel.warn,
-                Matcher.case("info") => Api.MessageLevel.info,
+                Matcher.case("debug") => api.MessageLevel.debug,
+                Matcher.case("error") => api.MessageLevel.err,
+                Matcher.case("warn") => api.MessageLevel.warn,
+                Matcher.case("info") => api.MessageLevel.info,
                 else => {
                     try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
                     unreachable;
@@ -197,7 +180,7 @@ pub const Bunfig = struct {
                     values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
                     i += 1;
                 }
-                this.bunfig.define = Api.StringMap{
+                this.bunfig.define = api.StringMap{
                     .keys = keys,
                     .values = values,
                 };
@@ -341,14 +324,42 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
+
+                    if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "coveragePathIgnorePatterns array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.coverage.ignore_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
-                    var install: *Api.BunInstall = this.ctx.install orelse brk: {
-                        const install = try this.allocator.create(Api.BunInstall);
-                        install.* = std.mem.zeroes(Api.BunInstall);
+                    var install: *api.BunInstall = this.ctx.install orelse brk: {
+                        const install = try this.allocator.create(api.BunInstall);
+                        install.* = std.mem.zeroes(api.BunInstall);
                         this.ctx.install = install;
                         break :brk install;
                     };
@@ -424,7 +435,7 @@ pub const Bunfig = struct {
                     }
 
                     if (install_obj.get("scopes")) |scopes| {
-                        var registry_map = install.scoped orelse Api.NpmRegistryMap{};
+                        var registry_map = install.scoped orelse api.NpmRegistryMap{};
                         try this.expect(scopes, .e_object);
 
                         try registry_map.scopes.ensureUnusedCapacity(this.allocator, scopes.data.e_object.properties.len);
@@ -475,6 +486,16 @@ pub const Bunfig = struct {
                     if (install_obj.get("ignoreScripts")) |ignore_scripts_expr| {
                         if (ignore_scripts_expr.asBool()) |ignore_scripts| {
                             install.ignore_scripts = ignore_scripts;
+                        }
+                    }
+
+                    if (install_obj.get("linker")) |node_linker_expr| {
+                        try this.expectString(node_linker_expr);
+                        if (node_linker_expr.asString(this.allocator)) |node_linker_str| {
+                            install.node_linker = PackageManager.Options.NodeLinker.fromStr(node_linker_str);
+                            if (install.node_linker == null) {
+                                try this.addError(node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                            }
                         }
                     }
 
@@ -582,6 +603,12 @@ pub const Bunfig = struct {
                             }
                         }
                     }
+
+                    if (install_obj.get("linkWorkspacePackages")) |link_workspace| {
+                        if (link_workspace.asBool()) |value| {
+                            install.link_workspace_packages = value;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -620,6 +647,18 @@ pub const Bunfig = struct {
                             this.ctx.debug.run_in_bun = value;
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
+
+                if (json.get("console")) |console_expr| {
+                    if (console_expr.get("depth")) |depth| {
+                        if (depth.data == .e_number) {
+                            const depth_value = @as(u16, @intFromFloat(depth.data.e_number.value));
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            this.ctx.runtime_options.console_depth = if (depth_value == 0) std.math.maxInt(u16) else depth_value;
+                        } else {
+                            try this.addError(depth.loc, "Expected number");
                         }
                     }
                 }
@@ -696,7 +735,7 @@ pub const Bunfig = struct {
                             values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
                             i += 1;
                         }
-                        this.bunfig.serve_define = Api.StringMap{
+                        this.bunfig.serve_define = api.StringMap{
                             .keys = keys,
                             .values = values,
                         };
@@ -802,20 +841,20 @@ pub const Bunfig = struct {
             var jsx_factory: string = "";
             var jsx_fragment: string = "";
             var jsx_import_source: string = "";
-            var jsx_runtime = Api.JsxRuntime.automatic;
+            var jsx_runtime = api.JsxRuntime.automatic;
             var jsx_dev = true;
 
             if (json.get("jsx")) |expr| {
                 if (expr.asString(allocator)) |value| {
                     if (strings.eqlComptime(value, "react")) {
-                        jsx_runtime = Api.JsxRuntime.classic;
+                        jsx_runtime = api.JsxRuntime.classic;
                     } else if (strings.eqlComptime(value, "solid")) {
-                        jsx_runtime = Api.JsxRuntime.solid;
+                        jsx_runtime = api.JsxRuntime.solid;
                     } else if (strings.eqlComptime(value, "react-jsx")) {
-                        jsx_runtime = Api.JsxRuntime.automatic;
+                        jsx_runtime = api.JsxRuntime.automatic;
                         jsx_dev = false;
                     } else if (strings.eqlComptime(value, "react-jsxDEV")) {
-                        jsx_runtime = Api.JsxRuntime.automatic;
+                        jsx_runtime = api.JsxRuntime.automatic;
                         jsx_dev = true;
                     } else {
                         try this.addError(expr.loc, "Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported");
@@ -842,7 +881,7 @@ pub const Bunfig = struct {
             }
 
             if (this.bunfig.jsx == null) {
-                this.bunfig.jsx = Api.Jsx{
+                this.bunfig.jsx = api.Jsx{
                     .factory = @constCast(jsx_factory),
                     .fragment = @constCast(jsx_fragment),
                     .import_source = @constCast(jsx_import_source),
@@ -850,7 +889,7 @@ pub const Bunfig = struct {
                     .development = jsx_dev,
                 };
             } else {
-                var jsx: *Api.Jsx = &this.bunfig.jsx.?;
+                var jsx: *api.Jsx = &this.bunfig.jsx.?;
                 if (jsx_factory.len > 0) {
                     jsx.factory = jsx_factory;
                 }
@@ -908,7 +947,7 @@ pub const Bunfig = struct {
                 try this.expect(expr, .e_object);
                 const properties = expr.data.e_object.properties.slice();
                 var loader_names = try this.allocator.alloc(string, properties.len);
-                var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
+                var loader_values = try this.allocator.alloc(api.Loader, properties.len);
 
                 for (properties, 0..) |item, i| {
                     const key = item.key.?.asString(allocator).?;
@@ -927,7 +966,7 @@ pub const Bunfig = struct {
                     loader_names[i] = key;
                     loader_values[i] = loader.toAPI();
                 }
-                this.bunfig.loaders = Api.LoaderMap{
+                this.bunfig.loaders = api.LoaderMap{
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
@@ -1007,3 +1046,23 @@ pub const Bunfig = struct {
         try parser.parse(cmd);
     }
 };
+
+const string = []const u8;
+
+const options = @import("./options.zig");
+const resolver = @import("./resolver/resolver.zig");
+const std = @import("std");
+const Command = @import("./cli.zig").Command;
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const URL = @import("./url.zig").URL;
+
+const bun = @import("bun");
+const JSONParser = bun.json;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const PackageManager = bun.install.PackageManager;
+const api = bun.schema.api;
+const TOML = bun.interchange.toml.TOML;

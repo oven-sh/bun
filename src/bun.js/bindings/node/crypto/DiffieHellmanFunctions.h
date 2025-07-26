@@ -38,7 +38,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
     auto encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(globalObject, scope, keys.span(), encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, keys.span(), encodingType));
 }
 
 template<typename DiffieHellmanType>
@@ -116,7 +116,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     // If output encoding is specified and not "buffer", return a string
-    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType));
 }
 
 template<typename DiffieHellmanType>
@@ -142,7 +142,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
     BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(globalObject, scope, prime.span(), encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, prime.span(), encodingType));
 }
 
 template<typename DiffieHellmanType>
@@ -168,7 +168,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
     BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(globalObject, scope, gen.span(), encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, gen.span(), encodingType));
 }
 
 template<typename DiffieHellmanType>
@@ -194,7 +194,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
     BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(globalObject, scope, key.span(), encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, key.span(), encodingType));
 }
 
 template<typename DiffieHellmanType>
@@ -219,7 +219,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
     auto encoding = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return StringBytes::encode(globalObject, scope, key.span(), encoding);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, key.span(), encoding));
 }
 
 template<typename DiffieHellmanType>

@@ -1,19 +1,6 @@
 //! Originally, we tried using LIEF to inject the module graph into a MachO segment
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
-const bun = @import("bun");
-const std = @import("std");
-const Schema = bun.Schema.Api;
-const strings = bun.strings;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Syscall = bun.sys;
-const SourceMap = bun.sourcemap;
-const StringPointer = bun.StringPointer;
-
-const macho = bun.macho;
-const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
@@ -97,6 +84,12 @@ pub const StandaloneModuleGraph = struct {
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
         module_format: ModuleFormat = .none,
+        side: FileSide = .server,
+    };
+
+    pub const FileSide = enum(u8) {
+        server = 0,
+        client = 1,
     };
 
     pub const Encoding = enum(u8) {
@@ -131,6 +124,19 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
+    const PE = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
+
+        pub fn getData() ?[]const u8 {
+            const length = Bun__getStandaloneModuleGraphPELength();
+            if (length == 0) return null;
+
+            const data_ptr = Bun__getStandaloneModuleGraphPEData() orelse return null;
+            return data_ptr[0..length];
+        }
+    };
+
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
@@ -141,6 +147,11 @@ pub const StandaloneModuleGraph = struct {
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
         module_format: ModuleFormat = .none,
+        side: FileSide = .server,
+
+        pub fn appearsInEmbeddedFilesArray(this: *const File) bool {
+            return this.side == .client or !this.loader.isJavaScriptLike();
+        }
 
         pub fn stat(this: *const File) bun.Stat {
             var result = std.mem.zeroes(bun.Stat);
@@ -159,7 +170,7 @@ pub const StandaloneModuleGraph = struct {
             if (this.wtf_string.isEmpty()) {
                 switch (this.encoding) {
                     .binary, .utf8 => {
-                        this.wtf_string = bun.String.createUTF8(this.contents);
+                        this.wtf_string = bun.String.cloneUTF8(this.contents);
                     },
                     .latin1 => {
                         this.wtf_string = bun.String.createStaticExternal(this.contents, true);
@@ -171,7 +182,7 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.webcore.Blob {
+        pub fn blob(this: *File, globalObject: *bun.jsc.JSGlobalObject) *bun.webcore.Blob {
             if (this.cached_blob == null) {
                 const store = bun.webcore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
@@ -192,9 +203,9 @@ pub const StandaloneModuleGraph = struct {
 
                 // The pretty name goes here:
                 if (strings.hasPrefixComptime(this.name, base_public_path_with_default_suffix)) {
-                    b.name = bun.String.createUTF8(this.name[base_public_path_with_default_suffix.len..]);
+                    b.name = bun.String.cloneUTF8(this.name[base_public_path_with_default_suffix.len..]);
                 } else if (this.name.len > 0) {
-                    b.name = bun.String.createUTF8(this.name);
+                    b.name = bun.String.cloneUTF8(this.name);
                 }
 
                 this.cached_blob = b;
@@ -226,6 +237,7 @@ pub const StandaloneModuleGraph = struct {
                         null,
                         std.math.maxInt(i32),
                         std.math.maxInt(i32),
+                        .{},
                     )) {
                         .success => |x| x,
                         .fail => {
@@ -251,7 +263,7 @@ pub const StandaloneModuleGraph = struct {
                     });
 
                     stored.external_source_names = file_names;
-                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none, .kind = .zig };
                     stored.is_standalone_module_graph = true;
 
                     const parsed = bun.new(SourceMap.ParsedSourceMap, stored);
@@ -300,6 +312,7 @@ pub const StandaloneModuleGraph = struct {
                         .none,
                     .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
                     .module_format = module.module_format,
+                    .side = module.side,
                 },
             );
         }
@@ -347,8 +360,10 @@ pub const StandaloneModuleGraph = struct {
                     string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
-                        if (output_file.output_kind == .@"entry-point") {
-                            entry_point_id = module_count;
+                        if (output_file.side == null or output_file.side.? == .server) {
+                            if (output_file.output_kind == .@"entry-point") {
+                                entry_point_id = module_count;
+                            }
                         }
                     }
 
@@ -421,6 +436,10 @@ pub const StandaloneModuleGraph = struct {
                     else => .none,
                 } else .none,
                 .bytecode = bytecode,
+                .side = switch (output_file.side orelse .server) {
+                    .server => .server,
+                    .client => .client,
+                },
             };
 
             if (output_file.source_map_index != std.math.maxInt(u32)) {
@@ -663,6 +682,48 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
+            .windows => {
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                }
+                var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer pe_file.deinit();
+                pe_file.addBunSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                input_result.bytes.deinit();
+
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    },
+                    else => {},
+                }
+
+                var file = bun.sys.File{ .handle = cloned_executable_fd };
+                const writer = file.writer();
+                pe_file.write(writer) catch |err| {
+                    Output.prettyErrorln("Error writing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                // Set executable permissions when running on POSIX hosts, even for Windows targets
+                if (comptime !Environment.isWindows) {
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                }
+                return cloned_executable_fd;
+            },
             else => {
                 var total_byte_count: usize = undefined;
                 if (Environment.isWindows) {
@@ -839,7 +900,7 @@ pub const StandaloneModuleGraph = struct {
             .fromStdDir(root_dir),
             bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
-            if (err == error.IsDir) {
+            if (err == error.IsDir or err == error.EISDIR) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
             } else {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
@@ -867,6 +928,22 @@ pub const StandaloneModuleGraph = struct {
             }
             const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
             return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+        }
+
+        if (comptime Environment.isWindows) {
+            const pe_bytes = PE.getData() orelse return null;
+            if (pe_bytes.len < @sizeOf(Offsets) + trailer.len) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
+            }
+            const pe_bytes_slice = pe_bytes[pe_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = pe_bytes[pe_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, pe_bytes_slice).*;
+            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(pe_bytes), offsets);
         }
 
         // Do not invoke libuv here.
@@ -1149,13 +1226,13 @@ pub const StandaloneModuleGraph = struct {
 
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
         defer {
-            bun.JSAst.Expr.Data.Store.reset();
-            bun.JSAst.Stmt.Data.Store.reset();
+            bun.ast.Expr.Data.Store.reset();
+            bun.ast.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
+        var json = bun.json.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse
@@ -1233,3 +1310,18 @@ pub const StandaloneModuleGraph = struct {
         bun.assert(header_list.items.len == string_payload_start_location);
     }
 };
+
+const std = @import("std");
+const w = std.os.windows;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const StringPointer = bun.StringPointer;
+const Syscall = bun.sys;
+const macho = bun.macho;
+const pe = bun.pe;
+const strings = bun.strings;
+const Schema = bun.schema.api;

@@ -59,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     constexpr static size_t hostnameBufferLength = 2048;
 
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    UChar hostnameBuffer[hostnameBufferLength];
+    char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
     const auto span = domain.span16();
@@ -128,7 +128,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     constexpr static int hostnameBufferLength = 2048;
 
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    UChar hostnameBuffer[hostnameBufferLength];
+    char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
 

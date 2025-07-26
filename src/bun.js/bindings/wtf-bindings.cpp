@@ -194,7 +194,7 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
 
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -235,12 +235,12 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
 
 static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
 
-extern "C" void Bun__StackCheck__initialize()
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
     stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
 }
 
-extern "C" void* Bun__StackCheck__getMaxStack()
+extern "C" [[ZIG_EXPORT(nothrow)]] void* Bun__StackCheck__getMaxStack()
 {
     return stackBoundsForCurrentThread.end();
 }

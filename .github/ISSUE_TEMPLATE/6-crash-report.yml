@@ -2,6 +2,7 @@ name: Prefilled crash report
 description: Report a crash in Bun
 labels:
   - crash
+  - needs triage
 body:
   - type: markdown
     attributes:

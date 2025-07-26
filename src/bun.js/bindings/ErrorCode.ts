@@ -204,6 +204,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT", TypeError, "PostgresError"],
+  ["ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"],
   ["ERR_REQUIRE_ASYNC_MODULE", Error],
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],
@@ -254,6 +255,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_CREDENTIAL", Error],
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
+  ["ERR_ZSTD_INVALID_PARAM", RangeError],
   ["ERR_USE_AFTER_CLOSE", Error],
   ["ERR_WASI_NOT_STARTED", Error],
   ["ERR_WORKER_INIT_FAILED", Error],
@@ -294,6 +296,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_VM_MODULE_DIFFERENT_CONTEXT", Error],
   ["ERR_VM_MODULE_LINK_FAILURE", Error],
   ["ERR_VM_MODULE_CACHED_DATA_REJECTED", Error],
+  ["ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING", TypeError],
   ["HPE_INVALID_HEADER_TOKEN", Error],
   ["HPE_HEADER_OVERFLOW", Error],
 ];

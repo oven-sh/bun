@@ -382,8 +382,9 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    manager: *PackageManager,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(manager)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 

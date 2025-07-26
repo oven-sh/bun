@@ -12,7 +12,8 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
-const expected_version = 15;
+/// Version 16: Emits utf-8 files in rare cases
+const expected_version = 16;
 
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -630,7 +631,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.cloneLatin1(output_code_bytes);
+        const output_code = bun.String.cloneUTF8(output_code_bytes);
         this.output_code = output_code;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
@@ -638,7 +639,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code.length()});
     }
 };
 

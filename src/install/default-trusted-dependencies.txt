@@ -92,6 +92,7 @@
 @strapi/strapi
 @sveltejs/kit
 @syncfusion/ej2-angular-base
+@tailwindcss/oxide
 @taquito/taquito
 @temporalio/core-bridge
 @tensorflow/tfjs-node

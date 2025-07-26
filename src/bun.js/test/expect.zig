@@ -4578,9 +4578,379 @@ pub const Expect = struct {
         return toHaveReturnedTimesFn(this, globalThis, callframe, null);
     }
 
-    pub const toHaveReturnedWith = notImplementedJSCFn;
-    pub const toHaveLastReturnedWith = notImplementedJSCFn;
-    pub const toHaveNthReturnedWith = notImplementedJSCFn;
+    // Formatter for when there are multiple returns or errors
+    const AllCallsFormatter = struct {
+        globalThis: *JSGlobalObject,
+        returns: JSValue,
+        formatter: *jsc.ConsoleObject.Formatter,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const len = try self.returns.getLength(self.globalThis);
+            var printed_once = false;
+
+            for (0..len) |i| {
+                if (printed_once) try writer.writeAll("\n");
+                printed_once = true;
+
+                const call_idx = i + 1;
+                try writer.print("           {d: >2}: ", .{call_idx});
+
+                const result = self.returns.getDirectIndex(self.globalThis, @truncate(i));
+                if (result.isObject()) {
+                    const result_type: JSValue = (try result.get(self.globalThis, "type")) orelse .js_undefined;
+                    if (result_type.isString()) {
+                        const type_str = try result_type.toBunString(self.globalThis);
+                        defer type_str.deref();
+
+                        if (type_str.eqlComptime("return")) {
+                            const result_value: JSValue = (try result.get(self.globalThis, "value")) orelse .js_undefined;
+                            try writer.print("{any}", .{result_value.toFmt(self.formatter)});
+                        } else if (type_str.eqlComptime("throw")) {
+                            try writer.writeAll("function call threw an error");
+                        } else {
+                            try writer.writeAll("<incomplete call>");
+                        }
+                        continue;
+                    }
+                }
+                try writer.writeAll("<unknown call result>");
+            }
+        }
+    };
+
+    const SuccessfulReturnsFormatter = struct {
+        globalThis: *JSGlobalObject,
+        successful_returns: *const std.ArrayList(JSValue),
+        formatter: *jsc.ConsoleObject.Formatter,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const len = self.successful_returns.items.len;
+            if (len == 0) return;
+
+            var printed_once = false;
+
+            for (self.successful_returns.items, 1..) |val, i| {
+                if (printed_once) try writer.writeAll("\n");
+                printed_once = true;
+
+                try writer.print("           {d: >4}: ", .{i});
+                try writer.print("{any}", .{val.toFmt(self.formatter)});
+            }
+        }
+    };
+
+    pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments();
+        defer this.postMatch(globalThis);
+
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
+
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("toHaveReturnedWith() requires 1 argument", .{});
+        }
+
+        const expected = arguments[0];
+        incrementExpectCallCounter();
+
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+
+        const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
+        var pass = false;
+
+        var successful_returns = std.ArrayList(JSValue).init(globalThis.bunVM().allocator);
+        defer successful_returns.deinit();
+
+        var has_errors = false;
+
+        // Check for a pass and collect info for error messages
+        for (0..calls_count) |i| {
+            const result = returns.getDirectIndex(globalThis, @truncate(i));
+
+            if (result.isObject()) {
+                const result_type = try result.get(globalThis, "type") orelse .js_undefined;
+                if (result_type.isString()) {
+                    const type_str = try result_type.toBunString(globalThis);
+                    defer type_str.deref();
+
+                    if (type_str.eqlComptime("return")) {
+                        const result_value = try result.get(globalThis, "value") orelse .js_undefined;
+                        try successful_returns.append(result_value);
+
+                        // Check for pass condition only if not already passed
+                        if (!pass) {
+                            if (try result_value.jestDeepEquals(expected, globalThis)) {
+                                pass = true;
+                            }
+                        }
+                    } else if (type_str.eqlComptime("throw")) {
+                        has_errors = true;
+                    }
+                }
+            }
+        }
+
+        if (pass != this.flags.not) {
+            return .js_undefined;
+        }
+
+        // Handle failure
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        defer formatter.deinit();
+
+        const signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", false);
+
+        if (this.flags.not) {
+            const not_signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", true);
+            return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected.toFmt(&formatter)});
+        }
+
+        // No match was found.
+        const successful_returns_count = successful_returns.items.len;
+
+        // Case: Only one successful return, no errors
+        if (calls_count == 1 and successful_returns_count == 1) {
+            const received = successful_returns.items[0];
+            if (expected.isString() and received.isString()) {
+                const diff_format = DiffFormatter{
+                    .expected = expected,
+                    .received = received,
+                    .globalThis = globalThis,
+                    .not = false,
+                };
+                return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+            }
+
+            return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{
+                expected.toFmt(&formatter),
+                received.toFmt(&formatter),
+            });
+        }
+
+        if (has_errors) {
+            // Case: Some calls errored
+            const list_formatter = AllCallsFormatter{
+                .globalThis = globalThis,
+                .returns = returns,
+                .formatter = &formatter,
+            };
+            const fmt =
+                \\Some calls errored:
+                \\
+                \\    Expected: {any}
+                \\    Received:
+                \\{any}
+                \\
+                \\    Number of returns: {d}
+                \\    Number of calls:   {d}
+            ;
+
+            switch (Output.enable_ansi_colors) {
+                inline else => |colors| {
+                    return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
+                        expected.toFmt(&formatter),
+                        list_formatter,
+                        successful_returns_count,
+                        calls_count,
+                    });
+                },
+            }
+        } else {
+            // Case: No errors, but no match (and multiple returns)
+            const list_formatter = SuccessfulReturnsFormatter{
+                .globalThis = globalThis,
+                .successful_returns = &successful_returns,
+                .formatter = &formatter,
+            };
+            const fmt =
+                \\    <green>Expected<r>: {any}
+                \\    <red>Received<r>:
+                \\{any}
+                \\
+                \\    Number of returns: {d}
+            ;
+
+            switch (Output.enable_ansi_colors) {
+                inline else => |colors| {
+                    return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
+                        expected.toFmt(&formatter),
+                        list_formatter,
+                        successful_returns_count,
+                    });
+                },
+            }
+        }
+    }
+
+    pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments();
+        defer this.postMatch(globalThis);
+
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastReturnedWith", "<green>expected<r>");
+
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("toHaveBeenLastReturnedWith() requires 1 argument", .{});
+        }
+
+        const expected = arguments[0];
+        incrementExpectCallCounter();
+
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+
+        const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
+        var pass = false;
+        var last_return_value: JSValue = .js_undefined;
+        var last_call_threw = false;
+        var last_error_value: JSValue = .js_undefined;
+
+        if (calls_count > 0) {
+            const last_result = returns.getDirectIndex(globalThis, calls_count - 1);
+
+            if (last_result.isObject()) {
+                const result_type = try last_result.get(globalThis, "type") orelse .js_undefined;
+                if (result_type.isString()) {
+                    const type_str = try result_type.toBunString(globalThis);
+                    defer type_str.deref();
+
+                    if (type_str.eqlComptime("return")) {
+                        last_return_value = try last_result.get(globalThis, "value") orelse .js_undefined;
+
+                        if (try last_return_value.jestDeepEquals(expected, globalThis)) {
+                            pass = true;
+                        }
+                    } else if (type_str.eqlComptime("throw")) {
+                        last_call_threw = true;
+                        last_error_value = try last_result.get(globalThis, "value") orelse .js_undefined;
+                    }
+                }
+            }
+        }
+
+        if (pass != this.flags.not) {
+            return .js_undefined;
+        }
+
+        // Handle failure
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        defer formatter.deinit();
+
+        const signature = comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
+
+        if (this.flags.not) {
+            return this.throw(globalThis, comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", true), "\n\n" ++ "Expected mock function not to have last returned: <green>{any}<r>\n" ++ "But it did.\n", .{expected.toFmt(&formatter)});
+        }
+
+        if (calls_count == 0) {
+            return this.throw(globalThis, signature, "\n\n" ++ "The mock function was not called.", .{});
+        }
+
+        if (last_call_threw) {
+            return this.throw(globalThis, signature, "\n\n" ++ "The last call threw an error: <red>{any}<r>\n", .{last_error_value.toFmt(&formatter)});
+        }
+
+        // Diff if possible
+        if (expected.isString() and last_return_value.isString()) {
+            const diff_format = DiffFormatter{ .expected = expected, .received = last_return_value, .globalThis = globalThis, .not = false };
+            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+        }
+
+        return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ expected.toFmt(&formatter), last_return_value.toFmt(&formatter) });
+    }
+    pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments();
+        defer this.postMatch(globalThis);
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>");
+
+        if (arguments.len < 2) {
+            return globalThis.throwInvalidArguments("toHaveNthReturnedWith() requires 2 arguments (n, expected)", .{});
+        }
+
+        const nth_arg = arguments[0];
+        const expected = arguments[1];
+
+        // Validate n is a number
+        if (!nth_arg.isAnyInt()) {
+            return globalThis.throwInvalidArguments("toHaveNthReturnedWith() first argument must be an integer", .{});
+        }
+
+        const n = nth_arg.toInt32();
+        if (n <= 0) {
+            return globalThis.throwInvalidArguments("toHaveNthReturnedWith() n must be greater than 0", .{});
+        }
+
+        incrementExpectCallCounter();
+        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+
+        const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
+        const index = @as(u32, @intCast(n - 1)); // Convert to 0-based index
+
+        var pass = false;
+        var nth_return_value: JSValue = .js_undefined;
+        var nth_call_threw = false;
+        var nth_error_value: JSValue = .js_undefined;
+        var nth_call_exists = false;
+
+        if (index < calls_count) {
+            nth_call_exists = true;
+            const nth_result = returns.getDirectIndex(globalThis, index);
+            if (nth_result.isObject()) {
+                const result_type = try nth_result.get(globalThis, "type") orelse .js_undefined;
+                if (result_type.isString()) {
+                    const type_str = try result_type.toBunString(globalThis);
+                    defer type_str.deref();
+                    if (type_str.eqlComptime("return")) {
+                        nth_return_value = try nth_result.get(globalThis, "value") orelse .js_undefined;
+                        if (try nth_return_value.jestDeepEquals(expected, globalThis)) {
+                            pass = true;
+                        }
+                    } else if (type_str.eqlComptime("throw")) {
+                        nth_call_threw = true;
+                        nth_error_value = try nth_result.get(globalThis, "value") orelse .js_undefined;
+                    }
+                }
+            }
+        }
+
+        if (pass != this.flags.not) {
+            return .js_undefined;
+        }
+
+        // Handle failure
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        defer formatter.deinit();
+
+        const signature = comptime getSignature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
+
+        if (this.flags.not) {
+            return this.throw(globalThis, comptime getSignature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true), "\n\n" ++ "Expected mock function not to have returned on call {d}: <green>{any}<r>\n" ++ "But it did.\n", .{ n, expected.toFmt(&formatter) });
+        }
+
+        if (!nth_call_exists) {
+            return this.throw(globalThis, signature, "\n\n" ++ "The mock function was called {d} time{s}, but call {d} was requested.\n", .{ calls_count, if (calls_count == 1) "" else "s", n });
+        }
+
+        if (nth_call_threw) {
+            return this.throw(globalThis, signature, "\n\n" ++ "Call {d} threw an error: <red>{any}<r>\n", .{ n, nth_error_value.toFmt(&formatter) });
+        }
+
+        // Diff if possible
+        if (expected.isString() and nth_return_value.isString()) {
+            const diff_format = DiffFormatter{ .expected = expected, .received = nth_return_value, .globalThis = globalThis, .not = false };
+            return this.throw(globalThis, signature, "\n\nCall {d}:\n{any}\n", .{ n, diff_format });
+        }
+
+        return this.throw(globalThis, signature, "\n\nCall {d}:\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ n, expected.toFmt(&formatter), nth_return_value.toFmt(&formatter) });
+    }
 
     pub fn getStaticNot(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
         return ExpectStatic.create(globalThis, .{ .not = true });

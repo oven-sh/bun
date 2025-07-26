@@ -186,7 +186,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearData();
             this.tcp.detach();
 
-            this.dispatchAbruptClose(ErrorCode.ended);
+            // Dispatch close without double unref/deref - handleClose already handles cleanup
+            this.dispatchAbruptCloseFromSocketClose(ErrorCode.ended);
 
             // For the socket.
             this.deref();
@@ -1041,6 +1042,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.outgoing_websocket = null;
             out.didAbruptClose(code);
             this.deref();
+        }
+
+        /// Version of dispatchAbruptClose that doesn't unref poll_ref or deref the object
+        /// Used when called from handleClose which already handles cleanup
+        fn dispatchAbruptCloseFromSocketClose(this: *WebSocket, code: ErrorCode) void {
+            var out = this.outgoing_websocket orelse return;
+            jsc.markBinding(@src());
+            this.outgoing_websocket = null;
+            out.didAbruptClose(code);
         }
 
         fn dispatchClose(this: *WebSocket, code: u16, reason: *bun.String) void {

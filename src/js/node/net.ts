@@ -236,8 +236,11 @@ const SocketHandlers: SocketHandler = {
   open(socket) {
     const self = socket.data;
     if (!self) return;
-    socket.timeout(Math.ceil(self.timeout / 1000));
-
+    // make sure to disable timeout on usocket and handle on TS side
+    socket.timeout(0);
+    if (self.timeout) {
+      self.setTimeout(self.timeout);
+    }
     self._handle = socket;
     self.connecting = false;
     const options = self[bunTLSConnectOptions];
@@ -860,7 +863,11 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
-  socket.timeout(Math.ceil(this.timeout / 1000));
+  if (this.timeout) {
+    this.setTimeout(this.timeout);
+  }
+  // make sure to disable timeout on usocket and handle on TS side
+  socket.timeout(0);
   this._handle = socket;
   this.connecting = false;
 
@@ -1400,11 +1407,6 @@ Socket.prototype.setTimeout = {
     return this;
   },
 }.setTimeout;
-
-Socket.prototype._onTimeout = function _onTimeout() {
-  $debug("_onTimeout");
-  this.emit("timeout");
-};
 
 Socket.prototype._unrefTimer = function _unrefTimer() {
   for (let s = this; s !== null; s = s._parent) {
@@ -1961,7 +1963,9 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  if (!handle) return;
   const self = handle[owner_symbol];
+  if (!self) return;
 
   // Callback may come after call to destroy
   if (self.destroyed) {

@@ -97,11 +97,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onResolve(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onResolve", .{});
 
-            const arguments = callframe.arguments_old(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctxJsvalue, const result = callframe.argumentsAsArray(2);
+            var ctx = ctxJsvalue.asPromisePtr(@This());
             defer ctx.deref();
 
-            const result = arguments.ptr[0];
             result.ensureStillAlive();
 
             handleResolve(ctx, result);
@@ -250,9 +249,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onReject(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onReject", .{});
 
-            const arguments = callframe.arguments_old(2);
-            const ctx = arguments.ptr[1].asPromisePtr(@This());
-            const err = arguments.ptr[0];
+            const ctxJsvalue, const err = callframe.argumentsAsArray(2);
+            const ctx = ctxJsvalue.asPromisePtr(@This());
             defer ctx.deref();
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
             return .js_undefined;
@@ -1618,17 +1616,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments_old(2);
-            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            var args = callframe.arguments();
+            bun.assert(args.len > 0);
+            var req: *@This() = args[args.len - 1].asPromisePtr(@This());
             defer req.deref();
             req.handleResolveStream();
             return .js_undefined;
         }
         pub fn onRejectStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onRejectStream", .{});
-            const args = callframe.arguments_old(2);
-            var req = args.ptr[args.len - 1].asPromisePtr(@This());
-            const err = args.ptr[0];
+            const args = callframe.arguments();
+            bun.assert(args.len > 0);
+            var req = args[args.len - 1].asPromisePtr(@This());
+            const err = args[0];
             defer req.deref();
 
             req.handleRejectStream(globalThis, err);

@@ -522,7 +522,7 @@ pub fn publishBinary(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(4);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         log("publishBinary()", .{});
@@ -536,9 +536,9 @@ pub fn publishBinary(
     const flags = this.handler.flags;
     const ssl = flags.ssl;
     const publish_to_self = flags.publish_to_self;
-    const topic_value = args.ptr[0];
-    const message_value = args.ptr[1];
-    const compress_value = args.ptr[2];
+    const topic_value = args[0];
+    const message_value: JSValue = if (args.len > 1) args[1] else .js_undefined;
+    const compress_value: JSValue = if (args.len > 2) args[2] else .js_undefined;
 
     if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
         log("publishBinary() topic invalid", .{});
@@ -667,14 +667,14 @@ pub fn cork(
     // make sure the `this` value is up to date.
     this_value: jsc.JSValue,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     this.this_value = this_value;
 
     if (args.len < 1) {
         return globalThis.throwNotEnoughArguments("cork", 1, 0);
     }
 
-    const callback = args.ptr[0];
+    const callback = args[0];
     if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable()) {
         return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
     }
@@ -704,7 +704,7 @@ pub fn send(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         log("send()", .{});
@@ -716,8 +716,8 @@ pub fn send(
         return JSValue.jsNumber(0);
     }
 
-    const message_value = args.ptr[0];
-    const compress_value = args.ptr[1];
+    const message_value: JSValue = args[0];
+    const compress_value: JSValue = if (args.len > 1) args[1] else .js_undefined;
 
     if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
         return globalThis.throw("send expects compress to be a boolean", .{});
@@ -780,7 +780,7 @@ pub fn sendText(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         log("sendText()", .{});
@@ -792,8 +792,8 @@ pub fn sendText(
         return JSValue.jsNumber(0);
     }
 
-    const message_value = args.ptr[0];
-    const compress_value = args.ptr[1];
+    const message_value: JSValue = args[0];
+    const compress_value: JSValue = if (args.len > 1) args[1] else .js_undefined;
 
     if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
         return globalThis.throw("sendText expects compress to be a boolean", .{});
@@ -868,7 +868,7 @@ pub fn sendBinary(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         log("sendBinary()", .{});
@@ -880,8 +880,8 @@ pub fn sendBinary(
         return JSValue.jsNumber(0);
     }
 
-    const message_value = args.ptr[0];
-    const compress_value = args.ptr[1];
+    const message_value: JSValue = args[0];
+    const compress_value: JSValue = if (args.len > 1) args[1] else .js_undefined;
 
     if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
         return globalThis.throw("sendBinary expects compress to be a boolean", .{});
@@ -961,14 +961,14 @@ inline fn sendPing(
     comptime name: string,
     comptime opcode: uws.Opcode,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
 
     if (this.isClosed()) {
         return JSValue.jsNumber(0);
     }
 
     if (args.len > 0) {
-        var value = args.ptr[0];
+        var value = args[0];
         if (!value.isEmptyOrUndefinedOrNull()) {
             if (value.asArrayBuffer(globalThis)) |data| {
                 const buffer = data.slice();
@@ -1065,7 +1065,7 @@ pub fn close(
     // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
     this_value: jsc.JSValue,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
     log("close()", .{});
     this.this_value = this_value;
 
@@ -1074,21 +1074,21 @@ pub fn close(
     }
 
     const code = brk: {
-        if (args.ptr[0] == .zero or args.ptr[0].isUndefined()) {
+        if (args.len <= 0 or args[0] == .zero or args[0].isUndefined()) {
             // default exception code
             break :brk 1000;
         }
 
-        if (!args.ptr[0].isNumber()) {
+        if (!args[0].isNumber()) {
             return globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
         }
 
-        break :brk try args.ptr[0].coerce(i32, globalThis);
+        break :brk try args[0].coerce(i32, globalThis);
     };
 
     var message_value: ZigString.Slice = brk: {
-        if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
-        break :brk try args.ptr[1].toSliceOrNull(globalThis);
+        if (args.len <= 1 or args[1] == .zero or args[1].isUndefined()) break :brk ZigString.Slice.empty;
+        break :brk try args[1].toSliceOrNull(globalThis);
     };
 
     defer message_value.deinit();
@@ -1100,14 +1100,11 @@ pub fn close(
 
 pub fn terminate(
     this: *ServerWebSocket,
-    globalThis: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
+    _: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
     // Since terminate() can lead to close() being called, let's always ensure the `this` value is up to date.
     this_value: jsc.JSValue,
 ) bun.JSError!JSValue {
-    _ = globalThis;
-    const args = callframe.arguments_old(2);
-    _ = args;
     log("terminate()", .{});
 
     this.this_value = this_value;
@@ -1172,7 +1169,7 @@ pub fn subscribe(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     if (args.len < 1) {
         return globalThis.throw("subscribe requires at least 1 argument", .{});
     }
@@ -1181,11 +1178,11 @@ pub fn subscribe(
         return JSValue.jsBoolean(true);
     }
 
-    if (!args.ptr[0].isString()) {
-        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
+    if (!args[0].isString()) {
+        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args[0]);
     }
 
-    var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
+    var topic = try args[0].toSlice(globalThis, bun.default_allocator);
     defer topic.deinit();
 
     if (topic.len == 0) {
@@ -1195,7 +1192,7 @@ pub fn subscribe(
     return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
 }
 pub fn unsubscribe(this: *ServerWebSocket, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     if (args.len < 1) {
         return globalThis.throw("unsubscribe requires at least 1 argument", .{});
     }
@@ -1204,11 +1201,11 @@ pub fn unsubscribe(this: *ServerWebSocket, globalThis: *jsc.JSGlobalObject, call
         return JSValue.jsBoolean(true);
     }
 
-    if (!args.ptr[0].isString()) {
-        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
+    if (!args[0].isString()) {
+        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args[0]);
     }
 
-    var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
+    var topic = try args[0].toSlice(globalThis, bun.default_allocator);
     defer topic.deinit();
 
     if (topic.len == 0) {
@@ -1222,7 +1219,7 @@ pub fn isSubscribed(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     if (args.len < 1) {
         return globalThis.throw("isSubscribed requires at least 1 argument", .{});
     }
@@ -1231,11 +1228,11 @@ pub fn isSubscribed(
         return JSValue.jsBoolean(false);
     }
 
-    if (!args.ptr[0].isString()) {
-        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args.ptr[0]);
+    if (!args[0].isString()) {
+        return globalThis.throwInvalidArgumentTypeValue("topic", "string", args[0]);
     }
 
-    var topic = try args.ptr[0].toSlice(globalThis, bun.default_allocator);
+    var topic = try args[0].toSlice(globalThis, bun.default_allocator);
     defer topic.deinit();
 
     if (topic.len == 0) {

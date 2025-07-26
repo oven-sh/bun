@@ -544,8 +544,7 @@ pub fn wrapInstanceMethod(
             globalThis: *jsc.JSGlobalObject,
             callframe: *jsc.CallFrame,
         ) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
-            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
@@ -704,8 +703,7 @@ pub fn wrapStaticMethod(
             globalThis: *jsc.JSGlobalObject,
             callframe: *jsc.CallFrame,
         ) bun.JSError!jsc.JSValue {
-            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
-            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
+            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
             var args: Args = undefined;
 
             inline for (FunctionTypeInfo.params, 0..) |param, i| {

@@ -1,12 +1,13 @@
 const log = Output.scoped(.IsolatedInstall, false);
 
+/// Runs on main thread
 pub fn installIsolatedPackages(
     manager: *PackageManager,
     command_ctx: Command.Context,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
 ) OOM!PackageInstall.Summary {
-    bun.Analytics.Features.isolated_bun_install += 1;
+    bun.analytics.Features.isolated_bun_install += 1;
 
     const lockfile = manager.lockfile;
 
@@ -46,14 +47,14 @@ pub fn installIsolatedPackages(
         //
         // In the pnpm repo without this map: 772,471 nodes
         //                 and with this map: 314,022 nodes
-        var early_dedupe: std.AutoHashMapUnmanaged(PackageID, Store.Node.Id) = .empty;
-        defer early_dedupe.deinit(lockfile.allocator);
+        var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
+        defer early_dedupe.deinit();
 
-        var peer_dep_ids: std.ArrayListUnmanaged(DependencyID) = .empty;
-        defer peer_dep_ids.deinit(lockfile.allocator);
+        var peer_dep_ids: std.ArrayList(DependencyID) = .init(lockfile.allocator);
+        defer peer_dep_ids.deinit();
 
-        var visited_parent_node_ids: std.ArrayListUnmanaged(Store.Node.Id) = .empty;
-        defer visited_parent_node_ids.deinit(lockfile.allocator);
+        var visited_parent_node_ids: std.ArrayList(Store.Node.Id) = .init(lockfile.allocator);
+        defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
         next_node: while (node_queue.readItem()) |entry| {
@@ -61,6 +62,7 @@ pub fn installIsolatedPackages(
                 // check for cycles
                 const nodes_slice = nodes.slice();
                 const node_pkg_ids = nodes_slice.items(.pkg_id);
+                const node_dep_ids = nodes_slice.items(.dep_id);
                 const node_parent_ids = nodes_slice.items(.parent_id);
                 const node_nodes = nodes_slice.items(.nodes);
 
@@ -68,9 +70,20 @@ pub fn installIsolatedPackages(
                 while (curr_id != .invalid) {
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
                         // skip the new node, and add the previously added node to parent so it appears in
-                        // 'node_modules/.bun/parent@version/node_modules'
-                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
-                        continue :next_node;
+                        // 'node_modules/.bun/parent@version/node_modules'.
+
+                        const dep_id = node_dep_ids[curr_id.get()];
+                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
+
+                        // ensure the dependency name is the same before skipping the cycle. if they aren't
+                        // we lose dependency name information for the symlinks
+                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            continue :next_node;
+                        }
                     }
                     curr_id = node_parent_ids[curr_id.get()];
                 }
@@ -82,8 +95,8 @@ pub fn installIsolatedPackages(
             var skip_dependencies_of_workspace_node = false;
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.isWorkspaceDep()) dont_dedupe: {
-                    const dedupe_entry = try early_dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
+                    const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
 
@@ -98,8 +111,8 @@ pub fn installIsolatedPackages(
                             break :dont_dedupe;
                         }
 
-                        if (dedupe_dep.isWorkspaceDep() and entry_dep.isWorkspaceDep()) {
-                            if (dedupe_dep.behavior.isWorkspaceOnly() != entry_dep.behavior.isWorkspaceOnly()) {
+                        if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
+                            if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
                                 // only attach the dependencies to one of the workspaces
                                 skip_dependencies_of_workspace_node = true;
                                 break :dont_dedupe;
@@ -186,7 +199,7 @@ pub fn installIsolatedPackages(
                     continue;
                 }
 
-                try peer_dep_ids.append(lockfile.allocator, dep_id);
+                try peer_dep_ids.append(dep_id);
             }
 
             next_peer: for (peer_dep_ids.items) |peer_dep_id| {
@@ -268,7 +281,7 @@ pub fn installIsolatedPackages(
 
                             // add the remaining parent ids
                             while (curr_id != .invalid) {
-                                try visited_parent_node_ids.append(lockfile.allocator, curr_id);
+                                try visited_parent_node_ids.append(curr_id);
                                 curr_id = node_parent_ids[curr_id.get()];
                             }
 
@@ -279,7 +292,7 @@ pub fn installIsolatedPackages(
 
                         // add to visited parents after searching for a peer resolution.
                         // if a node resolves a transitive peer, it can still be deduplicated
-                        try visited_parent_node_ids.append(lockfile.allocator, curr_id);
+                        try visited_parent_node_ids.append(curr_id);
                         curr_id = node_parent_ids[curr_id.get()];
                     }
 
@@ -374,8 +387,8 @@ pub fn installIsolatedPackages(
                         const curr_dep = dependencies[curr_dep_id];
                         const existing_dep = dependencies[info.dep_id];
 
-                        if (existing_dep.isWorkspaceDep() and curr_dep.isWorkspaceDep()) {
-                            if (existing_dep.behavior.isWorkspaceOnly() != curr_dep.behavior.isWorkspaceOnly()) {
+                        if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                            if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
                                 continue;
                             }
                         }
@@ -395,7 +408,7 @@ pub fn installIsolatedPackages(
 
                         var parents = &entry_parents[info.entry_id.get()];
 
-                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
+                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspace()) {
                             try parents.append(lockfile.allocator, entry.entry_parent_id);
                             continue :next_entry;
                         }
@@ -436,7 +449,7 @@ pub fn installIsolatedPackages(
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
+            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].version.tag == .workspace;
 
             const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
                 .empty
@@ -457,7 +470,7 @@ pub fn installIsolatedPackages(
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
-                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly()) {
+                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspace()) {
                     // skip implicit workspace dependencies on the root.
                     break :skip_adding_dependency;
                 }
@@ -567,7 +580,7 @@ pub fn installIsolatedPackages(
 
     {
         var root_node: *Progress.Node = undefined;
-        // var download_node: Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -575,12 +588,13 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.showProgress()) {
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             root_node = progress.start("", 0);
-            // download_node = root_node.start(ProgressStrings.download(), 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
             install_node = root_node.start(ProgressStrings.install(), store.entries.len);
             scripts_node = root_node.start(ProgressStrings.script(), 0);
 
             manager.downloads_node = null;
             manager.scripts_node = &scripts_node;
+            manager.downloads_node = &download_node;
         }
 
         const nodes_slice = store.nodes.slice();
@@ -607,6 +621,9 @@ pub fn installIsolatedPackages(
         var seen_workspace_ids: std.AutoHashMapUnmanaged(PackageID, void) = .empty;
         defer seen_workspace_ids.deinit(lockfile.allocator);
 
+        const tasks = try manager.allocator.alloc(Store.Installer.Task, store.entries.len);
+        defer manager.allocator.free(tasks);
+
         var installer: Store.Installer = .{
             .lockfile = lockfile,
             .manager = manager,
@@ -615,13 +632,26 @@ pub fn installIsolatedPackages(
             .install_node = if (manager.options.log_level.showProgress()) &install_node else null,
             .scripts_node = if (manager.options.log_level.showProgress()) &scripts_node else null,
             .store = &store,
-            .preallocated_tasks = .init(bun.default_allocator),
+            .tasks = tasks,
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
+            .supported_backend = .init(PackageInstall.supported_method),
         };
 
+        for (tasks, 0..) |*task, _entry_id| {
+            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+            task.* = .{
+                .entry_id = entry_id,
+                .installer = &installer,
+                .result = .none,
+
+                .task = .{ .callback = &Store.Installer.Task.callback },
+                .next = null,
+            };
+        }
+
         // add the pending task count upfront
-        _ = manager.incrementPendingTasks(@intCast(store.entries.len));
+        manager.incrementPendingTasks(@intCast(store.entries.len));
 
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
@@ -637,11 +667,14 @@ pub fn installIsolatedPackages(
                 else => {
                     // this is `uninitialized` or `single_file_module`.
                     bun.debugAssert(false);
+                    // .monotonic is okay because the task isn't running on another thread.
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .root => {
+                    // .monotonic is okay in this block because the task isn't running on another
+                    // thread.
                     if (entry_id == .root) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
                         installer.startTask(entry_id);
@@ -652,6 +685,9 @@ pub fn installIsolatedPackages(
                     continue;
                 },
                 .workspace => {
+                    // .monotonic is okay in this block because the task isn't running on another
+                    // thread.
+
                     // if injected=true this might be false
                     if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
@@ -659,12 +695,13 @@ pub fn installIsolatedPackages(
                         continue;
                     }
                     entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.onTaskComplete(entry_id, .success);
+                    installer.onTaskComplete(entry_id, .skipped);
                     continue;
                 },
                 .symlink => {
                     // no installation required, will only need to be linked to packages that depend on it.
                     bun.debugAssert(entry_dependencies[entry_id.get()].list.items.len == 0);
+                    // .monotonic is okay because the task isn't running on another thread.
                     entry_steps[entry_id.get()].store(.done, .monotonic);
                     installer.onTaskComplete(entry_id, .skipped);
                     continue;
@@ -691,6 +728,11 @@ pub fn installIsolatedPackages(
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
                             installer.appendStorePath(&store_path, entry_id);
+                            const scope_for_patch_tag_path = store_path.save();
+                            if (pkg_res_tag == .npm)
+                                // if it's from npm, it should always have a package.json.
+                                // in other cases, probably yes but i'm less confident.
+                                store_path.append("package.json");
                             const exists = sys.existsZ(store_path.sliceZ());
 
                             break :needs_install switch (patch_info) {
@@ -700,16 +742,15 @@ pub fn installIsolatedPackages(
                                 .patch => |patch| {
                                     var hash_buf: install.BuntagHashBuf = undefined;
                                     const hash = install.buntaghashbuf_make(&hash_buf, patch.contents_hash);
-                                    var patch_tag_path: bun.AbsPath(.{}) = .initTopLevelDir();
-                                    defer patch_tag_path.deinit();
-                                    installer.appendStorePath(&patch_tag_path, entry_id);
-                                    patch_tag_path.append(hash);
-                                    break :needs_install !sys.existsZ(patch_tag_path.sliceZ());
+                                    scope_for_patch_tag_path.restore();
+                                    store_path.append(hash);
+                                    break :needs_install !sys.existsZ(store_path.sliceZ());
                                 },
                             };
                         };
 
                     if (!needs_install) {
+                        // .monotonic is okay because the task isn't running on another thread.
                         entry_steps[entry_id.get()].store(.done, .monotonic);
                         installer.onTaskComplete(entry_id, .skipped);
                         continue;
@@ -785,6 +826,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     installer.onTaskComplete(entry_id, .fail);
                                     continue;
@@ -820,6 +863,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     installer.onTaskComplete(entry_id, .fail);
                                     continue;
@@ -852,6 +897,8 @@ pub fn installIsolatedPackages(
                                     if (manager.options.enable.fail_early) {
                                         Global.exit(1);
                                     }
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
                                     installer.onTaskComplete(entry_id, .fail);
                                     continue;
@@ -864,38 +911,47 @@ pub fn installIsolatedPackages(
             }
         }
 
-        if (manager.pendingTaskCount() > 0) {
-            const Wait = struct {
-                installer: *Store.Installer,
-                manager: *PackageManager,
-                err: ?anyerror = null,
+        const Wait = struct {
+            installer: *Store.Installer,
+            err: ?anyerror = null,
 
-                pub fn isDone(wait: *@This()) bool {
-                    wait.manager.runTasks(
-                        *Store.Installer,
-                        wait.installer,
-                        .{
-                            .onExtract = Store.Installer.onPackageExtracted,
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                        },
-                        true,
-                        wait.manager.options.log_level,
-                    ) catch |err| {
-                        wait.err = err;
-                        return true;
-                    };
+            pub fn isDone(wait: *@This()) bool {
+                const pkg_manager = wait.installer.manager;
+                pkg_manager.runTasks(
+                    *Store.Installer,
+                    wait.installer,
+                    .{
+                        .onExtract = Store.Installer.onPackageExtracted,
+                        .onResolve = {},
+                        .onPackageManifestError = {},
+                        .onPackageDownloadError = {},
+                    },
+                    true,
+                    pkg_manager.options.log_level,
+                ) catch |err| {
+                    wait.err = err;
+                    return true;
+                };
 
-                    return wait.manager.pendingTaskCount() == 0;
+                if (pkg_manager.scripts_node) |node| {
+                    // if we're just waiting for scripts, make it known.
+
+                    // .monotonic is okay because this is just used for progress; we don't rely on
+                    // any side effects from completed tasks.
+                    const pending_lifecycle_scripts = pkg_manager.pending_lifecycle_script_tasks.load(.monotonic);
+                    // `+ 1` because the root task needs to wait for everything
+                    if (pending_lifecycle_scripts > 0 and pkg_manager.pendingTaskCount() <= pending_lifecycle_scripts + 1) {
+                        node.activate();
+                        pkg_manager.progress.refresh();
+                    }
                 }
-            };
 
-            var wait: Wait = .{
-                .manager = manager,
-                .installer = &installer,
-            };
+                return pkg_manager.pendingTaskCount() == 0;
+            }
+        };
 
+        if (manager.pendingTaskCount() > 0) {
+            var wait = Wait{ .installer = &installer };
             manager.sleepUntil(&wait, &Wait.isDone);
 
             if (wait.err) |err| {
@@ -913,6 +969,9 @@ pub fn installIsolatedPackages(
             var done = true;
             next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
                 const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+                // .monotonic is okay because `Wait.isDone` should have already synchronized with
+                // the completed task threads, via popping from the `UnboundedQueue` in `runTasks`,
+                // and the .acquire load `pendingTaskCount`.
                 const step = entry_step.load(.monotonic);
 
                 if (step == .done) {
@@ -925,6 +984,7 @@ pub fn installIsolatedPackages(
 
                 const deps = store.entries.items(.dependencies)[entry_id.get()];
                 for (deps.slice()) |dep| {
+                    // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
                     if (dep_step != .done) {
                         log(", parents:\n - ", .{});
@@ -954,8 +1014,6 @@ pub fn installIsolatedPackages(
     }
 }
 
-// @sortImports
-
 const std = @import("std");
 
 const bun = @import("bun");
@@ -966,7 +1024,7 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const sys = bun.sys;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const install = bun.install;
 const DependencyID = install.DependencyID;

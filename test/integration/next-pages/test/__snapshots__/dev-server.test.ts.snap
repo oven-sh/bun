@@ -278,22 +278,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 21,
-      "literal": "^6.0.0 || ^7.0.0 || >=8.0.0",
-      "name": "eslint",
-      "npm": {
-        "name": "eslint",
-        "version": ">=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 && >=8.0.0",
-      },
-      "package_id": 198,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 22,
+      "id": 21,
       "literal": "^3.4.3",
       "name": "eslint-visitor-keys",
       "npm": {
@@ -301,6 +288,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=3.4.3 <4.0.0",
       },
       "package_id": 474,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 22,
+      "literal": "^6.0.0 || ^7.0.0 || >=8.0.0",
+      "name": "eslint",
+      "npm": {
+        "name": "eslint",
+        "version": ">=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 && >=8.0.0",
+      },
+      "package_id": 198,
     },
     {
       "behavior": {
@@ -1100,48 +1100,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 84,
-      "literal": "^8.0.0 || ^8.0.0-alpha.0",
-      "name": "@typescript-eslint/parser",
-      "npm": {
-        "name": "@typescript-eslint/parser",
-        "version": ">=8.0.0 <9.0.0 || >=8.0.0-alpha.0 <9.0.0 && >=8.0.0-alpha.0 <9.0.0",
-      },
-      "package_id": 79,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
-      "id": 85,
-      "literal": "^8.57.0 || ^9.0.0",
-      "name": "eslint",
-      "npm": {
-        "name": "eslint",
-        "version": ">=8.57.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
-      },
-      "package_id": 198,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
-      "id": 86,
-      "literal": ">=4.8.4 <5.9.0",
-      "name": "typescript",
-      "npm": {
-        "name": "typescript",
-        "version": ">=4.8.4 && <5.9.0",
-      },
-      "package_id": 449,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 87,
+      "id": 84,
       "literal": "^4.10.0",
       "name": "@eslint-community/regexpp",
       "npm": {
@@ -1154,7 +1115,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 88,
+      "id": 85,
       "literal": "8.29.0",
       "name": "@typescript-eslint/scope-manager",
       "npm": {
@@ -1167,7 +1128,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 89,
+      "id": 86,
       "literal": "8.29.0",
       "name": "@typescript-eslint/type-utils",
       "npm": {
@@ -1180,7 +1141,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 90,
+      "id": 87,
       "literal": "8.29.0",
       "name": "@typescript-eslint/utils",
       "npm": {
@@ -1193,7 +1154,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 91,
+      "id": 88,
       "literal": "8.29.0",
       "name": "@typescript-eslint/visitor-keys",
       "npm": {
@@ -1206,7 +1167,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 92,
+      "id": 89,
       "literal": "^1.4.0",
       "name": "graphemer",
       "npm": {
@@ -1219,7 +1180,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 93,
+      "id": 90,
       "literal": "^5.3.1",
       "name": "ignore",
       "npm": {
@@ -1232,7 +1193,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 94,
+      "id": 91,
       "literal": "^1.4.0",
       "name": "natural-compare",
       "npm": {
@@ -1245,7 +1206,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 95,
+      "id": 92,
       "literal": "^2.0.1",
       "name": "ts-api-utils",
       "npm": {
@@ -1258,7 +1219,20 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 96,
+      "id": 93,
+      "literal": "^8.0.0 || ^8.0.0-alpha.0",
+      "name": "@typescript-eslint/parser",
+      "npm": {
+        "name": "@typescript-eslint/parser",
+        "version": ">=8.0.0 <9.0.0 || >=8.0.0-alpha.0 <9.0.0 && >=8.0.0-alpha.0 <9.0.0",
+      },
+      "package_id": 79,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 94,
       "literal": "^8.57.0 || ^9.0.0",
       "name": "eslint",
       "npm": {
@@ -1271,7 +1245,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 97,
+      "id": 95,
       "literal": ">=4.8.4 <5.9.0",
       "name": "typescript",
       "npm": {
@@ -1284,7 +1258,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 98,
+      "id": 96,
       "literal": "8.29.0",
       "name": "@typescript-eslint/scope-manager",
       "npm": {
@@ -1297,7 +1271,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 99,
+      "id": 97,
       "literal": "8.29.0",
       "name": "@typescript-eslint/types",
       "npm": {
@@ -1310,7 +1284,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 100,
+      "id": 98,
       "literal": "8.29.0",
       "name": "@typescript-eslint/typescript-estree",
       "npm": {
@@ -1323,7 +1297,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 101,
+      "id": 99,
       "literal": "8.29.0",
       "name": "@typescript-eslint/visitor-keys",
       "npm": {
@@ -1336,7 +1310,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 102,
+      "id": 100,
       "literal": "^4.3.4",
       "name": "debug",
       "npm": {
@@ -1344,6 +1318,32 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=4.3.4 <5.0.0",
       },
       "package_id": 170,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 101,
+      "literal": "^8.57.0 || ^9.0.0",
+      "name": "eslint",
+      "npm": {
+        "name": "eslint",
+        "version": ">=8.57.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
+      },
+      "package_id": 198,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 102,
+      "literal": ">=4.8.4 <5.9.0",
+      "name": "typescript",
+      "npm": {
+        "name": "typescript",
+        "version": ">=4.8.4 && <5.9.0",
+      },
+      "package_id": 449,
     },
     {
       "behavior": {
@@ -1373,35 +1373,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 105,
-      "literal": "^8.57.0 || ^9.0.0",
-      "name": "eslint",
-      "npm": {
-        "name": "eslint",
-        "version": ">=8.57.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
-      },
-      "package_id": 198,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
-      "id": 106,
-      "literal": ">=4.8.4 <5.9.0",
-      "name": "typescript",
-      "npm": {
-        "name": "typescript",
-        "version": ">=4.8.4 && <5.9.0",
-      },
-      "package_id": 449,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 107,
+      "id": 105,
       "literal": "8.29.0",
       "name": "@typescript-eslint/typescript-estree",
       "npm": {
@@ -1414,7 +1388,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 108,
+      "id": 106,
       "literal": "8.29.0",
       "name": "@typescript-eslint/utils",
       "npm": {
@@ -1427,150 +1401,33 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
+      "id": 107,
+      "literal": "^4.3.4",
+      "name": "debug",
+      "npm": {
+        "name": "debug",
+        "version": ">=4.3.4 <5.0.0",
+      },
+      "package_id": 170,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 108,
+      "literal": "^2.0.1",
+      "name": "ts-api-utils",
+      "npm": {
+        "name": "ts-api-utils",
+        "version": ">=2.0.1 <3.0.0",
+      },
+      "package_id": 440,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
       "id": 109,
-      "literal": "^4.3.4",
-      "name": "debug",
-      "npm": {
-        "name": "debug",
-        "version": ">=4.3.4 <5.0.0",
-      },
-      "package_id": 170,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 110,
-      "literal": "^2.0.1",
-      "name": "ts-api-utils",
-      "npm": {
-        "name": "ts-api-utils",
-        "version": ">=2.0.1 <3.0.0",
-      },
-      "package_id": 440,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
-      "id": 111,
-      "literal": ">=4.8.4 <5.9.0",
-      "name": "typescript",
-      "npm": {
-        "name": "typescript",
-        "version": ">=4.8.4 && <5.9.0",
-      },
-      "package_id": 449,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 112,
-      "literal": "8.29.0",
-      "name": "@typescript-eslint/types",
-      "npm": {
-        "name": "@typescript-eslint/types",
-        "version": "==8.29.0",
-      },
-      "package_id": 82,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 113,
-      "literal": "8.29.0",
-      "name": "@typescript-eslint/visitor-keys",
-      "npm": {
-        "name": "@typescript-eslint/visitor-keys",
-        "version": "==8.29.0",
-      },
-      "package_id": 85,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 114,
-      "literal": "^4.3.4",
-      "name": "debug",
-      "npm": {
-        "name": "debug",
-        "version": ">=4.3.4 <5.0.0",
-      },
-      "package_id": 170,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 115,
-      "literal": "^3.3.2",
-      "name": "fast-glob",
-      "npm": {
-        "name": "fast-glob",
-        "version": ">=3.3.2 <4.0.0",
-      },
-      "package_id": 218,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 116,
-      "literal": "^4.0.3",
-      "name": "is-glob",
-      "npm": {
-        "name": "is-glob",
-        "version": ">=4.0.3 <5.0.0",
-      },
-      "package_id": 279,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 117,
-      "literal": "^9.0.4",
-      "name": "minimatch",
-      "npm": {
-        "name": "minimatch",
-        "version": ">=9.0.4 <10.0.0",
-      },
-      "package_id": 483,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 118,
-      "literal": "^7.6.0",
-      "name": "semver",
-      "npm": {
-        "name": "semver",
-        "version": ">=7.6.0 <8.0.0",
-      },
-      "package_id": 484,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 119,
-      "literal": "^2.0.1",
-      "name": "ts-api-utils",
-      "npm": {
-        "name": "ts-api-utils",
-        "version": ">=2.0.1 <3.0.0",
-      },
-      "package_id": 440,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
-      "id": 120,
       "literal": "^8.57.0 || ^9.0.0",
       "name": "eslint",
       "npm": {
@@ -1583,7 +1440,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 121,
+      "id": 110,
       "literal": ">=4.8.4 <5.9.0",
       "name": "typescript",
       "npm": {
@@ -1596,33 +1453,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 122,
-      "literal": "^4.4.0",
-      "name": "@eslint-community/eslint-utils",
-      "npm": {
-        "name": "@eslint-community/eslint-utils",
-        "version": ">=4.4.0 <5.0.0",
-      },
-      "package_id": 7,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 123,
-      "literal": "8.29.0",
-      "name": "@typescript-eslint/scope-manager",
-      "npm": {
-        "name": "@typescript-eslint/scope-manager",
-        "version": "==8.29.0",
-      },
-      "package_id": 80,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 124,
+      "id": 111,
       "literal": "8.29.0",
       "name": "@typescript-eslint/types",
       "npm": {
@@ -1635,7 +1466,150 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 125,
+      "id": 112,
+      "literal": "8.29.0",
+      "name": "@typescript-eslint/visitor-keys",
+      "npm": {
+        "name": "@typescript-eslint/visitor-keys",
+        "version": "==8.29.0",
+      },
+      "package_id": 85,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 113,
+      "literal": "^4.3.4",
+      "name": "debug",
+      "npm": {
+        "name": "debug",
+        "version": ">=4.3.4 <5.0.0",
+      },
+      "package_id": 170,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 114,
+      "literal": "^3.3.2",
+      "name": "fast-glob",
+      "npm": {
+        "name": "fast-glob",
+        "version": ">=3.3.2 <4.0.0",
+      },
+      "package_id": 218,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 115,
+      "literal": "^4.0.3",
+      "name": "is-glob",
+      "npm": {
+        "name": "is-glob",
+        "version": ">=4.0.3 <5.0.0",
+      },
+      "package_id": 279,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 116,
+      "literal": "^9.0.4",
+      "name": "minimatch",
+      "npm": {
+        "name": "minimatch",
+        "version": ">=9.0.4 <10.0.0",
+      },
+      "package_id": 483,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 117,
+      "literal": "^7.6.0",
+      "name": "semver",
+      "npm": {
+        "name": "semver",
+        "version": ">=7.6.0 <8.0.0",
+      },
+      "package_id": 484,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 118,
+      "literal": "^2.0.1",
+      "name": "ts-api-utils",
+      "npm": {
+        "name": "ts-api-utils",
+        "version": ">=2.0.1 <3.0.0",
+      },
+      "package_id": 440,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 119,
+      "literal": ">=4.8.4 <5.9.0",
+      "name": "typescript",
+      "npm": {
+        "name": "typescript",
+        "version": ">=4.8.4 && <5.9.0",
+      },
+      "package_id": 449,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 120,
+      "literal": "^4.4.0",
+      "name": "@eslint-community/eslint-utils",
+      "npm": {
+        "name": "@eslint-community/eslint-utils",
+        "version": ">=4.4.0 <5.0.0",
+      },
+      "package_id": 7,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 121,
+      "literal": "8.29.0",
+      "name": "@typescript-eslint/scope-manager",
+      "npm": {
+        "name": "@typescript-eslint/scope-manager",
+        "version": "==8.29.0",
+      },
+      "package_id": 80,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 122,
+      "literal": "8.29.0",
+      "name": "@typescript-eslint/types",
+      "npm": {
+        "name": "@typescript-eslint/types",
+        "version": "==8.29.0",
+      },
+      "package_id": 82,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 123,
       "literal": "8.29.0",
       "name": "@typescript-eslint/typescript-estree",
       "npm": {
@@ -1643,6 +1617,32 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": "==8.29.0",
       },
       "package_id": 83,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 124,
+      "literal": "^8.57.0 || ^9.0.0",
+      "name": "eslint",
+      "npm": {
+        "name": "eslint",
+        "version": ">=8.57.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
+      },
+      "package_id": 198,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 125,
+      "literal": ">=4.8.4 <5.9.0",
+      "name": "typescript",
+      "npm": {
+        "name": "typescript",
+        "version": ">=4.8.4 && <5.9.0",
+      },
+      "package_id": 449,
     },
     {
       "behavior": {
@@ -2335,22 +2335,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 179,
-      "literal": "^8.1.0",
-      "name": "postcss",
-      "npm": {
-        "name": "postcss",
-        "version": ">=8.1.0 <9.0.0",
-      },
-      "package_id": 361,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 180,
+      "id": 179,
       "literal": "^4.21.10",
       "name": "browserslist",
       "npm": {
@@ -2363,7 +2350,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 181,
+      "id": 180,
       "literal": "^1.0.30001538",
       "name": "caniuse-lite",
       "npm": {
@@ -2376,7 +2363,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 182,
+      "id": 181,
       "literal": "^4.3.6",
       "name": "fraction.js",
       "npm": {
@@ -2389,7 +2376,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 183,
+      "id": 182,
       "literal": "^0.1.2",
       "name": "normalize-range",
       "npm": {
@@ -2402,7 +2389,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 184,
+      "id": 183,
       "literal": "^1.0.0",
       "name": "picocolors",
       "npm": {
@@ -2415,7 +2402,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 185,
+      "id": 184,
       "literal": "^4.2.0",
       "name": "postcss-value-parser",
       "npm": {
@@ -2423,6 +2410,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=4.2.0 <5.0.0",
       },
       "package_id": 367,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 185,
+      "literal": "^8.1.0",
+      "name": "postcss",
+      "npm": {
+        "name": "postcss",
+        "version": ">=8.1.0 <9.0.0",
+      },
+      "package_id": 361,
     },
     {
       "behavior": {
@@ -2491,10 +2491,23 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
+        "prod": true,
+      },
+      "id": 191,
+      "literal": "^2.21.0",
+      "name": "streamx",
+      "npm": {
+        "name": "streamx",
+        "version": ">=2.21.0 <3.0.0",
+      },
+      "package_id": 416,
+    },
+    {
+      "behavior": {
         "optional": true,
         "peer": true,
       },
-      "id": 191,
+      "id": 192,
       "literal": "*",
       "name": "bare-buffer",
       "npm": {
@@ -2508,7 +2521,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 192,
+      "id": 193,
       "literal": "*",
       "name": "bare-events",
       "npm": {
@@ -2516,19 +2529,6 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=0.0.0",
       },
       "package_id": 129,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 193,
-      "literal": "^2.21.0",
-      "name": "streamx",
-      "npm": {
-        "name": "streamx",
-        "version": ">=2.21.0 <3.0.0",
-      },
-      "package_id": 416,
     },
     {
       "behavior": {
@@ -2922,22 +2922,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 224,
-      "literal": "*",
-      "name": "devtools-protocol",
-      "npm": {
-        "name": "devtools-protocol",
-        "version": ">=0.0.0",
-      },
-      "package_id": 176,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 225,
+      "id": 224,
       "literal": "3.0.1",
       "name": "mitt",
       "npm": {
@@ -2950,7 +2937,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 226,
+      "id": 225,
       "literal": "10.0.0",
       "name": "urlpattern-polyfill",
       "npm": {
@@ -2963,7 +2950,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 227,
+      "id": 226,
       "literal": "3.23.8",
       "name": "zod",
       "npm": {
@@ -2971,6 +2958,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": "==3.23.8",
       },
       "package_id": 473,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 227,
+      "literal": "*",
+      "name": "devtools-protocol",
+      "npm": {
+        "name": "devtools-protocol",
+        "version": ">=0.0.0",
+      },
+      "package_id": 176,
     },
     {
       "behavior": {
@@ -3078,23 +3078,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "optional": true,
-        "peer": true,
-      },
-      "id": 236,
-      "literal": ">=4.9.5",
-      "name": "typescript",
-      "npm": {
-        "name": "typescript",
-        "version": ">=4.9.5",
-      },
-      "package_id": 449,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 237,
+      "id": 236,
       "literal": "^2.2.1",
       "name": "env-paths",
       "npm": {
@@ -3107,7 +3093,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 238,
+      "id": 237,
       "literal": "^3.3.0",
       "name": "import-fresh",
       "npm": {
@@ -3120,7 +3106,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 239,
+      "id": 238,
       "literal": "^4.1.0",
       "name": "js-yaml",
       "npm": {
@@ -3133,7 +3119,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 240,
+      "id": 239,
       "literal": "^5.2.0",
       "name": "parse-json",
       "npm": {
@@ -3141,6 +3127,20 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=5.2.0 <6.0.0",
       },
       "package_id": 350,
+    },
+    {
+      "behavior": {
+        "optional": true,
+        "peer": true,
+      },
+      "id": 240,
+      "literal": ">=4.9.5",
+      "name": "typescript",
+      "npm": {
+        "name": "typescript",
+        "version": ">=4.9.5",
+      },
+      "package_id": 449,
     },
     {
       "behavior": {
@@ -4548,23 +4548,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "optional": true,
-        "peer": true,
-      },
-      "id": 349,
-      "literal": "*",
-      "name": "jiti",
-      "npm": {
-        "name": "jiti",
-        "version": ">=0.0.0",
-      },
-      "package_id": 296,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 350,
+      "id": 349,
       "literal": "^4.2.0",
       "name": "@eslint-community/eslint-utils",
       "npm": {
@@ -4577,7 +4563,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 351,
+      "id": 350,
       "literal": "^4.12.1",
       "name": "@eslint-community/regexpp",
       "npm": {
@@ -4590,7 +4576,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 352,
+      "id": 351,
       "literal": "^0.20.0",
       "name": "@eslint/config-array",
       "npm": {
@@ -4603,7 +4589,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 353,
+      "id": 352,
       "literal": "^0.2.0",
       "name": "@eslint/config-helpers",
       "npm": {
@@ -4616,7 +4602,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 354,
+      "id": 353,
       "literal": "^0.12.0",
       "name": "@eslint/core",
       "npm": {
@@ -4629,7 +4615,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 355,
+      "id": 354,
       "literal": "^3.3.1",
       "name": "@eslint/eslintrc",
       "npm": {
@@ -4642,7 +4628,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 356,
+      "id": 355,
       "literal": "9.24.0",
       "name": "@eslint/js",
       "npm": {
@@ -4655,7 +4641,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 357,
+      "id": 356,
       "literal": "^0.2.7",
       "name": "@eslint/plugin-kit",
       "npm": {
@@ -4668,7 +4654,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 358,
+      "id": 357,
       "literal": "^0.16.6",
       "name": "@humanfs/node",
       "npm": {
@@ -4681,7 +4667,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 359,
+      "id": 358,
       "literal": "^1.0.1",
       "name": "@humanwhocodes/module-importer",
       "npm": {
@@ -4694,7 +4680,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 360,
+      "id": 359,
       "literal": "^0.4.2",
       "name": "@humanwhocodes/retry",
       "npm": {
@@ -4707,7 +4693,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 361,
+      "id": 360,
       "literal": "^1.0.6",
       "name": "@types/estree",
       "npm": {
@@ -4720,7 +4706,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 362,
+      "id": 361,
       "literal": "^7.0.15",
       "name": "@types/json-schema",
       "npm": {
@@ -4733,7 +4719,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 363,
+      "id": 362,
       "literal": "^6.12.4",
       "name": "ajv",
       "npm": {
@@ -4746,7 +4732,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 364,
+      "id": 363,
       "literal": "^4.0.0",
       "name": "chalk",
       "npm": {
@@ -4759,7 +4745,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 365,
+      "id": 364,
       "literal": "^7.0.6",
       "name": "cross-spawn",
       "npm": {
@@ -4772,7 +4758,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 366,
+      "id": 365,
       "literal": "^4.3.2",
       "name": "debug",
       "npm": {
@@ -4785,7 +4771,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 367,
+      "id": 366,
       "literal": "^4.0.0",
       "name": "escape-string-regexp",
       "npm": {
@@ -4798,7 +4784,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 368,
+      "id": 367,
       "literal": "^8.3.0",
       "name": "eslint-scope",
       "npm": {
@@ -4811,7 +4797,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 369,
+      "id": 368,
       "literal": "^4.2.0",
       "name": "eslint-visitor-keys",
       "npm": {
@@ -4824,7 +4810,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 370,
+      "id": 369,
       "literal": "^10.3.0",
       "name": "espree",
       "npm": {
@@ -4837,7 +4823,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 371,
+      "id": 370,
       "literal": "^1.5.0",
       "name": "esquery",
       "npm": {
@@ -4850,7 +4836,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 372,
+      "id": 371,
       "literal": "^2.0.2",
       "name": "esutils",
       "npm": {
@@ -4863,7 +4849,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 373,
+      "id": 372,
       "literal": "^3.1.3",
       "name": "fast-deep-equal",
       "npm": {
@@ -4876,7 +4862,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 374,
+      "id": 373,
       "literal": "^8.0.0",
       "name": "file-entry-cache",
       "npm": {
@@ -4889,7 +4875,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 375,
+      "id": 374,
       "literal": "^5.0.0",
       "name": "find-up",
       "npm": {
@@ -4902,7 +4888,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 376,
+      "id": 375,
       "literal": "^6.0.2",
       "name": "glob-parent",
       "npm": {
@@ -4915,7 +4901,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 377,
+      "id": 376,
       "literal": "^5.2.0",
       "name": "ignore",
       "npm": {
@@ -4928,7 +4914,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 378,
+      "id": 377,
       "literal": "^0.1.4",
       "name": "imurmurhash",
       "npm": {
@@ -4941,7 +4927,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 379,
+      "id": 378,
       "literal": "^4.0.0",
       "name": "is-glob",
       "npm": {
@@ -4954,7 +4940,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 380,
+      "id": 379,
       "literal": "^1.0.1",
       "name": "json-stable-stringify-without-jsonify",
       "npm": {
@@ -4967,7 +4953,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 381,
+      "id": 380,
       "literal": "^4.6.2",
       "name": "lodash.merge",
       "npm": {
@@ -4980,7 +4966,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 382,
+      "id": 381,
       "literal": "^3.1.2",
       "name": "minimatch",
       "npm": {
@@ -4993,7 +4979,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 383,
+      "id": 382,
       "literal": "^1.4.0",
       "name": "natural-compare",
       "npm": {
@@ -5006,7 +4992,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 384,
+      "id": 383,
       "literal": "^0.9.3",
       "name": "optionator",
       "npm": {
@@ -5017,9 +5003,153 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
+        "optional": true,
         "peer": true,
       },
+      "id": 384,
+      "literal": "*",
+      "name": "jiti",
+      "npm": {
+        "name": "jiti",
+        "version": ">=0.0.0",
+      },
+      "package_id": 296,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
       "id": 385,
+      "literal": "15.2.4",
+      "name": "@next/eslint-plugin-next",
+      "npm": {
+        "name": "@next/eslint-plugin-next",
+        "version": "==15.2.4",
+      },
+      "package_id": 47,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 386,
+      "literal": "^1.10.3",
+      "name": "@rushstack/eslint-patch",
+      "npm": {
+        "name": "@rushstack/eslint-patch",
+        "version": ">=1.10.3 <2.0.0",
+      },
+      "package_id": 63,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 387,
+      "literal": "^5.4.2 || ^6.0.0 || ^7.0.0 || ^8.0.0",
+      "name": "@typescript-eslint/eslint-plugin",
+      "npm": {
+        "name": "@typescript-eslint/eslint-plugin",
+        "version": ">=5.4.2 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=8.0.0 <9.0.0",
+      },
+      "package_id": 78,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 388,
+      "literal": "^5.4.2 || ^6.0.0 || ^7.0.0 || ^8.0.0",
+      "name": "@typescript-eslint/parser",
+      "npm": {
+        "name": "@typescript-eslint/parser",
+        "version": ">=5.4.2 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=8.0.0 <9.0.0",
+      },
+      "package_id": 79,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 389,
+      "literal": "^0.3.6",
+      "name": "eslint-import-resolver-node",
+      "npm": {
+        "name": "eslint-import-resolver-node",
+        "version": ">=0.3.6 <0.4.0",
+      },
+      "package_id": 200,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 390,
+      "literal": "^3.5.2",
+      "name": "eslint-import-resolver-typescript",
+      "npm": {
+        "name": "eslint-import-resolver-typescript",
+        "version": ">=3.5.2 <4.0.0",
+      },
+      "package_id": 201,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 391,
+      "literal": "^2.31.0",
+      "name": "eslint-plugin-import",
+      "npm": {
+        "name": "eslint-plugin-import",
+        "version": ">=2.31.0 <3.0.0",
+      },
+      "package_id": 203,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 392,
+      "literal": "^6.10.0",
+      "name": "eslint-plugin-jsx-a11y",
+      "npm": {
+        "name": "eslint-plugin-jsx-a11y",
+        "version": ">=6.10.0 <7.0.0",
+      },
+      "package_id": 204,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 393,
+      "literal": "^7.37.0",
+      "name": "eslint-plugin-react",
+      "npm": {
+        "name": "eslint-plugin-react",
+        "version": ">=7.37.0 <8.0.0",
+      },
+      "package_id": 205,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 394,
+      "literal": "^5.0.0",
+      "name": "eslint-plugin-react-hooks",
+      "npm": {
+        "name": "eslint-plugin-react-hooks",
+        "version": ">=5.0.0 <6.0.0",
+      },
+      "package_id": 206,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 395,
       "literal": "^7.23.0 || ^8.0.0 || ^9.0.0",
       "name": "eslint",
       "npm": {
@@ -5033,7 +5163,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 386,
+      "id": 396,
       "literal": ">=3.3.1",
       "name": "typescript",
       "npm": {
@@ -5041,136 +5171,6 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=3.3.1",
       },
       "package_id": 449,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 387,
-      "literal": "15.2.4",
-      "name": "@next/eslint-plugin-next",
-      "npm": {
-        "name": "@next/eslint-plugin-next",
-        "version": "==15.2.4",
-      },
-      "package_id": 47,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 388,
-      "literal": "^1.10.3",
-      "name": "@rushstack/eslint-patch",
-      "npm": {
-        "name": "@rushstack/eslint-patch",
-        "version": ">=1.10.3 <2.0.0",
-      },
-      "package_id": 63,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 389,
-      "literal": "^5.4.2 || ^6.0.0 || ^7.0.0 || ^8.0.0",
-      "name": "@typescript-eslint/eslint-plugin",
-      "npm": {
-        "name": "@typescript-eslint/eslint-plugin",
-        "version": ">=5.4.2 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=8.0.0 <9.0.0",
-      },
-      "package_id": 78,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 390,
-      "literal": "^5.4.2 || ^6.0.0 || ^7.0.0 || ^8.0.0",
-      "name": "@typescript-eslint/parser",
-      "npm": {
-        "name": "@typescript-eslint/parser",
-        "version": ">=5.4.2 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 && >=8.0.0 <9.0.0",
-      },
-      "package_id": 79,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 391,
-      "literal": "^0.3.6",
-      "name": "eslint-import-resolver-node",
-      "npm": {
-        "name": "eslint-import-resolver-node",
-        "version": ">=0.3.6 <0.4.0",
-      },
-      "package_id": 200,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 392,
-      "literal": "^3.5.2",
-      "name": "eslint-import-resolver-typescript",
-      "npm": {
-        "name": "eslint-import-resolver-typescript",
-        "version": ">=3.5.2 <4.0.0",
-      },
-      "package_id": 201,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 393,
-      "literal": "^2.31.0",
-      "name": "eslint-plugin-import",
-      "npm": {
-        "name": "eslint-plugin-import",
-        "version": ">=2.31.0 <3.0.0",
-      },
-      "package_id": 203,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 394,
-      "literal": "^6.10.0",
-      "name": "eslint-plugin-jsx-a11y",
-      "npm": {
-        "name": "eslint-plugin-jsx-a11y",
-        "version": ">=6.10.0 <7.0.0",
-      },
-      "package_id": 204,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 395,
-      "literal": "^7.37.0",
-      "name": "eslint-plugin-react",
-      "npm": {
-        "name": "eslint-plugin-react",
-        "version": ">=7.37.0 <8.0.0",
-      },
-      "package_id": 205,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 396,
-      "literal": "^5.0.0",
-      "name": "eslint-plugin-react-hooks",
-      "npm": {
-        "name": "eslint-plugin-react-hooks",
-        "version": ">=5.0.0 <6.0.0",
-      },
-      "package_id": 206,
     },
     {
       "behavior": {
@@ -5213,9 +5213,100 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
+        "prod": true,
       },
       "id": 400,
+      "literal": "1.0.39",
+      "name": "@nolyfill/is-core-module",
+      "npm": {
+        "name": "@nolyfill/is-core-module",
+        "version": "==1.0.39",
+      },
+      "package_id": 59,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 401,
+      "literal": "^4.4.0",
+      "name": "debug",
+      "npm": {
+        "name": "debug",
+        "version": ">=4.4.0 <5.0.0",
+      },
+      "package_id": 170,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 402,
+      "literal": "^4.10.0",
+      "name": "get-tsconfig",
+      "npm": {
+        "name": "get-tsconfig",
+        "version": ">=4.10.0 <5.0.0",
+      },
+      "package_id": 241,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 403,
+      "literal": "^2.0.0",
+      "name": "is-bun-module",
+      "npm": {
+        "name": "is-bun-module",
+        "version": ">=2.0.0 <3.0.0",
+      },
+      "package_id": 270,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 404,
+      "literal": "^0.0.5",
+      "name": "stable-hash",
+      "npm": {
+        "name": "stable-hash",
+        "version": ">=0.0.5 <0.0.6",
+      },
+      "package_id": 414,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 405,
+      "literal": "^0.2.12",
+      "name": "tinyglobby",
+      "npm": {
+        "name": "tinyglobby",
+        "version": ">=0.2.12 <0.3.0",
+      },
+      "package_id": 438,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 406,
+      "literal": "^1.3.2",
+      "name": "unrs-resolver",
+      "npm": {
+        "name": "unrs-resolver",
+        "version": ">=1.3.2 <2.0.0",
+      },
+      "package_id": 452,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 407,
       "literal": "*",
       "name": "eslint",
       "npm": {
@@ -5229,7 +5320,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 401,
+      "id": 408,
       "literal": "*",
       "name": "eslint-plugin-import",
       "npm": {
@@ -5243,7 +5334,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 402,
+      "id": 409,
       "literal": "*",
       "name": "eslint-plugin-import-x",
       "npm": {
@@ -5251,97 +5342,6 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=0.0.0",
       },
       "package_id": null,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 403,
-      "literal": "1.0.39",
-      "name": "@nolyfill/is-core-module",
-      "npm": {
-        "name": "@nolyfill/is-core-module",
-        "version": "==1.0.39",
-      },
-      "package_id": 59,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 404,
-      "literal": "^4.4.0",
-      "name": "debug",
-      "npm": {
-        "name": "debug",
-        "version": ">=4.4.0 <5.0.0",
-      },
-      "package_id": 170,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 405,
-      "literal": "^4.10.0",
-      "name": "get-tsconfig",
-      "npm": {
-        "name": "get-tsconfig",
-        "version": ">=4.10.0 <5.0.0",
-      },
-      "package_id": 241,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 406,
-      "literal": "^2.0.0",
-      "name": "is-bun-module",
-      "npm": {
-        "name": "is-bun-module",
-        "version": ">=2.0.0 <3.0.0",
-      },
-      "package_id": 270,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 407,
-      "literal": "^0.0.5",
-      "name": "stable-hash",
-      "npm": {
-        "name": "stable-hash",
-        "version": ">=0.0.5 <0.0.6",
-      },
-      "package_id": 414,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 408,
-      "literal": "^0.2.12",
-      "name": "tinyglobby",
-      "npm": {
-        "name": "tinyglobby",
-        "version": ">=0.2.12 <0.3.0",
-      },
-      "package_id": 438,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 409,
-      "literal": "^1.3.2",
-      "name": "unrs-resolver",
-      "npm": {
-        "name": "unrs-resolver",
-        "version": ">=1.3.2 <2.0.0",
-      },
-      "package_id": 452,
     },
     {
       "behavior": {
@@ -5358,22 +5358,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 411,
-      "literal": "^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8 || ^9",
-      "name": "eslint",
-      "npm": {
-        "name": "eslint",
-        "version": ">=2.0.0 <3.0.0 || >=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
-      },
-      "package_id": 198,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 412,
+      "id": 411,
       "literal": "^1.1.0",
       "name": "@rtsao/scc",
       "npm": {
@@ -5386,7 +5373,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 413,
+      "id": 412,
       "literal": "^3.1.8",
       "name": "array-includes",
       "npm": {
@@ -5399,7 +5386,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 414,
+      "id": 413,
       "literal": "^1.2.5",
       "name": "array.prototype.findlastindex",
       "npm": {
@@ -5412,7 +5399,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 415,
+      "id": 414,
       "literal": "^1.3.2",
       "name": "array.prototype.flat",
       "npm": {
@@ -5425,7 +5412,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 416,
+      "id": 415,
       "literal": "^1.3.2",
       "name": "array.prototype.flatmap",
       "npm": {
@@ -5438,7 +5425,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 417,
+      "id": 416,
       "literal": "^3.2.7",
       "name": "debug",
       "npm": {
@@ -5451,7 +5438,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 418,
+      "id": 417,
       "literal": "^2.1.0",
       "name": "doctrine",
       "npm": {
@@ -5464,7 +5451,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 419,
+      "id": 418,
       "literal": "^0.3.9",
       "name": "eslint-import-resolver-node",
       "npm": {
@@ -5477,7 +5464,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 420,
+      "id": 419,
       "literal": "^2.12.0",
       "name": "eslint-module-utils",
       "npm": {
@@ -5490,7 +5477,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 421,
+      "id": 420,
       "literal": "^2.0.2",
       "name": "hasown",
       "npm": {
@@ -5503,7 +5490,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 422,
+      "id": 421,
       "literal": "^2.15.1",
       "name": "is-core-module",
       "npm": {
@@ -5516,7 +5503,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 423,
+      "id": 422,
       "literal": "^4.0.3",
       "name": "is-glob",
       "npm": {
@@ -5529,7 +5516,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 424,
+      "id": 423,
       "literal": "^3.1.2",
       "name": "minimatch",
       "npm": {
@@ -5542,7 +5529,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 425,
+      "id": 424,
       "literal": "^2.0.8",
       "name": "object.fromentries",
       "npm": {
@@ -5555,7 +5542,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 426,
+      "id": 425,
       "literal": "^1.0.3",
       "name": "object.groupby",
       "npm": {
@@ -5568,7 +5555,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 427,
+      "id": 426,
       "literal": "^1.2.0",
       "name": "object.values",
       "npm": {
@@ -5581,7 +5568,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 428,
+      "id": 427,
       "literal": "^6.3.1",
       "name": "semver",
       "npm": {
@@ -5594,7 +5581,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 429,
+      "id": 428,
       "literal": "^1.0.8",
       "name": "string.prototype.trimend",
       "npm": {
@@ -5607,7 +5594,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 430,
+      "id": 429,
       "literal": "^3.15.0",
       "name": "tsconfig-paths",
       "npm": {
@@ -5620,12 +5607,12 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 431,
-      "literal": "^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9",
+      "id": 430,
+      "literal": "^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8 || ^9",
       "name": "eslint",
       "npm": {
         "name": "eslint",
-        "version": ">=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
+        "version": ">=2.0.0 <3.0.0 || >=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=7.2.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
       },
       "package_id": 198,
     },
@@ -5633,7 +5620,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 432,
+      "id": 431,
       "literal": "^5.3.2",
       "name": "aria-query",
       "npm": {
@@ -5646,7 +5633,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 433,
+      "id": 432,
       "literal": "^3.1.8",
       "name": "array-includes",
       "npm": {
@@ -5659,7 +5646,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 434,
+      "id": 433,
       "literal": "^1.3.2",
       "name": "array.prototype.flatmap",
       "npm": {
@@ -5672,7 +5659,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 435,
+      "id": 434,
       "literal": "^0.0.8",
       "name": "ast-types-flow",
       "npm": {
@@ -5685,7 +5672,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 436,
+      "id": 435,
       "literal": "^4.10.0",
       "name": "axe-core",
       "npm": {
@@ -5698,7 +5685,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 437,
+      "id": 436,
       "literal": "^4.1.0",
       "name": "axobject-query",
       "npm": {
@@ -5711,7 +5698,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 438,
+      "id": 437,
       "literal": "^1.0.8",
       "name": "damerau-levenshtein",
       "npm": {
@@ -5724,7 +5711,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 439,
+      "id": 438,
       "literal": "^9.2.2",
       "name": "emoji-regex",
       "npm": {
@@ -5737,7 +5724,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 440,
+      "id": 439,
       "literal": "^2.0.2",
       "name": "hasown",
       "npm": {
@@ -5750,7 +5737,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 441,
+      "id": 440,
       "literal": "^3.3.5",
       "name": "jsx-ast-utils",
       "npm": {
@@ -5763,7 +5750,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 442,
+      "id": 441,
       "literal": "^1.0.9",
       "name": "language-tags",
       "npm": {
@@ -5776,7 +5763,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 443,
+      "id": 442,
       "literal": "^3.1.2",
       "name": "minimatch",
       "npm": {
@@ -5789,7 +5776,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 444,
+      "id": 443,
       "literal": "^2.0.8",
       "name": "object.fromentries",
       "npm": {
@@ -5802,7 +5789,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 445,
+      "id": 444,
       "literal": "^1.0.3",
       "name": "safe-regex-test",
       "npm": {
@@ -5815,7 +5802,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 446,
+      "id": 445,
       "literal": "^2.0.1",
       "name": "string.prototype.includes",
       "npm": {
@@ -5828,12 +5815,12 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 447,
-      "literal": "^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9.7",
+      "id": 446,
+      "literal": "^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9",
       "name": "eslint",
       "npm": {
         "name": "eslint",
-        "version": ">=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=9.7.0 <10.0.0",
+        "version": ">=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.0.0 <10.0.0 && >=9.0.0 <10.0.0",
       },
       "package_id": 198,
     },
@@ -5841,7 +5828,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 448,
+      "id": 447,
       "literal": "^3.1.8",
       "name": "array-includes",
       "npm": {
@@ -5854,7 +5841,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 449,
+      "id": 448,
       "literal": "^1.2.5",
       "name": "array.prototype.findlast",
       "npm": {
@@ -5867,7 +5854,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 450,
+      "id": 449,
       "literal": "^1.3.3",
       "name": "array.prototype.flatmap",
       "npm": {
@@ -5880,7 +5867,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 451,
+      "id": 450,
       "literal": "^1.1.4",
       "name": "array.prototype.tosorted",
       "npm": {
@@ -5893,7 +5880,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 452,
+      "id": 451,
       "literal": "^2.1.0",
       "name": "doctrine",
       "npm": {
@@ -5906,7 +5893,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 453,
+      "id": 452,
       "literal": "^1.2.1",
       "name": "es-iterator-helpers",
       "npm": {
@@ -5919,7 +5906,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 454,
+      "id": 453,
       "literal": "^5.3.0",
       "name": "estraverse",
       "npm": {
@@ -5932,7 +5919,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 455,
+      "id": 454,
       "literal": "^2.0.2",
       "name": "hasown",
       "npm": {
@@ -5945,7 +5932,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 456,
+      "id": 455,
       "literal": "^2.4.1 || ^3.0.0",
       "name": "jsx-ast-utils",
       "npm": {
@@ -5958,7 +5945,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 457,
+      "id": 456,
       "literal": "^3.1.2",
       "name": "minimatch",
       "npm": {
@@ -5971,7 +5958,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 458,
+      "id": 457,
       "literal": "^1.1.9",
       "name": "object.entries",
       "npm": {
@@ -5984,7 +5971,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 459,
+      "id": 458,
       "literal": "^2.0.8",
       "name": "object.fromentries",
       "npm": {
@@ -5997,7 +5984,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 460,
+      "id": 459,
       "literal": "^1.2.1",
       "name": "object.values",
       "npm": {
@@ -6010,7 +5997,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 461,
+      "id": 460,
       "literal": "^15.8.1",
       "name": "prop-types",
       "npm": {
@@ -6023,7 +6010,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 462,
+      "id": 461,
       "literal": "^2.0.0-next.5",
       "name": "resolve",
       "npm": {
@@ -6036,7 +6023,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 463,
+      "id": 462,
       "literal": "^6.3.1",
       "name": "semver",
       "npm": {
@@ -6049,7 +6036,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 464,
+      "id": 463,
       "literal": "^4.0.12",
       "name": "string.prototype.matchall",
       "npm": {
@@ -6062,7 +6049,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 465,
+      "id": 464,
       "literal": "^1.0.0",
       "name": "string.prototype.repeat",
       "npm": {
@@ -6070,6 +6057,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=1.0.0 <2.0.0",
       },
       "package_id": 420,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 465,
+      "literal": "^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9.7",
+      "name": "eslint",
+      "npm": {
+        "name": "eslint",
+        "version": ">=3.0.0 <4.0.0 || >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=4.0.0 <5.0.0 || >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=5.0.0 <6.0.0 || >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=6.0.0 <7.0.0 || >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=7.0.0 <8.0.0 || >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=8.0.0 <9.0.0 || >=9.7.0 <10.0.0 && >=9.7.0 <10.0.0",
+      },
+      "package_id": 198,
     },
     {
       "behavior": {
@@ -7973,9 +7973,217 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "behavior": {
         "optional": true,
-        "peer": true,
       },
       "id": 612,
+      "literal": "15.2.4",
+      "name": "@next/swc-darwin-arm64",
+      "npm": {
+        "name": "@next/swc-darwin-arm64",
+        "version": "==15.2.4",
+      },
+      "package_id": 48,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 613,
+      "literal": "15.2.4",
+      "name": "@next/swc-darwin-x64",
+      "npm": {
+        "name": "@next/swc-darwin-x64",
+        "version": "==15.2.4",
+      },
+      "package_id": 49,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 614,
+      "literal": "15.2.4",
+      "name": "@next/swc-linux-arm64-gnu",
+      "npm": {
+        "name": "@next/swc-linux-arm64-gnu",
+        "version": "==15.2.4",
+      },
+      "package_id": 50,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 615,
+      "literal": "15.2.4",
+      "name": "@next/swc-linux-arm64-musl",
+      "npm": {
+        "name": "@next/swc-linux-arm64-musl",
+        "version": "==15.2.4",
+      },
+      "package_id": 51,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 616,
+      "literal": "15.2.4",
+      "name": "@next/swc-linux-x64-gnu",
+      "npm": {
+        "name": "@next/swc-linux-x64-gnu",
+        "version": "==15.2.4",
+      },
+      "package_id": 52,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 617,
+      "literal": "15.2.4",
+      "name": "@next/swc-linux-x64-musl",
+      "npm": {
+        "name": "@next/swc-linux-x64-musl",
+        "version": "==15.2.4",
+      },
+      "package_id": 53,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 618,
+      "literal": "15.2.4",
+      "name": "@next/swc-win32-arm64-msvc",
+      "npm": {
+        "name": "@next/swc-win32-arm64-msvc",
+        "version": "==15.2.4",
+      },
+      "package_id": 54,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 619,
+      "literal": "15.2.4",
+      "name": "@next/swc-win32-x64-msvc",
+      "npm": {
+        "name": "@next/swc-win32-x64-msvc",
+        "version": "==15.2.4",
+      },
+      "package_id": 55,
+    },
+    {
+      "behavior": {
+        "optional": true,
+      },
+      "id": 620,
+      "literal": "^0.33.5",
+      "name": "sharp",
+      "npm": {
+        "name": "sharp",
+        "version": ">=0.33.5 <0.34.0",
+      },
+      "package_id": 399,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 621,
+      "literal": "15.2.4",
+      "name": "@next/env",
+      "npm": {
+        "name": "@next/env",
+        "version": "==15.2.4",
+      },
+      "package_id": 46,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 622,
+      "literal": "0.1.3",
+      "name": "@swc/counter",
+      "npm": {
+        "name": "@swc/counter",
+        "version": "==0.1.3",
+      },
+      "package_id": 64,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 623,
+      "literal": "0.5.15",
+      "name": "@swc/helpers",
+      "npm": {
+        "name": "@swc/helpers",
+        "version": "==0.5.15",
+      },
+      "package_id": 65,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 624,
+      "literal": "1.6.0",
+      "name": "busboy",
+      "npm": {
+        "name": "busboy",
+        "version": "==1.6.0",
+      },
+      "package_id": 143,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 625,
+      "literal": "^1.0.30001579",
+      "name": "caniuse-lite",
+      "npm": {
+        "name": "caniuse-lite",
+        "version": ">=1.0.30001579 <2.0.0",
+      },
+      "package_id": 149,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 626,
+      "literal": "8.4.31",
+      "name": "postcss",
+      "npm": {
+        "name": "postcss",
+        "version": "==8.4.31",
+      },
+      "package_id": 488,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 627,
+      "literal": "5.1.6",
+      "name": "styled-jsx",
+      "npm": {
+        "name": "styled-jsx",
+        "version": "==5.1.6",
+      },
+      "package_id": 427,
+    },
+    {
+      "behavior": {
+        "optional": true,
+        "peer": true,
+      },
+      "id": 628,
       "literal": "^1.1.0",
       "name": "@opentelemetry/api",
       "npm": {
@@ -7989,7 +8197,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 613,
+      "id": 629,
       "literal": "^1.41.2",
       "name": "@playwright/test",
       "npm": {
@@ -8003,7 +8211,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 614,
+      "id": 630,
       "literal": "*",
       "name": "babel-plugin-react-compiler",
       "npm": {
@@ -8016,7 +8224,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 615,
+      "id": 631,
       "literal": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0",
       "name": "react",
       "npm": {
@@ -8029,7 +8237,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
-      "id": 616,
+      "id": 632,
       "literal": "^18.2.0 || 19.0.0-rc-de68d2f4-20241204 || ^19.0.0",
       "name": "react-dom",
       "npm": {
@@ -8043,7 +8251,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 617,
+      "id": 633,
       "literal": "^1.3.0",
       "name": "sass",
       "npm": {
@@ -8051,214 +8259,6 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=1.3.0 <2.0.0",
       },
       "package_id": null,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 618,
-      "literal": "15.2.4",
-      "name": "@next/swc-darwin-arm64",
-      "npm": {
-        "name": "@next/swc-darwin-arm64",
-        "version": "==15.2.4",
-      },
-      "package_id": 48,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 619,
-      "literal": "15.2.4",
-      "name": "@next/swc-darwin-x64",
-      "npm": {
-        "name": "@next/swc-darwin-x64",
-        "version": "==15.2.4",
-      },
-      "package_id": 49,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 620,
-      "literal": "15.2.4",
-      "name": "@next/swc-linux-arm64-gnu",
-      "npm": {
-        "name": "@next/swc-linux-arm64-gnu",
-        "version": "==15.2.4",
-      },
-      "package_id": 50,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 621,
-      "literal": "15.2.4",
-      "name": "@next/swc-linux-arm64-musl",
-      "npm": {
-        "name": "@next/swc-linux-arm64-musl",
-        "version": "==15.2.4",
-      },
-      "package_id": 51,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 622,
-      "literal": "15.2.4",
-      "name": "@next/swc-linux-x64-gnu",
-      "npm": {
-        "name": "@next/swc-linux-x64-gnu",
-        "version": "==15.2.4",
-      },
-      "package_id": 52,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 623,
-      "literal": "15.2.4",
-      "name": "@next/swc-linux-x64-musl",
-      "npm": {
-        "name": "@next/swc-linux-x64-musl",
-        "version": "==15.2.4",
-      },
-      "package_id": 53,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 624,
-      "literal": "15.2.4",
-      "name": "@next/swc-win32-arm64-msvc",
-      "npm": {
-        "name": "@next/swc-win32-arm64-msvc",
-        "version": "==15.2.4",
-      },
-      "package_id": 54,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 625,
-      "literal": "15.2.4",
-      "name": "@next/swc-win32-x64-msvc",
-      "npm": {
-        "name": "@next/swc-win32-x64-msvc",
-        "version": "==15.2.4",
-      },
-      "package_id": 55,
-    },
-    {
-      "behavior": {
-        "optional": true,
-      },
-      "id": 626,
-      "literal": "^0.33.5",
-      "name": "sharp",
-      "npm": {
-        "name": "sharp",
-        "version": ">=0.33.5 <0.34.0",
-      },
-      "package_id": 399,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 627,
-      "literal": "15.2.4",
-      "name": "@next/env",
-      "npm": {
-        "name": "@next/env",
-        "version": "==15.2.4",
-      },
-      "package_id": 46,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 628,
-      "literal": "0.1.3",
-      "name": "@swc/counter",
-      "npm": {
-        "name": "@swc/counter",
-        "version": "==0.1.3",
-      },
-      "package_id": 64,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 629,
-      "literal": "0.5.15",
-      "name": "@swc/helpers",
-      "npm": {
-        "name": "@swc/helpers",
-        "version": "==0.5.15",
-      },
-      "package_id": 65,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 630,
-      "literal": "1.6.0",
-      "name": "busboy",
-      "npm": {
-        "name": "busboy",
-        "version": "==1.6.0",
-      },
-      "package_id": 143,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 631,
-      "literal": "^1.0.30001579",
-      "name": "caniuse-lite",
-      "npm": {
-        "name": "caniuse-lite",
-        "version": ">=1.0.30001579 <2.0.0",
-      },
-      "package_id": 149,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 632,
-      "literal": "8.4.31",
-      "name": "postcss",
-      "npm": {
-        "name": "postcss",
-        "version": "==8.4.31",
-      },
-      "package_id": 488,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 633,
-      "literal": "5.1.6",
-      "name": "styled-jsx",
-      "npm": {
-        "name": "styled-jsx",
-        "version": "==5.1.6",
-      },
-      "package_id": 427,
     },
     {
       "behavior": {
@@ -8951,22 +8951,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 687,
-      "literal": "^8.0.0",
-      "name": "postcss",
-      "npm": {
-        "name": "postcss",
-        "version": ">=8.0.0 <9.0.0",
-      },
-      "package_id": 361,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 688,
+      "id": 687,
       "literal": "^4.0.0",
       "name": "postcss-value-parser",
       "npm": {
@@ -8979,7 +8966,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 689,
+      "id": 688,
       "literal": "^1.0.0",
       "name": "read-cache",
       "npm": {
@@ -8992,7 +8979,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 690,
+      "id": 689,
       "literal": "^1.1.7",
       "name": "resolve",
       "npm": {
@@ -9005,7 +8992,33 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "peer": true,
       },
+      "id": 690,
+      "literal": "^8.0.0",
+      "name": "postcss",
+      "npm": {
+        "name": "postcss",
+        "version": ">=8.0.0 <9.0.0",
+      },
+      "package_id": 361,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
       "id": 691,
+      "literal": "^2.0.1",
+      "name": "camelcase-css",
+      "npm": {
+        "name": "camelcase-css",
+        "version": ">=2.0.1 <3.0.0",
+      },
+      "package_id": 148,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 692,
       "literal": "^8.4.21",
       "name": "postcss",
       "npm": {
@@ -9018,21 +9031,34 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 692,
-      "literal": "^2.0.1",
-      "name": "camelcase-css",
+      "id": 693,
+      "literal": "^3.0.0",
+      "name": "lilconfig",
       "npm": {
-        "name": "camelcase-css",
-        "version": ">=2.0.1 <3.0.0",
+        "name": "lilconfig",
+        "version": ">=3.0.0 <4.0.0",
       },
-      "package_id": 148,
+      "package_id": 490,
+    },
+    {
+      "behavior": {
+        "prod": true,
+      },
+      "id": 694,
+      "literal": "^2.3.4",
+      "name": "yaml",
+      "npm": {
+        "name": "yaml",
+        "version": ">=2.3.4 <3.0.0",
+      },
+      "package_id": 468,
     },
     {
       "behavior": {
         "optional": true,
         "peer": true,
       },
-      "id": 693,
+      "id": 695,
       "literal": ">=8.0.9",
       "name": "postcss",
       "npm": {
@@ -9046,7 +9072,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "optional": true,
         "peer": true,
       },
-      "id": 694,
+      "id": 696,
       "literal": ">=9.0.0",
       "name": "ts-node",
       "npm": {
@@ -9059,46 +9085,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 695,
-      "literal": "^3.0.0",
-      "name": "lilconfig",
-      "npm": {
-        "name": "lilconfig",
-        "version": ">=3.0.0 <4.0.0",
-      },
-      "package_id": 490,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 696,
-      "literal": "^2.3.4",
-      "name": "yaml",
-      "npm": {
-        "name": "yaml",
-        "version": ">=2.3.4 <3.0.0",
-      },
-      "package_id": 468,
-    },
-    {
-      "behavior": {
-        "peer": true,
-      },
       "id": 697,
-      "literal": "^8.2.14",
-      "name": "postcss",
-      "npm": {
-        "name": "postcss",
-        "version": ">=8.2.14 <9.0.0",
-      },
-      "package_id": 361,
-    },
-    {
-      "behavior": {
-        "prod": true,
-      },
-      "id": 698,
       "literal": "^6.1.1",
       "name": "postcss-selector-parser",
       "npm": {
@@ -9106,6 +9093,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=6.1.1 <7.0.0",
       },
       "package_id": 366,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 698,
+      "literal": "^8.2.14",
+      "name": "postcss",
+      "npm": {
+        "name": "postcss",
+        "version": ">=8.2.14 <9.0.0",
+      },
+      "package_id": 361,
     },
     {
       "behavior": {
@@ -9421,22 +9421,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 723,
-      "literal": "^19.1.0",
-      "name": "react",
-      "npm": {
-        "name": "react",
-        "version": ">=19.1.0 <20.0.0",
-      },
-      "package_id": 378,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 724,
+      "id": 723,
       "literal": "^0.26.0",
       "name": "scheduler",
       "npm": {
@@ -9444,6 +9431,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=0.26.0 <0.27.0",
       },
       "package_id": 394,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 724,
+      "literal": "^19.1.0",
+      "name": "react",
+      "npm": {
+        "name": "react",
+        "version": ">=19.1.0 <20.0.0",
+      },
+      "package_id": 378,
     },
     {
       "behavior": {
@@ -11150,22 +11150,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 856,
-      "literal": ">= 16.8.0 || 17.x.x || ^18.0.0-0 || ^19.0.0-0",
-      "name": "react",
-      "npm": {
-        "name": "react",
-        "version": ">=16.8.0 || <18.0.0 >=17.0.0 || >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && <18.0.0 >=17.0.0 || >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && >=19.0.0-0 <20.0.0",
-      },
-      "package_id": 378,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 857,
+      "id": 856,
       "literal": "0.0.1",
       "name": "client-only",
       "npm": {
@@ -11173,6 +11160,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": "==0.0.1",
       },
       "package_id": 153,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 857,
+      "literal": ">= 16.8.0 || 17.x.x || ^18.0.0-0 || ^19.0.0-0",
+      "name": "react",
+      "npm": {
+        "name": "react",
+        "version": ">=16.8.0 || <18.0.0 >=17.0.0 || >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && <18.0.0 >=17.0.0 || >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && >=18.0.0-0 <19.0.0 || >=19.0.0-0 <20.0.0 && >=19.0.0-0 <20.0.0",
+      },
+      "package_id": 378,
     },
     {
       "behavior": {
@@ -12359,22 +12359,9 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
     {
       "behavior": {
-        "peer": true,
-      },
-      "id": 949,
-      "literal": ">= 4.21.0",
-      "name": "browserslist",
-      "npm": {
-        "name": "browserslist",
-        "version": ">=4.21.0",
-      },
-      "package_id": 139,
-    },
-    {
-      "behavior": {
         "prod": true,
       },
-      "id": 950,
+      "id": 949,
       "literal": "^3.2.0",
       "name": "escalade",
       "npm": {
@@ -12387,7 +12374,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
       "behavior": {
         "prod": true,
       },
-      "id": 951,
+      "id": 950,
       "literal": "^1.1.1",
       "name": "picocolors",
       "npm": {
@@ -12395,6 +12382,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "version": ">=1.1.1 <2.0.0",
       },
       "package_id": 356,
+    },
+    {
+      "behavior": {
+        "peer": true,
+      },
+      "id": 951,
+      "literal": ">= 4.21.0",
+      "name": "browserslist",
+      "npm": {
+        "name": "browserslist",
+        "version": ">=4.21.0",
+      },
+      "package_id": 139,
     },
     {
       "behavior": {
@@ -23656,31 +23656,31 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 6,
         },
         "@eslint-community/eslint-utils": {
-          "id": 350,
+          "id": 349,
           "package_id": 7,
         },
         "@eslint-community/regexpp": {
-          "id": 351,
+          "id": 350,
           "package_id": 8,
         },
         "@eslint/config-array": {
-          "id": 352,
+          "id": 351,
           "package_id": 9,
         },
         "@eslint/config-helpers": {
-          "id": 353,
+          "id": 352,
           "package_id": 10,
         },
         "@eslint/core": {
-          "id": 354,
+          "id": 353,
           "package_id": 11,
         },
         "@eslint/eslintrc": {
-          "id": 355,
+          "id": 354,
           "package_id": 12,
         },
         "@eslint/js": {
-          "id": 356,
+          "id": 355,
           "package_id": 13,
         },
         "@eslint/object-schema": {
@@ -23688,7 +23688,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 14,
         },
         "@eslint/plugin-kit": {
-          "id": 357,
+          "id": 356,
           "package_id": 15,
         },
         "@humanfs/core": {
@@ -23696,15 +23696,15 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 16,
         },
         "@humanfs/node": {
-          "id": 358,
+          "id": 357,
           "package_id": 17,
         },
         "@humanwhocodes/module-importer": {
-          "id": 359,
+          "id": 358,
           "package_id": 18,
         },
         "@humanwhocodes/retry": {
-          "id": 360,
+          "id": 359,
           "package_id": 19,
         },
         "@img/sharp-darwin-arm64": {
@@ -23812,43 +23812,43 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 45,
         },
         "@next/env": {
-          "id": 627,
+          "id": 621,
           "package_id": 46,
         },
         "@next/eslint-plugin-next": {
-          "id": 387,
+          "id": 385,
           "package_id": 47,
         },
         "@next/swc-darwin-arm64": {
-          "id": 618,
+          "id": 612,
           "package_id": 48,
         },
         "@next/swc-darwin-x64": {
-          "id": 619,
+          "id": 613,
           "package_id": 49,
         },
         "@next/swc-linux-arm64-gnu": {
-          "id": 620,
+          "id": 614,
           "package_id": 50,
         },
         "@next/swc-linux-arm64-musl": {
-          "id": 621,
+          "id": 615,
           "package_id": 51,
         },
         "@next/swc-linux-x64-gnu": {
-          "id": 622,
+          "id": 616,
           "package_id": 52,
         },
         "@next/swc-linux-x64-musl": {
-          "id": 623,
+          "id": 617,
           "package_id": 53,
         },
         "@next/swc-win32-arm64-msvc": {
-          "id": 624,
+          "id": 618,
           "package_id": 54,
         },
         "@next/swc-win32-x64-msvc": {
-          "id": 625,
+          "id": 619,
           "package_id": 55,
         },
         "@nodelib/fs.scandir": {
@@ -23864,7 +23864,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 58,
         },
         "@nolyfill/is-core-module": {
-          "id": 403,
+          "id": 400,
           "package_id": 59,
         },
         "@pkgjs/parseargs": {
@@ -23876,19 +23876,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 61,
         },
         "@rtsao/scc": {
-          "id": 412,
+          "id": 411,
           "package_id": 62,
         },
         "@rushstack/eslint-patch": {
-          "id": 388,
+          "id": 386,
           "package_id": 63,
         },
         "@swc/counter": {
-          "id": 628,
+          "id": 622,
           "package_id": 64,
         },
         "@swc/helpers": {
-          "id": 629,
+          "id": 623,
           "package_id": 65,
         },
         "@tootallnate/quickjs-emscripten": {
@@ -23900,11 +23900,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 67,
         },
         "@types/estree": {
-          "id": 361,
+          "id": 360,
           "package_id": 68,
         },
         "@types/json-schema": {
-          "id": 362,
+          "id": 361,
           "package_id": 69,
         },
         "@types/json5": {
@@ -23940,35 +23940,35 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 77,
         },
         "@typescript-eslint/eslint-plugin": {
-          "id": 389,
+          "id": 387,
           "package_id": 78,
         },
         "@typescript-eslint/parser": {
-          "id": 390,
+          "id": 388,
           "package_id": 79,
         },
         "@typescript-eslint/scope-manager": {
-          "id": 88,
+          "id": 85,
           "package_id": 80,
         },
         "@typescript-eslint/type-utils": {
-          "id": 89,
+          "id": 86,
           "package_id": 81,
         },
         "@typescript-eslint/types": {
-          "id": 99,
+          "id": 97,
           "package_id": 82,
         },
         "@typescript-eslint/typescript-estree": {
-          "id": 100,
+          "id": 98,
           "package_id": 83,
         },
         "@typescript-eslint/utils": {
-          "id": 90,
+          "id": 87,
           "package_id": 84,
         },
         "@typescript-eslint/visitor-keys": {
-          "id": 91,
+          "id": 88,
           "package_id": 85,
         },
         "@unrs/resolver-binding-darwin-arm64": {
@@ -24044,7 +24044,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 103,
         },
         "ajv": {
-          "id": 363,
+          "id": 362,
           "package_id": 104,
         },
         "ansi-regex": {
@@ -24072,7 +24072,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 110,
         },
         "aria-query": {
-          "id": 432,
+          "id": 431,
           "package_id": 111,
         },
         "array-buffer-byte-length": {
@@ -24080,27 +24080,27 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 112,
         },
         "array-includes": {
-          "id": 413,
+          "id": 412,
           "package_id": 113,
         },
         "array.prototype.findlast": {
-          "id": 449,
+          "id": 448,
           "package_id": 114,
         },
         "array.prototype.findlastindex": {
-          "id": 414,
+          "id": 413,
           "package_id": 115,
         },
         "array.prototype.flat": {
-          "id": 415,
+          "id": 414,
           "package_id": 116,
         },
         "array.prototype.flatmap": {
-          "id": 416,
+          "id": 415,
           "package_id": 117,
         },
         "array.prototype.tosorted": {
-          "id": 451,
+          "id": 450,
           "package_id": 118,
         },
         "arraybuffer.prototype.slice": {
@@ -24112,7 +24112,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 120,
         },
         "ast-types-flow": {
-          "id": 435,
+          "id": 434,
           "package_id": 121,
         },
         "async-function": {
@@ -24128,11 +24128,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 124,
         },
         "axe-core": {
-          "id": 436,
+          "id": 435,
           "package_id": 125,
         },
         "axobject-query": {
-          "id": 437,
+          "id": 436,
           "package_id": 126,
         },
         "b4a": {
@@ -24184,7 +24184,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 138,
         },
         "browserslist": {
-          "id": 180,
+          "id": 179,
           "package_id": 139,
         },
         "buffer": {
@@ -24200,7 +24200,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 142,
         },
         "busboy": {
-          "id": 630,
+          "id": 624,
           "package_id": 143,
         },
         "call-bind": {
@@ -24220,15 +24220,15 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 147,
         },
         "camelcase-css": {
-          "id": 692,
+          "id": 691,
           "package_id": 148,
         },
         "caniuse-lite": {
-          "id": 181,
+          "id": 180,
           "package_id": 149,
         },
         "chalk": {
-          "id": 364,
+          "id": 363,
           "package_id": 150,
         },
         "chokidar": {
@@ -24240,7 +24240,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 152,
         },
         "client-only": {
-          "id": 857,
+          "id": 856,
           "package_id": 153,
         },
         "cliui": {
@@ -24276,7 +24276,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 161,
         },
         "cross-spawn": {
-          "id": 365,
+          "id": 364,
           "package_id": 162,
         },
         "cssesc": {
@@ -24288,7 +24288,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 164,
         },
         "damerau-levenshtein": {
-          "id": 438,
+          "id": 437,
           "package_id": 165,
         },
         "data-uri-to-buffer": {
@@ -24308,7 +24308,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 169,
         },
         "debug": {
-          "id": 366,
+          "id": 365,
           "package_id": 170,
         },
         "deep-is": {
@@ -24344,7 +24344,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 178,
         },
         "doctrine": {
-          "id": 418,
+          "id": 417,
           "package_id": 179,
         },
         "dunder-proto": {
@@ -24360,7 +24360,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 182,
         },
         "emoji-regex": {
-          "id": 439,
+          "id": 438,
           "package_id": 183,
         },
         "end-of-stream": {
@@ -24368,7 +24368,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 184,
         },
         "env-paths": {
-          "id": 237,
+          "id": 236,
           "package_id": 185,
         },
         "error-ex": {
@@ -24388,7 +24388,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 189,
         },
         "es-iterator-helpers": {
-          "id": 453,
+          "id": 452,
           "package_id": 190,
         },
         "es-object-atoms": {
@@ -24408,11 +24408,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 194,
         },
         "escalade": {
-          "id": 950,
+          "id": 949,
           "package_id": 195,
         },
         "escape-string-regexp": {
-          "id": 367,
+          "id": 366,
           "package_id": 196,
         },
         "escodegen": {
@@ -24428,43 +24428,43 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 199,
         },
         "eslint-import-resolver-node": {
-          "id": 391,
+          "id": 389,
           "package_id": 200,
         },
         "eslint-import-resolver-typescript": {
-          "id": 392,
+          "id": 390,
           "package_id": 201,
         },
         "eslint-module-utils": {
-          "id": 420,
+          "id": 419,
           "package_id": 202,
         },
         "eslint-plugin-import": {
-          "id": 393,
+          "id": 391,
           "package_id": 203,
         },
         "eslint-plugin-jsx-a11y": {
-          "id": 394,
+          "id": 392,
           "package_id": 204,
         },
         "eslint-plugin-react": {
-          "id": 395,
+          "id": 393,
           "package_id": 205,
         },
         "eslint-plugin-react-hooks": {
-          "id": 396,
+          "id": 394,
           "package_id": 206,
         },
         "eslint-scope": {
-          "id": 368,
+          "id": 367,
           "package_id": 207,
         },
         "eslint-visitor-keys": {
-          "id": 369,
+          "id": 368,
           "package_id": 208,
         },
         "espree": {
-          "id": 370,
+          "id": 369,
           "package_id": 209,
         },
         "esprima": {
@@ -24472,7 +24472,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 210,
         },
         "esquery": {
-          "id": 371,
+          "id": 370,
           "package_id": 211,
         },
         "esrecurse": {
@@ -24484,7 +24484,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 213,
         },
         "esutils": {
-          "id": 372,
+          "id": 371,
           "package_id": 214,
         },
         "extract-zip": {
@@ -24492,7 +24492,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 215,
         },
         "fast-deep-equal": {
-          "id": 373,
+          "id": 372,
           "package_id": 216,
         },
         "fast-fifo": {
@@ -24524,7 +24524,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 223,
         },
         "file-entry-cache": {
-          "id": 374,
+          "id": 373,
           "package_id": 224,
         },
         "fill-range": {
@@ -24532,7 +24532,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 225,
         },
         "find-up": {
-          "id": 375,
+          "id": 374,
           "package_id": 226,
         },
         "flat-cache": {
@@ -24552,7 +24552,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 230,
         },
         "fraction.js": {
-          "id": 182,
+          "id": 181,
           "package_id": 231,
         },
         "fsevents": {
@@ -24592,7 +24592,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 240,
         },
         "get-tsconfig": {
-          "id": 405,
+          "id": 402,
           "package_id": 241,
         },
         "get-uri": {
@@ -24604,7 +24604,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 243,
         },
         "glob-parent": {
-          "id": 376,
+          "id": 375,
           "package_id": 244,
         },
         "globals": {
@@ -24620,7 +24620,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 247,
         },
         "graphemer": {
-          "id": 92,
+          "id": 89,
           "package_id": 248,
         },
         "has-bigints": {
@@ -24648,7 +24648,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 254,
         },
         "hasown": {
-          "id": 421,
+          "id": 420,
           "package_id": 255,
         },
         "http-proxy-agent": {
@@ -24664,7 +24664,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 258,
         },
         "ignore": {
-          "id": 377,
+          "id": 376,
           "package_id": 259,
         },
         "import-fresh": {
@@ -24672,7 +24672,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 260,
         },
         "imurmurhash": {
-          "id": 378,
+          "id": 377,
           "package_id": 261,
         },
         "internal-slot": {
@@ -24708,7 +24708,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 269,
         },
         "is-bun-module": {
-          "id": 406,
+          "id": 403,
           "package_id": 270,
         },
         "is-callable": {
@@ -24744,7 +24744,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 278,
         },
         "is-glob": {
-          "id": 379,
+          "id": 378,
           "package_id": 279,
         },
         "is-map": {
@@ -24812,7 +24812,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 295,
         },
         "jiti": {
-          "id": 349,
+          "id": 384,
           "package_id": 296,
         },
         "js-tokens": {
@@ -24840,7 +24840,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 302,
         },
         "json-stable-stringify-without-jsonify": {
-          "id": 380,
+          "id": 379,
           "package_id": 303,
         },
         "json5": {
@@ -24848,7 +24848,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 304,
         },
         "jsx-ast-utils": {
-          "id": 441,
+          "id": 440,
           "package_id": 305,
         },
         "keyv": {
@@ -24860,7 +24860,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 307,
         },
         "language-tags": {
-          "id": 442,
+          "id": 441,
           "package_id": 308,
         },
         "levn": {
@@ -24880,7 +24880,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 312,
         },
         "lodash.merge": {
-          "id": 381,
+          "id": 380,
           "package_id": 313,
         },
         "loose-envify": {
@@ -24904,7 +24904,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 318,
         },
         "minimatch": {
-          "id": 382,
+          "id": 381,
           "package_id": 319,
         },
         "minimist": {
@@ -24916,7 +24916,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 321,
         },
         "mitt": {
-          "id": 225,
+          "id": 224,
           "package_id": 322,
         },
         "ms": {
@@ -24932,7 +24932,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 325,
         },
         "natural-compare": {
-          "id": 383,
+          "id": 382,
           "package_id": 326,
         },
         "netmask": {
@@ -24952,7 +24952,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 330,
         },
         "normalize-range": {
-          "id": 183,
+          "id": 182,
           "package_id": 331,
         },
         "object-assign": {
@@ -24976,19 +24976,19 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 336,
         },
         "object.entries": {
-          "id": 458,
+          "id": 457,
           "package_id": 337,
         },
         "object.fromentries": {
-          "id": 425,
+          "id": 424,
           "package_id": 338,
         },
         "object.groupby": {
-          "id": 426,
+          "id": 425,
           "package_id": 339,
         },
         "object.values": {
-          "id": 427,
+          "id": 426,
           "package_id": 340,
         },
         "once": {
@@ -24996,7 +24996,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 341,
         },
         "optionator": {
-          "id": 384,
+          "id": 383,
           "package_id": 342,
         },
         "own-keys": {
@@ -25028,7 +25028,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 349,
         },
         "parse-json": {
-          "id": 240,
+          "id": 239,
           "package_id": 350,
         },
         "path-exists": {
@@ -25052,7 +25052,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 355,
         },
         "picocolors": {
-          "id": 184,
+          "id": 183,
           "package_id": 356,
         },
         "picomatch": {
@@ -25096,7 +25096,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 366,
         },
         "postcss-value-parser": {
-          "id": 185,
+          "id": 184,
           "package_id": 367,
         },
         "prelude-ls": {
@@ -25108,7 +25108,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 369,
         },
         "prop-types": {
-          "id": 461,
+          "id": 460,
           "package_id": 370,
         },
         "proxy-agent": {
@@ -25152,7 +25152,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 380,
         },
         "read-cache": {
-          "id": 689,
+          "id": 688,
           "package_id": 381,
         },
         "readdirp": {
@@ -25200,15 +25200,15 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 392,
         },
         "safe-regex-test": {
-          "id": 445,
+          "id": 444,
           "package_id": 393,
         },
         "scheduler": {
-          "id": 724,
+          "id": 723,
           "package_id": 394,
         },
         "semver": {
-          "id": 428,
+          "id": 427,
           "package_id": 395,
         },
         "set-function-length": {
@@ -25224,7 +25224,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 398,
         },
         "sharp": {
-          "id": 626,
+          "id": 620,
           "package_id": 399,
         },
         "shebang-command": {
@@ -25284,7 +25284,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 413,
         },
         "stable-hash": {
-          "id": 407,
+          "id": 404,
           "package_id": 414,
         },
         "streamsearch": {
@@ -25304,15 +25304,15 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 417,
         },
         "string.prototype.includes": {
-          "id": 446,
+          "id": 445,
           "package_id": 418,
         },
         "string.prototype.matchall": {
-          "id": 464,
+          "id": 463,
           "package_id": 419,
         },
         "string.prototype.repeat": {
-          "id": 465,
+          "id": 464,
           "package_id": 420,
         },
         "string.prototype.trim": {
@@ -25320,7 +25320,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 421,
         },
         "string.prototype.trimend": {
-          "id": 429,
+          "id": 428,
           "package_id": 422,
         },
         "string.prototype.trimstart": {
@@ -25344,7 +25344,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 426,
         },
         "styled-jsx": {
-          "id": 633,
+          "id": 627,
           "package_id": 427,
         },
         "sucrase": {
@@ -25388,7 +25388,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 437,
         },
         "tinyglobby": {
-          "id": 408,
+          "id": 405,
           "package_id": 438,
         },
         "to-regex-range": {
@@ -25396,7 +25396,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 439,
         },
         "ts-api-utils": {
-          "id": 95,
+          "id": 92,
           "package_id": 440,
         },
         "ts-interface-checker": {
@@ -25404,7 +25404,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 441,
         },
         "tsconfig-paths": {
-          "id": 430,
+          "id": 429,
           "package_id": 442,
         },
         "tslib": {
@@ -25444,7 +25444,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 451,
         },
         "unrs-resolver": {
-          "id": 409,
+          "id": 406,
           "package_id": 452,
         },
         "update-browserslist-db": {
@@ -25456,7 +25456,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 454,
         },
         "urlpattern-polyfill": {
-          "id": 226,
+          "id": 225,
           "package_id": 455,
         },
         "util-deprecate": {
@@ -25512,7 +25512,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 467,
         },
         "yaml": {
-          "id": 696,
+          "id": 694,
           "package_id": 468,
         },
         "yargs": {
@@ -25532,7 +25532,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 472,
         },
         "zod": {
-          "id": 227,
+          "id": 226,
           "package_id": 473,
         },
       },
@@ -25543,7 +25543,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "postcss": {
-          "id": 632,
+          "id": 626,
           "package_id": 488,
         },
       },
@@ -25554,7 +25554,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "eslint-visitor-keys": {
-          "id": 22,
+          "id": 21,
           "package_id": 474,
         },
       },
@@ -25609,7 +25609,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "debug": {
-          "id": 417,
+          "id": 416,
           "package_id": 486,
         },
       },
@@ -25620,7 +25620,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "resolve": {
-          "id": 462,
+          "id": 461,
           "package_id": 487,
         },
       },
@@ -25690,7 +25690,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "lilconfig": {
-          "id": 695,
+          "id": 693,
           "package_id": 490,
         },
       },
@@ -25712,11 +25712,11 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     {
       "dependencies": {
         "minimatch": {
-          "id": 117,
+          "id": 116,
           "package_id": 483,
         },
         "semver": {
-          "id": 118,
+          "id": 117,
           "package_id": 484,
         },
       },

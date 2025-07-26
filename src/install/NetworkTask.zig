@@ -92,7 +92,7 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.JSC.URL.join(
+        const tmp = bun.jsc.URL.join(
             bun.String.borrowUTF8(scope.url.href),
             bun.String.borrowUTF8(encoded_name),
         );
@@ -301,9 +301,17 @@ pub fn forTarball(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
+
+const install = @import("./install.zig");
+const ExtractTarball = install.ExtractTarball;
+const NetworkTask = install.NetworkTask;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;
+const PatchTask = install.PatchTask;
+const Task = install.Task;
 
 const bun = @import("bun");
 const GlobalStringBuilder = bun.StringBuilder;
@@ -313,7 +321,6 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;
@@ -322,11 +329,3 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
-
-const install = @import("install.zig");
-const ExtractTarball = install.ExtractTarball;
-const NetworkTask = install.NetworkTask;
-const Npm = install.Npm;
-const PackageManager = install.PackageManager;
-const PatchTask = install.PatchTask;
-const Task = install.Task;

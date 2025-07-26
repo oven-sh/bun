@@ -1,6 +1,3 @@
-const env = @import("env.zig");
-const bun = @import("bun");
-
 /// All runtime feature flags that can be toggled with an environment variable.
 /// The field names correspond exactly to the expected environment variable names.
 pub const RuntimeFeatureFlag = enum {
@@ -15,8 +12,8 @@ pub const RuntimeFeatureFlag = enum {
     BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS,
     BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG,
     BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER,
-    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO,
     BUN_FEATURE_FLAG_DISABLE_DNS_CACHE,
+    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO,
     BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX,
     BUN_FEATURE_FLAG_DISABLE_IO_POOL,
     BUN_FEATURE_FLAG_DISABLE_IPV4,
@@ -25,6 +22,7 @@ pub const RuntimeFeatureFlag = enum {
     BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK,
     BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS,
     BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH,
+    BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING,
     BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE,
     BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE,
     BUN_FEATURE_FLAG_FORCE_IO_POOL,
@@ -33,8 +31,15 @@ pub const RuntimeFeatureFlag = enum {
     BUN_FEATURE_FLAG_NO_LIBDEFLATE,
     BUN_INSTRUMENTS,
     BUN_INTERNAL_BUNX_INSTALL,
+    /// Suppress crash reporting and creating a core dump when we abort due to an unsupported libuv function being called
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB,
+    /// Suppress crash reporting and creating a core dump when we abort due to a fatal Node-API error
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT,
+    /// Suppress crash reporting and creating a core dump when `process._kill()` is passed its own PID
+    BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF,
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
+    NODE_NO_WARNINGS,
 };
 
 /// Enable breaking changes for the next major release of Bun
@@ -196,3 +201,6 @@ pub fn bake() bool {
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.
 /// To use them, extra flags are passed in addition to this one.
 pub const bake_debugging_features = env.is_canary or env.isDebug;
+
+const bun = @import("bun");
+const env = @import("./env.zig");

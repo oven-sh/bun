@@ -2,7 +2,7 @@ pub const to = 17;
 pub const from = [_]short{17};
 
 pub fn toJS(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     value: *Data,
 ) AnyPostgresError!JSValue {
     defer value.deinit();
@@ -12,8 +12,6 @@ pub fn toJS(
     return JSValue.createBuffer(globalObject, value.slice(), null);
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const Data = @import("../Data.zig").Data;
@@ -21,5 +19,5 @@ const Data = @import("../Data.zig").Data;
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

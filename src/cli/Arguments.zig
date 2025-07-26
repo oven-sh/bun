@@ -1,5 +1,3 @@
-const Arguments = @This();
-
 pub fn loader_resolver(in: string) !Api.Loader {
     const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
     return option_loader.toAPI();
@@ -519,7 +517,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
     else
         null;
 
@@ -695,7 +693,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -707,7 +705,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -721,7 +719,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .set_breakpoint_on_first_line = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         if (args.flag("--no-deprecation")) {
@@ -1066,7 +1064,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (opts.define) |define| {
             if (define.keys.len > 0)
-                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+                bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
     }
 
@@ -1174,28 +1172,31 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Api = bun.Schema.Api;
-const logger = bun.logger;
-const strings = bun.strings;
-const string = bun.string;
-const clap = bun.clap;
+const string = []const u8;
+
 const builtin = @import("builtin");
-const FeatureFlags = bun.FeatureFlags;
-const Command = CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const debug_flags = CLI.debug_flags;
-const js_ast = bun.js_ast;
-const resolve_path = bun.path;
+const std = @import("std");
+
+const bun = @import("bun");
 const Bunfig = bun.Bunfig;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
 const OOM = bun.OOM;
-const options = bun.options;
-const printVersionAndExit = CLI.printVersionAndExit;
-const printRevisionAndExit = CLI.printRevisionAndExit;
-const CLI = bun.CLI;
+const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
+const clap = bun.clap;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const options = bun.options;
+const resolve_path = bun.path;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
+const CLI = bun.cli;
+const Command = CLI.Command;
 const DefineColonList = CLI.DefineColonList;
 const LoaderColonList = CLI.LoaderColonList;
+const debug_flags = CLI.debug_flags;
+const printRevisionAndExit = CLI.printRevisionAndExit;
+const printVersionAndExit = CLI.printVersionAndExit;

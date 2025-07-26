@@ -27,6 +27,10 @@ afterAll(() => {
   verdaccio.stop();
 });
 
+function splitErrLines(err: string): string[] {
+  return err.split(/\r?\n/).filter(s => !s.startsWith("WARNING: ASAN interferes"));
+}
+
 beforeEach(async () => {
   ({ packageDir, packageJson } = await verdaccio.createTestDir());
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
@@ -82,7 +86,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -131,7 +135,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -186,7 +190,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -277,7 +281,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -346,7 +350,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -379,7 +383,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -428,7 +432,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -473,7 +477,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -502,7 +506,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -536,7 +540,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -563,7 +567,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -601,7 +605,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -641,7 +645,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -668,7 +672,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -725,7 +729,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -770,7 +774,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -835,7 +839,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -874,7 +878,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         env: testEnv,
       });
 
@@ -914,7 +918,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -953,7 +957,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -985,7 +989,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1022,7 +1026,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1050,7 +1054,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1086,7 +1090,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1130,7 +1134,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cmd: [bunExe(), "install"],
           cwd: packageDir,
           stdout: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           stderr: "pipe",
           env: testEnv,
         });
@@ -1172,7 +1176,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1218,7 +1222,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1267,7 +1271,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1295,7 +1299,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const dependencies: Record<string, string> = {};
       const dependenciesList: string[] = [];
 
-      for (let i = 0; i < packagesCount; i++) {
+      async function iterate(i) {
         const packageName: string = "stress-test-package-" + i;
         const packageVersion = "1.0." + i;
 
@@ -1303,8 +1307,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         dependenciesList[i] = packageName;
 
         const packagePath = join(packageDir, packageName);
-        await mkdir(packagePath);
-        await writeFile(
+
+        await Bun.write(
           join(packagePath, "package.json"),
           JSON.stringify({
             name: packageName,
@@ -1313,6 +1317,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           }),
         );
       }
+
+      await Promise.all(Array.from({ length: packagesCount }, (_, i) => iterate(i)));
 
       await writeFile(
         packageJson,
@@ -1340,16 +1346,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install", "--concurrent-scripts=2"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
 
-      const err = await stderr.text();
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await stdout.text();
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -1358,7 +1364,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
         "4 packages installed",
       ]);
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
@@ -1374,16 +1380,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
 
-      const err = await stderr.text();
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await stdout.text();
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
@@ -1393,7 +1399,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "500 packages installed",
       ]);
 
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
@@ -1421,7 +1427,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1475,7 +1481,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1505,7 +1511,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1549,7 +1555,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1584,7 +1590,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env,
       });
@@ -1627,7 +1633,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1678,7 +1684,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1726,7 +1732,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1776,7 +1782,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -1818,7 +1824,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       }));
@@ -1967,7 +1973,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            stdin: "pipe",
+            stdin: "ignore",
             env: testEnv,
           });
 
@@ -2000,7 +2006,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            stdin: "pipe",
+            stdin: "ignore",
             env: testEnv,
           }));
 
@@ -2034,7 +2040,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            stdin: "pipe",
+            stdin: "ignore",
             env: testEnv,
           });
 
@@ -2074,7 +2080,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            stdin: "pipe",
+            stdin: "ignore",
             env: testEnv,
           });
 
@@ -2108,7 +2114,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            stdin: "pipe",
+            stdin: "ignore",
             env: testEnv,
           }));
 
@@ -2161,7 +2167,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         });
 
@@ -2196,7 +2202,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         }));
 
@@ -2234,7 +2240,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         });
 
@@ -2281,7 +2287,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         }));
 
@@ -2326,7 +2332,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         });
 
@@ -2375,7 +2381,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
-          stdin: "pipe",
+          stdin: "ignore",
           env: testEnv,
         }));
 
@@ -2418,7 +2424,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
-        stdin: "pipe",
+        stdin: "ignore",
         stderr: "pipe",
         env: testEnv,
       });
@@ -2838,7 +2844,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "No packages! Deleted empty lockfile",
         "",
         `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
@@ -2891,7 +2897,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "Resolving dependencies",
         expect.stringContaining("Resolved, downloaded and extracted "),
         "Saved lockfile",

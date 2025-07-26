@@ -166,9 +166,8 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(createX509Certificate(vm, globalObject, structure, arg)));
@@ -185,7 +184,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(init.owner->computeFingerprint(init.owner->view(), init.owner->globalObject()));
     });
     m_subject.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         auto value = init.owner->computeSubject(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (!value.isString()) {
             init.set(jsEmptyString(init.owner->vm()));
             return;
@@ -194,7 +198,12 @@ void JSX509Certificate::finishCreation(VM& vm)
         init.set(value.toString(init.owner->globalObject()));
     });
     m_issuer.initLater([](const JSC::LazyProperty<JSX509Certificate, JSString>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         JSValue value = init.owner->computeIssuer(init.owner->view(), init.owner->globalObject(), false);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return init.set(jsEmptyString(init.vm));
+        }
         if (value.isString()) {
             init.set(value.toString(init.owner->globalObject()));
         } else {

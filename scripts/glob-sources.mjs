@@ -20,7 +20,7 @@ async function globSources(output, patterns, excludes = []) {
 
   const sources =
     paths
-      .map(path => normalize(relative(root, path)))
+      .map(path => normalize(relative(root, path).replaceAll("\\", "/")))
       .sort((a, b) => a.localeCompare(b))
       .join("\n")
       .trim() + "\n";

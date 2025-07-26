@@ -3,29 +3,19 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-const bun = @import("bun");
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
-pub const js_ast = bun.JSAst;
+pub const js_ast = bun.ast;
 pub const options = @import("./options.zig");
 pub const js_printer = bun.js_printer;
 pub const renamer = @import("./renamer.zig");
-const _runtime = @import("./runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
 const G = js_ast.G;
-const Define = @import("./defines.zig").Define;
-const DefineData = @import("./defines.zig").DefineData;
-const FeatureFlags = @import("./feature_flags.zig");
 pub const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
 pub const ImportKind = importRecord.ImportKind;
 pub const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -39,8 +29,6 @@ pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
-const JSC = bun.JSC;
-const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileError("assert is missing an if (Environment.allow_assert)");
@@ -66,12 +54,9 @@ pub const Level = js_ast.Op.Level;
 pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
-const Ref = @import("./ast/base.zig").Ref;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
-const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -2696,7 +2681,6 @@ pub const StringVoidMap = struct {
     pub const Pool = ObjectPool(StringVoidMap, init, true, 32);
     pub const Node = Pool.Node;
 };
-const RefCtx = @import("./ast/base.zig").RefCtx;
 const SymbolUseMap = js_ast.Part.SymbolUseMap;
 const SymbolPropertyUseMap = js_ast.Part.SymbolPropertyUseMap;
 const StringBoolMap = bun.StringHashMapUnmanaged(bool);
@@ -3102,7 +3086,8 @@ pub const Parser = struct {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         bun.assert(p.symbols.items.len == 0);
-        p.symbols = symbols.listManaged(p.allocator);
+        var symbols_ = symbols;
+        p.symbols = symbols_.listManaged(p.allocator);
 
         try p.prepareForVisitPass();
 
@@ -3302,7 +3287,7 @@ pub const Parser = struct {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
                     return js_ast.Result{
@@ -4292,7 +4277,7 @@ pub const Parser = struct {
         // p.popScope();
 
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (p.macro_call_count != 0) {
                     // disable this for:
@@ -7482,7 +7467,7 @@ fn NewParser_(
                     .bin_pow => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = JSC.math.pow(vals[0], vals[1]) }, v.loc);
+                                return p.newExpr(E.Number{ .value = jsc.math.pow(vals[0], vals[1]) }, v.loc);
                             }
                         }
                     },
@@ -9049,7 +9034,9 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                item_refs.putAssumeCapacity(name, name_loc.*);
+                // No need to add the `default_name` to `item_refs` because
+                // `.scanImportsAndExports(...)` special cases and handles
+                // `default_name` separately
             }
             var end: usize = 0;
 
@@ -17519,7 +17506,7 @@ fn NewParser_(
                     //
                     // When we see a hook call, we need to hash it, and then mark a flag so that if
                     // it is assigned to a variable, that variable also get's hashed.
-                    if (p.options.features.react_fast_refresh) try_record_hook: {
+                    if (p.options.features.react_fast_refresh or p.options.features.server_components.isServerSide()) try_record_hook: {
                         const original_name = switch (e_.target.data) {
                             inline .e_identifier,
                             .e_import_identifier,
@@ -17529,7 +17516,33 @@ fn NewParser_(
                             else => break :try_record_hook,
                         };
                         if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
-                        p.handleReactRefreshHookCall(e_, original_name);
+                        if (p.options.features.react_fast_refresh) {
+                            p.handleReactRefreshHookCall(e_, original_name);
+                        } else if (
+                        // If we're here it means we're in server component.
+                        // Error if the user is using the `useState` hook as it
+                        // is disallowed in server components.
+                        //
+                        // We're also specifically checking that the target is
+                        // `.e_import_identifier`.
+                        //
+                        // Why? Because we *don't* want to check for uses of
+                        // `useState` _inside_ React, and we know React uses
+                        // commonjs so it will never be `.e_import_identifier`.
+                        e_.target.data == .e_import_identifier) {
+                            bun.assert(p.options.features.server_components.isServerSide());
+                            if (bun.strings.eqlComptime(original_name, "useState")) {
+                                p.log.addError(
+                                    p.source,
+                                    expr.loc,
+                                    std.fmt.allocPrint(
+                                        p.allocator,
+                                        "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                                        .{},
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
+                            }
+                        }
                     }
 
                     // Implement constant folding for 'string'.charCodeAt(n)
@@ -18794,6 +18807,26 @@ fn NewParser_(
                         return .{ .data = .{
                             .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
                         }, .loc = loc };
+                    }
+
+                    // Inline import.meta properties for Bake
+                    if (p.options.framework != null) {
+                        if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
+                            // Inline import.meta.dir
+                            return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
+                        } else if (strings.eqlComptime(name, "file")) {
+                            // Inline import.meta.file (filename only)
+                            return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
+                        } else if (strings.eqlComptime(name, "path")) {
+                            // Inline import.meta.path (full path)
+                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                        } else if (strings.eqlComptime(name, "url")) {
+                            // Inline import.meta.url as file:// URL
+                            const bunstr = bun.String.fromBytes(p.source.path.text);
+                            defer bunstr.deref();
+                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            return p.newExpr(E.String.init(url), name_loc);
+                        }
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.
@@ -24869,3 +24902,24 @@ fn floatToInt32(f: f64) i32 {
     const int: i32 = @bitCast(uint);
     return if (f < 0) @as(i32, 0) -% int else int;
 }
+
+const string = []const u8;
+
+const FeatureFlags = @import("./feature_flags.zig");
+const _runtime = @import("./runtime.zig");
+const ObjectPool = @import("./pool.zig").ObjectPool;
+
+const Define = @import("./defines.zig").Define;
+const DefineData = @import("./defines.zig").DefineData;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+
+const Index = bun.ast.Index;
+const Ref = bun.ast.Ref;
+const RefCtx = bun.ast.RefCtx;

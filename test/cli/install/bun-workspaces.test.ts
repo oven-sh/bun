@@ -1817,3 +1817,96 @@ registry = "${verdaccio.registryUrl()}"
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
 });
+
+test("matching workspace devDependency and npm peerDependency", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        devDependencies: {
+          "no-deps": "workspace:*", // resolves to ./packages/pkg2
+        },
+        peerDependencies: {
+          "no-deps": "2.0.0", // npm peerDependency
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
+
+  // first install should resolve both
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  // both dependencies should be included in the lockfile
+  expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
+    .toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "foo",
+        },
+        "packages/pkg1": {
+          "name": "pkg1",
+          "version": "1.0.0",
+          "devDependencies": {
+            "no-deps": "workspace:*",
+          },
+          "peerDependencies": {
+            "no-deps": "2.0.0",
+          },
+        },
+        "packages/pkg2": {
+          "name": "no-deps",
+          "version": "1.0.0",
+        },
+      },
+      "packages": {
+        "no-deps": ["no-deps@workspace:packages/pkg2"],
+
+        "pkg1": ["pkg1@workspace:packages/pkg1"],
+      }
+    }
+    "
+  `);
+
+  // another install does not think there's a diff between lockfile and package.jsons
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--verbose"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+
+  const out = await stdout.text();
+  const err = await stderr.text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("updated");
+  expect(out).toContain("no changes");
+});

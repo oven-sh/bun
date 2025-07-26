@@ -85,12 +85,10 @@ pub fn initWithoutStack(this: *ASTMemoryAllocator, arena: std.mem.Allocator) voi
     this.bump_allocator = this.stack_allocator.get();
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const ASTMemoryAllocator = js_ast.ASTMemoryAllocator;
 const Expr = js_ast.Expr;
 const Stmt = js_ast.Stmt;

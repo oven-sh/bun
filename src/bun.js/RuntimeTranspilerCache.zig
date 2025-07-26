@@ -14,10 +14,6 @@
 /// Version 15: Updated global defines table list.
 const expected_version = 15;
 
-const bun = @import("bun");
-const std = @import("std");
-const Output = bun.Output;
-
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
 
@@ -28,7 +24,7 @@ pub const RuntimeTranspilerCache = struct {
     input_hash: ?u64 = null,
     input_byte_length: ?u64 = null,
     features_hash: ?u64 = null,
-    exports_kind: bun.JSAst.ExportsKind = .none,
+    exports_kind: bun.ast.ExportsKind = .none,
     output_code: ?bun.String = null,
     entry: ?Entry = null,
 
@@ -159,7 +155,7 @@ pub const RuntimeTranspilerCache = struct {
             features_hash: u64,
             sourcemap: []const u8,
             output_code: OutputCode,
-            exports_kind: bun.JSAst.ExportsKind,
+            exports_kind: bun.ast.ExportsKind,
         ) !void {
             var tracer = bun.perf.trace("RuntimeTranspilerCache.save");
             defer tracer.end();
@@ -530,7 +526,7 @@ pub const RuntimeTranspilerCache = struct {
         features_hash: u64,
         sourcemap: []const u8,
         source_code: bun.String,
-        exports_kind: bun.JSAst.ExportsKind,
+        exports_kind: bun.ast.ExportsKind,
     ) !void {
         var tracer = bun.perf.trace("RuntimeTranspilerCache.toFile");
         defer tracer.end();
@@ -612,7 +608,7 @@ pub const RuntimeTranspilerCache = struct {
                 debug("get(\"{s}\") = {d} bytes, ignored for debug build", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             }
         }
-        bun.Analytics.Features.transpiler_cache += 1;
+        bun.analytics.Features.transpiler_cache += 1;
 
         if (comptime bun.Environment.isDebug) {
             if (!bun_debug_restore_from_cache) {
@@ -645,3 +641,8 @@ pub const RuntimeTranspilerCache = struct {
             debug("put() = {d} bytes", .{output_code.latin1().len});
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;

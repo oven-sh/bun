@@ -1,19 +1,4 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = @import("../env.zig");
-const Install = @import("./install.zig");
-const PackageManager = Install.PackageManager;
-const Features = Install.Features;
-const PackageNameHash = Install.PackageNameHash;
-const Repository = @import("./repository.zig").Repository;
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
 const Dependency = @This();
-const JSC = bun.JSC;
 
 const URI = union(Tag) {
     local: String,
@@ -163,12 +148,6 @@ pub fn toExternal(this: Dependency) External {
     bytes[16] = @bitCast(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
-}
-
-// Needed when a dependency uses workspace: protocol and isn't
-// marked with workspace behavior.
-pub fn isWorkspaceDep(this: *const Dependency) bool {
-    return this.behavior.isWorkspace() or this.version.tag == .workspace;
 }
 
 pub inline fn isSCPLikePath(dependency: string) bool {
@@ -330,8 +309,8 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        const object = jsc.JSValue.createEmptyObject(globalThis, 2);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
         switch (dep.tag) {
@@ -356,7 +335,7 @@ pub const Version = struct {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
                 var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
-                object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
+                object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
                 object.put(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
@@ -786,7 +765,7 @@ pub const Version = struct {
             return .npm;
         }
 
-        pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn inferFromJS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
                 return .js_undefined;
@@ -1280,7 +1259,7 @@ pub fn parseWithTag(
     }
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).slice();
     if (arguments.len == 1) {
         return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
@@ -1290,7 +1269,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
+    const alias_value: jsc.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
         return .js_undefined;
@@ -1302,7 +1281,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         return .js_undefined;
     }
 
-    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
+    const name_value: jsc.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1376,10 +1355,6 @@ pub const Behavior = packed struct(u8) {
         return this.bundled;
     }
 
-    pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
-    }
-
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
@@ -1405,9 +1380,23 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isWorkspaceOnly() != rhs.isWorkspaceOnly()) {
-            // ensure isWorkspaceOnly deps are placed at the beginning
-            return if (lhs.isWorkspaceOnly())
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            // ensure workspaces are placed at the beginning
+            return if (lhs.isWorkspace())
+                .lt
+            else
+                .gt;
+        }
+
+        if (lhs.isDev() != rhs.isDev()) {
+            return if (lhs.isDev())
+                .lt
+            else
+                .gt;
+        }
+
+        if (lhs.isOptional() != rhs.isOptional()) {
+            return if (lhs.isOptional())
                 .lt
             else
                 .gt;
@@ -1415,37 +1404,16 @@ pub const Behavior = packed struct(u8) {
 
         if (lhs.isProd() != rhs.isProd()) {
             return if (lhs.isProd())
-                .gt
+                .lt
             else
-                .lt;
-        }
-
-        if (lhs.isDev() != rhs.isDev()) {
-            return if (lhs.isDev())
-                .gt
-            else
-                .lt;
-        }
-
-        if (lhs.isOptional() != rhs.isOptional()) {
-            return if (lhs.isOptional())
-                .gt
-            else
-                .lt;
+                .gt;
         }
 
         if (lhs.isPeer() != rhs.isPeer()) {
             return if (lhs.isPeer())
-                .gt
+                .lt
             else
-                .lt;
-        }
-
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
-                .gt
-            else
-                .lt;
+                .gt;
         }
 
         return .eq;
@@ -1460,7 +1428,7 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.workspaces and this.isWorkspaceOnly());
+            (features.workspaces and this.isWorkspace());
     }
 
     comptime {
@@ -1471,3 +1439,23 @@ pub const Behavior = packed struct(u8) {
         bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };
+
+const string = []const u8;
+
+const Environment = @import("../env.zig");
+const std = @import("std");
+const Repository = @import("./repository.zig").Repository;
+
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const PackageManager = Install.PackageManager;
+const PackageNameHash = Install.PackageNameHash;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;

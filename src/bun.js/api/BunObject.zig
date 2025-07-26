@@ -651,7 +651,7 @@ pub fn getArgv(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
 
 pub fn openInEditor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var arguments = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -1206,7 +1206,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         return globalThis.throwTODO("mmapFile is not supported on Windows");
     }
 
-    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+    var args = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
     defer args.deinit();
 
     var buf: bun.PathBuffer = undefined;

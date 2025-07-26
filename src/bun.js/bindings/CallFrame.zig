@@ -183,7 +183,6 @@ pub const CallFrame = opaque {
     pub const ArgumentsSlice = struct {
         remaining: []const jsc.JSValue,
         vm: *jsc.VirtualMachine,
-        arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator),
         all: []const jsc.JSValue,
         threw: bool = false,
         protected: bun.bit_set.IntegerBitSet(32) = bun.bit_set.IntegerBitSet(32).initEmpty(),
@@ -199,7 +198,6 @@ pub const CallFrame = opaque {
 
         pub fn deinit(slice: *ArgumentsSlice) void {
             slice.unprotect();
-            slice.arena.deinit();
         }
 
         pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
@@ -210,16 +208,6 @@ pub const CallFrame = opaque {
                 .remaining = slice,
                 .vm = vm,
                 .all = slice,
-                .arena = bun.ArenaAllocator.init(vm.allocator),
-            };
-        }
-
-        pub fn initAsync(vm: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
-            return ArgumentsSlice{
-                .remaining = bun.default_allocator.dupe(jsc.JSValue, slice),
-                .vm = vm,
-                .all = slice,
-                .arena = bun.ArenaAllocator.init(bun.default_allocator),
             };
         }
 

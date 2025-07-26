@@ -537,14 +537,14 @@ pub fn wrapInstanceMethod(
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).@"fn";
         const Args = std.meta.ArgsTuple(FunctionType);
-        const eater = if (auto_protect) jsc.CallFrame.ArgumentsSlice.protectEatNext else jsc.CallFrame.ArgumentsSlice.nextEat;
+        const eater = if (auto_protect) jsc.CallFrame.NodeFsArgumentsSlice.protectEatNext else jsc.CallFrame.NodeFsArgumentsSlice.nextEat;
 
         pub fn method(
             this: *Container,
             globalThis: *jsc.JSGlobalObject,
             callframe: *jsc.CallFrame,
         ) bun.JSError!jsc.JSValue {
-            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+            var iter = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
@@ -697,13 +697,13 @@ pub fn wrapStaticMethod(
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).@"fn";
         const Args = std.meta.ArgsTuple(FunctionType);
-        const eater = if (auto_protect) jsc.CallFrame.ArgumentsSlice.protectEatNext else jsc.CallFrame.ArgumentsSlice.nextEat;
+        const eater = if (auto_protect) jsc.CallFrame.NodeFsArgumentsSlice.protectEatNext else jsc.CallFrame.NodeFsArgumentsSlice.nextEat;
 
         pub fn method(
             globalThis: *jsc.JSGlobalObject,
             callframe: *jsc.CallFrame,
         ) bun.JSError!jsc.JSValue {
-            var iter = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
+            var iter = jsc.CallFrame.NodeFsArgumentsSlice.init(globalThis.bunVM(), callframe.arguments());
             var args: Args = undefined;
 
             inline for (FunctionTypeInfo.params, 0..) |param, i| {

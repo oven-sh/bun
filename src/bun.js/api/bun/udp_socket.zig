@@ -585,12 +585,12 @@ pub const UDPSocket = struct {
         if (this.closed) {
             return globalThis.throw("Socket is closed", .{});
         }
-        const arguments = callframe.arguments_old(1);
+        const arguments = callframe.arguments();
         if (arguments.len != 1) {
             return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
         }
 
-        const arg = arguments.ptr[0];
+        const arg = arguments[0];
         if (!arg.jsType().isArray()) {
             return globalThis.throwInvalidArgumentType("sendMany", "first argument", "array");
         }
@@ -662,7 +662,7 @@ pub const UDPSocket = struct {
         if (this.closed) {
             return globalThis.throw("Socket is closed", .{});
         }
-        const arguments = callframe.arguments_old(3);
+        const arguments = callframe.arguments();
         const dst: ?Destination = brk: {
             if (this.connect_info != null) {
                 if (arguments.len == 1) {
@@ -677,13 +677,13 @@ pub const UDPSocket = struct {
                     return globalThis.throwInvalidArguments("Expected 3 arguments, got {}", .{arguments.len});
                 }
                 break :brk .{
-                    .port = arguments.ptr[1],
-                    .address = arguments.ptr[2],
+                    .port = arguments[1],
+                    .address = arguments[2],
                 };
             }
         };
 
-        const payload_arg = arguments.ptr[0];
+        const payload_arg: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
         var payload_str = jsc.ZigString.Slice.empty;
         defer payload_str.deinit();
         const payload = brk: {
@@ -802,13 +802,13 @@ pub const UDPSocket = struct {
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
+        const args = callframe.arguments();
 
         if (args.len < 1) {
             return globalThis.throwInvalidArguments("Expected 1 argument", .{});
         }
 
-        const options = args.ptr[0];
+        const options = args[0];
         const config = try UDPSocketConfig.fromJS(globalThis, options);
 
         config.protect();
@@ -887,7 +887,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn jsConnect(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callFrame.arguments_old(2);
+        const args = callFrame.arguments();
 
         const this = callFrame.this().as(UDPSocket) orelse {
             return globalThis.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
@@ -905,12 +905,12 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 2 arguments", .{});
         }
 
-        const str = try args.ptr[0].toBunString(globalThis);
+        const str = try args[0].toBunString(globalThis);
         defer str.deref();
         const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(connect_host);
 
-        const connect_port_js = args.ptr[1];
+        const connect_port_js = args[1];
 
         if (!connect_port_js.isNumber()) {
             return globalThis.throwInvalidArguments("Expected \"port\" to be an integer", .{});

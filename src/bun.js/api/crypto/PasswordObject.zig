@@ -503,8 +503,7 @@ pub const JSPasswordObject = struct {
 
     // Once we have bindings generator, this should be replaced with a generated function
     pub fn JSPasswordObject__hash(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments_ = callframe.arguments_old(2);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwNotEnoughArguments("hash", 1, 0);
@@ -533,8 +532,7 @@ pub const JSPasswordObject = struct {
 
     // Once we have bindings generator, this should be replaced with a generated function
     pub fn JSPasswordObject__hashSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments_ = callframe.arguments_old(2);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments();
 
         if (arguments.len < 1) {
             return globalObject.throwNotEnoughArguments("hash", 1, 0);
@@ -650,8 +648,7 @@ pub const JSPasswordObject = struct {
 
     // Once we have bindings generator, this should be replaced with a generated function
     pub fn JSPasswordObject__verify(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments_ = callframe.arguments_old(3);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments();
 
         if (arguments.len < 2) {
             return globalObject.throwNotEnoughArguments("verify", 2, 0);
@@ -706,8 +703,7 @@ pub const JSPasswordObject = struct {
 
     // Once we have bindings generator, this should be replaced with a generated function
     pub fn JSPasswordObject__verifySync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments_ = callframe.arguments_old(3);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments();
 
         if (arguments.len < 2) {
             return globalObject.throwNotEnoughArguments("verify", 2, 0);

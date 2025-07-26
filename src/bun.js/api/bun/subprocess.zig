@@ -649,10 +649,10 @@ pub fn kill(
 ) bun.JSError!JSValue {
     this.this_jsvalue = callframe.this();
 
-    const arguments = callframe.arguments_old(1);
+    const argument = callframe.argumentsAsArray(1)[0];
     // If signal is 0, then no actual signal is sent, but error checking
     // is still performed.
-    const sig: SignalCode = try parseSignal(arguments.ptr[0], globalThis);
+    const sig: SignalCode = try parseSignal(argument, globalThis);
 
     if (globalThis.hasException()) return .zero;
 

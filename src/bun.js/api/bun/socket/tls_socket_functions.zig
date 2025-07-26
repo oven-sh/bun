@@ -13,12 +13,12 @@ pub fn setServername(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
         return globalObject.throw("Cannot issue SNI from a TLS server-side socket", .{});
     }
 
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     if (args.len < 1) {
         return globalObject.throw("Expected 1 argument", .{});
     }
 
-    const server_name = args.ptr[0];
+    const server_name = args[0];
     if (!server_name.isString()) {
         return globalObject.throw("Expected \"serverName\" to be a string", .{});
     }
@@ -80,17 +80,17 @@ pub fn getTLSVersion(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.Cal
 pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         return globalObject.throw("Expected size to be a number", .{});
     }
 
-    const arg = args.ptr[0];
+    const arg = args[0];
     if (!arg.isNumber()) {
         return globalObject.throw("Expected size to be a number", .{});
     }
-    const size = try args.ptr[0].coerceToInt64(globalObject);
+    const size = try args[0].coerceToInt64(globalObject);
     if (size < 1) {
         return globalObject.throw("Expected size to be greater than 1", .{});
     }
@@ -105,10 +105,10 @@ pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callfr
 pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
     var abbreviated: bool = true;
     if (args.len > 0) {
-        const arg = args.ptr[0];
+        const arg = args[0];
         if (!arg.isBoolean()) {
             return globalObject.throw("Expected abbreviated to be a boolean", .{});
         }
@@ -317,11 +317,11 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *jsc.JSGlobalObject, call
         return .js_undefined;
     }
 
-    const args = callframe.arguments_old(3);
+    const args = callframe.arguments();
     if (args.len < 2) {
         return globalObject.throw("Expected length and label to be provided", .{});
     }
-    const length_arg = args.ptr[0];
+    const length_arg = args[0];
     if (!length_arg.isNumber()) {
         return globalObject.throw("Expected length to be a number", .{});
     }
@@ -331,7 +331,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *jsc.JSGlobalObject, call
         return globalObject.throw("Expected length to be a positive number", .{});
     }
 
-    const label_arg = args.ptr[1];
+    const label_arg = args[1];
     if (!label_arg.isString()) {
         return globalObject.throw("Expected label to be a string", .{});
     }
@@ -343,7 +343,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *jsc.JSGlobalObject, call
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
     if (args.len > 2) {
-        const context_arg = args.ptr[2];
+        const context_arg = args[2];
 
         var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -479,13 +479,13 @@ pub fn setSession(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *js
         return .js_undefined;
     }
 
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
 
     if (args.len < 1) {
         return globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
     }
 
-    const session_arg = args.ptr[0];
+    const session_arg = args[0];
     var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
@@ -539,13 +539,13 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
         return .js_undefined;
     }
 
-    const args = callframe.arguments_old(2);
+    const args = callframe.arguments();
 
     if (args.len < 2) {
         return globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
     }
-    const request_cert_js = args.ptr[0];
-    const reject_unauthorized_js = args.ptr[1];
+    const request_cert_js = args[0];
+    const reject_unauthorized_js = args[1];
     if (!request_cert_js.isBoolean() or !reject_unauthorized_js.isBoolean()) {
         return globalObject.throw("Expected requestCert and rejectUnauthorized arguments to be boolean", .{});
     }

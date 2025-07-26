@@ -76,13 +76,13 @@ pub const UnixOrHost = union(enum) {
 };
 
 pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments_old(1);
+    const args = callframe.arguments();
 
     if (args.len < 1 or (this.listener == .none and this.handlers.active_connections == 0)) {
         return globalObject.throw("Expected 1 argument", .{});
     }
 
-    const opts = args.ptr[0];
+    const opts = args[0];
     if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
         return globalObject.throwValue(globalObject.toInvalidArguments("Expected options object", .{}));
     }
@@ -426,10 +426,10 @@ pub fn dispose(this: *Listener, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.J
 }
 
 pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
     log("close", .{});
 
-    this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
+    this.doStop(if (arguments.len > 0 and arguments[0].isBoolean()) arguments[0].toBoolean() else false);
 
     return .js_undefined;
 }
@@ -817,13 +817,13 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
 pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.arguments();
     if (arguments.len < 3) {
         return global.throwNotEnoughArguments("addServerName", 3, arguments.len);
     }
-    const listener = arguments.ptr[0];
+    const listener = arguments[0];
     if (listener.as(Listener)) |this| {
-        return this.addServerName(global, arguments.ptr[1], arguments.ptr[2]);
+        return this.addServerName(global, arguments[1], arguments[2]);
     }
     return global.throw("Expected a Listener instance", .{});
 }

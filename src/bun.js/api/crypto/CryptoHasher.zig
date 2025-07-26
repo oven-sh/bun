@@ -240,12 +240,12 @@ pub const CryptoHasher = union(enum) {
 
     // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
     pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*CryptoHasher {
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.arguments();
         if (arguments.len == 0) {
             return globalThis.throwInvalidArguments("Expected an algorithm name as an argument", .{});
         }
 
-        const algorithm_name = arguments.ptr[0];
+        const algorithm_name = arguments[0];
         if (algorithm_name.isEmptyOrUndefinedOrNull() or !algorithm_name.isString()) {
             return globalThis.throwInvalidArguments("algorithm must be a string", .{});
         }
@@ -256,7 +256,7 @@ pub const CryptoHasher = union(enum) {
             return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
         }
 
-        const hmac_value = arguments.ptr[1];
+        const hmac_value: JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
         var hmac_key: ?jsc.Node.StringOrBuffer = null;
         defer {
             if (hmac_key) |*key| {
@@ -312,12 +312,10 @@ pub const CryptoHasher = union(enum) {
 
     pub fn update(this: *CryptoHasher, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(2);
-        const input = arguments.ptr[0];
+        const input, const encoding = callframe.argumentsAsArray(2);
         if (input.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
         }
-        const encoding = arguments.ptr[1];
         const buffer = try jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
             if (!globalThis.hasException()) return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
             return error.JSError;

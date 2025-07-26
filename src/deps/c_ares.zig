@@ -1990,7 +1990,7 @@ pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
-    var args = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+    var args = callframe.iterateArguments();
 
     if (args.all.len == 0) {
         return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});

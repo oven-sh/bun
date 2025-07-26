@@ -175,7 +175,7 @@ pub const CallFrame = opaque {
         return std.mem.span(Bun__CallFrame__describeFrame(self));
     }
 
-    pub fn iterate(self: *const CallFrame) ArgumentsSlice {
+    pub fn iterateArguments(self: *const CallFrame) ArgumentsSlice {
         const args = self.arguments();
         return .{ .remaining = args, .all = args };
     }
@@ -189,14 +189,8 @@ pub const CallFrame = opaque {
         remaining: []const jsc.JSValue,
         all: []const jsc.JSValue,
 
-        pub fn from(vm: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
-            return init(vm, @as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
-        }
-        pub fn init(_: *jsc.VirtualMachine, slice: []const jsc.JSValue) ArgumentsSlice {
-            return ArgumentsSlice{
-                .remaining = slice,
-                .all = slice,
-            };
+        pub fn from(_: *jsc.VirtualMachine, slice: []const jsc.JSValueRef) ArgumentsSlice {
+            return init2(@as([*]const jsc.JSValue, @ptrCast(slice.ptr))[0..slice.len]);
         }
         pub fn init2(slice: []const jsc.JSValue) ArgumentsSlice {
             return ArgumentsSlice{

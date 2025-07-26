@@ -286,7 +286,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
 pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+    var arguments = callframe.iterateArguments();
     const path_arg = arguments.nextEat() orelse {
         return globalThis.throw("which: expected 1 argument, got 0", .{});
     };

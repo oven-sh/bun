@@ -4276,7 +4276,7 @@ pub const TestingAPIs = struct {
     pub fn disabledOnThisPlatform(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         if (comptime bun.Environment.isWindows) return JSValue.false;
 
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
         const string = arguments.nextEat() orelse {
             return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
@@ -4298,7 +4298,7 @@ pub const TestingAPIs = struct {
         globalThis: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
@@ -4365,7 +4365,7 @@ pub const TestingAPIs = struct {
         globalThis: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };

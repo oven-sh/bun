@@ -1069,7 +1069,7 @@ const PatchLinesParser = struct {
 
 pub const TestingAPIs = struct {
     pub fn makeDiff(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
 
         const old_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
@@ -1131,7 +1131,7 @@ pub const TestingAPIs = struct {
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
 
         const patchfile_src_js = arguments.nextEat() orelse {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
@@ -1154,7 +1154,7 @@ pub const TestingAPIs = struct {
     }
 
     pub fn parseApplyArgs(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.jsc.Node.Maybe(ApplyArgs, jsc.JSValue) {
-        var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+        var arguments = callframe.iterateArguments();
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};

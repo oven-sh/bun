@@ -49,7 +49,7 @@ pub fn finalize(
 }
 
 pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    var arguments = jsc.CallFrame.ArgumentsSlice.init2(callframe.arguments());
+    var arguments = callframe.iterateArguments();
     const str_js = arguments.nextEat() orelse {
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };

@@ -49,11 +49,6 @@ pub const LinkerContext = struct {
         return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
     }
 
-    pub fn deinit(this: *LinkerContext) void {
-        this.cycle_detector.clearAndFree();
-        this.graph.deinit();
-    }
-
     pub const LinkerOptions = struct {
         generate_bytecode_cache: bool = false,
         output_format: options.Format = .esm,

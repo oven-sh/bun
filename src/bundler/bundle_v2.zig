@@ -2202,7 +2202,6 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinitWithoutFreeingArena(this: *BundleV2) void {
-        this.linker.deinit();
         {
             // We do this first to make it harder for any dangling pointers to data to be used in there.
             var on_parse_finalizers = this.finalizers;

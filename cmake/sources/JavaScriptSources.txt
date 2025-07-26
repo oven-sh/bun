@@ -29,6 +29,7 @@ src/js/builtins/TransformStream.ts
 src/js/builtins/TransformStreamDefaultController.ts
 src/js/builtins/TransformStreamInternals.ts
 src/js/builtins/UtilInspect.ts
+src/js/builtins/WasmStreaming.ts
 src/js/builtins/WritableStreamDefaultController.ts
 src/js/builtins/WritableStreamDefaultWriter.ts
 src/js/builtins/WritableStreamInternals.ts

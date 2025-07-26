@@ -185,3 +185,6 @@ codegen-for-zig-team.tar.gz
 scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
+
+# autocopied in build script
+packages/bun-types/CLAUDE.md

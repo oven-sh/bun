@@ -5,7 +5,6 @@ const first_high_surrogate = 0xD800;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 
-
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
@@ -1923,7 +1922,6 @@ fn NewPrinter(
             }
         }
 
-
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
             var flags = in_flags;
 
@@ -2764,9 +2762,9 @@ fn NewPrinter(
                         p.print("}");
                         switch (part.tail) {
                             .raw => |raw| {
-                            if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
-                            p.print(raw);
-                        },
+                                if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
+                                p.print(raw);
+                            },
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);

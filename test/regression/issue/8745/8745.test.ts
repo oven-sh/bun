@@ -1,5 +1,4 @@
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
-import { readdirSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const expected_stdout = new TextDecoder().decode(
   new Uint8Array([195, 166, 226, 132, 162, 229, 188, 159, 230, 176, 151, 240, 159, 145, 139]),
@@ -102,7 +101,15 @@ test("run directly (requires rtc)", async () => {
 
 test("build js then run (requires rtc)", async () => {
   const result_built = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--target", "bun", "--outfile", "build/requires_rtc_fixture.js", "requires_rtc_fixture.ts"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--target",
+      "bun",
+      "--outfile",
+      "build/requires_rtc_fixture.js",
+      "requires_rtc_fixture.ts",
+    ],
     cwd: dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
@@ -128,7 +135,16 @@ test("build js then run (requires rtc)", async () => {
 
 test("build min js then run (requires rtc)", async () => {
   const result_built = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--target", "bun", "--minify", "--outfile", "build/requires_rtc_fixture-min.js", "requires_rtc_fixture.ts"],
+    cmd: [
+      bunExe(),
+      "build",
+      "--target",
+      "bun",
+      "--minify",
+      "--outfile",
+      "build/requires_rtc_fixture-min.js",
+      "requires_rtc_fixture.ts",
+    ],
     cwd: dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],

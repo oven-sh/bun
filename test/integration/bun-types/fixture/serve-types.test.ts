@@ -1,10 +1,11 @@
 // This file is checked in the `bun-types.test.ts` integration test for successful typechecking, but also checked
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
-import { expect, test as it } from "bun:test";
+import { expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import html from "./html.html";
 import { expectType } from "./utilities";
 
 // XXX: importing this from "harness" caused a failure in bun-types.test.ts
@@ -16,8 +17,8 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
   expect(value).toBeInstanceOf(constructor);
 }
 
-let id = 0;
 function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & string> }>(
+  name: string,
   serveConfig: Bun.ServeFunctionOptions<T, R>,
   {
     onConstructorFailure,
@@ -44,7 +45,7 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     }
   }
 
-  it(`Bun.serve() types test ${++id}`, async () => {
+  it(name, async () => {
     try {
       using server = Bun.serve(serveConfig);
       try {
@@ -61,7 +62,7 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
   });
 }
 
-test({
+test("basic", {
   fetch(req) {
     console.log(req.url); // => http://localhost:3000/
     return new Response("Hello World");
@@ -69,6 +70,7 @@ test({
 });
 
 test(
+  "basic + tls",
   {
     fetch(req) {
       console.log(req.url); // => http://localhost:3000/
@@ -87,6 +89,7 @@ test(
 );
 
 test(
+  "basic + invalid route value",
   {
     routes: {
       "/": new Response("Hello World"),
@@ -101,7 +104,7 @@ test(
   },
 );
 
-test({
+test("basic + websocket + upgrade", {
   websocket: {
     message(ws, message) {
       expectType<typeof ws>().is<Bun.ServerWebSocket<unknown>>();
@@ -122,7 +125,7 @@ test({
   },
 });
 
-test({
+test("basic + websocket + upgrade + all handlers", {
   fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
@@ -166,6 +169,7 @@ test({
 });
 
 test(
+  "basic error handling",
   {
     fetch(req) {
       throw new Error("woops!");
@@ -188,7 +192,7 @@ test(
   },
 );
 
-test({
+test("port 0 + websocket + upgrade", {
   port: 0,
   fetch(req, server) {
     server.upgrade(req);
@@ -203,6 +207,7 @@ test({
 });
 
 test(
+  "basic unix socket",
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch() {
@@ -219,6 +224,7 @@ test(
 );
 
 test(
+  "basic unix socket + websocket + upgrade",
   // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
@@ -239,6 +245,7 @@ test(
 );
 
 test(
+  "basic unix socket + websocket + upgrade + tls",
   // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
@@ -260,6 +267,7 @@ test(
 );
 
 test(
+  "basic unix socket 2",
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -277,6 +285,7 @@ test(
 );
 
 test(
+  "basic unix socket + upgrade + cheap request to check upgrade",
   // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
@@ -340,6 +349,7 @@ test(
 );
 
 test(
+  "basic unix socket + routes",
   {
     unix: `${tmpdirSync()}/bun.sock`,
     routes: {
@@ -356,6 +366,7 @@ test(
 );
 
 test(
+  "unix socket with no routes or fetch handler (should fail)",
   // @ts-expect-error - Missing fetch or routes
   {
     unix: `${tmpdirSync()}/bun.sock`,
@@ -369,7 +380,7 @@ test(
   },
 );
 
-test({
+test("basic routes + fetch + websocket + upgrade", {
   routes: {
     "/:test": req => {
       return new Response(req.params.test);
@@ -390,7 +401,7 @@ test({
   },
 });
 
-test({
+test("basic routes + fetch", {
   routes: {
     "/:test": req => {
       return new Response(req.params.test);
@@ -402,13 +413,13 @@ test({
   },
 });
 
-test({
+test("very basic fetch", {
   fetch: (req, server) => {
     return new Response("cool");
   },
 });
 
-test({
+test("very basic single route with url params", {
   routes: {
     "/:test": req => {
       return new Response(req.params.test);
@@ -416,7 +427,7 @@ test({
   },
 });
 
-test({
+test("very basic fetch with websocket message handler", {
   fetch: () => new Response("ok"),
   websocket: {
     message: ws => {
@@ -425,7 +436,7 @@ test({
   },
 });
 
-test({
+test("yet another basic fetch and websocket message handler", {
   websocket: {
     message: () => {
       //
@@ -440,7 +451,7 @@ test({
   },
 });
 
-test({
+test("websocket + upgrade on a route path", {
   websocket: {
     message: () => {
       //
@@ -457,7 +468,27 @@ test({
   },
 });
 
-test({
+const files = {} as Record<string, Bun.BunFile>;
+
+test("permutations of valid route values", {
+  routes: {
+    "/this/:test": Bun.file(import.meta.file),
+    "/index.test-d.ts": Bun.file("index.test-d.ts"),
+    // @ts-expect-error this is invalid
+    "/index.test-d.ts.2": () => Bun.file("index.test-d.ts"),
+    "/ping": new Response("pong"),
+    "/": html,
+    // @ts-expect-error this is invalid, but hopefully not for too long
+    "/index.html": new Response(html),
+    ...files,
+  },
+
+  fetch: (req, server) => {
+    return new Response("cool");
+  },
+});
+
+test("basic websocket upgrade and ws publish/subscribe to topics", {
   fetch(req, server) {
     server.upgrade(req);
   },
@@ -475,6 +506,7 @@ test({
 });
 
 test(
+  "port with unix socket (is a type error)",
   {
     unix: `${tmpdirSync()}/bun.sock`,
     // @ts-expect-error
@@ -493,6 +525,7 @@ test(
 );
 
 test(
+  "port with unix socket with websocket + upgrade (is a type error)",
   {
     unix: `${tmpdirSync()}/bun.sock`,
     // @ts-expect-error

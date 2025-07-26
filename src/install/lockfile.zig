@@ -1,3 +1,5 @@
+const Lockfile = @This();
+
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
@@ -26,15 +28,30 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+pub const DepSorter = struct {
+    lockfile: *const Lockfile,
+
+    pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
+        const deps_buf = sorter.lockfile.buffers.dependencies.items;
+        const string_buf = sorter.lockfile.buffers.string_bytes.items;
+
+        const l_dep = &deps_buf[l];
+        const r_dep = &deps_buf[r];
+
+        return switch (l_dep.behavior.cmp(r_dep.behavior)) {
+            .lt => true,
+            .gt => false,
+            .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
+        };
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    pub const Entry = struct {
-        script: string,
-    };
-    pub const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(string);
 
     pub const names = [_]string{
         "preinstall",
@@ -73,7 +90,7 @@ pub const Scripts = struct {
         inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
-                allocator.free(entry.script);
+                allocator.free(entry);
             }
             list.deinit(allocator);
         }
@@ -273,7 +290,7 @@ pub fn loadFromDir(
             }
         };
 
-        bun.Analytics.Features.text_lockfile += 1;
+        bun.analytics.Features.text_lockfile += 1;
 
         return .{
             .ok = .{
@@ -316,7 +333,7 @@ pub fn loadFromDir(
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.Analytics.Features.text_lockfile += 1;
+                bun.analytics.Features.text_lockfile += 1;
             }
         },
         else => {},
@@ -556,7 +573,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -873,8 +890,6 @@ pub fn hoist(
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
-    var path_buf: bun.PathBuffer = undefined;
-
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
@@ -885,7 +900,6 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .path_buf = &path_buf,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };
@@ -895,7 +909,6 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -905,7 +918,6 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level,
         );
     }
 
@@ -998,7 +1010,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        const writer = Output.writer();
+        const writer = Output.writerBuffered();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }
@@ -1051,8 +1063,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
+    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1584,14 +1596,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("lockfile/Buffers.zig");
-pub const Serializer = @import("lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("lockfile/OverrideMap.zig");
-pub const Package = @import("lockfile/Package.zig").Package;
-pub const Tree = @import("lockfile/Tree.zig");
+pub const Buffers = @import("./lockfile/Buffers.zig");
+pub const Serializer = @import("./lockfile/bun.lockb.zig");
+pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
+pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
+pub const Package = @import("./lockfile/Package.zig").Package;
+pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -1807,8 +1819,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
         const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
-            if (script.script.len > 0) {
-                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script.script });
+            if (script.len > 0) {
+                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script });
                 has_scripts = true;
             }
         }
@@ -1843,8 +1855,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
             const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
-                if (script.script.len > 0) {
-                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script.script });
+                if (script.len > 0) {
+                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script });
                 }
             }
         }
@@ -1952,17 +1964,17 @@ pub const default_trusted_dependencies = brk: {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
-
-        map.putAssumeCapacity(dep, {});
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate trusted dependency: " ++ dep);
+        }
     }
 
     const final = map;
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);
@@ -1992,57 +2004,64 @@ pub const PatchedDep = extern struct {
     }
 };
 
-const Lockfile = @This();
 const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
+pub const StringPool = String.Builder.StringPool;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const TextLockfile = @import("./lockfile/bun.lock.zig");
+const migration = @import("./migration.zig");
 const std = @import("std");
+const Crypto = @import("../sha.zig").Hashers;
+const Resolution = @import("./resolution.zig").Resolution;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
+const which = @import("../which.zig").which;
 const Allocator = std.mem.Allocator;
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
 const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const assert = bun.assert;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Environment = bun.Environment;
-const File = bun.sys.File;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
-const Install = bun.install;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const PackageID = Install.PackageID;
-const PackageInstall = Install.PackageInstall;
-const PackageManager = Install.PackageManager;
-const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
-const PackageNameHash = Install.PackageNameHash;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;
+const z_allocator = bun.z_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const File = bun.sys.File;
+
 const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const ExternalSlice = Install.ExternalSlice;
+const Features = Install.Features;
+const PackageID = Install.PackageID;
+const PackageInstall = Install.PackageInstall;
+const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
+const PackageNameHash = Install.PackageNameHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const invalid_package_id = Install.invalid_package_id;
-pub const StringPool = String.Builder.StringPool;
-const DependencyID = Install.DependencyID;
-const ExternalSlice = Install.ExternalSlice;
-const ExternalString = Semver.ExternalString;
-const Features = Install.Features;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
-const DotEnv = @import("../env_loader.zig");
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Path = @import("../resolver/resolve_path.zig");
-const Crypto = @import("../sha.zig").Hashers;
-const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const which = @import("../which.zig").which;
-const Dependency = @import("./dependency.zig");
-const TextLockfile = @import("./lockfile/bun.lock.zig");
-const migration = @import("./migration.zig");
-const Resolution = @import("./resolution.zig").Resolution;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

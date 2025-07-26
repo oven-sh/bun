@@ -59,11 +59,113 @@ describe("bun build", () => {
     expect(["build", src]).toRun();
   });
 
+  test("--tsconfig-override works", () => {
+    const tmp = tmpdirSync();
+    const baseDir = path.join(tmp, "tsconfig-override-test");
+    fs.mkdirSync(baseDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(baseDir, "index.ts"),
+      `import { utils } from "@utils/helper";
+console.log(utils());`,
+    );
+
+    fs.writeFileSync(path.join(baseDir, "helper.ts"), `export function utils() { return "Hello from utils"; }`);
+
+    fs.writeFileSync(
+      path.join(baseDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@wrong/*": ["./wrong/*"],
+          },
+        },
+      }),
+    );
+
+    fs.writeFileSync(
+      path.join(baseDir, "custom-tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@utils/*": ["./*"],
+          },
+        },
+      }),
+    );
+
+    const failResult = Bun.spawnSync({
+      cmd: [bunExe(), "build", path.join(baseDir, "index.ts"), "--outdir", path.join(baseDir, "out-fail")],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(failResult.exitCode).not.toBe(0);
+    expect(failResult.stderr?.toString() || "").toContain("Could not resolve");
+
+    const successResult = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "build",
+        path.join(baseDir, "index.ts"),
+        "--tsconfig-override",
+        path.join(baseDir, "custom-tsconfig.json"),
+        "--outdir",
+        path.join(baseDir, "out-success"),
+      ],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(successResult.exitCode).toBe(0);
+
+    const outputFile = path.join(baseDir, "out-success", "index.js");
+    expect(fs.existsSync(outputFile)).toBe(true);
+    const output = fs.readFileSync(outputFile, "utf8");
+    expect(output).toContain("Hello from utils");
+  });
+
+  test("--tsconfig-override works from nested directories", () => {
+    const tmp = tmpdirSync();
+    const baseDir = path.join(tmp, "tsconfig-nested-test");
+    const nestedDir = path.join(baseDir, "nested", "deep");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(nestedDir, "index.ts"),
+      `import { utils } from "@utils/helper";
+console.log(utils());`,
+    );
+
+    fs.writeFileSync(path.join(baseDir, "helper.ts"), `export function utils() { return "Hello from nested!"; }`);
+
+    fs.writeFileSync(
+      path.join(baseDir, "custom-tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "@utils/*": ["./*"],
+          },
+        },
+      }),
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "build", "index.ts", "--tsconfig-override", "../../custom-tsconfig.json", "--outdir", "out"],
+      env: bunEnv,
+      cwd: nestedDir,
+    });
+    expect(result.exitCode).toBe(0);
+
+    const outputFile = path.join(nestedDir, "out", "index.js");
+    expect(fs.existsSync(outputFile)).toBe(true);
+    const output = fs.readFileSync(outputFile, "utf8");
+    expect(output).toContain("Hello from nested!");
+  });
+
   test("__dirname and __filename are printed correctly", () => {
     const tmpdir = tmpdirSync();
     const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
-    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    (fs.mkdirSync(path.join(baseDir, "我")), { recursive: true });
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
     const { exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
@@ -201,7 +303,14 @@ test("you can use --outfile=... and --sourcemap", () => {
   const outputContent = fs.readFileSync(outFile, "utf8");
   expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
 
-  expect(stdout.toString()).toMatchInlineSnapshot();
+  expect(stdout.toString().replace(/\d{1,}ms/, "0.000000001ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in 0.000000001ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
 });
 
 test("some log cases", () => {

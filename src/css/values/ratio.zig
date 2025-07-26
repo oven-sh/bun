@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -55,3 +54,5 @@ pub const Ratio = struct {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const std = @import("std");

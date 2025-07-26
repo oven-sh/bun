@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const MyersDiff = @import("./assert/myers_diff.zig");
-
-const Allocator = std.mem.Allocator;
-const BunString = bun.String;
-
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
 ///
@@ -22,7 +12,7 @@ const JSValue = JSC.JSValue;
 /// - `actual` and `expected` are alive and have the same encoding.
 pub fn myersDiff(
     allocator: Allocator,
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     actual: *const BunString,
     expected: *const BunString,
     // If true, strings that have a trailing comma but are otherwise equal are
@@ -30,14 +20,14 @@ pub fn myersDiff(
     check_comma_disparity: bool,
     // split `actual` and `expected` into lines before diffing
     lines: bool,
-) bun.JSError!JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     // Short circuit on empty strings. Note that, in release builds where
     // assertions are disabled, if `actual` and `expected` are both dead, this
     // branch will be hit since dead strings have a length of 0. This should be
     // moot since BunStrings with non-zero reference counds should never be
     // dead.
     if (actual.length() == 0 and expected.length() == 0) {
-        return try JSC.JSValue.createEmptyArray(global, 0);
+        return try jsc.JSValue.createEmptyArray(global, 0);
     }
 
     const actual_encoding = actual.encoding();
@@ -77,10 +67,10 @@ pub fn myersDiff(
 fn diffChars(
     comptime T: type,
     allocator: Allocator,
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     actual: []const T,
     expected: []const T,
-) bun.JSError!JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     const Differ = MyersDiff.Differ(T, .{ .check_comma_disparity = false });
     const diff: MyersDiff.DiffList(T) = Differ.diff(allocator, actual, expected) catch |err| return mapDiffError(global, err);
     return diffListToJS(T, global, diff);
@@ -89,11 +79,11 @@ fn diffChars(
 fn diffLines(
     comptime T: type,
     allocator: Allocator,
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     actual: []const T,
     expected: []const T,
     check_comma_disparity: bool,
-) bun.JSError!JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     var a = try MyersDiff.split(T, allocator, actual);
     defer a.deinit(allocator);
     var e = try MyersDiff.split(T, allocator, expected);
@@ -111,18 +101,28 @@ fn diffLines(
     return diffListToJS([]const T, global, diff);
 }
 
-fn diffListToJS(comptime T: type, global: *JSC.JSGlobalObject, diff_list: MyersDiff.DiffList(T)) bun.JSError!JSC.JSValue {
-    var array = try JSC.JSValue.createEmptyArray(global, diff_list.items.len);
+fn diffListToJS(comptime T: type, global: *jsc.JSGlobalObject, diff_list: MyersDiff.DiffList(T)) bun.JSError!jsc.JSValue {
+    var array = try jsc.JSValue.createEmptyArray(global, diff_list.items.len);
     for (diff_list.items, 0..) |*line, i| {
-        array.putIndex(global, @truncate(i), (try JSC.JSObject.createNullProto(line.*, global)).toJS());
+        try array.putIndex(global, @truncate(i), (try jsc.JSObject.createNullProto(line.*, global)).toJS());
     }
     return array;
 }
 
-fn mapDiffError(global: *JSC.JSGlobalObject, err: MyersDiff.Error) bun.JSError {
+fn mapDiffError(global: *jsc.JSGlobalObject, err: MyersDiff.Error) bun.JSError {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.DiffTooLarge => global.throwInvalidArguments("Diffing these two values would create a string that is too large. If this was intentional, please open a bug report on GitHub.", .{}),
         error.InputsTooLarge => global.throwInvalidArguments("Input strings are too large to diff. Please open a bug report on GitHub.", .{}),
     };
 }
+
+const MyersDiff = @import("./assert/myers_diff.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BunString = bun.String;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

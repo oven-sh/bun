@@ -102,7 +102,7 @@ server.on('session', common.mustCall((session) => {
 }));
 
 server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
 
   const countdown = new Countdown(4, () => {
     client.close();

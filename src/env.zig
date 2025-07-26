@@ -1,7 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("bun");
-
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
     if (@import("builtin").cpu.arch.isWasm()) {
@@ -26,11 +22,18 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
+pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.Mode.ReleaseSafe == @import("builtin").mode and is_canary);
 pub const show_crash_trace = isDebug or isTest or enable_asan;
 /// All calls to `@export` should be gated behind this check, so that code
 /// generators that compile Zig code know not to reference and compile a ton of
 /// unused code.
 pub const export_cpp_apis = if (build_options.override_no_export_cpp_apis) false else (@import("builtin").output_mode == .Obj or isTest);
+
+/// Whether or not to enable allocation tracking when the `AllocationScope`
+/// allocator is used.
+pub const enableAllocScopes = brk: {
+    break :brk isDebug or enable_asan;
+};
 
 pub const build_options = @import("build_options");
 
@@ -170,3 +173,7 @@ else if (isAarch64)
     .arm64
 else
     @compileError("Please add your architecture to the Architecture enum");
+
+const builtin = @import("builtin");
+const bun = @import("bun");
+const std = @import("std");

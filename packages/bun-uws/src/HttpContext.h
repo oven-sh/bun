@@ -383,7 +383,7 @@ private:
                     httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false);
+                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
                 us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);

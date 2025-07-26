@@ -82,7 +82,6 @@ server.on(
 
 server.listen(
   0,
-  "127.0.0.1",
   common.mustCall(async () => {
     await requestAndClose(server);
   }),

@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const Symbol = bun.JSAst.Symbol;
-
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
 pub const Printer = css.Printer;
@@ -230,7 +225,7 @@ pub const IdentOrRef = packed struct(u128) {
         return null;
     }
 
-    pub fn asStr(this: @This(), map: *const bun.JSAst.Symbol.Map, local_names: ?*const css.LocalsResultsMap) ?[]const u8 {
+    pub fn asStr(this: @This(), map: *const bun.ast.Symbol.Map, local_names: ?*const css.LocalsResultsMap) ?[]const u8 {
         if (this.isIdent()) return this.asIdent().?.v;
         const ref = this.asRef().?;
         const final_ref = map.follow(ref);
@@ -323,3 +318,8 @@ pub const CustomIdent = struct {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub const CustomIdentList = css.SmallList(CustomIdent, 1);
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Symbol = bun.ast.Symbol;

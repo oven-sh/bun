@@ -1,8 +1,11 @@
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
-
 pub const RemoveCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try PackageManager.remove(ctx);
+        try updatePackageJSONAndInstallCatchError(ctx, .remove);
     }
 };
+
+const bun = @import("bun");
+const Command = bun.cli.Command;
+
+const PackageManager = bun.install.PackageManager;
+const updatePackageJSONAndInstallCatchError = PackageManager.updatePackageJSONAndInstallCatchError;

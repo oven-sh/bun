@@ -11,8 +11,8 @@ state: union(enum) {
     },
     done: ExitCode,
 } = .idle,
-event_loop: JSC.EventLoopHandle,
-concurrent_task: JSC.EventLoopTask,
+event_loop: jsc.EventLoopHandle,
+concurrent_task: jsc.EventLoopTask,
 
 pub const ParentPtr = StatePtrUnion(.{
     Binary,
@@ -32,39 +32,41 @@ pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptio
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Expr,
     parent: ParentPtr,
     io: IO,
 ) *Async {
     interpreter.async_commands_executing += 1;
-    return bun.new(Async, .{
-        .base = .{ .kind = .@"async", .interpreter = interpreter, .shell = shell_state },
+    const async_cmd = parent.create(Async);
+    async_cmd.* = .{
+        .base = State.initWithNewAllocScope(.@"async", interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
         .event_loop = interpreter.event_loop,
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(interpreter.event_loop),
-    });
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(interpreter.event_loop),
+    };
+    return async_cmd;
 }
 
-pub fn start(this: *Async) void {
+pub fn start(this: *Async) Yield {
     log("{} start", .{this});
     this.enqueueSelf();
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
-pub fn next(this: *Async) void {
+pub fn next(this: *Async) Yield {
     log("{} next {s}", .{ this, @tagName(this.state) });
     switch (this.state) {
         .idle => {
             this.state = .{ .exec = .{} };
             this.enqueueSelf();
+            return .suspended;
         },
         .exec => {
             if (this.state.exec.child) |child| {
-                child.start();
-                return;
+                return child.start();
             }
 
             const child = brk: {
@@ -104,9 +106,11 @@ pub fn next(this: *Async) void {
             };
             this.state.exec.child = child;
             this.enqueueSelf();
+            return .suspended;
         },
         .done => {
             this.base.interpreter.asyncCmdDone(this);
+            return .done;
         },
     }
 }
@@ -119,11 +123,12 @@ pub fn enqueueSelf(this: *Async) void {
     }
 }
 
-pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
     log("{} childDone", .{this});
     child_ptr.deinit();
     this.state = .{ .done = exit_code };
     this.enqueueSelf();
+    return .suspended;
 }
 
 /// This function is purposefully empty as a hack to ensure Async runs in the background while appearing to
@@ -143,7 +148,7 @@ pub fn actuallyDeinit(this: *Async) void {
 }
 
 pub fn runFromMainThread(this: *Async) void {
-    this.next();
+    this.next().run();
 }
 
 pub fn runFromMainThreadMini(this: *Async, _: *void) void {
@@ -151,23 +156,25 @@ pub fn runFromMainThreadMini(this: *Async, _: *void) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const jsc = bun.jsc;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
 const Binary = bun.shell.Interpreter.Binary;
-const Stmt = bun.shell.Interpreter.Stmt;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

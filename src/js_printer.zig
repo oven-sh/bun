@@ -1,49 +1,9 @@
-const std = @import("std");
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
-const js_ast = bun.JSAst;
-const options = @import("options.zig");
-const rename = @import("renamer.zig");
-const runtime = @import("runtime.zig");
-const Api = @import("./api/schema.zig").Api;
-const fs = @import("fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const Ref = @import("ast/base.zig").Ref;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
-
-const S = js_ast.S;
-const B = js_ast.B;
-const G = js_ast.G;
-const E = js_ast.E;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Ast = js_ast.Ast;
-
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = bun.assert;
-
-const ImportRecord = bun.ImportRecord;
-const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
 const ascii_only_always_on_unless_minifying = true;
@@ -440,10 +400,10 @@ pub const Options = struct {
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
-    css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    css_import_behavior: api.CssInJsBehavior = api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
-    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
     input_files_for_dev_server: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
@@ -2203,7 +2163,7 @@ fn NewPrinter(
                     }
                 },
                 .e_new => |e| {
-                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused == .if_unused and p.options.print_dce_annotations;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
                     if (wrap) {
@@ -2253,7 +2213,7 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused == .if_unused and p.options.print_dce_annotations;
                     if (has_pure_comment and level.gte(.postfix)) {
                         wrap = true;
                     }
@@ -6110,3 +6070,45 @@ pub fn printCommonJS(
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
+
+const string = []const u8;
+
+const SourceMap = @import("./sourcemap/sourcemap.zig");
+const fs = @import("./fs.zig");
+const importRecord = @import("./import_record.zig");
+const options = @import("./options.zig");
+const rename = @import("./renamer.zig");
+const runtime = @import("./runtime.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptor;
+const ImportRecord = bun.ImportRecord;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const api = bun.schema.api;
+
+const js_ast = bun.ast;
+const Ast = js_ast.Ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
+
+const Op = js_ast.Op;
+const Level = js_ast.Op.Level;
+
+const strings = bun.strings;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;

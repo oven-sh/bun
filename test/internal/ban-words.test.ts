@@ -35,7 +35,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 230, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
 
-  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 170 },
+  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 171 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },

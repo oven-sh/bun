@@ -174,6 +174,7 @@ positionals: []const string = &[_]string{},
 yarn: bool = false,
 production: bool = false,
 frozen_lockfile: bool = false,
+is_ci_command: bool = false,
 no_save: bool = false,
 dry_run: bool = false,
 force: bool = false,
@@ -715,7 +716,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production");
-    cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
+    cli.is_ci_command = cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci");
+    cli.frozen_lockfile = args.flag("--frozen-lockfile") or cli.is_ci_command;
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");

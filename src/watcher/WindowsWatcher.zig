@@ -238,18 +238,44 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 // skip unrelated items
                 if (rel == .unrelated) continue;
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
+                
+                // Check if we're about to exceed the watch_events array capacity
+                if (event_id >= this.watch_events.len) {
+                    // Process current batch of events
+                    switch (processWatchEventBatch(this, event_id)) {
+                        .err => |err| return .{ .err = err },
+                        .result => {},
+                    }
+                    // Reset event_id to start a new batch
+                    event_id = 0;
+                }
+                
                 this.watch_events[event_id] = createWatchEvent(event, @truncate(item_idx));
                 event_id += 1;
             }
         }
     }
-    if (event_id == 0) {
+    
+    // Process any remaining events in the final batch
+    if (event_id > 0) {
+        switch (processWatchEventBatch(this, event_id)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
+    }
+
+    return .success;
+}
+
+
+fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(void) {
+    if (event_count == 0) {
         return .success;
     }
 
-    // log("event_id: {d}\n", .{event_id});
+    // log("event_count: {d}\n", .{event_count});
 
-    var all_events = this.watch_events[0..event_id];
+    var all_events = this.watch_events[0..event_count];
     std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
     var last_event_index: usize = 0;

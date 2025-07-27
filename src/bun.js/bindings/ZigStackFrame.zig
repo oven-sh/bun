@@ -19,8 +19,7 @@ pub const ZigStackFrame = extern struct {
         var frame: api.StackFrame = comptime std.mem.zeroes(api.StackFrame);
         if (!this.function_name.isEmpty()) {
             var slicer = this.function_name.toUTF8(allocator);
-            defer slicer.deinit();
-            frame.function_name = (try slicer.clone(allocator)).slice();
+            frame.function_name = (try slicer.cloneIfNeeded(allocator)).slice();
         }
 
         if (!this.source_url.isEmpty()) {

@@ -1572,17 +1572,18 @@ pub const DeferredRequest = struct {
 
     /// Deinitializes state by aborting the connection.
     fn abort(this: *DeferredRequest) void {
-        switch (this.handler) {
+        var handler = this.handler;
+        this.handler = .aborted;
+        switch (handler) {
             .server_handler => |*saved| {
-                saved.response.endWithoutBody(true);
-                saved.deinit();
+                saved.ctx.onAbort(saved.response);
+                saved.js_request.deinit();
             },
             .bundled_html_page => |r| {
                 r.response.endWithoutBody(true);
             },
-            .aborted => return,
+            .aborted => {},
         }
-        this.handler = .aborted;
     }
 };
 

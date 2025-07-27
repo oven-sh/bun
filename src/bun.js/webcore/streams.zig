@@ -825,7 +825,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // onWritable reset backpressure state to allow flushing
             this.has_backpressure = false;
             if (this.aborted) {
-                this.res = null;
                 this.signal.close(null);
                 this.flushPromise();
                 this.finalize();
@@ -841,7 +840,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // if we have nothing to write, we are done
             if (chunk.len == 0) {
                 if (this.done) {
-                    this.res = null;
                     this.signal.close(null);
                     this.flushPromise();
                     this.finalize();
@@ -1290,7 +1288,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                     res.endStream(false);
                 }
-                this.res = null;
             }
 
             if (comptime !FeatureFlags.http_buffer_pooling) {

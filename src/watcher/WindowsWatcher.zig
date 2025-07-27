@@ -238,7 +238,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 // skip unrelated items
                 if (rel == .unrelated) continue;
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
-                
+
                 // Check if we're about to exceed the watch_events array capacity
                 if (event_id >= this.watch_events.len) {
                     // Process current batch of events
@@ -249,13 +249,13 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }
-                
+
                 this.watch_events[event_id] = createWatchEvent(event, @truncate(item_idx));
                 event_id += 1;
             }
         }
     }
-    
+
     // Process any remaining events in the final batch
     if (event_id > 0) {
         switch (processWatchEventBatch(this, event_id)) {
@@ -266,7 +266,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     return .success;
 }
-
 
 fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(void) {
     if (event_count == 0) {

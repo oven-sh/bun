@@ -75,7 +75,7 @@ export default {
 
 Requires React 19 experimental:
 ```bash
-bun add react@experimental react-dom@experimental react-server-dom-webpack@experimental
+bun add react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental
 ```
 
 The built-in React framework provides:
@@ -109,7 +109,7 @@ const customFramework: Bake.Framework = {
   // Server Components configuration
   serverComponents: {
     separateSSRGraph: true,
-    serverRuntimeImportSource: "react-server-dom-webpack/server",
+    serverRuntimeImportSource: "react-server-dom-bun/server",
     serverRegisterClientReferenceExport: "registerClientReference",
   },
   

@@ -1,18 +1,18 @@
-# Bake: Full-Stack Web Framework
+# Bun Rendering API
 
-Bake is Bun's experimental full-stack web framework that provides server-side rendering with React Server Components support, static site generation, and hot module reloading. It's currently under heavy development and available in canary builds.
+The Bun Rendering API is an experimental server-side rendering system that provides React Server Components support, static site generation, and hot module reloading. It's currently under heavy development and available in canary builds.
 
-**⚠️ Warning: Bake is experimental software and APIs may change significantly.**
+**⚠️ Warning: The Rendering API is experimental and APIs may change significantly.**
 
 ## Overview
 
-Bake provides:
+The Bun Rendering API provides:
 
 - **React Server Components** with automatic client/server separation
 - **File-based routing** with Next.js-style conventions
 - **Hot Module Reloading (HMR)** for development
 - **Static Site Generation** for production builds
-- **Configuration-driven development** with framework detection
+- **Configuration-driven development** with React integration
 - **TypeScript support** out-of-the-box
 
 ## Quick Start
@@ -26,7 +26,7 @@ Create a `bun.app.ts` configuration file:
 export default {
   port: 3000,
   app: {
-    framework: "react", // Built-in React framework
+    framework: "react", // Built-in React integration
   },
 };
 ```
@@ -59,7 +59,7 @@ bun build --app ./src/app.tsx
 
 ## Configuration
 
-### Built-in React Framework
+### Built-in React Integration
 
 ```typescript
 // bun.app.ts
@@ -75,12 +75,12 @@ Requires React 19 experimental:
 bun add react@experimental react-dom@experimental react-server-dom-webpack@experimental
 ```
 
-### Custom Framework
+### Custom Configuration
 
 ```typescript
 import type { Bake } from "bun";
 
-const customFramework: Bake.Framework = {
+const customConfig: Bake.Framework = {
   // File-based routing configuration
   fileSystemRouterTypes: [{
     root: "pages",
@@ -123,7 +123,7 @@ const customFramework: Bake.Framework = {
 
 export default {
   app: {
-    framework: customFramework,
+    framework: customConfig,
   },
 };
 ```
@@ -397,7 +397,7 @@ export async function getStaticPaths() {
 
 ### Hot Module Reloading
 
-Bake provides fast development feedback:
+The Rendering API provides fast development feedback:
 
 - **Component updates** preserve React state
 - **CSS hot reloading** without page refresh  
@@ -453,7 +453,7 @@ function Header() {
 
 ## API Reference
 
-### Bake.Options
+### Rendering Options
 
 ```typescript
 interface Options {
@@ -512,7 +512,7 @@ const server = Bun.serve({
 
 ## Current Limitations
 
-Since Bake is experimental:
+Since the Rendering API is experimental:
 
 - ⚠️ APIs may change significantly  
 - ⚠️ Limited documentation and examples
@@ -545,4 +545,4 @@ export default async function HomePage() {
 }
 ```
 
-This documentation reflects the actual implementation of Bake as found in the Bun codebase. The framework is experimental and under active development.
+This documentation reflects the actual implementation of the Rendering API as found in the Bun codebase. The API is experimental and under active development.

@@ -20,7 +20,7 @@ pub const ZigStackFrame = extern struct {
         if (!this.function_name.isEmpty()) {
             var slicer = this.function_name.toUTF8(allocator);
             defer slicer.deinit();
-            frame.function_name = (try slicer.clone(allocator)).slice();
+            frame.function_name = try allocator.dupe(u8, slicer.slice());
         }
 
         if (!this.source_url.isEmpty()) {

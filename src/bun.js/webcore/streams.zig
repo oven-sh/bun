@@ -1282,8 +1282,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     res.clearAborted();
                     res.clearOnData();
                 }
-                this.done = true;
                 _ = this.flushNoWait();
+                this.done = true;
+
                 if (this.res) |res| {
                     // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                     res.endStream(false);

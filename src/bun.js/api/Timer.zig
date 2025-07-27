@@ -130,7 +130,7 @@ pub const All = struct {
     pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
-        all.drainTimers(vm) catch return;
+        all.drainTimers(vm) catch |e| bun.jsc.host_fn.voidFromJSError(e, vm.global);
         all.ensureUVTimer(vm);
     }
 
@@ -231,7 +231,7 @@ pub const All = struct {
     }
 
     export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
-        drainTimers(&vm.timer, vm) catch {}; // ??
+        drainTimers(&vm.timer, vm) catch |e| return bun.jsc.host_fn.voidFromJSError(e, vm.global);
     }
 
     comptime {

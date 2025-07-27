@@ -1752,8 +1752,8 @@ pub const Formatter = struct {
                     this.writer.writeAll(" ") catch unreachable;
                 }
                 if (!is_iterator) {
-                    const key = nextValue.getIndex(globalObject, 0) catch return;
-                    const value = nextValue.getIndex(globalObject, 1) catch return;
+                    const key = nextValue.getIndex(globalObject, 0) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
+                    const value = nextValue.getIndex(globalObject, 1) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
 
                     if (!single_line) {
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
@@ -1761,7 +1761,7 @@ pub const Formatter = struct {
                     const key_tag = Tag.getAdvanced(key, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    }) catch return;
+                    }) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
 
                     this.formatter.format(
                         key_tag,
@@ -1770,12 +1770,12 @@ pub const Formatter = struct {
                         key,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch {}; // TODO:
+                    ) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                     this.writer.writeAll(": ") catch unreachable;
                     const value_tag = Tag.getAdvanced(value, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    }) catch return;
+                    }) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                     this.formatter.format(
                         value_tag,
                         Writer,
@@ -1783,7 +1783,7 @@ pub const Formatter = struct {
                         value,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch {}; // TODO:
+                    ) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                 } else {
                     if (!single_line) {
                         this.writer.writeAll("\n") catch unreachable;
@@ -1792,7 +1792,7 @@ pub const Formatter = struct {
                     const tag = Tag.getAdvanced(nextValue, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    }) catch return;
+                    }) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                     this.formatter.format(
                         tag,
                         Writer,
@@ -1800,7 +1800,7 @@ pub const Formatter = struct {
                         nextValue,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch {}; // TODO:
+                    ) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                 }
                 this.count += 1;
                 if (!single_line) {
@@ -1833,7 +1833,7 @@ pub const Formatter = struct {
                 const key_tag = Tag.getAdvanced(nextValue, globalObject, .{
                     .hide_global = true,
                     .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                }) catch return;
+                }) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
                 this.formatter.format(
                     key_tag,
                     Writer,
@@ -1841,7 +1841,7 @@ pub const Formatter = struct {
                     nextValue,
                     this.formatter.globalThis,
                     enable_ansi_colors,
-                ) catch {}; // TODO:
+                ) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalObject);
 
                 if (!single_line) {
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
@@ -1910,11 +1910,11 @@ pub const Formatter = struct {
                 const tag = Tag.getAdvanced(value, globalThis, .{
                     .hide_global = true,
                     .disable_inspect_custom = this.disable_inspect_custom,
-                }) catch return;
+                }) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalThis);
 
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
-                    handleFirstProperty(ctx, globalThis, ctx.parent) catch return;
+                    handleFirstProperty(ctx, globalThis, ctx.parent) catch |err| return bun.jsc.host_fn.voidFromJSError(err, globalThis);
                 } else {
                     this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                 }
@@ -3632,12 +3632,12 @@ pub fn timeLog(
     var writer = console.error_writer.writer();
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {
-        const tag = ConsoleObject.Formatter.Tag.get(arg, global) catch return;
+        const tag = ConsoleObject.Formatter.Tag.get(arg, global) catch |err| return bun.jsc.host_fn.voidFromJSError(err, global);
         _ = writer.write(" ") catch 0;
         if (Output.enable_ansi_colors_stderr) {
-            fmt.format(tag, Writer, writer, arg, global, true) catch {}; // TODO:
+            fmt.format(tag, Writer, writer, arg, global, true) catch |err| return bun.jsc.host_fn.voidFromJSError(err, global);
         } else {
-            fmt.format(tag, Writer, writer, arg, global, false) catch {}; // TODO:
+            fmt.format(tag, Writer, writer, arg, global, false) catch |err| return bun.jsc.host_fn.voidFromJSError(err, global);
         }
     }
     _ = writer.write("\n") catch 0;

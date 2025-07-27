@@ -461,14 +461,14 @@ pub const WriteFileWindows = struct {
                 .errno = @intFromEnum(err),
                 .path = this.file_blob.store.?.data.file.pathlike.path.slice(),
                 .syscall = .open,
-            }) catch return;
+            }) catch return; // TODO: properly propagate exception upwards
             return;
         }
 
         this.fd = @intCast(rc.int());
 
         // the loop must be copied
-        this.doWriteLoop(this.loop()) catch return;
+        this.doWriteLoop(this.loop()) catch return; // TODO: properly propagate exception upwards
     }
 
     fn mkdirp(this: *WriteFileWindows) void {
@@ -511,15 +511,12 @@ pub const WriteFileWindows = struct {
         bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
-            this.throw(.{
-                .errno = @intCast(err),
-                .syscall = .write,
-            }) catch return;
+            this.throw(.{ .errno = @intCast(err), .syscall = .write }) catch return; // TODO: properly propagate exception upwards
             return;
         }
 
         this.total_written += @intCast(rc.int());
-        this.doWriteLoop(this.loop()) catch return;
+        this.doWriteLoop(this.loop()) catch return; // TODO: properly propagate exception upwards
     }
 
     pub fn onFinish(container: *WriteFileWindows) bun.JSExecutionTerminated!void {

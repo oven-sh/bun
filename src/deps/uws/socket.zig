@@ -163,7 +163,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -175,7 +175,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         reason,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -186,7 +186,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         buf.?[0..@as(usize, @intCast(len))],
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -196,7 +196,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -206,7 +206,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -216,7 +216,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -227,7 +227,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -238,7 +238,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -248,7 +248,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -711,7 +711,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -723,7 +723,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         reason,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -734,7 +734,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         buf.?[0..@as(usize, @intCast(len))],
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -744,7 +744,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -754,7 +754,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -771,7 +771,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -788,7 +788,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -798,7 +798,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -877,7 +877,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -889,7 +889,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         reason,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -900,7 +900,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         buf.?[0..@as(usize, @intCast(len))],
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -911,7 +911,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         file_descriptor,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -921,7 +921,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -931,7 +931,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -941,7 +941,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -958,7 +958,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -981,7 +981,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }
@@ -991,7 +991,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSExecutionTerminated => return null,
+                        error.JSExecutionTerminated => return null, // TODO: declare throw scope
                     };
                     return socket;
                 }

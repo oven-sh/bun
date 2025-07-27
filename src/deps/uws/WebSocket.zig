@@ -216,59 +216,64 @@ pub const WebSocketBehavior = extern struct {
             pub fn onOpen(raw_ws: *RawWebSocket) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onOpen, .{
+                const res = @call(bun.callmod_inline, Type.onOpen, .{
                     this,
                     ws,
-                }) catch |err| switch (err) {
-                    error.JSExecutionTerminated => return,
+                });
+                if (@TypeOf(res) != void) res catch |err| switch (err) {
+                    error.JSExecutionTerminated => return, // TODO: declare throw scope
                 };
             }
 
             pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onMessage, .{
+                const res = @call(bun.callmod_inline, Type.onMessage, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
                     opcode,
-                }) catch |err| switch (err) {
-                    error.JSExecutionTerminated => return,
+                });
+                if (@TypeOf(res) != void) res catch |err| switch (err) {
+                    error.JSExecutionTerminated => return, // TODO: declare throw scope
                 };
             }
 
             pub fn onDrain(raw_ws: *RawWebSocket) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onDrain, .{
+                const res = @call(bun.callmod_inline, Type.onDrain, .{
                     this,
                     ws,
-                }) catch |err| switch (err) {
-                    error.JSExecutionTerminated => return,
+                });
+                if (@TypeOf(res) != void) res catch |err| switch (err) {
+                    error.JSExecutionTerminated => return, // TODO: declare throw scope
                 };
             }
 
             pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onPing, .{
+                const res = @call(bun.callmod_inline, Type.onPing, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
-                }) catch |err| switch (err) {
-                    error.JSExecutionTerminated => return,
+                });
+                if (@TypeOf(res) != void) res catch |err| switch (err) {
+                    error.JSExecutionTerminated => return, // TODO: declare throw scope
                 };
             }
 
             pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onPong, .{
+                const res = @call(bun.callmod_inline, Type.onPong, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
-                }) catch |err| switch (err) {
-                    error.JSExecutionTerminated => return,
+                });
+                if (@TypeOf(res) != void) res catch |err| switch (err) {
+                    error.JSExecutionTerminated => return, // TODO: declare throw scope
                 };
             }
 

@@ -176,11 +176,13 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
 
 // For when bubbling up errors to functions that require a C ABI boundary
 pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
-    return switch (err) {
+    switch (err) {
         error.JSError => {},
         error.OutOfMemory => globalThis.throwOutOfMemory() catch {},
         error.JSExecutionTerminated => {},
-    };
+    }
+    // TODO: catch exception, declare throw scope, re-throw
+    // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
 }
 
 pub fn wrap1(comptime func: anytype) @"return": {

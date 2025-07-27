@@ -2447,8 +2447,7 @@ pub const H2FrameParser = struct {
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
             // we assume that onStreamStart will never mutate the stream hash map
-            _ = callback.call(this.handlers.globalObject, ctx_value, &[_]jsc.JSValue{ ctx_value, jsc.JSValue.jsNumber(streamIdentifier) }) catch |err|
-                try this.handlers.globalObject.reportActiveExceptionAsUnhandled(err);
+            try callback.callMaybeEmitUncaught(this.handlers.globalObject, ctx_value, &[_]jsc.JSValue{ ctx_value, jsc.JSValue.jsNumber(streamIdentifier) });
         }
         return entry.value_ptr;
     }

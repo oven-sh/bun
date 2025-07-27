@@ -100,7 +100,7 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
     this.writer.close();
 
     this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
-    this.runPending();
+    this.runPending() catch {}; // TODO: properly propagate exception upwards
 
     if (this.must_be_kept_alive_until_eof) {
         this.must_be_kept_alive_until_eof = false;
@@ -108,7 +108,7 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
     }
 }
 
-fn runPending(this: *FileSink) void {
+fn runPending(this: *FileSink) bun.JSError!void {
     this.ref();
     defer this.deref();
 
@@ -116,7 +116,7 @@ fn runPending(this: *FileSink) void {
     const l = this.eventLoop();
     l.enter();
     defer l.exit();
-    this.pending.run() catch return;
+    try this.pending.run();
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
@@ -157,7 +157,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
             this.pending.result = .{ .owned = this.pending.consumed };
         }
 
-        this.runPending();
+        this.runPending() catch {}; // TODO: properly propagate exception upwards
 
         // this.done == true means ended was called
         const ended_and_done = this.done and status == .end_of_file;
@@ -190,7 +190,7 @@ pub fn onError(this: *FileSink, err: bun.sys.Error) void {
             }
         }
 
-        this.runPending();
+        this.runPending() catch return; // TODO: properly propagate exception upwards
     }
 }
 
@@ -637,13 +637,13 @@ fn toResult(this: *FileSink, write_result: bun.io.WriteResult) streams.Result.Wr
 pub const FlushPendingTask = struct {
     has: bool = false,
 
-    pub fn runFromJSThread(flush_pending: *FlushPendingTask) void {
+    pub fn runFromJSThread(flush_pending: *FlushPendingTask) bun.JSError!void {
         const had = flush_pending.has;
         flush_pending.has = false;
         const this: *FileSink = @alignCast(@fieldParentPtr("run_pending_later", flush_pending));
         defer this.deref();
         if (had)
-            this.runPending();
+            try this.runPending();
     }
 };
 

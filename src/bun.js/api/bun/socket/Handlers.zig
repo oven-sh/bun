@@ -98,7 +98,7 @@ pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, args: *const [2]JSV
         return false;
     }
 
-    _ = onError.call(globalObject, thisValue, args) catch |e| try globalObject.reportActiveExceptionAsUnhandled(e);
+    try onError.callMaybeEmitUncaught(globalObject, thisValue, args);
 
     return true;
 }

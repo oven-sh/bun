@@ -184,13 +184,13 @@ pub const ValkeyClient = struct {
             const object = protocol.valkeyErrorToJS(globalThis, "Connection closed", protocol.RedisError.ConnectionClosed) catch unreachable;
             for (pending.readableSlice(0)) |pair| {
                 var pair_ = pair;
-                pair_.rejectCommand(globalThis, object) catch return;
+                pair_.rejectCommand(globalThis, object) catch return; // TODO: properly propagate exception upwards
             }
 
             for (commands.readableSlice(0)) |cmd| {
                 var offline_cmd = cmd;
                 defer offline_cmd.deinit(this.allocator);
-                offline_cmd.promise.reject(globalThis, object) catch return;
+                offline_cmd.promise.reject(globalThis, object) catch return; // TODO: properly propagate exception upwards
             }
         } else {
             // finalizing. we can't call into JS.

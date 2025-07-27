@@ -571,15 +571,13 @@ pub const FetchTasklet = struct {
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
                 const tracker = this.tracker;
+                defer tracker.didDispatch(globalThis);
                 var result = this.onReject();
                 defer result.deinit();
 
                 defer this.promise.deinit();
                 promise_value.ensureStillAlive();
-                promise.reject(globalThis, result.toJS(globalThis)) catch return;
-
-                tracker.didDispatch(globalThis);
-                return;
+                return promise.reject(globalThis, result.toJS(globalThis));
             }
             // everything ok
             if (this.metadata == null) {

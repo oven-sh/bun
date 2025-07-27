@@ -453,10 +453,9 @@ pub const Result = union(Tag) {
             vm.eventLoop().enqueueTask(jsc.Task.init(clone));
         }
 
-        pub fn runFromJSThread(this: *Pending) void {
-            this.run();
-
-            bun.destroy(this);
+        pub fn runFromJSThread(this: *Pending) bun.JSExecutionTerminated!void {
+            defer bun.destroy(this);
+            try this.run();
         }
 
         pub const Future = union(enum) {
@@ -497,12 +496,12 @@ pub const Result = union(Tag) {
             used,
         };
 
-        pub fn run(this: *Pending) void {
+        pub fn run(this: *Pending) bun.JSExecutionTerminated!void {
             if (this.state != .pending) return;
             this.state = .used;
             switch (this.future) {
                 .promise => |p| {
-                    Result.fulfillPromise(&this.result, p.promise, p.globalThis);
+                    try Result.fulfillPromise(&this.result, p.promise, p.globalThis);
                 },
                 .handler => |h| {
                     h.handler(h.ctx, this.result);
@@ -518,7 +517,7 @@ pub const Result = union(Tag) {
         };
     }
 
-    pub fn fulfillPromise(result: *Result, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
+    pub fn fulfillPromise(result: *Result, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!void {
         const vm = globalThis.bunVM();
         const loop = vm.eventLoop();
         const promise_value = promise.toJS();
@@ -538,21 +537,20 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value) catch return;
+                return promise.reject(globalThis, value);
             },
             .done => {
-                promise.resolve(globalThis, JSValue.jsBoolean(false)) catch return;
+                return promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
                     result.* = .{ .temporary = .{} };
-                    promise.reject(globalThis, err) catch return;
-                    return;
+                    return promise.reject(globalThis, err);
                 };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
-                promise.resolve(globalThis, value) catch return;
+                return promise.resolve(globalThis, value);
             },
         }
     }
@@ -1313,7 +1311,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush)) catch return;
+                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush)) catch return; // TODO: properly propagate exception upwards
                 this.wrote_at_start_of_flush = this.wrote;
             }
         }
@@ -1395,7 +1393,7 @@ pub const NetworkSink = struct {
     pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed)) catch return;
+            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed)) catch return; // TODO: properly propagate exception upwards
         }
     }
 

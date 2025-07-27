@@ -1720,6 +1720,7 @@ pub const TestCommand = struct {
 
         if (vm.hot_reload == .watch) {
             vm.runWithAPILock(jsc.VirtualMachine, vm, runEventLoopForWatch);
+            if (vm.global.vm().hasTerminationRequest()) vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
         }
         const summary = reporter.summary();
 

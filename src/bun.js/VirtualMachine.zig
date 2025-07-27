@@ -2769,7 +2769,7 @@ pub fn remapZigException(
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return; // TODO: audit this error set
             must_reset_parser_arena_later.* = true;
             break :code original_source.source_code.toUTF8(bun.default_allocator);
         };
@@ -3489,7 +3489,7 @@ pub const IPCInstance = struct {
         return this.globalThis;
     }
 
-    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) void {
+    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) bun.JSError!void {
         jsc.markBinding(@src());
         const globalThis = this.globalThis;
         const event_loop = jsc.VirtualMachine.get().eventLoop();
@@ -3510,7 +3510,7 @@ pub const IPCInstance = struct {
                 IPC.log("Received IPC internal message from parent", .{});
                 event_loop.enter();
                 defer event_loop.exit();
-                node_cluster_binding.handleInternalMessageChild(globalThis, data) catch return;
+                try node_cluster_binding.handleInternalMessageChild(globalThis, data);
             },
         }
     }
@@ -3642,7 +3642,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         jsc.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
+        jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return; // TODO: properly propagate exception upwards
     }
 };
 

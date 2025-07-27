@@ -29,7 +29,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     event_loop.enter();
     defer event_loop.exit();
     _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
-        this.callErrorHandler(.zero, this.globalThis.takeException(err)) catch return;
+        this.callErrorHandler(.zero, this.globalThis.takeException(err)) catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.globalThis);
     };
 }
 
@@ -375,7 +375,7 @@ pub const UDPSocket = struct {
             return;
         }
 
-        _ = callback.call(globalThis, thisValue, &.{err}) catch |e| try globalThis.reportActiveExceptionAsUnhandled(e);
+        try callback.callMaybeEmitUncaught(globalThis, thisValue, &.{err});
     }
 
     pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -625,7 +625,7 @@ pub const UDPSocket = struct {
                     if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
                         break :brk arrayBuffer.slice();
                     } else if (val.isString()) {
-                        const js_string = val.toString(globalThis) catch @panic("unreachable");
+                        const js_string = try val.toString(globalThis);
                         break :brk js_string.toSlice(globalThis, alloc).slice();
                     } else {
                         return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});

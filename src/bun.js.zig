@@ -299,17 +299,17 @@ pub const Run = struct {
                 // PropertyCallback which means we don't have a WriteBarrier we can access
                 const global = vm.global;
                 const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try vm.global.reportActiveExceptionAsUnhandled(err);
                     break :do_redis_preconnect;
                 } orelse break :do_redis_preconnect;
                 const redis = bun_object.get(global, "redis") catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try vm.global.reportActiveExceptionAsUnhandled(err);
                     break :do_redis_preconnect;
                 } orelse break :do_redis_preconnect;
                 const client = redis.as(bun.valkey.JSValkeyClient) orelse break :do_redis_preconnect;
                 // If connection fails, this will become an unhandled promise rejection, which is fine.
                 _ = client.doConnect(vm.global, redis) catch |err| {
-                    vm.global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try vm.global.reportActiveExceptionAsUnhandled(err);
                     break :do_redis_preconnect;
                 };
             }
@@ -319,19 +319,19 @@ pub const Run = struct {
             if (this.ctx.runtime_options.sql_preconnect) {
                 const global = vm.global;
                 const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try global.reportActiveExceptionAsUnhandled(err);
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 const sql_object = bun_object.get(global, "sql") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try global.reportActiveExceptionAsUnhandled(err);
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 const connect_fn = sql_object.get(global, "connect") catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try global.reportActiveExceptionAsUnhandled(err);
                     break :do_postgres_preconnect;
                 } orelse break :do_postgres_preconnect;
                 _ = connect_fn.call(global, sql_object, &.{}) catch |err| {
-                    global.reportActiveExceptionAsUnhandled(err) catch return;
+                    try global.reportActiveExceptionAsUnhandled(err);
                     break :do_postgres_preconnect;
                 };
             }

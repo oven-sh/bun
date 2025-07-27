@@ -96,7 +96,7 @@ pub const InternalJSEventCallback = struct {
 
     pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!bool {
         if (this.function.get()) |callback| {
-            _ = callback.call(globalThis, .js_undefined, &.{.jsNumber(@intFromEnum(eventType))}) catch |err| try globalThis.reportActiveExceptionAsUnhandled(err);
+            try callback.callMaybeEmitUncaught(globalThis, .js_undefined, &.{.jsNumber(@intFromEnum(eventType))});
             return true;
         }
         return false;

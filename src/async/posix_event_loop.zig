@@ -754,30 +754,31 @@ pub const FilePoll = struct {
         this.deactivate(event_loop_ctx.platformEventLoop());
     }
 
-    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) bool {
+    /// Returns 'no' if error.JSExecutionTerminated is encountered and the event loop should stop.
+    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) enum(c_int) { no, yes } {
         var tag = Pollable.from(tagged_pointer);
 
         if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))
-            return true;
+            return .yes;
 
         var file_poll: *FilePoll = tag.as(FilePoll);
         if (file_poll.flags.contains(.ignore_updates)) {
-            return true;
+            return .yes;
         }
 
         if (comptime Environment.isMac) {
             onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]) catch |err| switch (err) {
-                error.JSExecutionTerminated => return false,
+                error.JSExecutionTerminated => return .no,
             };
-            return true;
+            return .yes;
         }
         if (comptime Environment.isLinux) {
             onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]) catch |err| switch (err) {
-                error.JSExecutionTerminated => return false,
+                error.JSExecutionTerminated => return .no,
             };
-            return true;
+            return .yes;
         }
-        return true;
+        return .yes;
     }
 
     const Pollable = bun.TaggedPointerUnion(.{

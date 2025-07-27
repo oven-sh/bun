@@ -318,14 +318,14 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     const loop = this.globalObject.bunVM().eventLoop();
     loop.enter();
     defer loop.exit();
-    _ = on_close.call(
+    _ = on_close.callMaybeEmitUncaught(
         this.globalObject,
         this.js_value,
         &[_]JSValue{
             value,
             this.getQueriesArray(),
         },
-    ) catch |e| (this.globalObject.reportActiveExceptionAsUnhandled(e) catch return);
+    ) catch return; // TODO: properly propagate exception upwards
 }
 
 pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {

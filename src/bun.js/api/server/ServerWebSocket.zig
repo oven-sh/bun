@@ -344,13 +344,13 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
-            return handler.runErrorCallback(vm, globalObject, err) catch return;
+            return handler.runErrorCallback(vm, globalObject, err) catch return; // TODO: properly propagate exception upwards
         };
 
         _ = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.getThisValue(), JSValue.jsNumber(code), message_js }) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
-            return handler.runErrorCallback(vm, globalObject, err) catch return;
+            return handler.runErrorCallback(vm, globalObject, err) catch return; // TODO: properly propagate exception upwards
         };
     } else if (signal) |sig| {
         const loop = vm.eventLoop();
@@ -991,7 +991,7 @@ inline fn sendPing(
                     },
                 }
             } else if (value.isString()) {
-                const js_string = value.toString(globalThis) catch @panic("unreachable");
+                const js_string = try value.toString(globalThis);
                 var string_value = js_string.toSlice(globalThis, bun.default_allocator);
                 defer string_value.deinit();
                 const buffer = string_value.slice();

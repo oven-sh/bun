@@ -467,7 +467,7 @@ pub fn tick(this: *EventLoop) bun.JSExecutionTerminated!void {
         while (try this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
             this.tickConcurrent();
         } else {
-            this.drainMicrotasksWithGlobal(global, global_vm) catch return;
+            try this.drainMicrotasksWithGlobal(global, global_vm);
             if (scope.hasException()) return;
             this.tickConcurrent();
             if (this.tasks.count > 0) continue;
@@ -648,6 +648,7 @@ pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
 const std = @import("std");
 const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;
+pub const reportErrorOrTerminate = @import("./event_loop/Task.zig").reportErrorOrTerminate;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

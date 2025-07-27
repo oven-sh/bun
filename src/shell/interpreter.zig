@@ -1150,11 +1150,9 @@ pub const Interpreter = struct {
                     this.keep_alive.disable();
                     loop.enter();
                     defer loop.exit();
-                    _ = resolve.call(globalThis, .js_undefined, &.{
-                        JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| (globalThis.reportActiveExceptionAsUnhandled(err) catch return .terminated);
+                    const stdout_js = this.getBufferedStdout(globalThis);
+                    const stderr_js = this.getBufferedStderr(globalThis);
+                    resolve.callMaybeEmitUncaught(globalThis, .js_undefined, &.{ .jsNumberFromU16(exit_code), stdout_js, stderr_js }) catch return .terminated;
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
                 }

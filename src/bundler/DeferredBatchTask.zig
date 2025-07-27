@@ -32,15 +32,15 @@ pub fn deinit(this: *DeferredBatchTask) void {
     }
 }
 
-pub fn runOnJSThread(this: *DeferredBatchTask) void {
+pub fn runOnJSThread(this: *DeferredBatchTask) bun.JSError!void {
     defer this.deinit();
     var bv2 = this.getBundleV2();
-    bv2.plugins.?.drainDeferred(
+    try bv2.plugins.?.drainDeferred(
         if (bv2.completion) |completion|
             completion.result == .err
         else
             false,
-    ) catch return;
+    );
 }
 
 pub const Ref = bun.ast.Ref;

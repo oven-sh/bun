@@ -363,7 +363,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
 
             var head = this.head;
             bun.default_allocator.destroy(this);
-            return head.processResolve(err_, timeout, result) catch return;
+            return head.processResolve(err_, timeout, result);
         }
     };
 }

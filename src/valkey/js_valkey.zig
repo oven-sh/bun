@@ -417,7 +417,7 @@ pub const JSValkeyClient = struct {
 
             if (js.connectionPromiseGetCached(this_value)) |promise| {
                 js.connectionPromiseSetCached(this_value, globalObject, .zero);
-                promise.asPromise().?.resolve(globalObject, hello_value) catch return;
+                promise.asPromise().?.resolve(globalObject, hello_value) catch return; // TODO: properly propagate exception upwards
             }
         }
 
@@ -465,11 +465,7 @@ pub const JSValkeyClient = struct {
 
         // Call onClose callback if it exists
         if (js.oncloseGetCached(this_jsvalue)) |on_close| {
-            _ = on_close.call(
-                globalObject,
-                this_jsvalue,
-                &[_]JSValue{error_value},
-            ) catch |e| try globalObject.reportActiveExceptionAsUnhandled(e);
+            try on_close.callMaybeEmitUncaught(globalObject, this_jsvalue, &.{error_value});
         }
     }
 
@@ -489,11 +485,7 @@ pub const JSValkeyClient = struct {
             const loop = this.client.vm.eventLoop();
             loop.enter();
             defer loop.exit();
-            _ = on_close.call(
-                globalObject,
-                this_value,
-                &[_]JSValue{value},
-            ) catch |e| (globalObject.reportActiveExceptionAsUnhandled(e) catch return);
+            on_close.callMaybeEmitUncaught(globalObject, this_value, &.{value}) catch return; // TODO: properly propagate exception upwards
         }
     }
 
@@ -722,7 +714,7 @@ fn SocketHandler(comptime ssl: bool) type {
         }
         pub fn onOpen(this: *JSValkeyClient, socket: SocketType) void {
             this.client.socket = _socket(socket);
-            this.client.onOpen(_socket(socket)) catch return;
+            this.client.onOpen(_socket(socket)) catch return; // TODO: properly propagate exception upwards
         }
 
         fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -761,7 +753,7 @@ fn SocketHandler(comptime ssl: bool) type {
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
 
-            this.client.onClose() catch return;
+            this.client.onClose() catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
@@ -776,7 +768,7 @@ fn SocketHandler(comptime ssl: bool) type {
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
 
-            this.client.onClose() catch return;
+            this.client.onClose() catch return; // TODO: properly propagate exception upwards
         }
 
         pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
@@ -790,7 +782,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
             this.ref();
             defer this.deref();
-            this.client.onData(data) catch return;
+            this.client.onData(data) catch return; // TODO: properly propagate exception upwards
             this.updatePollRef();
         }
 

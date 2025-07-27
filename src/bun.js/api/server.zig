@@ -2851,10 +2851,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     try this.globalThis.reportActiveExceptionAsUnhandled(err);
                     return;
                 };
-                _ = callback.call(this.globalThis, .js_undefined, &.{ .jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
-                    try this.globalThis.reportActiveExceptionAsUnhandled(err);
-                    return;
-                };
+                try callback.callMaybeEmitUncaught(this.globalThis, .js_undefined, &.{ .jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value });
             }
         }
     };

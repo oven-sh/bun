@@ -1381,7 +1381,7 @@ pub const TestRunnerTask = struct {
                 .{ .pass = expect.active_test_expectation_counter.actual }
             else
                 .{ .fail = expect.active_test_expectation_counter.actual };
-            this.handleResult(result, .unhandledRejection) catch return; // XXX:
+            this.handleResult(result, .unhandledRejection) catch return; // TODO: properly propagate exception upwards
         } else if (Jest.runner) |runner| {
             if (!deduped)
                 runner.unhandled_errors_between_tests += 1;
@@ -1499,7 +1499,7 @@ pub const TestRunnerTask = struct {
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.requestTermination();
         this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) }) catch |err| switch (err) {
-            error.JSExecutionTerminated => {}, // XXX:
+            error.JSExecutionTerminated => {}, // TODO: properly propagate exception upwards
         };
     }
 

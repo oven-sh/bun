@@ -60,8 +60,8 @@ pub fn WorkTask(comptime Context: type) type {
             this.ref.unref(vm);
 
             tracker.willDispatch(globalThis);
+            defer tracker.didDispatch(globalThis);
             try ctx.then(globalThis);
-            tracker.didDispatch(globalThis);
         }
 
         pub fn schedule(this: *This) void {

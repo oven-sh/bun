@@ -467,10 +467,7 @@ pub const FSWatcher = struct {
                     EventType.@"error".toJS(this.globalThis),
                     if (err.isEmptyOrUndefinedOrNull()) jsc.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
                 };
-                _ = listener.callWithGlobalThis(
-                    this.globalThis,
-                    &args,
-                ) catch this.globalThis.clearException();
+                _ = listener.call(this.globalThis, this.globalThis.toJSValue(), &args) catch {}; // TODO: properly propagate exception upwards
             }
         }
     }
@@ -487,7 +484,8 @@ pub const FSWatcher = struct {
                     EventType.@"error".toJS(globalObject),
                     err.toJS(globalObject),
                 };
-                _ = try listener.callWithGlobalThis(globalObject, &args);
+                // TODO: investigate correct errdefer behavior with respect to `this.close()` here
+                _ = try listener.call(globalObject, globalObject.toJSValue(), &args);
             }
         }
         try this.close();
@@ -527,7 +525,7 @@ pub const FSWatcher = struct {
             filename,
         };
 
-        _ = listener.callWithGlobalThis(globalObject, &args) catch |err| try globalObject.reportActiveExceptionAsUnhandled(err);
+        _ = listener.call(globalObject, globalObject.toJSValue(), &args) catch |err| try globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn doRef(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {

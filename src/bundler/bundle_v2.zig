@@ -1798,7 +1798,7 @@ pub const BundleV2 = struct {
                 .pending => unreachable,
                 .err => brk: {
                     if (this.config.throw_on_error) {
-                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"))) catch return;
+                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"))) catch return; // TODO: this should be got from a parameter
                         break :brk;
                     }
 
@@ -1813,15 +1813,15 @@ pub const BundleV2 = struct {
                         globalThis,
                         jsc.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                            return promise.reject(globalThis, err) catch return;
+                            return promise.reject(globalThis, err) catch return; // TODO: this should be got from a parameter
                         },
                     );
-                    promise.resolve(globalThis, root_obj) catch return;
+                    promise.resolve(globalThis, root_obj) catch return; // TODO: this should be got from a parameter
                 },
                 .value => |*build| {
                     const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError) catch return;
+                    const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError) catch return; // TODO: this should be got from a parameter
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
@@ -1880,10 +1880,10 @@ pub const BundleV2 = struct {
                         globalThis,
                         jsc.ZigString.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                            return promise.reject(globalThis, err) catch return;
+                            return promise.reject(globalThis, err) catch return; // TODO: this should be got from a parameter
                         },
                     );
-                    promise.resolve(globalThis, root_obj) catch return;
+                    promise.resolve(globalThis, root_obj) catch return; // TODO: this should be got from a parameter
                 },
             }
 

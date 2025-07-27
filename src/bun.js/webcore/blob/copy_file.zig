@@ -639,7 +639,7 @@ pub const CopyFileWindows = struct {
             bun.sys.syslog("uv_fs_read({}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
             if (rc.toError(.read)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete() catch return;
+                this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 return;
             }
 
@@ -648,7 +648,7 @@ pub const CopyFileWindows = struct {
 
             if (rc.int() == 0) {
                 // Handle EOF. We can't read any more.
-                this.onReadWriteLoopComplete() catch return;
+                this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 return;
             }
 
@@ -667,7 +667,7 @@ pub const CopyFileWindows = struct {
 
             if (rc2.toError(.write)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete() catch return;
+                this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 return;
             }
         }
@@ -685,7 +685,7 @@ pub const CopyFileWindows = struct {
 
             if (rc.toError(.write)) |err| {
                 this.err = err;
-                this.onReadWriteLoopComplete() catch return;
+                this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 return;
             }
 
@@ -696,7 +696,7 @@ pub const CopyFileWindows = struct {
             if (wrote < buf.len) {
                 if (wrote == 0) {
                     // Handle EOF. We can't write any more.
-                    this.onReadWriteLoopComplete() catch return;
+                    this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                     return;
                 }
 
@@ -717,7 +717,7 @@ pub const CopyFileWindows = struct {
 
                 if (rc2.toError(.write)) |err| {
                     this.err = err;
-                    this.onReadWriteLoopComplete() catch return;
+                    this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                     return;
                 }
 
@@ -728,7 +728,7 @@ pub const CopyFileWindows = struct {
             switch (this.read_write_loop.read(this)) {
                 .err => |err| {
                     this.err = err;
-                    this.onReadWriteLoopComplete() catch return;
+                    this.onReadWriteLoopComplete() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 },
                 .result => {},
             }
@@ -1010,7 +1010,7 @@ pub const CopyFileWindows = struct {
         if (rc.errEnum()) |errno| {
             if (this.mkdirp_if_not_exists and errno == .NOENT) {
                 req.deinit();
-                this.mkdirp() catch return;
+                this.mkdirp() catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
                 return;
             } else {
                 var err = bun.sys.Error.fromCode(
@@ -1028,12 +1028,12 @@ pub const CopyFileWindows = struct {
                     err = err.withFd(destination.pathlike.fd);
                 }
 
-                this.throw(err) catch return;
+                this.throw(err) catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
             }
             return;
         }
 
-        this.onComplete(req.statbuf.size) catch return;
+        this.onComplete(req.statbuf.size) catch |e| return bun.jsc.host_fn.voidFromJSError(e, this.event_loop.global);
     }
 
     pub fn onComplete(this: *CopyFileWindows, written_actual: usize) bun.JSExecutionTerminated!void {

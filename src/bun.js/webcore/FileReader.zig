@@ -380,7 +380,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             }
             this.pending_value.clearWithoutDeallocation();
             this.pending_view = &.{};
-            this.pending.run();
+            this.pending.run() catch return false; // TODO: properly propagate exception upwards
             return false;
         }
 
@@ -409,7 +409,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
             this.pending_value.clearWithoutDeallocation();
             this.pending_view = &.{};
-            this.pending.run();
+            this.pending.run() catch {}; // TODO: properly propagate exception upwards
             return !was_done;
         }
 
@@ -433,7 +433,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
             this.pending_value.clearWithoutDeallocation();
             this.pending_view = &.{};
-            this.pending.run();
+            this.pending.run() catch {}; // TODO: properly propagate exception upwards
             return !was_done;
         }
 
@@ -449,7 +449,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         this.buffered = .{};
         this.pending_value.clearWithoutDeallocation();
         this.pending_view = &.{};
-        this.pending.run();
+        this.pending.run() catch {}; // TODO: properly propagate exception upwards
         return !was_done;
     } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
         this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
@@ -599,7 +599,7 @@ pub fn onReaderDone(this: *FileReader) void {
                 this.pending.result = .{ .done = {} };
             }
             this.buffered = .{};
-            this.pending.run();
+            this.pending.run() catch return; // TODO: properly propagate exception upwards
         } else if (this.buffered.items.len > 0) {
             const this_value = this.parent().this_jsvalue;
             const globalThis = this.parent().globalThis;
@@ -640,7 +640,7 @@ pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
     }
 
     this.pending.result = .{ .err = .{ .Error = err } };
-    this.pending.run();
+    this.pending.run() catch return; // TODO: properly propagate exception upwards
 }
 
 pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {

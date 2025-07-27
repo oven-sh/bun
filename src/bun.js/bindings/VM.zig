@@ -151,6 +151,10 @@ pub const VM = opaque {
         return bun.cpp.JSC__VM__isTerminationException(vm, exception);
     }
 
+    pub fn hasTerminationRequest(vm: *VM) bool {
+        return bun.cpp.JSC__VM__hasTerminationRequest(vm);
+    }
+
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
     pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
         var scope: bun.jsc.ExceptionValidationScope = undefined;

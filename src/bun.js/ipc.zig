@@ -1005,11 +1005,11 @@ pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *jsc.CallFra
     const target, const message, const handle = callframe.argumentsAsArray(3);
     if (target.isNull()) {
         const ipc = globalThis.bunVM().getIPCInstance() orelse return .js_undefined;
-        ipc.handleIPCMessage(.{ .data = message }, handle);
+        try ipc.handleIPCMessage(.{ .data = message }, handle);
     } else {
         if (!target.isCell()) return .js_undefined;
         const subprocess = bun.jsc.Subprocess.fromJSDirect(target) orelse return .js_undefined;
-        subprocess.handleIPCMessage(.{ .data = message }, handle);
+        try subprocess.handleIPCMessage(.{ .data = message }, handle);
     }
     return .js_undefined;
 }
@@ -1020,7 +1020,7 @@ const IPCCommand = union(enum) {
     nack,
 };
 
-fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!void {
+fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     if (Environment.isDebug) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
@@ -1112,13 +1112,13 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     } else {
         switch (send_queue.owner) {
             inline else => |owner| {
-                owner.handleIPCMessage(message, .js_undefined);
+                try owner.handleIPCMessage(message, .js_undefined);
             },
         }
     }
 }
 
-fn onData2(send_queue: *SendQueue, all_data: []const u8) bun.JSExecutionTerminated!void {
+fn onData2(send_queue: *SendQueue, all_data: []const u8) bun.JSError!void {
     var data = all_data;
     // log("onData '{'}'", .{std.zig.fmtEscapes(data)});
 
@@ -1145,10 +1145,10 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) bun.JSExecutionTerminat
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
-                error.JSExecutionTerminated => return,
+                error.JSExecutionTerminated => |err| return err,
             };
 
-            handleIPCMessage(send_queue, result.message, globalThis) catch return;
+            try handleIPCMessage(send_queue, result.message, globalThis);
 
             if (result.bytes_consumed < data.len) {
                 data = data[result.bytes_consumed..];
@@ -1226,12 +1226,12 @@ pub const IPCHandlers = struct {
             send_queue: *SendQueue,
             _: Socket,
             all_data: []const u8,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             const globalThis = send_queue.getGlobalThis();
             const loop = globalThis.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();
-            onData2(send_queue, all_data) catch return;
+            onData2(send_queue, all_data) catch |err| try bun.jsc.EventLoop.reportErrorOrTerminate(globalThis, err);
         }
 
         pub fn onFd(
@@ -1343,7 +1343,7 @@ pub const IPCHandlers = struct {
                     },
                 };
 
-                handleIPCMessage(send_queue, result.message, globalThis) catch {}; // XXX:
+                handleIPCMessage(send_queue, result.message, globalThis) catch {}; // TODO: properly propagate exception upwards
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];

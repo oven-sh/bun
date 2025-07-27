@@ -389,12 +389,12 @@ pub const Process = struct {
 
         if (signal_code) |sig| {
             this.close();
-            this.onExit(.{ .signaled = sig }, &rusage) catch return;
+            this.onExit(.{ .signaled = sig }, &rusage) catch return; // TODO: properly propagate exception upwards
         } else if (exit_code >= 0) {
             this.close();
-            this.onExit(.{ .exited = .{ .code = exit_code, .signal = @enumFromInt(0) } }, &rusage) catch return;
+            this.onExit(.{ .exited = .{ .code = exit_code, .signal = @enumFromInt(0) } }, &rusage) catch return; // TODO: properly propagate exception upwards
         } else {
-            this.onExit(.{ .err = bun.sys.Error.fromCode(@intCast(exit_status), .waitpid) }, &rusage) catch return;
+            this.onExit(.{ .err = bun.sys.Error.fromCode(@intCast(exit_status), .waitpid) }, &rusage) catch return; // TODO: properly propagate exception upwards
         }
     }
 

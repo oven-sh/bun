@@ -202,7 +202,7 @@ pub fn onData(
 
         log("ByteStream.onData pending.run()", .{});
 
-        this.pending.run();
+        try this.pending.run();
 
         return;
     }
@@ -343,12 +343,12 @@ pub fn onCancel(this: *@This()) void {
         this.pending_buffer = &.{};
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };
-        this.pending.run();
+        this.pending.run() catch return; // TODO: properly propagate exception upwards
     }
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        action.reject(global, .{ .AbortReason = .UserAbort }) catch return;
+        action.reject(global, .{ .AbortReason = .UserAbort }) catch return; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }
@@ -373,7 +373,7 @@ pub fn deinit(this: *@This()) void {
             // We must never run JavaScript inside of a GC finalizer.
             this.pending.runOnNextTick();
         } else {
-            this.pending.run();
+            this.pending.run() catch {}; // TODO: properly propagate exception upwards
         }
     }
     if (this.buffer_action) |*action| {

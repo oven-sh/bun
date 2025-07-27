@@ -2659,7 +2659,7 @@ pub fn handleIPCMessage(
     this: *Subprocess,
     message: IPC.DecodedIPCMessage,
     handle: jsc.JSValue,
-) void {
+) bun.JSError!void {
     IPClog("Subprocess#handleIPCMessage", .{});
     switch (message) {
         // In future versions we can read this in order to detect version mismatches,
@@ -2685,7 +2685,7 @@ pub fn handleIPCMessage(
         },
         .internal => |data| {
             IPC.log("Received IPC internal message from child", .{});
-            node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data) catch {};
+            try node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data);
         },
     }
 }

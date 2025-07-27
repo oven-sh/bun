@@ -2169,7 +2169,7 @@ pub const Expect = struct {
                 }
             } else if (value.isString()) {
                 // `.toThrow("") behaves the same as `.toThrow()`
-                const s = value.toString(globalThis) catch @panic("unreachable");
+                const s = try value.toString(globalThis);
                 if (s.length() == 0) break :brk .zero;
             }
             break :brk value;
@@ -4810,7 +4810,7 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable()); // checked above
 
-            const message_result = try message.callWithGlobalThis(globalThis, &.{});
+            const message_result = try message.call(globalThis, globalThis.toJSValue(), &.{});
             message_text = try bun.String.fromJS(message_result, globalThis);
         }
 

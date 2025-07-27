@@ -1563,7 +1563,7 @@ pub const ThreadSafeFunction = struct {
                     return;
                 }
 
-                _ = js.call(globalObject, .js_undefined, &.{}) catch |err| try globalObject.reportActiveExceptionAsUnhandled(err);
+                try js.callMaybeEmitUncaught(globalObject, .js_undefined, &.{});
             },
             .c => |cb| {
                 const js: JSValue = cb.js.get() orelse .js_undefined;

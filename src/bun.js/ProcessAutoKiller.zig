@@ -63,7 +63,7 @@ pub fn clear(this: *ProcessAutoKiller) void {
 
 pub fn onSubprocessSpawn(this: *ProcessAutoKiller, process: *bun.spawn.Process) void {
     if (this.enabled) {
-        this.processes.put(bun.default_allocator, process, {}) catch return;
+        this.processes.put(bun.default_allocator, process, {}) catch bun.outOfMemory();
         process.ref();
     }
 }

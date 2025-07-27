@@ -37,7 +37,7 @@ pub const Handler = struct {
     pub fn runErrorCallback(this: *const Handler, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) bun.JSExecutionTerminated!void {
         const onError = this.onError;
         if (!onError.isEmptyOrUndefinedOrNull()) {
-            _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err| try this.globalObject.reportActiveExceptionAsUnhandled(err);
+            try onError.callMaybeEmitUncaught(globalObject, .js_undefined, &.{error_value});
             return;
         }
 

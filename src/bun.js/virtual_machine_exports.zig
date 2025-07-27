@@ -12,9 +12,9 @@ pub export fn Bun__getVM() *jsc.VirtualMachine {
     return jsc.VirtualMachine.get();
 }
 
-/// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
-    jsc.VirtualMachine.get().eventLoop().tick() catch return;
+    const vm = jsc.VirtualMachine.get();
+    vm.eventLoop().tick() catch |err| bun.jsc.host_fn.voidFromJSError(err, vm.global);
 }
 
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {

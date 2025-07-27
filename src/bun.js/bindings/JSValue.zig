@@ -215,10 +215,6 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isInstanceOf(this, global, constructor);
     }
 
-    pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const jsc.JSValue) !jsc.JSValue {
-        return this.call(globalThis, globalThis.toJSValue(), args);
-    }
-
     extern "c" fn Bun__JSValue__call(
         ctx: *JSGlobalObject,
         object: JSValue,
@@ -248,6 +244,12 @@ pub const JSValue = enum(i64) {
             args.len,
             args.ptr,
         });
+    }
+
+    pub fn callMaybeEmitUncaught(function: JSValue, global: *JSGlobalObject, thisValue: jsc.JSValue, args: []const jsc.JSValue) bun.JSExecutionTerminated!void {
+        _ = function.call(global, thisValue, args) catch |err| {
+            try global.reportActiveExceptionAsUnhandled(err);
+        };
     }
 
     extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;

@@ -897,7 +897,7 @@ fn HandlerCallback(
                 }
 
                 if (result.asAnyPromise()) |promise| {
-                    this.global.bunVM().waitForPromise(promise) catch return false; // XXX:
+                    this.global.bunVM().waitForPromise(promise) catch return false; // TODO: properly propagate exception upwards
                     const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
                         this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());

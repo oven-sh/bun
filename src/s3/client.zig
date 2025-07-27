@@ -647,7 +647,7 @@ pub fn readableStream(
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(opaque_self));
-            callback(chunk, has_more, err, self) catch return;
+            callback(chunk, has_more, err, self) catch return; // TODO: properly propagate exception upwards
         }
     };
 

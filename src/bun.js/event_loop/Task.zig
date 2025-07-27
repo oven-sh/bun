@@ -474,7 +474,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             },
             @field(Task.Tag, @typeName(bun.bundle_v2.DeferredBatchTask)) => {
                 var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
-                any.runOnJSThread();
+                any.runOnJSThread() catch |err| try reportErrorOrTerminate(global, err);
             },
             @field(Task.Tag, @typeName(PosixSignalTask)) => {
                 PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
@@ -488,11 +488,11 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             },
             @field(Task.Tag, @typeName(FlushPendingFileSinkTask)) => {
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
-                any.runFromJSThread();
+                any.runFromJSThread() catch |err| try reportErrorOrTerminate(global, err);
             },
             @field(Task.Tag, @typeName(StreamPending)) => {
                 var any: *StreamPending = task.get(StreamPending).?;
-                any.runFromJSThread();
+                try any.runFromJSThread();
             },
 
             .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
@@ -511,7 +511,8 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
     return counter;
 }
 
-fn reportErrorOrTerminate(global: *jsc.JSGlobalObject, proof: bun.JSError) bun.JSExecutionTerminated!void {
+pub fn reportErrorOrTerminate(global: *jsc.JSGlobalObject, proof: bun.JSError) bun.JSExecutionTerminated!void {
+    @branchHint(.cold);
     if (proof == error.JSExecutionTerminated) return error.JSExecutionTerminated;
     const vm = global.vm();
     const ex = global.takeException(proof).asException(vm).?;

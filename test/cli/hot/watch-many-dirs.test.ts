@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, forEachLine } from "harness";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, tempDirWithFiles } from "harness";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -13,28 +13,31 @@ describe("--hot with many directories", () => {
 
     // Generate 129 directories with files
     const dirCount = 129;
-const maxCount = 3;
+    const maxCount = 3;
     for (let i = 0; i < dirCount; i++) {
-      const dirName = `dir-${i.toString().padStart(4, '0')}`;
+      const dirName = `dir-${i.toString().padStart(4, "0")}`;
       const dirPath = join(tmpdir, dirName);
       mkdirSync(dirPath, { recursive: true });
 
       // Create an index.js in each directory
-      writeFileSync(join(dirPath, 'index.js'), `export const value${i} = ${i};`);
+      writeFileSync(join(dirPath, "index.js"), `export const value${i} = ${i};`);
     }
 
     // Create main index that imports all directories
     const imports = Array.from({ length: dirCount }, (_, i) => {
-      const dirName = `dir-${i.toString().padStart(4, '0')}`;
+      const dirName = `dir-${i.toString().padStart(4, "0")}`;
       return `import * as dir${i} from './${dirName}/index.js';`;
-    }).join('\n');
+    }).join("\n");
 
-    writeFileSync(join(tmpdir, 'entry.js'), `
+    writeFileSync(
+      join(tmpdir, "entry.js"),
+      `
 ${imports}
 console.log('Loaded', ${dirCount}, 'directories');
 (globalThis.reloaded ??= 0);
 if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
-`);
+`,
+    );
 
     // Start bun --hot
     await using proc = spawn({
@@ -56,18 +59,17 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     // Trigger maxCount reload cycles
     let reloadCount = 0;
 
-
     for (let cycle = 0; cycle < maxCount; cycle++) {
       // Update all files simultaneously
       const timestamp = Date.now() + cycle;
       const updatePromises = [];
 
       for (let i = 0; i < dirCount; i++) {
-        const dirName = `dir-${i.toString().padStart(4, '0')}`;
-        const filePath = join(tmpdir, dirName, 'index.js');
+        const dirName = `dir-${i.toString().padStart(4, "0")}`;
+        const filePath = join(tmpdir, dirName, "index.js");
 
         updatePromises.push(
-          Bun.write(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`)
+          Bun.write(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
         );
       }
 

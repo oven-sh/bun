@@ -19,17 +19,17 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // Check if the bundled code contains __esm wrappers
       const bundledContent = api.readFile("/out.js");
-      
+
       // If there are __esm wrappers with await, they should have async keyword
       const esmWithAwaitPattern = /__esm\(\(\) => \{[\s\S]*?await/;
       const esmAsyncPattern = /__esm\(async \(\) => \{[\s\S]*?await/;
-      
+
       if (bundledContent.includes("__esm(") && bundledContent.includes("await")) {
         // Should NOT have non-async __esm functions that contain await
         if (esmWithAwaitPattern.test(bundledContent)) {
           throw new Error("Found __esm() function without async keyword that contains await");
         }
-        
+
         // Should have async __esm functions if they contain await
         if (!esmAsyncPattern.test(bundledContent)) {
           throw new Error("Expected to find __esm(async () => { ... await ... }) pattern");
@@ -64,11 +64,11 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // Check typical splitting output files
       const potentialFiles = ["entry.js", "chunk.js", "module-a.js", "module-b.js"];
-      
+
       for (const file of potentialFiles) {
         try {
           const content = api.readFile(`/out/${file}`);
-          
+
           // If there are __esm wrappers with await, they should have async keyword
           if (content.includes("__esm(") && content.includes("await")) {
             const badPattern = /__esm\(\(\) => \{[\s\S]*?await/;
@@ -115,17 +115,19 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // Check typical splitting output files
       const potentialFiles = ["entry.js", "log.js", "env.js", "statsigStorage.js", "chunk.js"];
-      
+
       for (const file of potentialFiles) {
         try {
           const content = api.readFile(`/out/${file}`);
-          
+
           // The bug was: var init_statsigStorage = __esm(() => { await init_log(); ... });
           // Should be: var init_statsigStorage = __esm(async () => { await init_log(); ... });
           if (content.includes("__esm(") && content.includes("await")) {
             const badPattern = /__esm\(\(\) => \{[\s\S]*?await/;
             if (badPattern.test(content)) {
-              throw new Error(`Found __esm(() => { await ... }) - missing async keyword in ${file}! Content: ${content}`);
+              throw new Error(
+                `Found __esm(() => { await ... }) - missing async keyword in ${file}! Content: ${content}`,
+              );
             }
           }
         } catch (e) {

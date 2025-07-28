@@ -316,6 +316,14 @@ set(BUN_CPP_OUTPUTS
   ${CODEGEN_PATH}/cpp.zig
 )
 
+# Root-level node_modules install needed for @lezer/cpp dependency used by cppbind.ts
+register_bun_install(
+  CWD
+    ${CWD}
+  NODE_MODULES_VARIABLE
+    BUN_ROOT_NODE_MODULES
+)
+
 register_command(
   TARGET
     bun-cppbind
@@ -329,6 +337,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
+    ${BUN_ROOT_NODE_MODULES}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )

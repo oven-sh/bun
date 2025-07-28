@@ -490,8 +490,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                     }
                                     var take = source_map.chunk.buffer;
                                     take.deinit();
-                                    bun.default_allocator.free(source_map.escaped_source.*.?);
-                                    source_map.escaped_source.* = null;
+                                    if (source_map.escaped_source.*) |escaped_source| {
+                                        bun.default_allocator.free(escaped_source);
+                                        source_map.escaped_source.* = null;
+                                    }
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -578,8 +580,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (content.js.source_map) |source_map| {
                             var take = source_map.chunk.buffer;
                             take.deinit();
-                            bun.default_allocator.free(source_map.escaped_source.*.?);
-                            source_map.escaped_source.* = null;
+                            if (source_map.escaped_source.*) |escaped_source| {
+                                bun.default_allocator.free(escaped_source);
+                                source_map.escaped_source.* = null;
+                            }
                         }
                     }
                 },

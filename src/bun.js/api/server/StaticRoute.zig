@@ -343,7 +343,7 @@ pub fn onRequestWithMethod(this: *StaticRoute, req: *uws.Request, resp: AnyRespo
                     return;
                 }
             }
-            
+
             // Continue with normal request handling
             if (method == .GET) {
                 this.on(resp);
@@ -352,7 +352,7 @@ pub fn onRequestWithMethod(this: *StaticRoute, req: *uws.Request, resp: AnyRespo
             }
         },
         else => {
-            this.doWriteStatus(405, resp); // Method not allowed  
+            this.doWriteStatus(405, resp); // Method not allowed
             resp.endWithoutBody(resp.shouldCloseConnection());
         },
     }

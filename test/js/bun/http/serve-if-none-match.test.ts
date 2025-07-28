@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("If-None-Match Support", () => {
   let server: Server;
-  
+
   const testContent = "Hello, World!";
   const routes = {
     "/basic": new Response(testContent, {
@@ -18,7 +18,7 @@ describe("If-None-Match Support", () => {
     }),
     "/weak-etag": new Response("Weak content", {
       headers: {
-        "Content-Type": "text/plain", 
+        "Content-Type": "text/plain",
         "ETag": 'W/"weak-etag"',
       },
     }),
@@ -74,7 +74,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": etag!,
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(res.headers.get("ETag")).toBe(etag);
       expect(await res.text()).toBe("");
@@ -86,7 +86,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": '"custom-etag"',
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(res.headers.get("ETag")).toBe('"custom-etag"');
       expect(await res.text()).toBe("");
@@ -98,7 +98,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": 'W/"weak-etag"',
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(res.headers.get("ETag")).toBe('W/"weak-etag"');
       expect(await res.text()).toBe("");
@@ -110,7 +110,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": '"weak-etag"', // Strong comparison with weak ETag
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(res.headers.get("ETag")).toBe('W/"weak-etag"');
       expect(await res.text()).toBe("");
@@ -122,7 +122,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(await res.text()).toBe("");
     });
@@ -130,13 +130,13 @@ describe("If-None-Match Support", () => {
     it("should handle multiple ETags in If-None-Match", async () => {
       const initialRes = await fetch(`${server.url}basic`);
       const etag = initialRes.headers.get("ETag");
-      
+
       const res = await fetch(`${server.url}basic`, {
         headers: {
           "If-None-Match": `"non-matching-etag", ${etag}, "another-etag"`,
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(await res.text()).toBe("");
     });
@@ -147,7 +147,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": '"non-matching-etag"',
         },
       });
-      
+
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(testContent);
     });
@@ -155,10 +155,10 @@ describe("If-None-Match Support", () => {
     it("should handle malformed If-None-Match headers gracefully", async () => {
       const res = await fetch(`${server.url}basic`, {
         headers: {
-          "If-None-Match": 'malformed-etag-without-quotes',
+          "If-None-Match": "malformed-etag-without-quotes",
         },
       });
-      
+
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(testContent);
     });
@@ -166,13 +166,13 @@ describe("If-None-Match Support", () => {
     it("should handle whitespace in If-None-Match", async () => {
       const initialRes = await fetch(`${server.url}basic`);
       const etag = initialRes.headers.get("ETag");
-      
+
       const res = await fetch(`${server.url}basic`, {
         headers: {
           "If-None-Match": `  ${etag}  `,
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(await res.text()).toBe("");
     });
@@ -190,7 +190,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": etag!,
         },
       });
-      
+
       expect(res.status).toBe(304);
       expect(res.headers.get("ETag")).toBe(etag);
       expect(await res.text()).toBe("");
@@ -203,7 +203,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": '"non-matching-etag"',
         },
       });
-      
+
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Length")).toBe(testContent.length.toString());
       expect(await res.text()).toBe("");
@@ -215,13 +215,13 @@ describe("If-None-Match Support", () => {
       const redirectRoutes = {
         "/redirect": Response.redirect("/basic", 302),
       };
-      
+
       const redirectServer = Bun.serve({
         static: redirectRoutes,
         port: 0,
         fetch: () => new Response("Not Found", { status: 404 }),
       });
-      
+
       try {
         const res = await fetch(`${redirectServer.url}redirect`, {
           redirect: "manual",
@@ -229,7 +229,7 @@ describe("If-None-Match Support", () => {
             "If-None-Match": "*",
           },
         });
-        
+
         expect(res.status).toBe(302);
         expect(res.headers.get("Location")).toBe("/basic");
       } finally {
@@ -246,7 +246,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       expect(res.status).toBe(405); // Method Not Allowed for static routes
     });
 
@@ -257,7 +257,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       expect(res.status).toBe(405); // Method Not Allowed for static routes
     });
   });

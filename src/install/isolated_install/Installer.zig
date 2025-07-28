@@ -27,13 +27,15 @@ pub const Installer = struct {
     /// Called from main thread
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
         const task = &this.tasks[entry_id.get()];
-        bun.debugAssert(
+        bun.debugAssert(switch (task.result) {
             // first time starting the task
-            task.result == .none or
-                // the task returned to the main thread because it was blocked
-                task.result == .blocked or
-                // the task returned to the main thread to spawn some scripts
-                task.result == .run_scripts);
+            .none => true,
+            // the task returned to the main thread because it was blocked
+            .blocked => true,
+            // the task returned to the main thread to spawn some scripts
+            .run_scripts => true,
+            else => false,
+        });
 
         task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));

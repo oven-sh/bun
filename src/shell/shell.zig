@@ -2056,6 +2056,10 @@ pub const Token = union(TokenTag) {
             if (bun.Environment.allow_assert) assert(range.start <= range.end);
             return range.end - range.start;
         }
+
+        pub fn slice(range: TextRange, buf: []const u8) []const u8 {
+            return buf[range.start..range.end];
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
@@ -2115,15 +2119,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.len();
                 }
                 break :size i;
             };
             var buf = arena.alloc(u8, size) catch bun.outOfMemory();
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + e.msg.len()], e.msg.slice(this.strpool));
+                i += e.msg.len();
             }
             break :str buf;
         };
@@ -2132,7 +2136,7 @@ pub const LexResult = struct {
 };
 pub const LexError = struct {
     /// Allocated with lexer arena
-    msg: []const u8,
+    msg: Token.TextRange,
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2209,9 +2213,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         pub fn get_result(self: @This()) LexResult {
             return .{
-                .tokens = self.tokens.items[0..],
-                .strpool = self.strpool.items[0..],
-                .errors = self.errors.items[0..],
+                .tokens = self.tokens.items,
+                .strpool = self.strpool.items,
+                .errors = self.errors.items,
             };
         }
 
@@ -2219,7 +2223,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             const start = self.strpool.items.len;
             self.strpool.appendSlice(msg) catch bun.outOfMemory();
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }) catch bun.outOfMemory();
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {

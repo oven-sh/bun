@@ -783,7 +783,7 @@ pub fn init(
         break :brk loader;
     };
 
-    env.loadProcess();
+    try env.loadProcess();
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();

@@ -1,9 +1,3 @@
-import { SyntaxNode } from "@lezer/common";
-import { parser as cppParser } from "@lezer/cpp";
-import { mkdir } from "fs/promises";
-import { join, relative } from "path";
-import { bannedTypes, sharedTypes, typeDeclarations } from "./shared-types";
-
 let isInstalled = false;
 try {
   const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
@@ -26,6 +20,12 @@ if (!isInstalled) {
   const r2 = Bun.spawnSync([...process.argv, "--already-installed"], { stdio: ["inherit", "inherit", "inherit"] });
   process.exit(r2.exitCode ?? 1);
 }
+
+const { SyntaxNode } = await import("@lezer/common");
+const { parser: cppParser } = await import("@lezer/cpp");
+const { mkdir } = await import("fs/promises");
+const { join, relative } = await import("path");
+const { bannedTypes, sharedTypes, typeDeclarations } = await import("./shared-types");
 
 type Point = {
   line: number;

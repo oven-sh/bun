@@ -12,8 +12,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
         var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
 
-        const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
-        const tla_checks = this.parse_graph.ast.items(.tla_check);
         const input_files = this.parse_graph.input_files.items(.source);
         const loaders: []const Loader = this.parse_graph.input_files.items(.loader);
 
@@ -80,7 +78,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 continue;
             }
 
-            _ = try this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {

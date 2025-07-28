@@ -223,8 +223,10 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
     const method = bun.http.Method.find(req.method()) orelse .GET;
     if (method == .GET) {
         this.onGET(req, resp);
+    } else if (method == .HEAD) {
+        this.onHEADRequest(req, resp);
     } else {
-        // For non-GET methods, use the original behavior
+        // For other methods, use the original behavior
         req.setYield(false);
         this.on(resp);
     }

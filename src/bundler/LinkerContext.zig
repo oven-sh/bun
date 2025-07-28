@@ -903,6 +903,8 @@ pub const LinkerContext = struct {
             result_tla_check.depth = 1;
             if (tla_keywords[source_index].len > 0) {
                 result_tla_check.parent = source_index;
+                // If this module has top-level await, mark it as async
+                meta_flags[source_index].is_async_or_has_async_dependency = true;
             }
 
             for (import_records, 0..) |record, import_record_index| {

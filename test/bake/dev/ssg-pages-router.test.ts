@@ -324,3 +324,66 @@ export { Markdoc as default };`,
     expect(await c1.elemText("h1")).toBe("Welcome to SSG");
   },
 });
+
+devTest("SSG pages router - catch-all routes [...slug]", {
+  framework: "react",
+  files: {
+    "pages/[...slug].tsx": `
+      const CatchAllPage: Bun.SSGPage = ({ params }) => {
+        return (
+          <div>
+            <h1>Catch-all Route</h1>
+            <p id="params">{JSON.stringify(params)}</p>
+            <ul>
+              {params.slug && Array.isArray(params.slug) ? (
+                params.slug.map((segment, index) => (
+                  <li key={index}>{segment}</li>
+                ))
+              ) : (
+                <li>No slug array</li>
+              )}
+            </ul>
+          </div>
+        );
+      };
+
+      export default CatchAllPage;
+
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        return {
+          paths: [
+            { params: { slug: ["docs"] } },
+            { params: { slug: ["docs", "getting-started"] } },
+            { params: { slug: ["docs", "api", "reference"] } },
+            { params: { slug: ["blog", "2024", "january", "new-features"] } },
+          ],
+        };
+      };
+    `,
+  },
+  async test(dev) {
+    // Test single segment
+    await using c1 = await dev.client("/docs");
+    expect(await c1.elemText("h1")).toBe("Catch-all Route");
+    expect(await c1.elemText("#params")).toBe('{"slug":"docs"}');
+    expect(await c1.elemsText("li")).toEqual(["No slug array"]);
+
+    // Test two segments
+    await using c2 = await dev.client("/docs/getting-started");
+    expect(await c2.elemText("h1")).toBe("Catch-all Route");
+    expect(await c2.elemText("#params")).toBe('{"slug":["docs","getting-started"]}');
+    expect(await c2.elemsText("li")).toEqual(["docs", "getting-started"]);
+
+    // Test three segments
+    await using c3 = await dev.client("/docs/api/reference");
+    expect(await c3.elemText("h1")).toBe("Catch-all Route");
+    expect(await c3.elemText("#params")).toBe('{"slug":["docs","api","reference"]}');
+    expect(await c3.elemsText("li")).toEqual(["docs", "api", "reference"]);
+
+    // Test four segments
+    await using c4 = await dev.client("/blog/2024/january/new-features");
+    expect(await c4.elemText("h1")).toBe("Catch-all Route");
+    expect(await c4.elemText("#params")).toBe('{"slug":["blog","2024","january","new-features"]}');
+    expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
+  },
+});

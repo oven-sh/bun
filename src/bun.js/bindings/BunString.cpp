@@ -744,6 +744,43 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::Stri
     str->hash();
 }
 
+extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
+    JSC::EncodedJSValue encodedTarget,
+    JSC::JSGlobalObject* global,
+    const BunString* key,
+    JSC::EncodedJSValue encodedValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(global->vm());
+    JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
+    auto& vm = global->vm();
+    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    Identifier id = Identifier::fromString(vm, str);
+    auto existingValue = target->getIfPropertyExists(global, id);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!existingValue.isEmpty()) {
+        // If existing value is already an array, push to it
+        if (existingValue.isObject() && existingValue.getObject()->inherits<JSC::JSArray>()) {
+            JSC::JSArray* array = jsCast<JSC::JSArray*>(existingValue.getObject());
+            array->push(global, newValue);
+        } else {
+            // Create new array with both values
+            JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, 2);
+            array->putDirectIndex(global, 0, existingValue);
+            array->putDirectIndex(global, 1, newValue);
+            target->putDirect(vm, id, array, 0);
+        }
+    } else {
+        // No existing value, just put the new value directly
+        target->putDirect(vm, id, newValue, 0);
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 extern "C" void JSC__JSValue__putBunString(
     JSC::EncodedJSValue encodedTarget,
     JSC::JSGlobalObject* global,

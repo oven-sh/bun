@@ -337,6 +337,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn renderDefaultError(
             this: *RequestContext,
+            arena_allocator: std.mem.Allocator,
             log: *logger.Log,
             err: anyerror,
             exceptions: []Api.JsException,
@@ -351,12 +352,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
-            const allocator = this.allocator;
-
-            const fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
-            defer allocator.destroy(fallback_container);
+            const fallback_container = arena_allocator.create(Api.FallbackMessageContainer) catch unreachable;
+            defer arena_allocator.destroy(fallback_container);
             fallback_container.* = Api.FallbackMessageContainer{
-                .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
+                .message = std.fmt.allocPrint(arena_allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,
@@ -364,18 +363,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
                     .exceptions = exceptions,
-                    .build = log.toAPI(allocator) catch unreachable,
+                    .build = log.toAPI(arena_allocator) catch unreachable,
                 },
             };
 
             if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
             Output.flush();
 
-            var bb = std.ArrayList(u8).init(allocator);
+            // Explicitly use `this.allocator` and *not* the arena
+            var bb = std.ArrayList(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
-                allocator,
+                arena_allocator,
                 fallback_container,
                 @TypeOf(bb_writer),
                 bb_writer,
@@ -1943,7 +1943,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var vm: *jsc.VirtualMachine = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
             if (comptime debug_mode) {
-                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                var arena = std.heap.ArenaAllocator.init(this.allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
                 var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
@@ -1954,9 +1954,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 vm.onUnhandledRejectionExceptionList = prev_exception_list;
 
                 this.renderDefaultError(
+                    allocator,
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice() catch @panic("TODO"),
+                    exception_list.items,
                     "<r><red>{s}<r> - <b>{}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );

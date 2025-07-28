@@ -1232,7 +1232,7 @@ fn onFrameworkRequestWithBundle(
             const value_str = bun.String.cloneUTF8(param.value);
             defer value_str.deref();
 
-            obj.put(global, key_str, value_str.toJS(global));
+            _ = try obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global));
         }
         break :blk obj;
     } else JSValue.null;

@@ -317,6 +317,13 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__putBunString(value, global, key, result);
     }
 
+    extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
+
+    /// Put key/val pair into `obj`. If `key` is already present on the object, create an array for the values.
+    pub fn putBunStringOneOrArray(obj: JSValue, global: *JSGlobalObject, key: *const bun.String, value: jsc.JSValue) bun.JSError!JSValue {
+        return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
+    }
+
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {

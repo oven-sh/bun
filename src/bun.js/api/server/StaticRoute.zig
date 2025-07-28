@@ -37,8 +37,12 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
 
     // Generate ETag if not already present
     if (headers.get("etag") == null) {
-        const etag = generateETag(blob);
-        headers.append("ETag", etag) catch bun.outOfMemory();
+        const slice = blob.slice();
+        const hash = std.hash.XxHash64.hash(0, slice);
+        
+        var etag_buf: [32]u8 = undefined;
+        const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
+        headers.append("ETag", etag_str) catch bun.outOfMemory();
     }
 
     return bun.new(StaticRoute, .{
@@ -147,8 +151,12 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         // Generate ETag if not already present
         if (headers.get("etag") == null) {
-            const etag = generateETag(&blob);
-            headers.append("ETag", etag) catch {
+            const slice = blob.slice();
+            const hash = std.hash.XxHash64.hash(0, slice);
+            
+            var etag_buf: [32]u8 = undefined;
+            const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
+            headers.append("ETag", etag_str) catch {
                 var mutable_blob = blob;
                 mutable_blob.detach();
                 return globalThis.throwOutOfMemory();
@@ -171,7 +179,27 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
 // HEAD requests have no body.
 pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
-    this.onRequestWithMethod(req, resp, .HEAD);
+    // Check If-None-Match for HEAD requests with 200 status
+    if (this.status_code == 200) {
+        if (evaluateIfNoneMatch(this, req)) {
+            // Return 304 Not Modified
+            req.setYield(false);
+            this.ref();
+            if (this.server) |server| {
+                server.onPendingRequest();
+                resp.timeout(server.config().idleTimeout);
+            }
+            this.doWriteStatus(304, resp);
+            this.doWriteHeaders(resp);
+            resp.endWithoutBody(resp.shouldCloseConnection());
+            this.onResponseComplete(resp);
+            return;
+        }
+    }
+    
+    // Continue with normal HEAD request handling
+    req.setYield(false);
+    this.onHEAD(resp);
 }
 
 pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
@@ -193,7 +221,42 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
 
 pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     const method = bun.http.Method.find(req.method()) orelse .GET;
-    this.onRequestWithMethod(req, resp, method);
+    if (method == .GET) {
+        this.onGET(req, resp);
+    } else if (method == .HEAD) {
+        // HEAD is handled by its own handler, but just in case
+        req.setYield(false);
+        this.onHEAD(resp);
+    } else {
+        // For other methods (POST, PUT, etc.), return method not allowed
+        req.setYield(false);
+        this.doWriteStatus(405, resp);
+        resp.endWithoutBody(resp.shouldCloseConnection());
+    }
+}
+
+pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
+    // Check If-None-Match for GET requests with 200 status
+    if (this.status_code == 200) {
+        if (evaluateIfNoneMatch(this, req)) {
+            // Return 304 Not Modified
+            req.setYield(false);
+            this.ref();
+            if (this.server) |server| {
+                server.onPendingRequest();
+                resp.timeout(server.config().idleTimeout);
+            }
+            this.doWriteStatus(304, resp);
+            this.doWriteHeaders(resp);
+            resp.endWithoutBody(resp.shouldCloseConnection());
+            this.onResponseComplete(resp);
+            return;
+        }
+    }
+    
+    // Continue with normal GET request handling
+    req.setYield(false);
+    this.on(resp);
 }
 
 pub fn on(this: *StaticRoute, resp: AnyResponse) void {
@@ -322,55 +385,7 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
     }
 }
 
-pub fn onRequestWithMethod(this: *StaticRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method) void {
-    // First check if method is supported
-    switch (method) {
-        .GET, .HEAD => {
-            // Only check If-None-Match for GET and HEAD requests with 200 status
-            if (this.status_code == 200) {
-                if (evaluateIfNoneMatch(this, req)) {
-                    // Return 304 Not Modified
-                    req.setYield(false);
-                    this.ref();
-                    if (this.server) |server| {
-                        server.onPendingRequest();
-                        resp.timeout(server.config().idleTimeout);
-                    }
-                    this.doWriteStatus(304, resp);
-                    this.doWriteHeaders(resp);
-                    resp.endWithoutBody(resp.shouldCloseConnection());
-                    this.onResponseComplete(resp);
-                    return;
-                }
-            }
 
-            // Continue with normal request handling
-            if (method == .GET) {
-                this.on(resp);
-            } else {
-                this.onHEAD(resp);
-            }
-        },
-        else => {
-            this.doWriteStatus(405, resp); // Method not allowed
-            resp.endWithoutBody(resp.shouldCloseConnection());
-        },
-    }
-}
-
-/// Generate ETag for a blob using its content hash
-fn generateETag(blob: *const AnyBlob) []const u8 {
-    const slice = blob.slice();
-    const hash = bun.hash(slice);
-
-    // Use thread-local static buffer for ETag string - this is safe because headers.append() copies the data
-    const S = struct {
-        var buf: [32]u8 = undefined;
-    };
-
-    const etag_str = std.fmt.bufPrint(&S.buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
-    return etag_str;
-}
 
 /// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
 fn parseEntityTag(tag_str: []const u8) struct { tag: []const u8, is_weak: bool } {

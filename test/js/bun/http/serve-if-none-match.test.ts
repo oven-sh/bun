@@ -246,8 +246,9 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-
-      expect(res.status).toBe(405); // Method Not Allowed for static routes
+      
+      // POST requests return Method Not Allowed for static routes
+      expect(res.status).toBe(405);
     });
 
     it("should not apply If-None-Match to PUT requests", async () => {
@@ -257,8 +258,9 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-
-      expect(res.status).toBe(405); // Method Not Allowed for static routes
+      
+      // PUT requests return Method Not Allowed for static routes
+      expect(res.status).toBe(405);
     });
   });
 });

@@ -4559,7 +4559,7 @@ pub const Expect = struct {
             const fmt = signature ++ "\n\n" ++ "Function threw an exception\n{any}\n";
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throwPretty(fmt, .{(try times_value.get(globalThis, "value")).?.toFmt(&formatter)});
+            return globalThis.throwPretty(fmt, .{((try times_value.get(globalThis, "value")) orelse JSValue.js_undefined).toFmt(&formatter)});
         }
 
         switch (not) {

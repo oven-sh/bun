@@ -87,6 +87,28 @@ pub fn runTasks(
                 .blocked => {
                     installer.onTaskBlocked(task.entry_id);
                 },
+                .run_scripts => |list| {
+                    const entries = installer.store.entries.slice();
+
+                    const node_id = entries.items(.node_id)[task.entry_id.get()];
+                    const dep_id = installer.store.nodes.items(.dep_id)[node_id.get()];
+                    const dep = installer.lockfile.buffers.dependencies.items[dep_id];
+                    installer.manager.spawnPackageLifecycleScripts(
+                        installer.command_ctx,
+                        list.*,
+                        dep.behavior.optional,
+                        false,
+                        .{
+                            .entry_id = task.entry_id,
+                            .installer = installer,
+                        },
+                    ) catch |err| {
+                        // .monotonic is okay for the same reason as `.done`: we popped this
+                        // task from the `UnboundedQueue`, and the task is no longer running.
+                        entries.items(.step)[task.entry_id.get()].store(.done, .monotonic);
+                        installer.onTaskFail(task.entry_id, .{ .run_scripts = err });
+                    };
+                },
                 .done => {
                     if (comptime Environment.ci_assert) {
                         // .monotonic is okay because we should have already synchronized with the

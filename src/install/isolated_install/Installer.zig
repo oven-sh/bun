@@ -27,7 +27,14 @@ pub const Installer = struct {
     /// Called from main thread
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
         const task = &this.tasks[entry_id.get()];
-        bun.debugAssert(task.result == .none or task.result == .blocked);
+        bun.debugAssert(
+            // first time starting the task
+            task.result == .none or
+                // the task returned to the main thread because it was blocked
+                task.result == .blocked or
+                // the task returned to the main thread to spawn some scripts
+                task.result == .run_scripts);
+
         task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));
     }
@@ -272,31 +279,22 @@ pub const Installer = struct {
             none,
             err: Error,
             blocked,
+            run_scripts: *Package.Scripts.List,
             done,
         };
 
-        const Error = union(Step) {
+        const Error = union(enum) {
             link_package: sys.Error,
             symlink_dependencies: sys.Error,
-            check_if_blocked,
-            symlink_dependency_binaries,
-            run_preinstall: anyerror,
+            run_scripts: anyerror,
             binaries: anyerror,
-            @"run (post)install and (pre/post)prepare": anyerror,
-            done,
-            blocked,
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
                     .link_package => |err| .{ .link_package = err.clone(allocator) },
                     .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
-                    .check_if_blocked => .check_if_blocked,
-                    .symlink_dependency_binaries => .symlink_dependency_binaries,
-                    .run_preinstall => |err| .{ .run_preinstall = err },
                     .binaries => |err| .{ .binaries = err },
-                    .@"run (post)install and (pre/post)prepare" => |err| .{ .@"run (post)install and (pre/post)prepare" = err },
-                    .done => .done,
-                    .blocked => .blocked,
+                    .run_scripts => |err| .{ .run_scripts = err },
                 };
             }
         };
@@ -349,12 +347,15 @@ pub const Installer = struct {
 
         const Yield = union(enum) {
             yield,
+            run_scripts: *Package.Scripts.List,
             done,
             blocked,
             fail: Error,
 
             pub fn failure(e: Error) Yield {
-                return .{ .fail = e };
+                // clone here in case a path is kept in a buffer that
+                // will be freed at the end of the current scope.
+                return .{ .fail = e.clone(bun.default_allocator) };
             }
         };
 
@@ -870,11 +871,12 @@ pub const Installer = struct {
                             dep.name.slice(string_buf),
                             &pkg_res,
                         ) catch |err| {
-                            return .failure(.{ .run_preinstall = err });
+                            return .failure(.{ .run_scripts = err });
                         };
 
                         if (scripts_list) |list| {
-                            entry_scripts[this.entry_id.get()] = bun.create(bun.default_allocator, Package.Scripts.List, list);
+                            const clone = bun.create(bun.default_allocator, Package.Scripts.List, list);
+                            entry_scripts[this.entry_id.get()] = clone;
 
                             if (is_trusted_through_update_request) {
                                 const trusted_dep_to_add = try installer.manager.allocator.dupe(u8, dep.name.slice(string_buf));
@@ -897,20 +899,7 @@ pub const Installer = struct {
                                 continue :next_step this.nextStep(current_step);
                             }
 
-                            installer.manager.spawnPackageLifecycleScripts(
-                                installer.command_ctx,
-                                list,
-                                dep.behavior.optional,
-                                false,
-                                .{
-                                    .entry_id = this.entry_id,
-                                    .installer = installer,
-                                },
-                            ) catch |err| {
-                                return .failure(.{ .run_preinstall = err });
-                            };
-
-                            return .yield;
+                            return .{ .run_scripts = clone };
                         }
                     }
 
@@ -989,26 +978,11 @@ pub const Installer = struct {
                         continue :next_step this.nextStep(current_step);
                     }
 
-                    const dep = installer.lockfile.buffers.dependencies.items[dep_id];
-
-                    installer.manager.spawnPackageLifecycleScripts(
-                        installer.command_ctx,
-                        list.*,
-                        dep.behavior.optional,
-                        false,
-                        .{
-                            .entry_id = this.entry_id,
-                            .installer = installer,
-                        },
-                    ) catch |err| {
-                        return .failure(.{ .@"run (post)install and (pre/post)prepare" = err });
-                    };
-
                     // when these scripts finish the package install will be
                     // complete. the task does not have anymore work to complete
                     // so it does not return to the thread pool.
 
-                    return .yield;
+                    return .{ .run_scripts = list };
                 },
 
                 .done => {
@@ -1032,6 +1006,14 @@ pub const Installer = struct {
 
             switch (res) {
                 .yield => {},
+                .run_scripts => |list| {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.installer.store.entries.items(.scripts)[this.entry_id.get()] != null, @src());
+                    }
+                    this.result = .{ .run_scripts = list };
+                    this.installer.task_queue.push(this);
+                    this.installer.manager.wake();
+                },
                 .done => {
                     if (comptime Environment.ci_assert) {
                         // .monotonic is okay because this should have been set by this thread.
@@ -1056,7 +1038,7 @@ pub const Installer = struct {
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
                     }
                     this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
-                    this.result = .{ .err = err.clone(bun.default_allocator) };
+                    this.result = .{ .err = err };
                     this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },

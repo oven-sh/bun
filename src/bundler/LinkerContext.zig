@@ -357,6 +357,36 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
+        // Validate top-level await for all files first, like esbuild does.
+        // This must be done before scanImportsAndExports to ensure async
+        // status is properly propagated through cyclic imports.
+        {
+            const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
+            const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
+            const tla_checks = this.parse_graph.ast.items(.tla_check);
+            const input_files = this.parse_graph.input_files.items(.source);
+            const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
+            const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
+            // Process all files in source index order, like esbuild does
+            var source_index: u32 = 0;
+            while (source_index < this.graph.files.len) : (source_index += 1) {
+
+                // Skip runtime
+                if (source_index == Index.runtime.get()) continue;
+
+                // Skip if not a JavaScript AST
+                if (source_index >= import_records_list.len) continue;
+
+                // Skip CSS files
+                if (css_asts[source_index] != null) continue;
+
+                const import_records = import_records_list[source_index].slice();
+
+                _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
+            }
+        }
+
         try this.scanImportsAndExports();
 
         // Stop now if there were errors

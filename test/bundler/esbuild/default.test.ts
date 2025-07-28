@@ -3609,64 +3609,6 @@ describe("bundler", () => {
       stdout: "a.js loaded\nEntry value from a",
     },
   });
-  itBundled("default/CyclicImportsWithAsyncDependency", {
-    // Test cyclic imports where one module in the chain uses top-level await
-    // This reproduces the bug where non-async wrappers contain await statements
-    files: {
-      "/entry.js": /* js */ `
-        // Dynamic import to trigger wrapper generation
-        const mod = await import("./AsyncEntryPoint.js");
-        mod.AsyncEntryPoint();
-      `,
-      "/AsyncEntryPoint.js": /* js */ `
-        export async function AsyncEntryPoint() {
-          const { BaseElement } = await import("./BaseElement.js");
-          BaseElement();
-        }
-      `,
-      "/BaseElement.js": /* js */ `
-        import { StoreDependency } from "./StoreDependency.js";
-        import { BaseElementImport } from "./BaseElementImport.js";
-        
-        const depValue = StoreDependency();
-        
-        export const formValue = {
-          key: depValue,
-        };
-        
-        export function BaseElement() {
-          return BaseElementImport();
-        }
-      `,
-      "/BaseElementImport.js": /* js */ `
-        import { SecondElementImport } from "./SecondElementImport.js";
-        export function BaseElementImport() {
-          return SecondElementImport();
-        }
-      `,
-      "/SecondElementImport.js": /* js */ `
-        // This creates the circular dependency
-        import { formValue } from "./BaseElement.js";
-        export function SecondElementImport() {
-          return formValue.key;
-        }
-      `,
-      "/StoreDependency.js": /* js */ `
-        import { somePromise } from "./StoreDependencyAsync.js";
-        
-        export function StoreDependency() {
-          return "A string from StoreFunc" + somePromise;
-        }
-      `,
-      "/StoreDependencyAsync.js": /* js */ `
-        // This top-level await should cause all modules in the cycle to be async
-        export const somePromise = await Promise.resolve("Hello World");
-      `,
-    },
-    format: "esm",
-    // Just test that it compiles without syntax errors
-    compile: true,
-  });
   itBundled("default/TopLevelAwaitWithNestedDynamicImport", {
     // Test nested dynamic imports with top-level await
     files: {

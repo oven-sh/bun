@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-
 pub const NPMClient = struct {
     bin: string,
     tag: Tag,
@@ -9,3 +6,7 @@ pub const NPMClient = struct {
         bun,
     };
 };
+
+const string = []const u8;
+
+const bun = @import("bun");

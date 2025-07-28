@@ -1,7 +1,8 @@
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 const HTTPThread = @This();
 
-loop: *JSC.MiniEventLoop,
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+
+loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
@@ -197,7 +198,7 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.default_arena = Arena.init() catch unreachable;
     bun.http.default_allocator = bun.default_allocator;
 
-    const loop = bun.JSC.MiniEventLoop.initGlobal(null);
+    const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 
     if (Environment.isWindows) {
         _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
@@ -457,25 +458,28 @@ pub fn schedule(this: *@This(), batch: Batch) void {
         this.loop.loop.wakeup();
 }
 
+pub const Queue = UnboundedQueue(AsyncHTTP, .next);
+
+const log = Output.scoped(.HTTPThread, false);
+
+const stringZ = [:0]const u8;
+
+const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const Output = bun.Output;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const uws = bun.uws;
+const Output = bun.Output;
+const jsc = bun.jsc;
 const strings = bun.strings;
-const stringZ = bun.stringZ;
-const JSC = bun.JSC;
-const NewHTTPContext = bun.http.NewHTTPContext;
+const uws = bun.uws;
+const Arena = bun.allocators.MimallocArena;
+const Batch = bun.ThreadPool.Batch;
 const UnboundedQueue = bun.threading.UnboundedQueue;
-const AsyncHTTP = bun.http.AsyncHTTP;
-pub const Queue = UnboundedQueue(AsyncHTTP, .next);
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
-const ProxyTunnel = @import("./ProxyTunnel.zig");
+const AsyncHTTP = bun.http.AsyncHTTP;
 const InitError = HTTPClient.InitError;
-const Batch = bun.ThreadPool.Batch;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
-const log = Output.scoped(.HTTPThread, false);
+const NewHTTPContext = bun.http.NewHTTPContext;

@@ -1,15 +1,14 @@
 //! This namespace is used to test binding generator
-const gen = bun.gen.bindgen_test;
 
-pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-    return (try JSC.JSObject.create(.{
+pub fn getBindgenTestFunctions(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    return (try jsc.JSObject.create(.{
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
     }, global)).toJS();
 }
 
 // This example should be kept in sync with bindgen's documentation
-pub fn add(global: *JSC.JSGlobalObject, a: i32, b: i32) !i32 {
+pub fn add(global: *jsc.JSGlobalObject, a: i32, b: i32) !i32 {
     return std.math.add(i32, a, b) catch {
         // Binding functions can return `error.OutOfMemory` and `error.JSError`.
         // Others like `error.Overflow` from `std.math.add` must be converted.
@@ -32,5 +31,7 @@ pub fn requiredAndOptionalArg(a: bool, b: ?usize, c: i32, d: ?u8) i32 {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
+const gen = bun.gen.bindgen_test;

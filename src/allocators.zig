@@ -1,8 +1,12 @@
-const std = @import("std");
-
-const Environment = @import("./env.zig");
-const bun = @import("bun");
-const OOM = bun.OOM;
+pub const c_allocator = @import("./allocators/basic.zig").c_allocator;
+pub const z_allocator = @import("./allocators/basic.zig").z_allocator;
+pub const mimalloc = @import("./allocators/mimalloc.zig");
+pub const MimallocArena = @import("./allocators/MimallocArena.zig");
+pub const AllocationScope = @import("./allocators/AllocationScope.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
+pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
+pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
+pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -289,8 +293,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub const Pair = struct { index: IndexType, value: *ValueType };
     };
 }
-
-const Mutex = bun.Mutex;
 
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file
@@ -769,3 +771,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
     };
 }
+
+const Environment = @import("./env.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Mutex = bun.threading.Mutex;

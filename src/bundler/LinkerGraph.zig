@@ -451,26 +451,30 @@ pub const File = struct {
     pub const List = MultiArrayList(File);
 };
 
-const bun = @import("bun");
-const Environment = bun.Environment;
-const std = @import("std");
-const string = bun.string;
-const Output = bun.Output;
-const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-const BabyList = bun.BabyList;
+const string = []const u8;
 
-const Logger = bun.bundle_v2.Logger;
-const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
-const Ref = bun.bundle_v2.Ref;
-const EntryPoint = bun.bundle_v2.EntryPoint;
-const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
+const Output = bun.Output;
+
+const js_ast = bun.ast;
+const Symbol = js_ast.Symbol;
+
+const AutoBitSet = bun.bit_set.AutoBitSet;
+const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
+
+const EntryPoint = bun.bundle_v2.EntryPoint;
+const Index = bun.bundle_v2.Index;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
-const js_ast = @import("../js_ast.zig");
-const Symbol = @import("../js_ast.zig").Symbol;
-const ImportRecord = bun.ImportRecord;
+const Logger = bun.bundle_v2.Logger;
+const Part = bun.bundle_v2.Part;
+const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const AutoBitSet = bun.bit_set.AutoBitSet;
+const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
+const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;

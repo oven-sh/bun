@@ -1,13 +1,13 @@
 pub const JSRef = union(enum) {
-    weak: JSC.JSValue,
-    strong: JSC.Strong.Optional,
+    weak: jsc.JSValue,
+    strong: jsc.Strong.Optional,
     finalized: void,
 
-    pub fn initWeak(value: JSC.JSValue) @This() {
+    pub fn initWeak(value: jsc.JSValue) @This() {
         return .{ .weak = value };
     }
 
-    pub fn initStrong(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) @This() {
+    pub fn initStrong(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) @This() {
         return .{ .strong = .create(value, globalThis) };
     }
 
@@ -15,7 +15,7 @@ pub const JSRef = union(enum) {
         return .{ .weak = .zero };
     }
 
-    pub fn get(this: *@This()) JSC.JSValue {
+    pub fn get(this: *@This()) jsc.JSValue {
         return switch (this.*) {
             .weak => this.weak,
             .strong => this.strong.get() orelse .zero,
@@ -23,14 +23,14 @@ pub const JSRef = union(enum) {
         };
     }
 
-    pub fn tryGet(this: *@This()) ?JSC.JSValue {
+    pub fn tryGet(this: *@This()) ?jsc.JSValue {
         return switch (this.*) {
             .weak => if (this.weak != .zero) this.weak else null,
             .strong => this.strong.get(),
             .finalized => null,
         };
     }
-    pub fn setWeak(this: *@This(), value: JSC.JSValue) void {
+    pub fn setWeak(this: *@This(), value: jsc.JSValue) void {
         switch (this.*) {
             .weak => {},
             .strong => {
@@ -43,7 +43,7 @@ pub const JSRef = union(enum) {
         this.* = .{ .weak = value };
     }
 
-    pub fn setStrong(this: *@This(), value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    pub fn setStrong(this: *@This(), value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
         if (this.* == .strong) {
             this.strong.set(globalThis, value);
             return;
@@ -51,7 +51,7 @@ pub const JSRef = union(enum) {
         this.* = .{ .strong = .create(value, globalThis) };
     }
 
-    pub fn upgrade(this: *@This(), globalThis: *JSC.JSGlobalObject) void {
+    pub fn upgrade(this: *@This(), globalThis: *jsc.JSGlobalObject) void {
         switch (this.*) {
             .weak => {
                 bun.assert(this.weak != .zero);
@@ -77,6 +77,7 @@ pub const JSRef = union(enum) {
     }
 };
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
 const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

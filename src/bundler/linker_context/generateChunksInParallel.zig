@@ -426,15 +426,15 @@ pub fn generateChunksInParallel(
                         .js;
 
                     if (loader.isJavaScriptLike()) {
-                        JSC.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
-                        JSC.initialize(false);
+                        jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
+                        jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
                         var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                         source_provider_url.ref();
 
                         defer source_provider_url.deref();
 
-                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                        if (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
                             const bytecode, const cached_bytecode = result;
                             const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                             defer source_provider_url_str.deinit();
@@ -545,48 +545,42 @@ pub fn generateChunksInParallel(
     return output_files.take();
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
-const std = @import("std");
-const debug = LinkerContext.debug;
-
-const Environment = bun.Environment;
-const Logger = bun.logger;
-const options = bun.options;
-
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const Loc = Logger.Loc;
-const Chunk = bun.bundle_v2.Chunk;
-
-const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
-const CompileResult = LinkerContext.CompileResult;
-const PendingPartRange = LinkerContext.PendingPartRange;
-
-const Output = bun.Output;
-const OutputFile = bun.options.OutputFile;
 const debugPartRanges = Output.scoped(.PartRanges, true);
 
-const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
-const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
-const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
-const generateChunk = LinkerContext.generateChunk;
+const std = @import("std");
 
-const Index = bun.bundle_v2.Index;
-
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Loader = bun.Loader;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const base64 = bun.base64;
+const jsc = bun.jsc;
+const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
+const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
-
+const Index = bun.bundle_v2.Index;
+const Part = bun.bundle_v2.Part;
 const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
 
-const base64 = bun.base64;
-
-const JSC = bun.JSC;
-
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const CompileResult = LinkerContext.CompileResult;
+const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
+const PendingPartRange = LinkerContext.PendingPartRange;
 const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;
-const ThreadPoolLib = bun.ThreadPool;
+const debug = LinkerContext.debug;
+const generateChunk = LinkerContext.generateChunk;
+const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
+const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
+const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;
+
+const options = bun.options;
+const OutputFile = bun.options.OutputFile;

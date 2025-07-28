@@ -1,3 +1,5 @@
+const Cat = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -115,7 +117,7 @@ pub fn next(this: *Cat) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?jsc.SystemError) Yield {
     debug("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
@@ -199,7 +201,7 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8, remove: *bool) Yield {
     return .done;
 }
 
-pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) Yield {
+pub fn onIOReaderDone(this: *Cat, err: ?jsc.SystemError) Yield {
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
         break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -330,21 +332,24 @@ const Opts = struct {
 };
 
 const debug = bun.Output.scoped(.ShellCat, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
+const std = @import("std");
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const Cat = @This();
-const JSC = bun.JSC;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
-
 const ShellSyscall = interpreter.ShellSyscall;
 const unsupportedFlag = interpreter.unsupportedFlag;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const IOReader = shell.IOReader;
+const Yield = bun.shell.Yield;

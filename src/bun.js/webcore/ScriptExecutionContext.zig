@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 extern fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) ?*bun.jsc.JSGlobalObject;
 
 /// Safe handle to a JavaScript execution environment that may have exited.
@@ -22,3 +20,5 @@ pub const Identifier = enum(u32) {
         return self.globalObject() != null;
     }
 };
+
+const bun = @import("bun");

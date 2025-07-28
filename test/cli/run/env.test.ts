@@ -820,7 +820,7 @@ test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
   expect(stdout).toBe("test");
 });
 
-describe.only("env loader buffer handling", () => {
+describe("env loader buffer handling", () => {
   test("handles large quoted values with escape sequences", () => {
     // This test ensures the env loader properly handles large values that exceed the initial buffer size
     // The env loader doesn't process escape sequences, so \\\\ remains as \\\\

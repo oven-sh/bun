@@ -1011,13 +1011,6 @@ const Parser = struct {
         return strings.trim(this.src[start..end], whitespace_chars);
     }
 
-    inline fn writeBackwards(ptr: usize, bytes: []const u8, buffer: *std.ArrayList(u8)) usize {
-        const end = ptr;
-        const start = end - bytes.len;
-        buffer.insertSlice(start, bytes) catch unreachable;
-        return start;
-    }
-
     fn expandValue(this: *Parser, map: *Map, value: string) OOM!?string {
         if (value.len < 2) return null;
 

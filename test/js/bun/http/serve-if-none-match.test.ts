@@ -246,7 +246,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       // POST requests to static routes return the content normally (no If-None-Match applied)
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(testContent);
@@ -259,7 +259,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       // PUT requests to static routes return the content normally (no If-None-Match applied)
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(testContent);

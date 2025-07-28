@@ -34,6 +34,13 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
+
+    // Generate ETag if not already present
+    if (headers.get("etag") == null) {
+        const etag = generateETag(blob);
+        headers.append("ETag", etag) catch bun.outOfMemory();
+    }
+
     return bun.new(StaticRoute, .{
         .ref_count = .init(),
         .blob = blob.*,
@@ -125,8 +132,8 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             headers.fastRemove(.ContentLength);
         }
 
-        const headers: Headers = if (response.init.headers) |headers|
-            Headers.from(headers, bun.default_allocator, .{
+        var headers: Headers = if (response.init.headers) |h|
+            Headers.from(h, bun.default_allocator, .{
                 .body = &blob,
             }) catch {
                 blob.detach();
@@ -137,6 +144,16 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             .{
                 .allocator = bun.default_allocator,
             };
+
+        // Generate ETag if not already present
+        if (headers.get("etag") == null) {
+            const etag = generateETag(&blob);
+            headers.append("ETag", etag) catch {
+                var mutable_blob = blob;
+                mutable_blob.detach();
+                return globalThis.throwOutOfMemory();
+            };
+        }
 
         return bun.new(StaticRoute, .{
             .ref_count = .init(),
@@ -154,8 +171,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
 // HEAD requests have no body.
 pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
-    req.setYield(false);
-    this.onHEAD(resp);
+    this.onRequestWithMethod(req, resp, .HEAD);
 }
 
 pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
@@ -176,8 +192,8 @@ fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
 }
 
 pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
-    req.setYield(false);
-    this.on(resp);
+    const method = bun.http.Method.find(req.method()) orelse .GET;
+    this.onRequestWithMethod(req, resp, method);
 }
 
 pub fn on(this: *StaticRoute, resp: AnyResponse) void {
@@ -304,6 +320,109 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
             resp.endWithoutBody(resp.shouldCloseConnection());
         },
     }
+}
+
+pub fn onRequestWithMethod(this: *StaticRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method) void {
+    // First check if method is supported
+    switch (method) {
+        .GET, .HEAD => {
+            // Only check If-None-Match for GET and HEAD requests with 200 status
+            if (this.status_code == 200) {
+                if (evaluateIfNoneMatch(this, req)) {
+                    // Return 304 Not Modified
+                    req.setYield(false);
+                    this.ref();
+                    if (this.server) |server| {
+                        server.onPendingRequest();
+                        resp.timeout(server.config().idleTimeout);
+                    }
+                    this.doWriteStatus(304, resp);
+                    this.doWriteHeaders(resp);
+                    resp.endWithoutBody(resp.shouldCloseConnection());
+                    this.onResponseComplete(resp);
+                    return;
+                }
+            }
+            
+            // Continue with normal request handling
+            if (method == .GET) {
+                this.on(resp);
+            } else {
+                this.onHEAD(resp);
+            }
+        },
+        else => {
+            this.doWriteStatus(405, resp); // Method not allowed  
+            resp.endWithoutBody(resp.shouldCloseConnection());
+        },
+    }
+}
+
+/// Generate ETag for a blob using its content hash
+fn generateETag(blob: *const AnyBlob) []const u8 {
+    const slice = blob.slice();
+    const hash = bun.hash(slice);
+
+    // Use thread-local static buffer for ETag string - this is safe because headers.append() copies the data
+    const S = struct {
+        var buf: [32]u8 = undefined;
+    };
+
+    const etag_str = std.fmt.bufPrint(&S.buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
+    return etag_str;
+}
+
+/// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
+fn parseEntityTag(tag_str: []const u8) struct { tag: []const u8, is_weak: bool } {
+    var str = std.mem.trim(u8, tag_str, " \t");
+
+    // Check for weak indicator
+    var is_weak = false;
+    if (std.mem.startsWith(u8, str, "W/")) {
+        is_weak = true;
+        str = str[2..];
+        str = std.mem.trimLeft(u8, str, " \t");
+    }
+
+    // Remove surrounding quotes
+    if (str.len >= 2 and str[0] == '"' and str[str.len - 1] == '"') {
+        str = str[1 .. str.len - 1];
+    }
+
+    return .{ .tag = str, .is_weak = is_weak };
+}
+
+/// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
+fn weakEntityTagMatch(tag1: []const u8, is_weak1: bool, tag2: []const u8, is_weak2: bool) bool {
+    _ = is_weak1;
+    _ = is_weak2;
+    // For weak comparison, we only compare the opaque tag values, ignoring weak indicators
+    return std.mem.eql(u8, tag1, tag2);
+}
+
+/// Evaluate If-None-Match condition according to RFC 9110 Section 13.1.2
+fn evaluateIfNoneMatch(this: *StaticRoute, req: *uws.Request) bool {
+    const if_none_match = req.header("if-none-match") orelse return false;
+
+    // Get the ETag from our headers
+    const our_etag = this.headers.get("etag") orelse return false;
+    const our_parsed = parseEntityTag(our_etag);
+
+    // Handle "*" case
+    if (std.mem.eql(u8, std.mem.trim(u8, if_none_match, " \t"), "*")) {
+        return true; // Condition is false, so we should return 304
+    }
+
+    // Parse comma-separated list of entity tags
+    var iter = std.mem.splitScalar(u8, if_none_match, ',');
+    while (iter.next()) |tag_str| {
+        const parsed = parseEntityTag(tag_str);
+        if (weakEntityTagMatch(our_parsed.tag, our_parsed.is_weak, parsed.tag, parsed.is_weak)) {
+            return true; // Condition is false, so we should return 304
+        }
+    }
+
+    return false; // Condition is true, continue with normal processing
 }
 
 const std = @import("std");

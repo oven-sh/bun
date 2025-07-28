@@ -1343,10 +1343,10 @@ const which = @import("./which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const OOM = bun.OOM;
 const Output = bun.Output;
 const analytics = bun.analytics;
 const logger = bun.logger;
 const s3 = bun.S3;
 const strings = bun.strings;
 const api = bun.schema.api;
-const OOM = bun.OOM;

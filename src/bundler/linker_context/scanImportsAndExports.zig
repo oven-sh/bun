@@ -78,7 +78,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 continue;
             }
 
-
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {
                     continue;

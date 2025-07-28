@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("cyclic imports with async dependencies should generate async wrappers", async () => {
@@ -95,19 +95,19 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   // var init_BaseElement = __esm(() => {
   //   await init_StoreDependency();  // ERROR: await in non-async function
   // });
-  
+
   // All __esm wrappers that contain await should be async
   const esmWrapperRegex = /var\s+(\w+)\s*=\s*__esm\s*\((async\s*)?\(\)\s*=>\s*\{([^}]+)\}/g;
   let match;
-  
+
   while ((match = esmWrapperRegex.exec(bundled)) !== null) {
     const [fullMatch, varName, isAsync, body] = match;
     const hasAwait = body.includes("await ");
-    
+
     if (hasAwait && !isAsync) {
       throw new Error(
         `Found await in non-async wrapper ${varName}:\n${fullMatch}\n\n` +
-        `This indicates the cyclic import async propagation bug is present.`
+          `This indicates the cyclic import async propagation bug is present.`,
       );
     }
   }
@@ -128,6 +128,6 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   ]);
 
   // Should not have syntax errors
-  expect(stderr).not.toContain("await\" can only be used inside an \"async\" function");
+  expect(stderr).not.toContain('await" can only be used inside an "async" function');
   expect(exitCode).toBe(0);
 });

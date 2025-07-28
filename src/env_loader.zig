@@ -508,7 +508,9 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
         const source = &logger.Source.initPathString("test", str);
-        Parser.parse(source, this.allocator, this.map, overwrite, false, expand);
+        var value_buffer = std.ArrayList(u8).init(this.allocator);
+        defer value_buffer.deinit();
+        Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -521,8 +523,13 @@ pub const Loader = struct {
     ) !void {
         const start = std.time.nanoTimestamp();
 
+        // Create a reusable buffer with stack fallback for parsing multiple files
+        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+        var value_buffer = std.ArrayList(u8).init(stack_fallback.get());
+        defer value_buffer.deinit();
+
         if (env_files.len > 0) {
-            try this.loadExplicitFiles(env_files);
+            try this.loadExplicitFiles(env_files, &value_buffer);
         } else {
             // Do not automatically load .env files in `bun run <script>`
             // Instead, it is the responsibility of the script's instance of `bun` to load .env,
@@ -532,7 +539,7 @@ pub const Loader = struct {
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
             if (!skip_default_env)
-                try this.loadDefaultFiles(dir, suffix);
+                try this.loadDefaultFiles(dir, suffix, &value_buffer);
         }
 
         if (!this.quiet) this.printLoaded(start);
@@ -541,6 +548,7 @@ pub const Loader = struct {
     fn loadExplicitFiles(
         this: *Loader,
         env_files: []const []const u8,
+        value_buffer: *std.ArrayList(u8),
     ) !void {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
@@ -550,7 +558,7 @@ pub const Loader = struct {
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
-                        try this.loadEnvFileDynamic(file_path, false);
+                        try this.loadEnvFileDynamic(file_path, false, value_buffer);
                         analytics.Features.dotenv += 1;
                     }
                 }
@@ -566,25 +574,26 @@ pub const Loader = struct {
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
+        value_buffer: *std.ArrayList(u8),
     ) !void {
         const dir_handle: std.fs.Dir = std.fs.cwd();
 
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.development.local", false);
+                    try this.loadEnvFile(dir_handle, ".env.development.local", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.production.local", false);
+                    try this.loadEnvFile(dir_handle, ".env.production.local", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.test.local", false);
+                    try this.loadEnvFile(dir_handle, ".env.test.local", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
@@ -592,7 +601,7 @@ pub const Loader = struct {
 
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false);
+                try this.loadEnvFile(dir_handle, ".env.local", false, value_buffer);
                 analytics.Features.dotenv += 1;
             }
         }
@@ -600,26 +609,26 @@ pub const Loader = struct {
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
-                    try this.loadEnvFile(dir_handle, ".env.development", false);
+                    try this.loadEnvFile(dir_handle, ".env.development", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
-                    try this.loadEnvFile(dir_handle, ".env.production", false);
+                    try this.loadEnvFile(dir_handle, ".env.production", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
-                    try this.loadEnvFile(dir_handle, ".env.test", false);
+                    try this.loadEnvFile(dir_handle, ".env.test", false, value_buffer);
                     analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
-            try this.loadEnvFile(dir_handle, ".env", false);
+            try this.loadEnvFile(dir_handle, ".env", false, value_buffer);
             analytics.Features.dotenv += 1;
         }
     }
@@ -694,6 +703,7 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
+        value_buffer: *std.ArrayList(u8),
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -769,6 +779,7 @@ pub const Loader = struct {
             source,
             this.allocator,
             this.map,
+            value_buffer,
             override,
             false,
             true,
@@ -781,6 +792,7 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
+        value_buffer: *std.ArrayList(u8),
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -840,6 +852,7 @@ pub const Loader = struct {
             source,
             this.allocator,
             this.map,
+            value_buffer,
             override,
             false,
             true,
@@ -852,7 +865,7 @@ pub const Loader = struct {
 const Parser = struct {
     pos: usize = 0,
     src: string,
-    value_buffer: std.ArrayList(u8),
+    value_buffer: *std.ArrayList(u8),
 
     const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
 
@@ -1101,17 +1114,13 @@ const Parser = struct {
         source: *const logger.Source,
         allocator: std.mem.Allocator,
         map: *Map,
+        value_buffer: *std.ArrayList(u8),
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,
     ) void {
-        // Create stack fallback allocator for temporary value buffer
-        var stack_fallback = std.heap.stackFallback(4096, allocator);
-        const temp_allocator = stack_fallback.get();
-        
-        var value_buffer = std.ArrayList(u8).init(temp_allocator);
-        defer value_buffer.deinit();
-        
+        // Clear the buffer before each parse to ensure no leftover data
+        value_buffer.clearRetainingCapacity();
         var parser = Parser{ 
             .src = source.contents,
             .value_buffer = value_buffer,

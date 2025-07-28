@@ -223,15 +223,10 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
     const method = bun.http.Method.find(req.method()) orelse .GET;
     if (method == .GET) {
         this.onGET(req, resp);
-    } else if (method == .HEAD) {
-        // HEAD is handled by its own handler, but just in case
-        req.setYield(false);
-        this.onHEAD(resp);
     } else {
-        // For other methods (POST, PUT, etc.), return method not allowed
+        // For non-GET methods, use the original behavior
         req.setYield(false);
-        this.doWriteStatus(405, resp);
-        resp.endWithoutBody(resp.shouldCloseConnection());
+        this.on(resp);
     }
 }
 

@@ -956,8 +956,7 @@ const Parser = struct {
                                             i += 2;
                                         },
                                         else => {
-                                            try this.value_buffer.append(this.src[i]);
-                                            try this.value_buffer.append(this.src[i + 1]);
+                                            try this.value_buffer.appendSlice(this.src[i..][0..2]);
                                             i += 2;
                                         },
                                     }

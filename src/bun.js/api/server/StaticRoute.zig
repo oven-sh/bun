@@ -39,7 +39,7 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
     if (headers.get("etag") == null) {
         const slice = blob.slice();
         const hash = std.hash.XxHash64.hash(0, slice);
-        
+
         var etag_buf: [32]u8 = undefined;
         const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
         headers.append("ETag", etag_str) catch bun.outOfMemory();
@@ -153,7 +153,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         if (headers.get("etag") == null) {
             const slice = blob.slice();
             const hash = std.hash.XxHash64.hash(0, slice);
-            
+
             var etag_buf: [32]u8 = undefined;
             const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
             headers.append("ETag", etag_str) catch {
@@ -196,7 +196,7 @@ pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) v
             return;
         }
     }
-    
+
     // Continue with normal HEAD request handling
     req.setYield(false);
     this.onHEAD(resp);
@@ -253,7 +253,7 @@ pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
             return;
         }
     }
-    
+
     // Continue with normal GET request handling
     req.setYield(false);
     this.on(resp);
@@ -384,8 +384,6 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
         },
     }
 }
-
-
 
 /// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
 fn parseEntityTag(tag_str: []const u8) struct { tag: []const u8, is_weak: bool } {

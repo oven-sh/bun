@@ -246,7 +246,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       // POST requests return Method Not Allowed for static routes
       expect(res.status).toBe(405);
     });
@@ -258,7 +258,7 @@ describe("If-None-Match Support", () => {
           "If-None-Match": "*",
         },
       });
-      
+
       // PUT requests return Method Not Allowed for static routes
       expect(res.status).toBe(405);
     });

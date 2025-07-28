@@ -57,7 +57,7 @@ describe("toHaveBeenCalled", () => {
   test("works only on spies or jest.fn", () => {
     const fn = function fn() {};
 
-    expect(() => jestExpect(fn).toHaveBeenCalled()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveBeenCalled()).toThrow();
   });
 
   test("passes when called", () => {
@@ -65,7 +65,7 @@ describe("toHaveBeenCalled", () => {
     fn("arg0", "arg1", "arg2");
     jestExpect(createSpy(fn)).toHaveBeenCalled();
     jestExpect(fn).toHaveBeenCalled();
-    expect(() => jestExpect(fn).not.toHaveBeenCalled()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveBeenCalled()).toThrow();
   });
 
   test(".not passes when called", () => {
@@ -74,7 +74,7 @@ describe("toHaveBeenCalled", () => {
 
     jestExpect(spy).not.toHaveBeenCalled();
     jestExpect(fn).not.toHaveBeenCalled();
-    expect(() => jestExpect(spy).toHaveBeenCalled()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(spy).toHaveBeenCalled()).toThrow();
   });
 
   test("fails with any argument passed", () => {
@@ -84,7 +84,7 @@ describe("toHaveBeenCalled", () => {
     expect(() =>
       // @ts-expect-error: Testing runtime error
       jestExpect(fn).toHaveBeenCalled(555),
-    ).toThrowErrorMatchingSnapshot();
+    ).toThrow();
   });
 
   test(".not fails with any argument passed", () => {
@@ -93,7 +93,7 @@ describe("toHaveBeenCalled", () => {
     expect(() =>
       // @ts-expect-error: Testing runtime error
       jestExpect(fn).not.toHaveBeenCalled(555),
-    ).toThrowErrorMatchingSnapshot();
+    ).toThrow();
   });
 
   test("includes the custom mock name in the error message", () => {
@@ -101,7 +101,7 @@ describe("toHaveBeenCalled", () => {
 
     fn();
     jestExpect(fn).toHaveBeenCalled();
-    expect(() => jestExpect(fn).not.toHaveBeenCalled()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveBeenCalled()).toThrow();
   });
 });
 
@@ -109,7 +109,7 @@ describe("toHaveBeenCalledTimes", () => {
   test(".not works only on spies or jest.fn", () => {
     const fn = function fn() {};
 
-    expect(() => jestExpect(fn).not.toHaveBeenCalledTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveBeenCalledTimes(2)).toThrow();
   });
 
   test("only accepts a number argument", () => {
@@ -121,7 +121,7 @@ describe("toHaveBeenCalledTimes", () => {
       expect(() =>
         // @ts-expect-error: Testing runtime error
         jestExpect(fn).toHaveBeenCalledTimes(value),
-      ).toThrowErrorMatchingSnapshot();
+      ).toThrow();
     }
   });
 
@@ -133,7 +133,7 @@ describe("toHaveBeenCalledTimes", () => {
       expect(() =>
         // @ts-expect-error: Testing runtime error
         jestExpect(fn).not.toHaveBeenCalledTimes(value),
-      ).toThrowErrorMatchingSnapshot();
+      ).toThrow();
     }
   });
 
@@ -146,7 +146,7 @@ describe("toHaveBeenCalledTimes", () => {
     jestExpect(spy).toHaveBeenCalledTimes(2);
     jestExpect(fn).toHaveBeenCalledTimes(2);
 
-    expect(() => jestExpect(spy).not.toHaveBeenCalledTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(spy).not.toHaveBeenCalledTimes(2)).toThrow();
   });
 
   test(".not passes if function called more than expected times", () => {
@@ -162,7 +162,7 @@ describe("toHaveBeenCalledTimes", () => {
     jestExpect(fn).toHaveBeenCalledTimes(3);
     jestExpect(fn).not.toHaveBeenCalledTimes(2);
 
-    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrow();
   });
 
   test(".not passes if function called less than expected times", () => {
@@ -176,14 +176,14 @@ describe("toHaveBeenCalledTimes", () => {
     jestExpect(fn).toHaveBeenCalledTimes(1);
     jestExpect(fn).not.toHaveBeenCalledTimes(2);
 
-    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrow();
   });
 
   test("includes the custom mock name in the error message", () => {
     const fn = jest.fn().mockName("named-mock");
     fn();
 
-    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveBeenCalledTimes(2)).toThrow();
   });
 });
 
@@ -198,9 +198,9 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
       const fn = function fn() {};
 
       if (isToHaveNth(calledWith)) {
-        expect(() => jestExpect(fn)[calledWith](3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](3)).toThrow();
       } else {
-        expect(() => jestExpect(fn)[calledWith]()).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]()).toThrow();
       }
     });
 
@@ -211,12 +211,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn)).not[calledWith](1, "foo", "bar");
         jestExpect(fn).not[calledWith](1, "foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrow();
       } else {
         jestExpect(createSpy(fn)).not[calledWith]("foo", "bar");
         jestExpect(fn).not[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrow();
       }
     });
 
@@ -241,12 +241,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn)).not[calledWith](1, "foo", "bar");
         jestExpect(fn).not[calledWith](1, "foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrow();
       } else {
         jestExpect(createSpy(fn)).not[calledWith]("foo", "bar");
         jestExpect(fn).not[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrow();
       }
     });
 
@@ -258,12 +258,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn)).not[calledWith](1, "foo", "bar");
         jestExpect(fn).not[calledWith](1, "foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo", "bar")).toThrow();
       } else {
         jestExpect(createSpy(fn)).not[calledWith]("foo", "bar");
         jestExpect(fn).not[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrow();
       }
     });
 
@@ -275,16 +275,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn)).not[calledWith](1, jestExpect.any(String), jestExpect.any(Number));
         jestExpect(fn).not[calledWith](1, jestExpect.any(String), jestExpect.any(Number));
 
-        expect(() =>
-          jestExpect(fn)[calledWith](1, jestExpect.any(String), jestExpect.any(Number)),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, jestExpect.any(String), jestExpect.any(Number))).toThrow();
       } else {
         jestExpect(createSpy(fn)).not[calledWith](jestExpect.any(String), jestExpect.any(Number));
         jestExpect(fn).not[calledWith](jestExpect.any(String), jestExpect.any(Number));
 
-        expect(() =>
-          jestExpect(fn)[calledWith](jestExpect.any(String), jestExpect.any(Number)),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](jestExpect.any(String), jestExpect.any(Number))).toThrow();
       }
     });
 
@@ -296,12 +292,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn)).not[calledWith](1, "foo", jestExpect.any(String));
         jestExpect(fn).not[calledWith](1, "foo", jestExpect.any(String));
 
-        expect(() => jestExpect(fn)[calledWith](1, "foo", jestExpect.any(String))).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo", jestExpect.any(String))).toThrow();
       } else {
         jestExpect(createSpy(fn)).not[calledWith]("foo", jestExpect.any(String));
         jestExpect(fn).not[calledWith]("foo", jestExpect.any(String));
 
-        expect(() => jestExpect(fn)[calledWith]("foo", jestExpect.any(String))).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", jestExpect.any(String))).toThrow();
       }
     });
 
@@ -312,10 +308,10 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
       if (isToHaveNth(calledWith)) {
         jestExpect(fn).not[calledWith](1, "foo", jestExpect.optionalFn());
-        expect(() => jestExpect(fn)[calledWith](1, "foo", jestExpect.optionalFn())).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo", jestExpect.optionalFn())).toThrow();
       } else {
         jestExpect(fn).not[calledWith]("foo", jestExpect.optionalFn());
-        expect(() => jestExpect(fn)[calledWith]("foo", jestExpect.optionalFn())).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", jestExpect.optionalFn())).toThrow();
       }
     });
 
@@ -327,12 +323,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn))[calledWith](1, "foo", "bar");
         jestExpect(fn)[calledWith](1, "foo", "bar");
 
-        expect(() => jestExpect(fn).not[calledWith](1, "foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, "foo", "bar")).toThrow();
       } else {
         jestExpect(createSpy(fn))[calledWith]("foo", "bar");
         jestExpect(fn)[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrow();
       }
     });
 
@@ -344,16 +340,12 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(createSpy(fn))[calledWith](1, jestExpect.any(String), jestExpect.any(String));
         jestExpect(fn)[calledWith](1, jestExpect.any(String), jestExpect.any(String));
 
-        expect(() =>
-          jestExpect(fn).not[calledWith](1, jestExpect.any(String), jestExpect.any(String)),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, jestExpect.any(String), jestExpect.any(String))).toThrow();
       } else {
         jestExpect(createSpy(fn))[calledWith](jestExpect.any(String), jestExpect.any(String));
         jestExpect(fn)[calledWith](jestExpect.any(String), jestExpect.any(String));
 
-        expect(() =>
-          jestExpect(fn).not[calledWith](jestExpect.any(String), jestExpect.any(String)),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](jestExpect.any(String), jestExpect.any(String))).toThrow();
       }
     });
 
@@ -362,9 +354,9 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
       fn("foo", undefined);
 
       if (isToHaveNth(calledWith)) {
-        expect(() => jestExpect(fn)[calledWith](1, "foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, "foo")).toThrow();
       } else {
-        expect(() => jestExpect(fn)[calledWith]("foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo")).toThrow();
       }
     });
 
@@ -374,10 +366,10 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
       if (isToHaveNth(calledWith)) {
         jestExpect(fn)[calledWith](1, "foo", undefined);
-        expect(() => jestExpect(fn).not[calledWith](1, "foo", undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, "foo", undefined)).toThrow();
       } else {
         jestExpect(fn)[calledWith]("foo", undefined);
-        expect(() => jestExpect(fn).not[calledWith]("foo", undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith]("foo", undefined)).toThrow();
       }
     });
 
@@ -388,10 +380,10 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
       if (isToHaveNth(calledWith)) {
         jestExpect(fn)[calledWith](1, "foo", jestExpect.optionalFn());
-        expect(() => jestExpect(fn).not[calledWith](1, "foo", jestExpect.optionalFn())).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, "foo", jestExpect.optionalFn())).toThrow();
       } else {
         jestExpect(fn)[calledWith]("foo", jestExpect.optionalFn());
-        expect(() => jestExpect(fn).not[calledWith]("foo", jestExpect.optionalFn())).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith]("foo", jestExpect.optionalFn())).toThrow();
       }
     });
 
@@ -417,14 +409,14 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(fn)[calledWith](1, m2);
         jestExpect(fn).not[calledWith](1, m3);
 
-        expect(() => jestExpect(fn).not[calledWith](1, m2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[calledWith](1, m3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, m2)).toThrow();
+        expect(() => jestExpect(fn)[calledWith](1, m3)).toThrow();
       } else {
         jestExpect(fn)[calledWith](m2);
         jestExpect(fn).not[calledWith](m3);
 
-        expect(() => jestExpect(fn).not[calledWith](m2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[calledWith](m3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](m2)).toThrow();
+        expect(() => jestExpect(fn)[calledWith](m3)).toThrow();
       }
     });
 
@@ -441,14 +433,14 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(fn)[calledWith](1, s2);
         jestExpect(fn).not[calledWith](1, s3);
 
-        expect(() => jestExpect(fn).not[calledWith](1, s2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[calledWith](1, s3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, s2)).toThrow();
+        expect(() => jestExpect(fn)[calledWith](1, s3)).toThrow();
       } else {
         jestExpect(fn)[calledWith](s2);
         jestExpect(fn).not[calledWith](s3);
 
-        expect(() => jestExpect(fn).not[calledWith](s2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[calledWith](s3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](s2)).toThrow();
+        expect(() => jestExpect(fn)[calledWith](s3)).toThrow();
       }
     });
 
@@ -461,13 +453,11 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
       if (isToHaveNth(calledWith)) {
         jestExpect(fn)[calledWith](1, indirectlyCreated, directlyCreated);
 
-        expect(() =>
-          jestExpect(fn).not[calledWith](1, indirectlyCreated, directlyCreated),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, indirectlyCreated, directlyCreated)).toThrow();
       } else {
         jestExpect(fn)[calledWith](indirectlyCreated, directlyCreated);
 
-        expect(() => jestExpect(fn).not[calledWith](indirectlyCreated, directlyCreated)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](indirectlyCreated, directlyCreated)).toThrow();
       }
     });
 
@@ -480,7 +470,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         jestExpect(fn)[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrow();
       });
 
       test("works with many arguments that don't match", () => {
@@ -491,7 +481,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         jestExpect(fn).not[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith]("foo", "bar")).toThrow();
       });
     }
 
@@ -508,7 +498,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         expect(() => {
           jestExpect(fn).not[calledWith](1, "foo1", "bar");
-        }).toThrowErrorMatchingSnapshot();
+        }).toThrow();
       });
 
       test("positive throw matcher error for n that is not positive integer", async () => {
@@ -517,7 +507,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         expect(() => {
           jestExpect(fn)[calledWith](0, "foo1", "bar");
-        }).toThrowErrorMatchingSnapshot();
+        }).toThrow();
       });
 
       test("positive throw matcher error for n that is not integer", async () => {
@@ -526,7 +516,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         expect(() => {
           jestExpect(fn)[calledWith](0.1, "foo1", "bar");
-        }).toThrowErrorMatchingSnapshot();
+        }).toThrow();
       });
 
       test("negative throw matcher error for n that is not integer", async () => {
@@ -535,7 +525,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
 
         expect(() => {
           jestExpect(fn).not[calledWith](Number.POSITIVE_INFINITY, "foo1", "bar");
-        }).toThrowErrorMatchingSnapshot();
+        }).toThrow();
       });
     }
 
@@ -546,11 +536,11 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
       if (isToHaveNth(calledWith)) {
         jestExpect(fn)[calledWith](1, "foo", "bar");
 
-        expect(() => jestExpect(fn).not[calledWith](1, "foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, "foo", "bar")).toThrow();
       } else {
         jestExpect(fn)[calledWith]("foo", "bar");
 
-        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith]("foo", "bar")).toThrow();
       }
     });
 
@@ -566,17 +556,11 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(fn)[calledWith](2, jestExpect.objectContaining({ b: 7 }));
         jestExpect(fn)[calledWith](2, jestExpect.not.objectContaining({ b: 2 }));
 
-        expect(() =>
-          jestExpect(fn)[calledWith](1, jestExpect.objectContaining({ b: 7 })),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, jestExpect.objectContaining({ b: 7 }))).toThrow();
 
-        expect(() =>
-          jestExpect(fn).not[calledWith](1, jestExpect.objectContaining({ b: 2 })),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](1, jestExpect.objectContaining({ b: 2 }))).toThrow();
 
-        expect(() =>
-          jestExpect(fn)[calledWith](1, jestExpect.not.objectContaining({ b: 2 })),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](1, jestExpect.not.objectContaining({ b: 2 }))).toThrow();
       } else {
         jestExpect(fn)[calledWith](jestExpect.objectContaining({ b: 7 }));
         jestExpect(fn)[calledWith](jestExpect.not.objectContaining({ b: 3 }));
@@ -584,12 +568,10 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         // The function was never called with this value.
         // Only {"b": 3} should be shown as the expected value in the snapshot
         // (no extra properties in the expected value).
-        expect(() => jestExpect(fn)[calledWith](jestExpect.objectContaining({ b: 3 }))).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](jestExpect.objectContaining({ b: 3 }))).toThrow();
 
         // Only {"b": 7} should be shown in the snapshot.
-        expect(() =>
-          jestExpect(fn).not[calledWith](jestExpect.objectContaining({ b: 7 })),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[calledWith](jestExpect.objectContaining({ b: 7 }))).toThrow();
       }
 
       if (calledWith === "toHaveBeenCalledWith") {
@@ -597,9 +579,7 @@ describe.each(["toHaveBeenLastCalledWith", "toHaveBeenNthCalledWith", "toHaveBee
         jestExpect(fn)[calledWith](jestExpect.not.objectContaining({ b: 7 }));
 
         // Only {"c": 4} should be shown in the snapshot.
-        expect(() =>
-          jestExpect(fn)[calledWith](jestExpect.not.objectContaining({ c: 4 })),
-        ).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[calledWith](jestExpect.not.objectContaining({ c: 4 }))).toThrow();
       }
     });
   },
@@ -609,27 +589,27 @@ describe("toHaveReturned", () => {
   test(".not works only on jest.fn", () => {
     const fn = function fn() {};
 
-    expect(() => jestExpect(fn).not.toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
   test("throw matcher error if received is spy", () => {
     const spy = createSpy(jest.fn());
 
-    expect(() => jestExpect(spy).toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(spy).toHaveReturned()).toThrow();
   });
 
   test("passes when returned", () => {
     const fn = jest.fn(() => 42);
     fn();
     jestExpect(fn).toHaveReturned();
-    expect(() => jestExpect(fn).not.toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
   test("passes when undefined is returned", () => {
     const fn = jest.fn(() => undefined);
     fn();
     jestExpect(fn).toHaveReturned();
-    expect(() => jestExpect(fn).not.toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
   test("passes when at least one call does not throw", () => {
@@ -652,14 +632,14 @@ describe("toHaveReturned", () => {
     fn(false);
 
     jestExpect(fn).toHaveReturned();
-    expect(() => jestExpect(fn).not.toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
   test(".not passes when not returned", () => {
     const fn = jest.fn();
 
     jestExpect(fn).not.toHaveReturned();
-    expect(() => jestExpect(fn).toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturned()).toThrow();
   });
 
   test(".not passes when all calls throw", () => {
@@ -680,7 +660,7 @@ describe("toHaveReturned", () => {
     }
 
     jestExpect(fn).not.toHaveReturned();
-    expect(() => jestExpect(fn).toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturned()).toThrow();
   });
 
   test(".not passes when a call throws undefined", () => {
@@ -696,7 +676,7 @@ describe("toHaveReturned", () => {
     }
 
     jestExpect(fn).not.toHaveReturned();
-    expect(() => jestExpect(fn).toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturned()).toThrow();
   });
 
   test("fails with any argument passed", () => {
@@ -706,7 +686,7 @@ describe("toHaveReturned", () => {
     expect(() =>
       // @ts-expect-error: Testing runtime error
       jestExpect(fn).toHaveReturned(555),
-    ).toThrowErrorMatchingSnapshot();
+    ).toThrow();
   });
 
   test(".not fails with any argument passed", () => {
@@ -715,14 +695,14 @@ describe("toHaveReturned", () => {
     expect(() =>
       // @ts-expect-error: Testing runtime error
       jestExpect(fn).not.toHaveReturned(555),
-    ).toThrowErrorMatchingSnapshot();
+    ).toThrow();
   });
 
   test("includes the custom mock name in the error message", () => {
     const fn = jest.fn(() => 42).mockName("named-mock");
     fn();
     jestExpect(fn).toHaveReturned();
-    expect(() => jestExpect(fn).not.toHaveReturned()).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
   test("incomplete recursive calls are handled properly", () => {
@@ -732,7 +712,7 @@ describe("toHaveReturned", () => {
         // Before returning from the base case of recursion, none of the
         // calls have returned yet.
         jestExpect(fn).not.toHaveReturned();
-        expect(() => jestExpect(fn).toHaveReturned()).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).toHaveReturned()).toThrow();
         return 0;
       } else {
         return value + fn(value - 1);
@@ -747,7 +727,7 @@ describe("toHaveReturnedTimes", () => {
   test("throw matcher error if received is spy", () => {
     const spy = createSpy(jest.fn());
 
-    expect(() => jestExpect(spy).not.toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(spy).not.toHaveReturnedTimes(2)).toThrow();
   });
 
   test("only accepts a number argument", () => {
@@ -759,7 +739,7 @@ describe("toHaveReturnedTimes", () => {
       expect(() =>
         // @ts-expect-error: Testing runtime error
         jestExpect(fn).toHaveReturnedTimes(value),
-      ).toThrowErrorMatchingSnapshot();
+      ).toThrow();
     }
   });
 
@@ -771,7 +751,7 @@ describe("toHaveReturnedTimes", () => {
       expect(() =>
         // @ts-expect-error: Testing runtime error
         jestExpect(fn).not.toHaveReturnedTimes(value),
-      ).toThrowErrorMatchingSnapshot();
+      ).toThrow();
     }
   });
 
@@ -782,7 +762,7 @@ describe("toHaveReturnedTimes", () => {
 
     jestExpect(fn).toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrow();
   });
 
   test("calls that return undefined are counted as returns", () => {
@@ -792,7 +772,7 @@ describe("toHaveReturnedTimes", () => {
 
     jestExpect(fn).toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrow();
   });
 
   test(".not passes if function returned more than expected times", () => {
@@ -804,7 +784,7 @@ describe("toHaveReturnedTimes", () => {
     jestExpect(fn).toHaveReturnedTimes(3);
     jestExpect(fn).not.toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturnedTimes(2)).toThrow();
   });
 
   test(".not passes if function called less than expected times", () => {
@@ -814,7 +794,7 @@ describe("toHaveReturnedTimes", () => {
     jestExpect(fn).toHaveReturnedTimes(1);
     jestExpect(fn).not.toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturnedTimes(2)).toThrow();
   });
 
   test("calls that throw are not counted", () => {
@@ -838,7 +818,7 @@ describe("toHaveReturnedTimes", () => {
 
     jestExpect(fn).not.toHaveReturnedTimes(3);
 
-    expect(() => jestExpect(fn).toHaveReturnedTimes(3)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturnedTimes(3)).toThrow();
   });
 
   test("calls that throw undefined are not counted", () => {
@@ -863,7 +843,7 @@ describe("toHaveReturnedTimes", () => {
 
     jestExpect(fn).toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrow();
   });
 
   test("includes the custom mock name in the error message", () => {
@@ -873,7 +853,7 @@ describe("toHaveReturnedTimes", () => {
 
     jestExpect(fn).toHaveReturnedTimes(2);
 
-    expect(() => jestExpect(fn).toHaveReturnedTimes(1)).toThrowErrorMatchingSnapshot();
+    expect(() => jestExpect(fn).toHaveReturnedTimes(1)).toThrow();
   });
 
   test("incomplete recursive calls are handled properly", () => {
@@ -887,7 +867,7 @@ describe("toHaveReturnedTimes", () => {
         if (value === 2) {
           // Only 2 of the recursive calls have returned at this point
           jestExpect(fn).toHaveReturnedTimes(2);
-          expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrowErrorMatchingSnapshot();
+          expect(() => jestExpect(fn).not.toHaveReturnedTimes(2)).toThrow();
         }
 
         return value + recursiveResult;
@@ -912,7 +892,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       const fn = function fn() {};
 
       // @ts-expect-error: Testing runtime error
-      expect(() => jestExpect(fn)[returnedWith]()).toThrowErrorMatchingSnapshot();
+      expect(() => jestExpect(fn)[returnedWith]()).toThrow();
     });
 
     test("works when not called", () => {
@@ -921,11 +901,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn).not[returnedWith](1, "foo");
 
-        expect(() => jestExpect(fn)[returnedWith](1, "foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](1, "foo")).toThrow();
       } else {
         jestExpect(fn).not[returnedWith]("foo");
 
-        expect(() => jestExpect(fn)[returnedWith]("foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith]("foo")).toThrow();
       }
     });
 
@@ -947,11 +927,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn).not[returnedWith](1, "bar");
 
-        expect(() => jestExpect(fn)[returnedWith](1, "bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](1, "bar")).toThrow();
       } else {
         jestExpect(fn).not[returnedWith]("bar");
 
-        expect(() => jestExpect(fn)[returnedWith]("bar")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith]("bar")).toThrow();
       }
     });
 
@@ -962,11 +942,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn)[returnedWith](1, "foo");
 
-        expect(() => jestExpect(fn).not[returnedWith](1, "foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, "foo")).toThrow();
       } else {
         jestExpect(fn)[returnedWith]("foo");
 
-        expect(() => jestExpect(fn).not[returnedWith]("foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith]("foo")).toThrow();
       }
     });
 
@@ -977,11 +957,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn)[returnedWith](1, undefined);
 
-        expect(() => jestExpect(fn).not[returnedWith](1, undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, undefined)).toThrow();
       } else {
         jestExpect(fn)[returnedWith](undefined);
 
-        expect(() => jestExpect(fn).not[returnedWith](undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](undefined)).toThrow();
       }
     });
 
@@ -1006,14 +986,14 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
         jestExpect(fn)[returnedWith](1, m2);
         jestExpect(fn).not[returnedWith](1, m3);
 
-        expect(() => jestExpect(fn).not[returnedWith](1, m2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[returnedWith](1, m3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, m2)).toThrow();
+        expect(() => jestExpect(fn)[returnedWith](1, m3)).toThrow();
       } else {
         jestExpect(fn)[returnedWith](m2);
         jestExpect(fn).not[returnedWith](m3);
 
-        expect(() => jestExpect(fn).not[returnedWith](m2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[returnedWith](m3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](m2)).toThrow();
+        expect(() => jestExpect(fn)[returnedWith](m3)).toThrow();
       }
     });
 
@@ -1029,14 +1009,14 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
         jestExpect(fn)[returnedWith](1, s2);
         jestExpect(fn).not[returnedWith](1, s3);
 
-        expect(() => jestExpect(fn).not[returnedWith](1, s2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[returnedWith](1, s3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, s2)).toThrow();
+        expect(() => jestExpect(fn)[returnedWith](1, s3)).toThrow();
       } else {
         jestExpect(fn)[returnedWith](s2);
         jestExpect(fn).not[returnedWith](s3);
 
-        expect(() => jestExpect(fn).not[returnedWith](s2)).toThrowErrorMatchingSnapshot();
-        expect(() => jestExpect(fn)[returnedWith](s3)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](s2)).toThrow();
+        expect(() => jestExpect(fn)[returnedWith](s3)).toThrow();
       }
     });
 
@@ -1048,11 +1028,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn)[returnedWith](1, directlyCreated);
 
-        expect(() => jestExpect(fn).not[returnedWith](1, directlyCreated)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, directlyCreated)).toThrow();
       } else {
         jestExpect(fn)[returnedWith](directlyCreated);
 
-        expect(() => jestExpect(fn).not[returnedWith](directlyCreated)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](directlyCreated)).toThrow();
       }
     });
 
@@ -1064,11 +1044,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn)[returnedWith](1, indirectlyCreated);
 
-        expect(() => jestExpect(fn).not[returnedWith](1, indirectlyCreated)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](1, indirectlyCreated)).toThrow();
       } else {
         jestExpect(fn)[returnedWith](indirectlyCreated);
 
-        expect(() => jestExpect(fn).not[returnedWith](indirectlyCreated)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn).not[returnedWith](indirectlyCreated)).toThrow();
       }
     });
 
@@ -1089,14 +1069,14 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
         jestExpect(fn).not[returnedWith](1, null);
         jestExpect(fn).not[returnedWith](1, undefined);
 
-        expect(() => jestExpect(fn)[returnedWith](1, undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](1, undefined)).toThrow();
       } else {
         // It doesn't matter what return value is tested if the call threw
         jestExpect(fn).not[returnedWith]("foo");
         jestExpect(fn).not[returnedWith](null);
         jestExpect(fn).not[returnedWith](undefined);
 
-        expect(() => jestExpect(fn)[returnedWith](undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](undefined)).toThrow();
       }
     });
 
@@ -1118,14 +1098,14 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
         jestExpect(fn).not[returnedWith](1, null);
         jestExpect(fn).not[returnedWith](1, undefined);
 
-        expect(() => jestExpect(fn)[returnedWith](1, undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](1, undefined)).toThrow();
       } else {
         // It doesn't matter what return value is tested if the call threw
         jestExpect(fn).not[returnedWith]("foo");
         jestExpect(fn).not[returnedWith](null);
         jestExpect(fn).not[returnedWith](undefined);
 
-        expect(() => jestExpect(fn)[returnedWith](undefined)).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](undefined)).toThrow();
       }
     });
 
@@ -1151,7 +1131,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
           expect(() => {
             jestExpect(fn)[returnedWith]("bar");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("incomplete recursive calls are handled properly", () => {
@@ -1163,7 +1143,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
               // This test ensures that the incomplete calls are not incorrectly
               // interpreted as have returned undefined
               jestExpect(fn).not[returnedWith](undefined);
-              expect(() => jestExpect(fn)[returnedWith](undefined)).toThrowErrorMatchingSnapshot();
+              expect(() => jestExpect(fn)[returnedWith](undefined)).toThrow();
 
               return 0;
             } else {
@@ -1195,7 +1175,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
             jestExpect(fn).not[returnedWith](1, "foo1");
             jestExpect(fn).not[returnedWith](2, "foo2");
             jestExpect(fn).not[returnedWith](3, "foo3");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("should replace 1st, 2nd, 3rd with first, second, third", async () => {
@@ -1211,13 +1191,13 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
             jestExpect(fn)[returnedWith](1, "bar1");
             jestExpect(fn)[returnedWith](2, "bar2");
             jestExpect(fn)[returnedWith](3, "bar3");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
 
           expect(() => {
             jestExpect(fn).not[returnedWith](1, "foo1");
             jestExpect(fn).not[returnedWith](2, "foo2");
             jestExpect(fn).not[returnedWith](3, "foo3");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("positive throw matcher error for n that is not positive integer", async () => {
@@ -1226,7 +1206,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
           expect(() => {
             jestExpect(fn)[returnedWith](0, "foo");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("should reject nth value greater than number of calls", async () => {
@@ -1237,7 +1217,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
           expect(() => {
             jestExpect(fn)[returnedWith](4, "foo");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("positive throw matcher error for n that is not integer", async () => {
@@ -1246,7 +1226,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
           expect(() => {
             jestExpect(fn)[returnedWith](0.1, "foo");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("negative throw matcher error for n that is not number", async () => {
@@ -1256,7 +1236,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
           expect(() => {
             // @ts-expect-error: Testing runtime error
             jestExpect(fn).not[returnedWith]();
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("incomplete recursive calls are handled properly", () => {
@@ -1274,10 +1254,10 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
                 jestExpect(fn)[returnedWith](3, 1);
                 jestExpect(fn)[returnedWith](4, 0);
 
-                expect(() => jestExpect(fn)[returnedWith](1, 6)).toThrowErrorMatchingSnapshot();
-                expect(() => jestExpect(fn)[returnedWith](2, 3)).toThrowErrorMatchingSnapshot();
-                expect(() => jestExpect(fn).not[returnedWith](3, 1)).toThrowErrorMatchingSnapshot();
-                expect(() => jestExpect(fn).not[returnedWith](4, 0)).toThrowErrorMatchingSnapshot();
+                expect(() => jestExpect(fn)[returnedWith](1, 6)).toThrow();
+                expect(() => jestExpect(fn)[returnedWith](2, 3)).toThrow();
+                expect(() => jestExpect(fn).not[returnedWith](3, 1)).toThrow();
+                expect(() => jestExpect(fn).not[returnedWith](4, 0)).toThrow();
               }
 
               return value + recursiveResult;
@@ -1304,7 +1284,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
           expect(() => {
             jestExpect(fn).not[returnedWith]("foo3");
-          }).toThrowErrorMatchingSnapshot();
+          }).toThrow();
         });
 
         test("incomplete recursive calls are handled properly", () => {
@@ -1314,7 +1294,7 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
               // Before returning from the base case of recursion, none of the
               // calls have returned yet.
               jestExpect(fn).not[returnedWith](0);
-              expect(() => jestExpect(fn)[returnedWith](0)).toThrowErrorMatchingSnapshot();
+              expect(() => jestExpect(fn)[returnedWith](0)).toThrow();
               return 0;
             } else {
               return value + fn(value - 1);
@@ -1332,11 +1312,11 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       if (isToHaveNth(returnedWith)) {
         jestExpect(fn).not[returnedWith](1, "foo");
 
-        expect(() => jestExpect(fn)[returnedWith](1, "foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith](1, "foo")).toThrow();
       } else {
         jestExpect(fn).not[returnedWith]("foo");
 
-        expect(() => jestExpect(fn)[returnedWith]("foo")).toThrowErrorMatchingSnapshot();
+        expect(() => jestExpect(fn)[returnedWith]("foo")).toThrow();
       }
     });
   },

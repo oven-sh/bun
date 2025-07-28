@@ -1,12 +1,3 @@
-register_repository(
-  NAME
-    zstd
-  REPOSITORY
-    facebook/zstd
-  COMMIT
-    f8745da6ff1ad1e7bab384bd1f9d742439278e99
-)
-
 register_cmake_command(
   TARGET
     zstd
@@ -23,4 +14,6 @@ register_cmake_command(
   LIBRARIES
     zstd_static WIN32
     zstd UNIX
+  INCLUDES
+    lib
 )

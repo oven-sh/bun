@@ -1,4 +1,4 @@
-// Maintaining the root certificates 
+// Maintaining the root certificates
 //
 // `src/crypto/root_certs.h` contains a compiled-in set of root certificates used as trust anchors
 // for TLS certificate validation.
@@ -23,7 +23,7 @@
 //    `src/crypto/root_certs.h`.
 //  * Using `git diff-files` to determine which certificate have been added and/or
 //    removed.
-//  
+//
 #include "libusockets.h"
 static struct us_cert_string_t root_certs[] = {
 

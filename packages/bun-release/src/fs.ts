@@ -157,3 +157,15 @@ export function exists(path: string): boolean {
   }
   return false;
 }
+
+export function link(path: string, newPath: string): void {
+  debug("link", path, newPath);
+  try {
+    fs.unlinkSync(newPath);
+    fs.linkSync(path, newPath);
+    return;
+  } catch (error) {
+    copy(path, newPath);
+    debug("fs.linkSync failed, reverting to copy", error);
+  }
+}

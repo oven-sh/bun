@@ -1,4 +1,4 @@
-state: enum { idle, waiting_io, err, done } = .idle,
+state: enum { idle, err, done } = .idle,
 buf: std.ArrayListUnmanaged(u8) = .{},
 _start: f32 = 1,
 _end: f32 = 1,
@@ -7,7 +7,7 @@ separator: []const u8 = "\n",
 terminator: []const u8 = "",
 fixed_width: bool = false,
 
-pub fn start(this: *@This()) Maybe(void) {
+pub fn start(this: *@This()) Yield {
     const args = this.bltn().argsSlice();
     var iter = bun.SliceIterator([*:0]const u8).init(args);
 
@@ -71,18 +71,16 @@ pub fn start(this: *@This()) Maybe(void) {
     return this.do();
 }
 
-fn fail(this: *@This(), msg: []const u8) Maybe(void) {
+fn fail(this: *@This(), msg: []const u8) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .err;
-        this.bltn().stderr.enqueue(this, msg, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, msg, safeguard);
     }
     _ = this.bltn().writeNoIO(.stderr, msg);
-    this.bltn().done(1);
-    return Maybe(void).success;
+    return this.bltn().done(1);
 }
 
-fn do(this: *@This()) Maybe(void) {
+fn do(this: *@This()) Yield {
     var current = this._start;
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -97,34 +95,30 @@ fn do(this: *@This()) Maybe(void) {
 
     this.state = .done;
     if (this.bltn().stdout.needsIO()) |safeguard| {
-        this.bltn().stdout.enqueue(this, this.buf.items, safeguard);
-    } else {
-        this.bltn().done(0);
+        return this.bltn().stdout.enqueue(this, this.buf.items, safeguard);
     }
-    return Maybe(void).success;
+    return this.bltn().done(0);
 }
 
-fn print(this: *@This(), msg: []const u8) Maybe(void) {
+fn print(this: *@This(), msg: []const u8) void {
     if (this.bltn().stdout.needsIO() != null) {
         this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
-        return Maybe(void).success;
+        return;
     }
-    const res = this.bltn().writeNoIO(.stdout, msg);
-    if (res == .err) return Maybe(void).initErr(res.err);
-    return Maybe(void).success;
+    _ = this.bltn().writeNoIO(.stdout, msg);
+    return;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
-        this.bltn().done(1);
-        return;
+        return this.bltn().done(1);
     }
     switch (this.state) {
-        .done => this.bltn().done(0),
-        .err => this.bltn().done(1),
-        else => {},
+        .done => return this.bltn().done(0),
+        .err => return this.bltn().done(1),
+        .idle => bun.shell.unreachableState("Seq.onIOWriterChunk", "idle"),
     }
 }
 
@@ -139,10 +133,13 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("bun");
+
 const interpreter = @import("../interpreter.zig");
+const std = @import("std");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const Yield = bun.shell.Yield;

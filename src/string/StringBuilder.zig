@@ -1,9 +1,4 @@
 const StringBuilder = @This();
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const assert = bun.assert;
 
 len: usize = 0,
 cap: usize = 0,
@@ -66,7 +61,7 @@ pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: st
         var list = std.ArrayList(u8).init(fallback_allocator);
         var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice, false) catch return null;
         out.append(0) catch return null;
-        return list.items[0 .. list.items.len - 1 :0];
+        return out.items[0 .. out.items.len - 1 :0];
     }
 }
 
@@ -240,3 +235,10 @@ pub fn writable(this: *StringBuilder) []u8 {
     }
     return ptr[this.len..this.cap];
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const assert = bun.assert;

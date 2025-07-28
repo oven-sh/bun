@@ -21,16 +21,16 @@ jobs:
           set -euo pipefail
 
           # Extract the commit hash from the line after COMMIT
-          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildZstd.cmake)
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/CloneZstd.cmake)
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find COMMIT line in BuildZstd.cmake"
+            echo "Error: Could not find COMMIT line in CloneZstd.cmake"
             exit 1
           fi
 
           # Validate that it looks like a git hash
           if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid git hash format in BuildZstd.cmake"
+            echo "Error: Invalid git hash format in CloneZstd.cmake"
             echo "Found: $CURRENT_VERSION"
             echo "Expected: 40 character hexadecimal string"
             exit 1
@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           # Handle multi-line format where COMMIT and its value are on separate lines
-          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildZstd.cmake
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/CloneZstd.cmake
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
@@ -84,7 +84,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
-            cmake/targets/BuildZstd.cmake
+            cmake/targets/CloneZstd.cmake
           commit-message: "deps: update zstd to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update zstd to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true

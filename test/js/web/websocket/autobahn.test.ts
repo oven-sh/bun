@@ -21,72 +21,78 @@ function isDockerEnabled(): boolean {
   }
 }
 
-if (isDockerEnabled()) {
-  describe("autobahn", async () => {
-    const url = "ws://localhost:9002";
-    const agent = encodeURIComponent("bun/1.0.0");
-    let docker: child_process.ChildProcessWithoutNullStreams | null = null;
-    const { promise, resolve } = Promise.withResolvers();
-    // we can exclude cases by adding them to the exclude-cases array
-    // "exclude-cases": [
-    //   "9.*"
-    // ],
-    const CWD = tempDirWithFiles("autobahn", {
-      "fuzzingserver.json": `{
+let docker: child_process.ChildProcess | null = null;
+let url: string = "";
+const agent = encodeURIComponent("bun/1.0.0");
+async function load() {
+  if (process.env.BUN_AUTOBAHN_URL) {
+    url = process.env.BUN_AUTOBAHN_URL;
+    return true;
+  }
+  url = "ws://localhost:9002";
+
+  const { promise, resolve } = Promise.withResolvers();
+  // we can exclude cases by adding them to the exclude-cases array
+  // "exclude-cases": [
+  //   "9.*"
+  // ],
+  const CWD = tempDirWithFiles("autobahn", {
+    "fuzzingserver.json": `{
         "url": "ws://127.0.0.1:9002",
         "outdir": "./",
         "cases": ["*"],
         "exclude-agent-cases": {}
       }`,
-      "index.json": "{}",
-    });
+    "index.json": "{}",
+  });
 
-    docker = child_process.spawn(
-      dockerCLI,
-      [
-        "run",
-        "-t",
-        "--rm",
-        "-v",
-        `${CWD}:/config`,
-        "-v",
-        `${CWD}:/reports`,
-        "-p",
-        "9002:9002",
-        "--name",
-        "fuzzingserver",
-        "crossbario/autobahn-testsuite",
-      ],
-      {
-        cwd: CWD,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    ) as child_process.ChildProcessWithoutNullStreams;
+  docker = child_process.spawn(
+    dockerCLI,
+    [
+      "run",
+      "-t",
+      "--rm",
+      "-v",
+      `${CWD}:/config`,
+      "-v",
+      `${CWD}:/reports`,
+      "-p",
+      "9002:9002",
+      "--platform",
+      "linux/amd64",
+      "--name",
+      "fuzzingserver",
+      "crossbario/autobahn-testsuite",
+    ],
+    {
+      cwd: CWD,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
-    let out = "";
-    let pending = true;
-    docker.stdout.on("data", data => {
-      out += data;
-      if (pending) {
-        if (out.indexOf("Autobahn WebSocket") !== -1) {
-          pending = false;
-          resolve(true);
-        }
-      }
-    });
-
-    docker.on("close", code => {
-      if (pending) {
+  let out = "";
+  let pending = true;
+  docker.stdout?.on("data", data => {
+    out += data;
+    if (pending) {
+      if (out.indexOf("Autobahn WebSocket") !== -1) {
         pending = false;
-        resolve(false);
+        resolve(true);
       }
-    });
-    const cases = await promise;
-    if (!cases) {
-      throw new Error("Autobahn WebSocket not detected");
     }
+  });
 
+  docker.on("close", () => {
+    if (pending) {
+      pending = false;
+      resolve(false);
+    }
+  });
+  return await promise;
+}
+
+if (isDockerEnabled() && (await load())) {
+  describe("autobahn", async () => {
     function getCaseStatus(testID: number) {
       return new Promise((resolve, reject) => {
         const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`);
@@ -108,7 +114,7 @@ if (isDockerEnabled()) {
         socket.addEventListener("message", event => {
           count = parseInt(event.data as string, 10);
         });
-        socket.addEventListener("close", event => {
+        socket.addEventListener("close", () => {
           if (!count) {
             reject("No test count received");
           }
@@ -139,7 +145,7 @@ if (isDockerEnabled()) {
         socket.addEventListener("message", event => {
           socket.send(event.data);
         });
-        socket.addEventListener("close", event => {
+        socket.addEventListener("close", () => {
           resolve(undefined);
         });
         socket.addEventListener("error", event => {
@@ -154,12 +160,11 @@ if (isDockerEnabled()) {
     });
     for (let i = 1; i <= count; i++) {
       const info = (await getCaseInfo(i)) as { id: string; description: string };
-      const test = parseInt(info.id.split(".")[0]) > 10 ? it.todo : it;
-      // tests > 10 are compression tests, which are not supported yet
-      test(`Running test case ${info.id}: ${info.description}`, async () => {
+
+      it(`Running test case ${info.id}: ${info.description}`, async () => {
         await runTestCase(i);
         const result = (await getCaseStatus(i)) as { behavior: string };
-        expect(["OK", "INFORMATIONAL", "NON-STRICT"]).toContain(result.behavior);
+        expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
       });
     }
 

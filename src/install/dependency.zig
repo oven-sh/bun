@@ -1,19 +1,4 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = @import("../env.zig");
-const Install = @import("./install.zig");
-const PackageManager = Install.PackageManager;
-const Features = Install.Features;
-const PackageNameHash = Install.PackageNameHash;
-const Repository = @import("./repository.zig").Repository;
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
 const Dependency = @This();
-const JSC = bun.JSC;
 
 const URI = union(Tag) {
     local: String,
@@ -324,48 +309,48 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        const object = jsc.JSValue.createEmptyObject(globalThis, 2);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
         switch (dep.tag) {
             .dist_tag => {
-                object.put(globalThis, "name", dep.value.dist_tag.name.toJS(buf, globalThis));
-                object.put(globalThis, "tag", dep.value.dist_tag.tag.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.dist_tag.name.toJS(buf, globalThis));
+                object.put(globalThis, "tag", try dep.value.dist_tag.tag.toJS(buf, globalThis));
             },
             .folder => {
-                object.put(globalThis, "folder", dep.value.folder.toJS(buf, globalThis));
+                object.put(globalThis, "folder", try dep.value.folder.toJS(buf, globalThis));
             },
             .git => {
-                object.put(globalThis, "owner", dep.value.git.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", dep.value.git.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", dep.value.git.committish.toJS(buf, globalThis));
+                object.put(globalThis, "owner", try dep.value.git.owner.toJS(buf, globalThis));
+                object.put(globalThis, "repo", try dep.value.git.repo.toJS(buf, globalThis));
+                object.put(globalThis, "ref", try dep.value.git.committish.toJS(buf, globalThis));
             },
             .github => {
-                object.put(globalThis, "owner", dep.value.github.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", dep.value.github.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", dep.value.github.committish.toJS(buf, globalThis));
+                object.put(globalThis, "owner", try dep.value.github.owner.toJS(buf, globalThis));
+                object.put(globalThis, "repo", try dep.value.github.repo.toJS(buf, globalThis));
+                object.put(globalThis, "ref", try dep.value.github.committish.toJS(buf, globalThis));
             },
             .npm => {
-                object.put(globalThis, "name", dep.value.npm.name.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
                 var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
-                object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
+                object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
-                object.put(globalThis, "path", dep.value.symlink.toJS(buf, globalThis));
+                object.put(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
             },
             .workspace => {
-                object.put(globalThis, "name", dep.value.workspace.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.workspace.toJS(buf, globalThis));
             },
             .tarball => {
-                object.put(globalThis, "name", dep.value.tarball.package_name.toJS(buf, globalThis));
+                object.put(globalThis, "name", try dep.value.tarball.package_name.toJS(buf, globalThis));
                 switch (dep.value.tarball.uri) {
                     .local => |*local| {
-                        object.put(globalThis, "path", local.toJS(buf, globalThis));
+                        object.put(globalThis, "path", try local.toJS(buf, globalThis));
                     },
                     .remote => |*remote| {
-                        object.put(globalThis, "url", remote.toJS(buf, globalThis));
+                        object.put(globalThis, "url", try remote.toJS(buf, globalThis));
                     },
                 }
             },
@@ -780,13 +765,13 @@ pub const Version = struct {
             return .npm;
         }
 
-        pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn inferFromJS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
-                return .undefined;
+                return .js_undefined;
             }
 
-            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .js_undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -1274,7 +1259,7 @@ pub fn parseWithTag(
     }
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).slice();
     if (arguments.len == 1) {
         return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
@@ -1284,19 +1269,19 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value = if (arguments.len > 0) arguments[0] else .undefined;
+    const alias_value: jsc.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
-        return .undefined;
+        return .js_undefined;
     }
     const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
-        return .undefined;
+        return .js_undefined;
     }
 
-    const name_value = if (arguments.len > 1) arguments[1] else .undefined;
+    const name_value: jsc.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1320,7 +1305,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
-        return .undefined;
+        return .js_undefined;
     };
 
     if (log.msgs.items.len > 0) {
@@ -1370,10 +1355,6 @@ pub const Behavior = packed struct(u8) {
         return this.bundled;
     }
 
-    pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
-    }
-
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
@@ -1399,39 +1380,40 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isProd() != rhs.isProd()) {
-            return if (lhs.isProd())
-                .gt
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            // ensure workspaces are placed at the beginning
+            return if (lhs.isWorkspace())
+                .lt
             else
-                .lt;
+                .gt;
         }
 
         if (lhs.isDev() != rhs.isDev()) {
             return if (lhs.isDev())
-                .gt
+                .lt
             else
-                .lt;
+                .gt;
         }
 
         if (lhs.isOptional() != rhs.isOptional()) {
             return if (lhs.isOptional())
-                .gt
+                .lt
             else
-                .lt;
+                .gt;
+        }
+
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
+                .lt
+            else
+                .gt;
         }
 
         if (lhs.isPeer() != rhs.isPeer()) {
             return if (lhs.isPeer())
-                .gt
+                .lt
             else
-                .lt;
-        }
-
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
-                .gt
-            else
-                .lt;
+                .gt;
         }
 
         return .eq;
@@ -1446,7 +1428,7 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.workspaces and this.isWorkspaceOnly());
+            (features.workspaces and this.isWorkspace());
     }
 
     comptime {
@@ -1457,3 +1439,23 @@ pub const Behavior = packed struct(u8) {
         bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };
+
+const string = []const u8;
+
+const Environment = @import("../env.zig");
+const std = @import("std");
+const Repository = @import("./repository.zig").Repository;
+
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const PackageManager = Install.PackageManager;
+const PackageNameHash = Install.PackageNameHash;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;

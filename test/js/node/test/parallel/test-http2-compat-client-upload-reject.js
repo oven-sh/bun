@@ -24,7 +24,7 @@ fs.readFile(loc, common.mustSucceed((data) => {
   server.on('close', common.mustCall());
 
   server.listen(0, common.mustCall(() => {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
     client.on('close', common.mustCall());
 
     const req = client.request({ ':method': 'POST' });

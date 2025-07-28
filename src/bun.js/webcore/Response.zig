@@ -1,7 +1,7 @@
 const Response = @This();
 
 const ResponseMixin = BodyMixin(@This());
-pub const js = JSC.Codegen.JSResponse;
+pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -56,7 +56,7 @@ pub fn getBodyValue(
     return &this.body.value;
 }
 
-pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     _ = globalObject; // autofix
     const arguments = callframe.arguments_old(1);
     const this_value = arguments.ptr[0];
@@ -65,19 +65,19 @@ pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *JSC.JSGloba
     }
 
     if (this_value.as(Response)) |response| {
-        return JSC.JSValue.jsBoolean(!response.body.value.isDefinitelyEmpty());
+        return jsc.JSValue.jsBoolean(!response.body.value.isDefinitelyEmpty());
     } else if (this_value.as(Request)) |request| {
-        return JSC.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
+        return jsc.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
     }
 
     return .false;
 }
 
-pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     const arguments = callframe.arguments_old(1);
     const this_value = arguments.ptr[0];
     if (this_value.isEmptyOrUndefinedOrNull()) {
-        return .undefined;
+        return .js_undefined;
     }
 
     const body: *Body.Value = brk: {
@@ -87,15 +87,15 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             break :brk &request.body.value;
         }
 
-        return .undefined;
+        return .js_undefined;
     };
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .undefined,
+        .Used, .Empty, .Null => return .js_undefined,
         .Blob => |*blob| {
             if (blob.isBunFile()) {
-                return .undefined;
+                return .js_undefined;
             }
             defer body.* = .{ .Used = {} };
             return blob.toArrayBuffer(globalObject, .transfer) catch return .zero;
@@ -104,7 +104,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked => return .undefined,
+        .Error, .Locked => return .js_undefined,
     }
 }
 
@@ -141,7 +141,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+        try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
@@ -154,7 +154,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+        try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
@@ -166,13 +166,13 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+        try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+        try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
         try writer.writeAll("\n");
 
@@ -191,16 +191,16 @@ pub fn isOK(this: *const Response) bool {
 
 pub fn getURL(
     this: *Response,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
     return this.url.toJS(globalThis);
 }
 
 pub fn getResponseType(
     this: *Response,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
     if (this.init.status_code < 200) {
         return bun.String.static("error").toJS(globalThis);
     }
@@ -210,36 +210,36 @@ pub fn getResponseType(
 
 pub fn getStatusText(
     this: *Response,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
     return this.init.status_text.toJS(globalThis);
 }
 
 pub fn getRedirected(
     this: *Response,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
     return JSValue.jsBoolean(this.redirected);
 }
 
 pub fn getOK(
     this: *Response,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
     return JSValue.jsBoolean(this.isOK());
 }
 
-fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
+fn getOrCreateHeaders(this: *Response, globalThis: *jsc.JSGlobalObject) bun.JSError!*FetchHeaders {
     if (this.init.headers == null) {
         this.init.headers = FetchHeaders.createEmpty();
 
         if (this.body.value == .Blob) {
             const content_type = this.body.value.Blob.content_type;
             if (content_type.len > 0) {
-                this.init.headers.?.put(.ContentType, content_type, globalThis);
+                try this.init.headers.?.put(.ContentType, content_type, globalThis);
             }
         }
     }
@@ -249,22 +249,18 @@ fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHe
 
 pub fn getHeaders(
     this: *Response,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return this.getOrCreateHeaders(globalThis).toJS(globalThis);
+    globalThis: *jsc.JSGlobalObject,
+) bun.JSError!jsc.JSValue {
+    return (try this.getOrCreateHeaders(globalThis)).toJS(globalThis);
 }
 
 pub fn doClone(
     this: *Response,
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     const this_value = callframe.this();
-    const cloned = this.clone(globalThis);
-    if (globalThis.hasException()) {
-        cloned.finalize();
-        return .zero;
-    }
+    const cloned = try this.clone(globalThis);
 
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
@@ -286,30 +282,34 @@ pub fn doClone(
     return js_wrapper;
 }
 
-pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {
+pub fn makeMaybePooled(globalObject: *jsc.JSGlobalObject, ptr: *Response) JSValue {
     return ptr.toJS(globalObject);
 }
 
 pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
-) Response {
+) bun.JSError!Response {
+    var body = try this.body.clone(globalThis);
+    errdefer body.deinit(bun.default_allocator);
+    var init = try this.init.clone(globalThis);
+    errdefer init.deinit(bun.default_allocator);
     return Response{
-        .body = this.body.clone(globalThis),
-        .init = this.init.clone(globalThis),
+        .body = body,
+        .init = init,
         .url = this.url.clone(),
         .redirected = this.redirected,
     };
 }
 
-pub fn clone(this: *Response, globalThis: *JSGlobalObject) *Response {
-    return bun.new(Response, this.cloneValue(globalThis));
+pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
+    return bun.new(Response, try this.cloneValue(globalThis));
 }
 
 pub fn getStatus(
     this: *Response,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
     return JSValue.jsNumber(this.init.status_code);
 }
@@ -359,12 +359,12 @@ pub fn getContentType(
 }
 
 pub fn constructJSON(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     const args_list = callframe.arguments_old(2);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
     var response = Response{
         .body = Body{
@@ -382,13 +382,13 @@ pub fn constructJSON(
             response.init.deinit(bun.default_allocator);
         }
     }
-    const json_value = args.nextEat() orelse JSC.JSValue.zero;
+    const json_value = args.nextEat() orelse jsc.JSValue.zero;
 
     if (@intFromEnum(json_value) != 0) {
         var str = bun.String.empty;
         // calling JSON.stringify on an empty string adds extra quotes
         // so this is correct
-        json_value.jsonStringify(globalThis, 0, &str);
+        try json_value.jsonStringify(globalThis, 0, &str);
 
         if (globalThis.hasException()) {
             return .zero;
@@ -421,18 +421,18 @@ pub fn constructJSON(
         }
     }
 
-    var headers_ref = response.getOrCreateHeaders(globalThis);
-    headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
+    var headers_ref = try response.getOrCreateHeaders(globalThis);
+    try headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
 pub fn constructRedirect(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     var args_list = callframe.arguments_old(4);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
     var url_string_slice = ZigString.Slice.empty;
     defer url_string_slice.deinit();
@@ -447,7 +447,7 @@ pub fn constructRedirect(
             .url = bun.String.empty,
         };
 
-        const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
+        const url_string_value = args.nextEat() orelse jsc.JSValue.zero;
         var url_string = ZigString.init("");
 
         if (@intFromEnum(url_string_value) != 0) {
@@ -481,16 +481,16 @@ pub fn constructRedirect(
         break :brk response;
     };
 
-    response.init.headers = response.getOrCreateHeaders(globalThis);
+    response.init.headers = try response.getOrCreateHeaders(globalThis);
     var headers_ref = response.init.headers.?;
-    headers_ref.put(.Location, url_string_slice.slice(), globalThis);
+    try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
 
     return ptr.toJS(globalThis);
 }
 pub fn constructError(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.CallFrame,
+    globalThis: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     const response = bun.new(
         Response,
@@ -507,7 +507,7 @@ pub fn constructError(
     return response.toJS(globalThis);
 }
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
     const arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -535,10 +535,10 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
                     return s3.throwSignError(sign_err, globalThis);
                 };
                 defer result.deinit();
-                response.init.headers = response.getOrCreateHeaders(globalThis);
+                response.init.headers = try response.getOrCreateHeaders(globalThis);
                 response.redirected = true;
                 var headers_ref = response.init.headers.?;
-                headers_ref.put(.Location, result.url, globalThis);
+                try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
             }
         }
@@ -588,7 +588,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         response.body.value.Blob.content_type.len > 0 and
         !response.init.headers.?.fastHas(.ContentType))
     {
-        response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
+        try response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
     }
 
     response.calculateEstimatedByteSize();
@@ -602,18 +602,18 @@ pub const Init = struct {
     status_text: bun.String = bun.String.empty,
     method: Method = Method.GET,
 
-    pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+    pub fn clone(this: Init, ctx: *JSGlobalObject) bun.JSError!Init {
         var that = this;
         const headers = this.headers;
         if (headers) |head| {
-            that.headers = head.cloneThis(ctx);
+            that.headers = try head.cloneThis(ctx);
         }
         that.status_text = this.status_text.clone();
 
         return that;
     }
 
-    pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
+    pub fn init(globalThis: *JSGlobalObject, response_init: jsc.JSValue) bun.JSError!?Init {
         var result = Init{ .status_code = 200 };
         errdefer {
             result.deinit(bun.default_allocator);
@@ -627,7 +627,7 @@ pub const Init = struct {
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {
                 if (req.getFetchHeadersUnlessEmpty()) |headers| {
-                    result.headers = headers.cloneThis(globalThis);
+                    result.headers = try headers.cloneThis(globalThis);
                 }
 
                 result.method = req.method;
@@ -635,7 +635,7 @@ pub const Init = struct {
             }
 
             if (response_init.asDirect(Response)) |resp| {
-                return resp.init.clone(globalThis);
+                return try resp.init.clone(globalThis);
             }
         }
 
@@ -646,10 +646,10 @@ pub const Init = struct {
         if (try response_init.fastGet(globalThis, .headers)) |headers| {
             if (headers.as(FetchHeaders)) |orig| {
                 if (!orig.isEmpty()) {
-                    result.headers = orig.cloneThis(globalThis);
+                    result.headers = try orig.cloneThis(globalThis);
                 }
             } else {
-                result.headers = FetchHeaders.createFromJS(globalThis, headers);
+                result.headers = try FetchHeaders.createFromJS(globalThis, headers);
             }
         }
 
@@ -658,7 +658,7 @@ pub const Init = struct {
         }
 
         if (try response_init.fastGet(globalThis, .status)) |status_value| {
-            const number = status_value.coerceToInt64(globalThis);
+            const number = try status_value.coerceToInt64(globalThis);
             if ((200 <= number and number < 600) or number == 101) {
                 result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
             } else {
@@ -699,15 +699,15 @@ pub const Init = struct {
     }
 };
 
-pub fn @"404"(globalThis: *JSC.JSGlobalObject) Response {
+pub fn @"404"(globalThis: *jsc.JSGlobalObject) Response {
     return emptyWithStatus(globalThis, 404);
 }
 
-pub fn @"200"(globalThis: *JSC.JSGlobalObject) Response {
+pub fn @"200"(globalThis: *jsc.JSGlobalObject) Response {
     return emptyWithStatus(globalThis, 200);
 }
 
-inline fn emptyWithStatus(_: *JSC.JSGlobalObject, status: u16) Response {
+inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
     return bun.new(Response, .{
         .body = Body{
             .value = Body.Value{ .Null = {} },
@@ -719,28 +719,30 @@ inline fn emptyWithStatus(_: *JSC.JSGlobalObject, status: u16) Response {
 }
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers
-// TODO: move to http.zig. this has nothing to do with JSC or WebCore
+// TODO: move to http.zig. this has nothing to do with jsc or WebCore
+
+const string = []const u8;
 
 const std = @import("std");
+const Method = @import("../../http/Method.zig").Method;
+
 const bun = @import("bun");
-const MimeType = bun.http.MimeType;
-const http = bun.http;
-const JSC = bun.JSC;
-
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = bun.webcore.FetchHeaders;
 const Output = bun.Output;
-const string = bun.string;
 const default_allocator = bun.default_allocator;
-
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
-const InternalBlob = JSC.WebCore.Blob.Internal;
-const BodyMixin = JSC.WebCore.Body.Mixin;
-const Body = JSC.WebCore.Body;
-const Request = JSC.WebCore.Request;
-const Blob = JSC.WebCore.Blob;
-
 const s3 = bun.S3;
+const FetchHeaders = bun.webcore.FetchHeaders;
+
+const http = bun.http;
+const MimeType = bun.http.MimeType;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const Request = jsc.WebCore.Request;
+
+const Blob = jsc.WebCore.Blob;
+const InternalBlob = jsc.WebCore.Blob.Internal;
+
+const Body = jsc.WebCore.Body;
+const BodyMixin = jsc.WebCore.Body.Mixin;

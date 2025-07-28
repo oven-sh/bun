@@ -1,8 +1,3 @@
-const std = @import("std");
-const strings = @import("../string_immutable.zig");
-const bun = @import("bun");
-const Fs = @import("../fs.zig");
-
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
@@ -1239,6 +1234,14 @@ pub fn joinStringBufWZ(buf: []u16, parts: anytype, comptime platform: Platform) 
     return buf[start_offset..][0..joined.len :0];
 }
 
+pub fn joinStringBufZ(buf: []u8, parts: anytype, comptime platform: Platform) [:0]const u8 {
+    const joined = joinStringBufT(u8, buf[0 .. buf.len - 1], parts, platform);
+    assert(bun.isSliceInBufferT(u8, joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
+}
+
 pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platform: Platform) []const T {
     var written: usize = 0;
     var temp_buf_: [4096]T = undefined;
@@ -1975,7 +1978,7 @@ pub const PosixToWinNormalizer = struct {
 /// Used in PathInlines.h
 /// gets cwd off of the global object
 export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
-    globalObject: *bun.JSC.JSGlobalObject,
+    globalObject: *bun.jsc.JSGlobalObject,
     in: bun.String,
 ) bun.String {
     const str = in.toUTF8WithoutRef(bun.default_allocator);
@@ -1988,7 +1991,7 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         .auto,
     );
 
-    return bun.String.createUTF8(out_slice);
+    return bun.String.cloneUTF8(out_slice);
 }
 
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
@@ -2053,4 +2056,9 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+const Fs = @import("../fs.zig");
+const std = @import("std");
+
+const bun = @import("bun");
 const assert = bun.assert;
+const strings = bun.strings;

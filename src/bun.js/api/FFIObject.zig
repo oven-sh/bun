@@ -1,4 +1,6 @@
-pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
+const FFIObject = @This();
+
+pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) bun.JSError!jsc.JSValue {
     switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
         .err => |err| {
             return err;
@@ -11,13 +13,13 @@ pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSVa
 
 pub const dom_call = DOMCall("FFI", @This(), "ptr", DOMEffect.forRead(.TypedArrayProperties));
 
-pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
+pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    const object = jsc.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |field| {
         object.put(
             globalObject,
             comptime ZigString.static(field),
-            JSC.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
+            jsc.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
         );
     }
 
@@ -43,8 +45,8 @@ pub const Reader = struct {
         .f64 = DOMCall("Reader", @This(), "f64", DOMEffect.forRead(.World)),
     };
 
-    pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(@TypeOf(Reader.dom_calls)).len);
+    pub fn toJS(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(@TypeOf(Reader.dom_calls)).len);
 
         inline for (comptime std.meta.fieldNames(@TypeOf(Reader.dom_calls))) |field| {
             @field(Reader.dom_calls, field).put(globalThis, obj);
@@ -207,7 +209,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -217,7 +219,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -227,7 +229,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -237,7 +239,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -247,7 +249,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -257,7 +259,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -267,7 +269,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -277,7 +279,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -288,7 +290,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -299,7 +301,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
         return JSValue.jsNumber(value);
@@ -310,7 +312,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
         return JSValue.fromUInt64NoTruncate(global, value);
@@ -321,7 +323,7 @@ pub const Reader = struct {
         _: *anyopaque,
         raw_addr: i64,
         offset: i32,
-    ) callconv(JSC.conv) JSValue {
+    ) callconv(jsc.conv) JSValue {
         const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
         const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
         return JSValue.fromInt64NoTruncate(global, value);
@@ -343,8 +345,8 @@ pub fn ptr(
 pub fn ptrWithoutTypeChecks(
     _: *JSGlobalObject,
     _: *anyopaque,
-    array: *JSC.JSUint8Array,
-) callconv(JSC.conv) JSValue {
+    array: *jsc.JSUint8Array,
+) callconv(jsc.conv) JSValue {
     return JSValue.fromPtrAddress(@intFromPtr(array.ptr()));
 }
 
@@ -354,7 +356,7 @@ fn ptr_(
     byteOffset: ?JSValue,
 ) JSValue {
     if (value == .zero) {
-        return JSC.JSValue.jsNull();
+        return jsc.JSValue.jsNull();
     }
 
     const array_buffer = value.asArrayBuffer(globalThis) orelse {
@@ -401,10 +403,10 @@ fn ptr_(
     }
 
     if (comptime Environment.allow_assert) {
-        assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
+        assert(jsc.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
     }
 
-    return JSC.JSValue.fromPtrAddress(addr);
+    return jsc.JSValue.fromPtrAddress(addr);
 }
 
 const ValueOrError = union(enum) {
@@ -413,7 +415,7 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber()) {
+    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > std.math.maxInt(usize)) {
         return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
@@ -504,17 +506,17 @@ pub fn toArrayBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |erro| {
             return erro;
         },
         .slice => |slice| {
-            var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
+            var callback: jsc.C.JSTypedArrayBytesDeallocator = null;
             var ctx: ?*anyopaque = null;
             if (finalizationCallback) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
-                    callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
+                    callback = @as(jsc.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
 
                     if (finalizationCtxOrPtr) |ctx_value| {
                         if (getCPtr(ctx_value)) |ctx_ptr| {
@@ -528,13 +530,13 @@ pub fn toArrayBuffer(
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
-                    callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
+                    callback = @as(jsc.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
                     return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
-            return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback, null);
+            return jsc.ArrayBuffer.fromBytes(slice, jsc.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback);
         },
     }
 }
@@ -546,17 +548,17 @@ pub fn toBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
             return err;
         },
         .slice => |slice| {
-            var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
+            var callback: jsc.C.JSTypedArrayBytesDeallocator = null;
             var ctx: ?*anyopaque = null;
             if (finalizationCallback) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
-                    callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
+                    callback = @as(jsc.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
 
                     if (finalizationCtxOrPtr) |ctx_value| {
                         if (getCPtr(ctx_value)) |ctx_ptr| {
@@ -570,17 +572,17 @@ pub fn toBuffer(
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
-                    callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
+                    callback = @as(jsc.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
                     return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
             if (callback != null or ctx != null) {
-                return JSC.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
+                return jsc.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
             }
 
-            return JSC.JSValue.createBuffer(globalThis, slice, null);
+            return jsc.JSValue.createBuffer(globalThis, slice, null);
         },
     }
 }
@@ -590,47 +592,48 @@ pub fn toCStringBuffer(
     value: JSValue,
     byteOffset: ?JSValue,
     valueLength: ?JSValue,
-) JSC.JSValue {
+) jsc.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
             return err;
         },
         .slice => |slice| {
-            return JSC.JSValue.createBuffer(globalThis, slice, null);
+            return jsc.JSValue.createBuffer(globalThis, slice, null);
         },
     }
 }
 
 pub fn getter(
-    globalObject: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+    globalObject: *jsc.JSGlobalObject,
+    _: *jsc.JSObject,
+) jsc.JSValue {
     return FFIObject.toJS(globalObject);
 }
 
 const fields = .{
-    .viewSource = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "print", false),
-    .dlopen = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "open", false),
-    .callback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "callback", false),
-    .linkSymbols = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "linkSymbols", false),
-    .toBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toBuffer", false),
-    .toArrayBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toArrayBuffer", false),
-    .closeCallback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "closeCallback", false),
-    .CString = JSC.host_fn.wrapStaticMethod(bun.api.FFIObject, "newCString", false),
+    .viewSource = jsc.host_fn.wrapStaticMethod(bun.api.FFI, "print", false),
+    .dlopen = jsc.host_fn.wrapStaticMethod(bun.api.FFI, "open", false),
+    .callback = jsc.host_fn.wrapStaticMethod(bun.api.FFI, "callback", false),
+    .linkSymbols = jsc.host_fn.wrapStaticMethod(bun.api.FFI, "linkSymbols", false),
+    .toBuffer = jsc.host_fn.wrapStaticMethod(@This(), "toBuffer", false),
+    .toArrayBuffer = jsc.host_fn.wrapStaticMethod(@This(), "toArrayBuffer", false),
+    .closeCallback = jsc.host_fn.wrapStaticMethod(bun.api.FFI, "closeCallback", false),
+    .CString = jsc.host_fn.wrapStaticMethod(bun.api.FFIObject, "newCString", false),
 };
 const max_addressable_memory = std.math.maxInt(u56);
 
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
-const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const DOMCall = JSC.host_fn.DOMCall;
-const DOMEffect = JSC.host_fn.DOMEffect;
-const bun = @import("bun");
-const FFIObject = @This();
-const Bun = JSC.API.Bun;
-
-const Environment = bun.Environment;
 const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
-const ZigString = JSC.ZigString;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSObject = jsc.JSObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const Bun = jsc.API.Bun;
+
+const DOMCall = jsc.host_fn.DOMCall;
+const DOMEffect = jsc.host_fn.DOMEffect;

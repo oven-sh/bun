@@ -1,6 +1,8 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
+
 const INotifyWatcher = @This();
+
 const log = Output.scoped(.watcher, false);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
@@ -10,7 +12,6 @@ const log = Output.scoped(.watcher, false);
 // but an arbitrary but reasonable size. when reading, the strategy is to read
 // as much as possible, then process the buffer in `max_count` chunks, since
 // `bun.Watcher` has the same hardcoded `max_count`.
-const max_count = bun.Watcher.max_count;
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
 const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
@@ -51,7 +52,7 @@ pub const Event = extern struct {
     const largest_size = std.mem.alignForward(usize, @sizeOf(Event) + bun.MAX_PATH_BYTES, @alignOf(Event));
 
     pub fn name(event: *align(1) Event) [:0]u8 {
-        if (comptime Environment.allow_assert) bun.assert(event.name_len > 0);
+        if (comptime Environment.allow_assert) bun.assertf(event.name_len > 0, "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function.", .{});
         const name_first_char_ptr = std.mem.asBytes(&event.name_len).ptr + @sizeOf(u32);
         return bun.sliceTo(@as([*:0]u8, @ptrCast(name_first_char_ptr)), 0);
     }
@@ -61,25 +62,25 @@ pub const Event = extern struct {
     }
 };
 
-pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
-pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
@@ -103,7 +104,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     log("{} init", .{this.fd});
 }
 
-pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
+pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
     bun.assert(this.loaded);
     // This is what replit does as of Jaunary 2023.
     // 1) CREATE .http.ts.3491171321~
@@ -192,7 +193,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-        if (!Environment.enable_logs)
+        if (Environment.enable_logs)
             log("{} read event {} {} {} {}", .{
                 this.fd,
                 event.watch_descriptor,
@@ -225,14 +226,14 @@ pub fn stop(this: *INotifyWatcher) void {
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     defer Output.flush();
 
     var events = switch (this.platform.read()) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
-    if (events.len == 0) return .{ .result = {} };
+    if (events.len == 0) return .success;
 
     // TODO: is this thread safe?
     var remaining_events = events.len;
@@ -287,7 +288,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
             last_event_index = i;
             last_event_id = all_events[i].index;
         }
-        if (all_events.len == 0) return .{ .result = {} };
+        if (all_events.len == 0) return .success;
 
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -300,7 +301,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         remaining_events -= slice.len;
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {
@@ -316,12 +317,14 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Futex = bun.Futex;
 const system = std.posix.system;
 const IN = std.os.linux.IN;
 
-const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Output = bun.Output;
+
 const WatchEvent = bun.Watcher.Event;
+const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const max_count = bun.Watcher.max_count;

@@ -2914,8 +2914,8 @@ test("no assertion failures 3", () => {
       inspect(Object.getPrototypeOf(bar), { showHidden: true, getters: true }),
       "<ref *1> Foo [Map] {\n" +
         "    [constructor]: [class Bar extends Foo] {\n" +
-        `      [prototype]: [Circular *1],\n      [name]: 'Bar',\n` +
         "      [length]: 0,\n" +
+        `      [name]: 'Bar',\n      [prototype]: [Circular *1],\n` +
         "      [Symbol(Symbol.species)]: [Getter: <Inspection threw " +
         "(Symbol.prototype.toString requires that |this| be a symbol or a symbol object)>]\n" +
         "    },\n" +
@@ -3088,8 +3088,8 @@ test("no assertion failures 3", () => {
       "Fhqwhgads {\n" +
         "  constructor: <ref *1> [Function: Fhqwhgads] {\n" +
         "    [length]: 0,\n" +
-        "    [prototype]: { [constructor]: [Circular *1] },\n" +
-        "    [name]: 'Fhqwhgads'\n" +
+        "    [name]: 'Fhqwhgads',\n" +
+        "    [prototype]: { [constructor]: [Circular *1] }\n" +
         "  }\n" +
         "}",
     );

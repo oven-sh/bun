@@ -11,13 +11,19 @@
   "files": [
     "./*.d.ts",
     "docs/**/*.md",
-    "docs/*.md"
+    "docs/*.md",
+    "CLAUDE.md",
+    "README.md"
   ],
-  "homepage": "https://bun.sh",
+  "homepage": "https://bun.com",
   "dependencies": {
     "@types/node": "*"
   },
+  "peerDependencies": {
+    "@types/react": "^19"
+  },
   "devDependencies": {
+    "@types/react": "^19",
     "typescript": "^5.0.2"
   },
   "scripts": {

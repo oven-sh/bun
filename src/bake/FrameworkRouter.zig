@@ -1,6 +1,7 @@
 //! Discovers routes from the filesystem, as instructed by the framework
 //! configuration. Agnotic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
+
 const FrameworkRouter = @This();
 
 /// Metadata for route files is specified out of line, either in DevServer where
@@ -30,6 +31,25 @@ static_routes: StaticRouteMap,
 /// root. This check is special cased.
 // TODO: no code to sort this data structure
 dynamic_routes: DynamicRouteMap,
+
+/// Arena allocator for pattern strings.
+///
+/// This should be passed into `EncodedPattern.initFromParts` or should be the
+/// allocator used to allocate `StaticRoute.route_path`.
+///
+/// Q: Why use this and not just free the strings for `EncodedPattern` and
+///    `StaticRoute` manually?
+///
+/// A: Inside `fr.insert(...)` we iterate over `EncodedPattern/StaticRoute`,
+///    turning them into a bunch of `Route.Part`s, and we discard the original
+///    `EncodePattern/StaticRoute` structure.
+///
+///    In this process it's too easy to lose the original base pointer and
+///    length of the entire allocation. So we'll just allocate everything in
+///    this arena to ensure that everything gets freed.
+///
+///    Thank you to `AllocationScope` for catching this! Hell yeah!
+pattern_string_arena: bun.ArenaAllocator,
 
 /// The above structure is optimized for incremental updates, but
 /// production has a different set of requirements:
@@ -91,7 +111,7 @@ pub const Type = struct {
     /// `FrameworkRouter` itself does not use this value.
     server_file: OpaqueFileId,
     /// `FrameworkRouter` itself does not use this value.
-    server_file_string: JSC.Strong.Optional,
+    server_file_string: jsc.Strong.Optional,
 
     pub fn rootRouteIndex(type_index: Index) Route.Index {
         return Route.Index.init(type_index.get());
@@ -128,6 +148,7 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
         .routes = routes,
         .dynamic_routes = .{},
         .static_routes = .{},
+        .pattern_string_arena = bun.ArenaAllocator.init(allocator),
     };
 }
 
@@ -136,6 +157,7 @@ pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.static_routes.deinit(allocator);
     fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+    fr.pattern_string_arena.deinit();
 }
 
 pub fn memoryCost(fr: *FrameworkRouter) usize {
@@ -266,6 +288,11 @@ pub const EncodedPattern = struct {
                 },
                 .param => |name| {
                     const end = strings.indexOfCharPos(path, '/', i) orelse path.len;
+                    // Check if we're about to exceed the maximum number of parameters
+                    if (param_num >= MatchedParams.max_count) {
+                        // TODO: ideally we should throw a nice user message
+                        bun.Output.panic("Route pattern matched more than {d} parameters. Path: {s}", .{ MatchedParams.max_count, path });
+                    }
                     params.params.len = @intCast(param_num + 1);
                     params.params.buffer[param_num] = .{
                         .key = name,
@@ -274,8 +301,30 @@ pub const EncodedPattern = struct {
                     param_num += 1;
                     i = if (end == path.len) end else end + 1;
                 },
-                .catch_all_optional => return true,
-                .catch_all => break,
+                .catch_all_optional, .catch_all => |name| {
+                    // Capture remaining path segments as individual parameters
+                    if (i < path.len) {
+                        var segment_start = i;
+                        while (segment_start < path.len) {
+                            const segment_end = strings.indexOfCharPos(path, '/', segment_start) orelse path.len;
+                            if (segment_start < segment_end) {
+                                // Check if we're about to exceed the maximum number of parameters
+                                if (param_num >= MatchedParams.max_count) {
+                                    // TODO: ideally we should throw a nice user message
+                                    bun.Output.panic("Route pattern matched more than {d} parameters. Path: {s}", .{ MatchedParams.max_count, path });
+                                }
+                                params.params.len = @intCast(param_num + 1);
+                                params.params.buffer[param_num] = .{
+                                    .key = name,
+                                    .value = path[segment_start..segment_end],
+                                };
+                                param_num += 1;
+                            }
+                            segment_start = if (segment_end == path.len) segment_end else segment_end + 1;
+                        }
+                    }
+                    return true;
+                },
                 .group => continue,
             }
         }
@@ -412,7 +461,7 @@ pub const Style = union(enum) {
     nextjs_pages,
     nextjs_app_ui,
     nextjs_app_routes,
-    javascript_defined: JSC.Strong.Optional,
+    javascript_defined: jsc.Strong.Optional,
 
     pub const map = bun.ComptimeStringMap(Style, .{
         .{ "nextjs-pages", .nextjs_pages },
@@ -421,7 +470,7 @@ pub const Style = union(enum) {
     });
     pub const error_message = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
-    pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
+    pub fn fromJS(value: JSValue, global: *jsc.JSGlobalObject) !Style {
         if (value.isString()) {
             const bun_string = try value.toBunString(global);
             var sfa = std.heap.stackFallback(4096, bun.default_allocator);
@@ -1029,9 +1078,9 @@ fn scanInner(
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
                             const pattern = if (has_dynamic_comptime)
-                                try EncodedPattern.initFromParts(parsed.parts, alloc)
+                                try EncodedPattern.initFromParts(parsed.parts, fr.pattern_string_arena.allocator())
                             else static_route: {
-                                const allocation = try bun.default_allocator.alloc(u8, static_total_len);
+                                const allocation = try fr.pattern_string_arena.allocator().alloc(u8, static_total_len);
                                 var s = std.io.fixedBufferStream(allocation);
                                 for (parsed.parts) |part|
                                     switch (part) {
@@ -1080,7 +1129,7 @@ fn scanInner(
 /// production usage. It uses a slower but easier to use pattern for object
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
-    pub const js = JSC.Codegen.JSFrameworkFileSystemRouter;
+    pub const js = jsc.Codegen.JSFrameworkFileSystemRouter;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
 
@@ -1092,16 +1141,16 @@ pub const JSFrameworkRouter = struct {
         log: TinyLog,
     }),
 
-    const validators = bun.JSC.Node.validators;
+    const validators = bun.jsc.Node.validators;
 
-    pub fn getBindings(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        return (try JSC.JSObject.create(.{
+    pub fn getBindings(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        return (try jsc.JSObject.create(.{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
             .FrameworkRouter = js.getConstructor(global),
         }, global)).toJS();
     }
 
-    pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSFrameworkRouter {
+    pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*JSFrameworkRouter {
         const opts = callframe.argumentsAsArray(1)[0];
         if (!opts.isObject())
             return global.throwInvalidArguments("FrameworkRouter needs an object as it's first argument", .{});
@@ -1110,7 +1159,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("Missing options.root", .{});
         defer root.deinit();
 
-        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .undefined, global);
+        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .js_undefined, global);
         errdefer style.deinit();
 
         const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
@@ -1146,7 +1195,7 @@ pub const JSFrameworkRouter = struct {
         if (jsfr.stored_parse_errors.items.len > 0) {
             const arr = try JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
             for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
-                arr.putIndex(
+                try arr.putIndex(
                     global,
                     @intCast(i),
                     global.createErrorInstance("Invalid route {}: {s}", .{
@@ -1155,16 +1204,13 @@ pub const JSFrameworkRouter = struct {
                     }),
                 );
             }
-            return global.throwValue(global.createAggregateErrorWithArray(
-                bun.String.static("Errors scanning routes"),
-                arr,
-            ));
+            return global.throwValue(try global.createAggregateErrorWithArray(.static("Errors scanning routes"), arr));
         }
 
         return jsfr;
     }
 
-    pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+    pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *jsc.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
         const path_str = try path_js.toBunString(global);
         defer path_str.deref();
@@ -1176,11 +1222,11 @@ pub const JSFrameworkRouter = struct {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 
-            return (try JSC.JSObject.create(.{
+            return (try jsc.JSObject.create(.{
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
-                        const value = bun.String.createUTF8(param.value);
+                        const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
                         obj.put(global, param.key, value.toJS(global));
                     }
@@ -1193,7 +1239,7 @@ pub const JSFrameworkRouter = struct {
         return .null;
     }
 
-    pub fn toJSON(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn toJSON(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         _ = callframe;
 
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
@@ -1204,7 +1250,7 @@ pub const JSFrameworkRouter = struct {
 
     fn routeToJson(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return (try JSC.JSObject.create(.{
+        return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1218,7 +1264,7 @@ pub const JSFrameworkRouter = struct {
                 next = route.first_child.unwrap();
                 var i: u32 = 0;
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap()) {
-                    arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
+                    try arr.putIndex(global, i, try routeToJson(jsfr, global, r, allocator));
                     i += 1;
                 }
                 break :brk arr;
@@ -1228,7 +1274,7 @@ pub const JSFrameworkRouter = struct {
 
     fn routeToJsonInverse(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return (try JSC.JSObject.create(.{
+        return (try jsc.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1286,7 +1332,7 @@ pub const JSFrameworkRouter = struct {
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
@@ -1294,12 +1340,12 @@ pub const JSFrameworkRouter = struct {
         var rendered = std.ArrayList(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
-        var str = bun.String.createUTF8(rendered.items);
+        var str = bun.String.cloneUTF8(rendered.items);
         return str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
-        try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
+        try jsfr.files.append(bun.default_allocator, bun.String.cloneUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }
 
@@ -1318,15 +1364,17 @@ pub const JSFrameworkRouter = struct {
 };
 
 const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
 
 const bun = @import("bun");
 const strings = bun.strings;
-const Resolver = bun.resolver.Resolver;
-const DirInfo = bun.resolver.DirInfo;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
+const DirInfo = bun.resolver.DirInfo;
+const Resolver = bun.resolver.Resolver;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

@@ -71,7 +71,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     ASSERT(
         result && result.isCell() && jsDynamicCast<JSObject*>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().data());
+        moduleName.utf8().span().data());
     return result;
 }
 
@@ -114,7 +114,7 @@ JSValue initializeInternalModuleFromDisk(
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().data(), file.utf8().data());
+            moduleName.utf8().span().data(), file.utf8().span().data());
         CRASH();
     }
 }

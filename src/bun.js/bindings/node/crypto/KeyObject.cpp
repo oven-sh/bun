@@ -393,13 +393,13 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
             ncrypto::EVPKeyPointer::PublicKeyEncodingConfig config;
             parsePublicKeyEncoding(globalObject, scope, options, keyType, WTF::nullStringView(), config);
             RETURN_IF_EXCEPTION(scope, {});
-            return exportPublic(globalObject, scope, config);
+            RELEASE_AND_RETURN(scope, exportPublic(globalObject, scope, config));
         }
 
         ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
         parsePrivateKeyEncoding(globalObject, scope, options, keyType, WTF::nullStringView(), config);
         RETURN_IF_EXCEPTION(scope, {});
-        return exportPrivate(globalObject, scope, config);
+        RELEASE_AND_RETURN(scope, exportPrivate(globalObject, scope, config));
     }
 
     // This would hit validateObject in `parseKeyEncoding`
@@ -419,7 +419,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return {};
         }
-        memcpy(buf->data(), key.data(), key.size());
+        memcpy(buf->data(), key.begin(), key.size());
         return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
     };
 
@@ -1220,7 +1220,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         auto keyObject = create(key);
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
-            return {};
+            RELEASE_AND_RETURN(scope, {});
         }
         KeyObject handle = keyObject.releaseReturnValue();
         RETURN_IF_EXCEPTION(scope, {});
@@ -1288,6 +1288,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             auto keyObject = create(key);
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
+                RELEASE_AND_RETURN(scope, {});
             }
             KeyObject handle = keyObject.releaseReturnValue();
             return { .keyData = handle.data() };

@@ -1,17 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const http = bun.http;
-const HeaderBuilder = http.HeaderBuilder;
-const MutableString = bun.MutableString;
-const URL = @import("../url.zig").URL;
-const logger = bun.logger;
-const libdeflate = @import("../deps/libdeflate.zig");
-
 const VulnerabilityInfo = struct {
     severity: []const u8,
     title: []const u8,
@@ -117,7 +103,7 @@ pub const AuditCommand = struct {
                 var log = logger.Log.init(ctx.allocator);
                 defer log.deinit();
 
-                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
+                const expr = bun.json.parse(source, &log, ctx.allocator, true) catch {
                     Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
                     return 1; // If we can't parse then safe to assume a similar failure
                 };
@@ -334,6 +320,8 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     defer allocator.free(url_str);
     const url = URL.parse(url_str);
 
+    const http_proxy = pm.env.getHttpProxyFor(url);
+
     var response_buf = try MutableString.init(allocator, 1024);
     var req = http.AsyncHTTP.initSync(
         allocator,
@@ -343,7 +331,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.content.ptr.?[0..headers.content.len],
         &response_buf,
         final_compressed_body,
-        null,
+        http_proxy,
         null,
         .follow,
     );
@@ -360,7 +348,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     return try allocator.dupe(u8, response_buf.slice());
 }
 
-fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vuln: bun.JSAst.Expr) bun.OOM!VulnerabilityInfo {
+fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vuln: bun.ast.Expr) bun.OOM!VulnerabilityInfo {
     var vulnerability = VulnerabilityInfo{
         .severity = "moderate",
         .title = "Vulnerability found",
@@ -547,7 +535,7 @@ fn printEnhancedAuditReport(
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(source, &log, allocator, true) catch {
+    const expr = bun.json.parse(source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return 1;
@@ -736,3 +724,19 @@ fn printEnhancedAuditReport(
 
     return 0;
 }
+
+const libdeflate = @import("../deps/libdeflate.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const PackageManager = @import("../install/install.zig").PackageManager;
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const http = bun.http;
+const HeaderBuilder = http.HeaderBuilder;

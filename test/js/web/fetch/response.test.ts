@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { sep } from "node:path";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -43,4 +44,23 @@ describe("2-arg form", () => {
     expect(response.status).toBe(200);
     expect(response.statusText).toBe("");
   });
+});
+
+test("print size", () => {
+  expect(Bun.inspect(new Response(Bun.file(import.meta.filename)))).toMatchInlineSnapshot(`
+    "Response (1.81 KB) {
+      ok: true,
+      url: "",
+      status: 200,
+      statusText: "",
+      headers: Headers {
+        "content-type": "text/javascript;charset=utf-8",
+      },
+      redirected: false,
+      bodyUsed: false,
+      FileRef ("${import.meta.dir}${sep}response.test.ts") {
+        type: "text/javascript;charset=utf-8"
+      }
+    }"
+  `);
 });

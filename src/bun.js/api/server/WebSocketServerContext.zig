@@ -1,6 +1,6 @@
 const WebSocketServerContext = @This();
 
-globalObject: *JSC.JSGlobalObject = undefined,
+globalObject: *jsc.JSGlobalObject = undefined,
 handler: Handler = .{},
 
 maxPayloadLength: u32 = 1024 * 1024 * 16, // 16MB
@@ -13,19 +13,19 @@ resetIdleTimeoutOnSend: bool = true,
 closeOnBackpressureLimit: bool = false,
 
 pub const Handler = struct {
-    onOpen: JSC.JSValue = .zero,
-    onMessage: JSC.JSValue = .zero,
-    onClose: JSC.JSValue = .zero,
-    onDrain: JSC.JSValue = .zero,
-    onError: JSC.JSValue = .zero,
-    onPing: JSC.JSValue = .zero,
-    onPong: JSC.JSValue = .zero,
+    onOpen: jsc.JSValue = .zero,
+    onMessage: jsc.JSValue = .zero,
+    onClose: jsc.JSValue = .zero,
+    onDrain: jsc.JSValue = .zero,
+    onError: jsc.JSValue = .zero,
+    onPing: jsc.JSValue = .zero,
+    onPong: jsc.JSValue = .zero,
 
     app: ?*anyopaque = null,
 
     // Always set manually.
-    vm: *JSC.VirtualMachine = undefined,
-    globalObject: *JSC.JSGlobalObject = undefined,
+    vm: *jsc.VirtualMachine = undefined,
+    globalObject: *jsc.JSGlobalObject = undefined,
     active_connections: usize = 0,
 
     /// used by publish()
@@ -34,10 +34,10 @@ pub const Handler = struct {
         publish_to_self: bool = false,
     } = .{},
 
-    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
+    pub fn runErrorCallback(this: *const Handler, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) void {
         const onError = this.onError;
         if (!onError.isEmptyOrUndefinedOrNull()) {
-            _ = onError.call(globalObject, .undefined, &.{error_value}) catch |err|
+            _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err|
                 this.globalObject.reportActiveExceptionAsUnhandled(err);
             return;
         }
@@ -45,76 +45,32 @@ pub const Handler = struct {
         _ = vm.uncaughtException(globalObject, error_value, false);
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!Handler {
+    pub fn fromJS(globalObject: *jsc.JSGlobalObject, object: jsc.JSValue) bun.JSError!Handler {
         var handler = Handler{ .globalObject = globalObject, .vm = VirtualMachine.get() };
 
         var valid = false;
 
-        if (try object.getTruthyComptime(globalObject, "message")) |message_| {
-            if (!message_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
+        inline for (.{
+            .{ "error", "onError" },
+            .{ "message", "onMessage" },
+            .{ "open", "onOpen" },
+            .{ "close", "onClose" },
+            .{ "drain", "onDrain" },
+            .{ "ping", "onPing" },
+            .{ "pong", "onPong" },
+        }, 0..) |pair, i| {
+            if (try object.getTruthy(globalObject, pair[0])) |value| {
+                if (!value.isCell() or !value.isCallable()) {
+                    return globalObject.throwInvalidArguments("websocket expects a function for the '{s}' option", .{pair[0]});
+                }
+                const cb = value.withAsyncContextIfNeeded(globalObject);
+                @field(handler, pair[1]) = cb;
+                cb.ensureStillAlive();
+                if (i > 0) {
+                    // anything other than "error" is considered valid.
+                    valid = true;
+                }
             }
-            const message = message_.withAsyncContextIfNeeded(globalObject);
-            handler.onMessage = message;
-            message.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "open")) |open_| {
-            if (!open_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
-            }
-            const open = open_.withAsyncContextIfNeeded(globalObject);
-            handler.onOpen = open;
-            open.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "close")) |close_| {
-            if (!close_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
-            }
-            const close = close_.withAsyncContextIfNeeded(globalObject);
-            handler.onClose = close;
-            close.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "drain")) |drain_| {
-            if (!drain_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
-            }
-            const drain = drain_.withAsyncContextIfNeeded(globalObject);
-            handler.onDrain = drain;
-            drain.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "onError")) |onError_| {
-            if (!onError_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
-            }
-            const onError = onError_.withAsyncContextIfNeeded(globalObject);
-            handler.onError = onError;
-            onError.ensureStillAlive();
-        }
-
-        if (try object.getTruthy(globalObject, "ping")) |cb| {
-            if (!cb.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the ping option", .{});
-            }
-            handler.onPing = cb;
-            cb.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "pong")) |cb| {
-            if (!cb.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the pong option", .{});
-            }
-            handler.onPong = cb;
-            cb.ensureStillAlive();
-            valid = true;
         }
 
         if (valid)
@@ -196,7 +152,7 @@ const DecompressTable = bun.ComptimeStringMap(i32, .{
     .{ "256KB", uws.DEDICATED_COMPRESSOR_256KB },
 });
 
-pub fn onCreate(globalObject: *JSC.JSGlobalObject, object: JSValue) bun.JSError!WebSocketServerContext {
+pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!WebSocketServerContext {
     var server = WebSocketServerContext{};
     server.handler = try Handler.fromJS(globalObject, object);
 
@@ -313,10 +269,11 @@ pub fn onCreate(globalObject: *JSC.JSGlobalObject, object: JSValue) bun.JSError!
 }
 
 const bun = @import("bun");
-const uws = bun.uws;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
 const JSError = bun.JSError;
-const VirtualMachine = JSC.VirtualMachine;
-const ZigString = JSC.ZigString;
+const uws = bun.uws;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;

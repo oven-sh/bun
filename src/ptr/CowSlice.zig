@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const AllocationScope = bun.AllocationScope;
-
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
 /// This structure, in release builds, is the same size as `[]const T`, but
@@ -221,8 +215,8 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            return std.fmt.formatType(str.slice(), fmt, options, writer, 1);
+        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return try writer.writeAll(str.slice());
         }
 
         /// Free this `Cow`'s allocation if it is owned.
@@ -273,7 +267,6 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
     };
 }
 
-const cow_str_assertions = Environment.isDebug;
 const DebugData = if (cow_str_assertions) struct {
     mutex: bun.Mutex = .{},
     allocator: Allocator,
@@ -312,3 +305,12 @@ test CowSlice {
     // borrow is uneffected by str being deinitialized
     try expectEqualStrings(borrow.slice(), "hello");
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const AllocationScope = bun.AllocationScope;
+
+const Environment = bun.Environment;
+const cow_str_assertions = Environment.isDebug;

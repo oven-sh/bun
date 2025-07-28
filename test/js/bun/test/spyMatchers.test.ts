@@ -28,6 +28,7 @@ SOFTWARE.
 import * as Immutable from "immutable";
 import type { FunctionLike } from "jest-mock";
 import { expect as jestExpect, describe, test, jest } from "bun:test";
+import { expect } from "bun:test";
 
 jestExpect.extend({
   optionalFn(fn?: unknown) {

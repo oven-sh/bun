@@ -36,7 +36,7 @@ pub const PatchFile = struct {
         pathbuf: bun.PathBuffer = undefined,
         patch_dir_abs_path: ?[:0]const u8 = null,
 
-        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) jsc.Maybe([:0]const u8) {
+        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) bun.sys.Maybe([:0]const u8) {
             if (state.patch_dir_abs_path) |p| return .{ .result = p };
             return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
                 .result => |p| {
@@ -209,7 +209,7 @@ pub const PatchFile = struct {
         arena: *bun.ArenaAllocator,
         patch_dir: bun.FileDescriptor,
         state: *ApplyState,
-    ) jsc.Maybe(void) {
+    ) bun.sys.Maybe(void) {
         const file_path: [:0]const u8 = arena.allocator().dupeZ(u8, patch.path) catch bun.outOfMemory();
 
         // Need to get the mode of the original file
@@ -328,7 +328,7 @@ pub const PatchFile = struct {
             };
         }
 
-        return jsc.Maybe(void).success;
+        return .success;
     }
 };
 

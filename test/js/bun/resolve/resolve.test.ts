@@ -6,7 +6,7 @@ import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
-it.todo("spawn test file", () => {
+it("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 

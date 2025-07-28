@@ -6,6 +6,7 @@ pub fn BabyList(comptime Type: type) type {
         ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
+        alloc_ptr: CheckedAllocPtr = .{},
 
         pub const Elem = Type;
         pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
@@ -32,8 +33,8 @@ pub fn BabyList(comptime Type: type) type {
         }
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
-            this.len = @as(u32, @truncate(slice_.len));
-            this.cap = @as(u32, @truncate(slice_.len));
+            this.len = @intCast(slice_.len);
+            this.cap = @intCast(slice_.len);
         }
 
         pub fn available(this: *@This()) []Type {
@@ -78,8 +79,8 @@ pub fn BabyList(comptime Type: type) type {
             return ListType{
                 // Remove the const qualifier from the items
                 .ptr = @constCast(items.ptr),
-                .len = @as(u32, @truncate(items.len)),
-                .cap = @as(u32, @truncate(items.len)),
+                .len = @intCast(items.len),
+                .cap = @intCast(items.len),
             };
         }
 
@@ -96,12 +97,11 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn clone(this: @This(), allocator: std.mem.Allocator) !@This() {
-            var list_ = this.listManaged(allocator);
-            const copy = try list_.clone();
+            const copy = try this.list().clone(allocator);
             return ListType{
                 .ptr = copy.items.ptr,
-                .len = @as(u32, @truncate(copy.items.len)),
-                .cap = @as(u32, @truncate(copy.capacity)),
+                .len = @intCast(copy.items.len),
+                .cap = @intCast(copy.capacity),
             };
         }
 
@@ -141,8 +141,14 @@ pub fn BabyList(comptime Type: type) type {
             this.len = 0;
         }
 
-        pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
-            var list_ = this.listManaged(bun.default_allocator);
+        pub fn replaceRange(
+            allocator: std.mem.Allocator,
+            this: *@This(),
+            start: usize,
+            len_: usize,
+            new_items: []const Type,
+        ) !void {
+            var list_ = this.listManaged(allocator);
             try list_.replaceRange(start, len_, new_items);
         }
 
@@ -155,7 +161,7 @@ pub fn BabyList(comptime Type: type) type {
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
-            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
+            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @intCast(cap))];
             list_.items.len += cap;
             this.update(list_);
             return writable;
@@ -163,21 +169,23 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             const tail = this.ptr[this.len .. this.len + values.len];
-            bun.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
+            bun.assert(this.cap >= this.len + @as(u32, @intCast(values.len)));
             bun.copy(Type, tail, values);
-            this.len += @as(u32, @truncate(values.len));
+            this.len += @intCast(values.len);
             bun.assert(this.cap >= this.len);
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
-            return initWithBuffer(try allocator.alloc(Type, len));
+            var this = initWithBuffer(try allocator.alloc(Type, len));
+            this.alloc_ptr.set(allocator);
+            return this;
         }
 
         pub fn initWithBuffer(buffer: []Type) ListType {
             return ListType{
                 .ptr = buffer.ptr,
                 .len = 0,
-                .cap = @as(u32, @truncate(buffer.len)),
+                .cap = @intCast(buffer.len),
             };
         }
 
@@ -185,8 +193,8 @@ pub fn BabyList(comptime Type: type) type {
             @setRuntimeSafety(false);
             return ListType{
                 .ptr = @constCast(items.ptr),
-                .len = @as(u32, @truncate(items.len)),
-                .cap = @as(u32, @truncate(items.len)),
+                .len = @intCast(items.len),
+                .cap = @intCast(items.len),
             };
         }
 
@@ -205,8 +213,8 @@ pub fn BabyList(comptime Type: type) type {
 
             return ListType{
                 .ptr = list_.items.ptr,
-                .len = @as(u32, @truncate(list_.items.len)),
-                .cap = @as(u32, @truncate(list_.capacity)),
+                .len = @intCast(list_.items.len),
+                .cap = @intCast(list_.capacity),
             };
         }
 
@@ -216,8 +224,9 @@ pub fn BabyList(comptime Type: type) type {
 
             return ListType{
                 .ptr = allocated.ptr,
-                .len = @as(u32, @truncate(allocated.len)),
-                .cap = @as(u32, @truncate(allocated.len)),
+                .len = @intCast(allocated.len),
+                .cap = @intCast(allocated.len),
+                .alloc_ptr = .init(allocator),
             };
         }
 
@@ -230,8 +239,8 @@ pub fn BabyList(comptime Type: type) type {
         pub fn update(this: *ListType, list_: anytype) void {
             this.* = .{
                 .ptr = list_.items.ptr,
-                .len = @as(u32, @truncate(list_.items.len)),
-                .cap = @as(u32, @truncate(list_.capacity)),
+                .len = @intCast(list_.items.len),
+                .cap = @intCast(list_.capacity),
             };
 
             if (comptime Environment.allow_assert) {
@@ -246,12 +255,10 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        pub fn listManaged(this: ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            return std.ArrayList(Type){
-                .items = this.ptr[0..this.len],
-                .capacity = this.cap,
-                .allocator = allocator,
-            };
+        pub fn listManaged(this: *ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
+            this.alloc_ptr.set(allocator);
+            var list_ = this.list();
+            return list_.toManaged(allocator);
         }
 
         pub fn first(this: ListType) callconv(bun.callconv_inline) ?*Type {
@@ -283,6 +290,7 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = @as([*]Type, @ptrCast(items.ptr)),
                 .len = 1,
                 .cap = 1,
+                .alloc_ptr = .init(allocator),
             };
         }
 
@@ -292,35 +300,35 @@ pub fn BabyList(comptime Type: type) type {
         const OOM = error{OutOfMemory};
 
         pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!void {
-            var list_ = this.list();
-            try list_.append(allocator, value);
+            var list_ = this.listManaged(allocator);
+            try list_.append(value);
             this.update(list_);
         }
 
         pub fn appendFmt(this: *@This(), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
-            var list__ = this.listManaged(allocator);
-            const writer = list__.writer();
+            var list_ = this.listManaged(allocator);
+            const writer = list_.writer();
             try writer.print(fmt, args);
 
-            this.update(list__);
+            this.update(list_);
         }
 
         pub fn insert(this: *@This(), allocator: std.mem.Allocator, index: usize, val: Type) !void {
-            var list__ = this.listManaged(allocator);
-            try list__.insert(index, val);
-            this.update(list__);
+            var list_ = this.listManaged(allocator);
+            try list_.insert(index, val);
+            this.update(list_);
         }
 
         pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
-            var list__ = this.listManaged(allocator);
-            try list__.insertSlice(index, vals);
-            this.update(list__);
+            var list_ = this.listManaged(allocator);
+            try list_.insertSlice(index, vals);
+            this.update(list_);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
-            var list__ = this.listManaged(allocator);
-            try list__.appendSlice(value);
-            this.update(list__);
+            var list_ = this.listManaged(allocator);
+            try list_.appendSlice(value);
+            this.update(list_);
         }
 
         pub fn slice(this: ListType) callconv(bun.callconv_inline) []Type {
@@ -471,6 +479,7 @@ pub fn OffsetList(comptime Type: type) type {
 }
 
 const std = @import("std");
+const CheckedAllocPtr = @import("./safety.zig").AllocPtr;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

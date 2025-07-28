@@ -483,9 +483,9 @@ pub const ShellSubprocess = struct {
         return this.process.hasKilled();
     }
 
-    pub fn tryKill(this: *@This(), sig: i32) jsc.Maybe(void) {
+    pub fn tryKill(this: *@This(), sig: i32) bun.sys.Maybe(void) {
         if (this.hasExited()) {
-            return .{ .result = {} };
+            return .success;
         }
 
         return this.process.kill(@intCast(sig));
@@ -747,7 +747,7 @@ pub const ShellSubprocess = struct {
             .err => |err| return .{ .err = err },
         };
 
-        return bun.shell.Result(void).success;
+        return .success;
     }
 
     fn spawnMaybeSyncImpl(
@@ -1124,7 +1124,7 @@ pub const PipeReader = struct {
             this.reader.read();
     }
 
-    pub fn start(this: *PipeReader, process: *ShellSubprocess, event_loop: jsc.EventLoopHandle) jsc.Maybe(void) {
+    pub fn start(this: *PipeReader, process: *ShellSubprocess, event_loop: jsc.EventLoopHandle) bun.sys.Maybe(void) {
         // this.ref();
         this.process = process;
         this.event_loop = event_loop;
@@ -1144,7 +1144,7 @@ pub const PipeReader = struct {
                     this.reader.flags.socket = true;
                 }
 
-                return .{ .result = {} };
+                return .success;
             },
         }
     }

@@ -51,7 +51,7 @@ pub const PathWatcherManager = struct {
     fn _fdFromAbsolutePathZ(
         this: *PathWatcherManager,
         path: [:0]const u8,
-    ) bun.jsc.Maybe(PathInfo) {
+    ) bun.sys.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
@@ -406,7 +406,7 @@ pub const PathWatcherManager = struct {
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
             buf: *bun.PathBuffer,
-        ) bun.jsc.Maybe(void) {
+        ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
             const manager = this.manager;
@@ -483,7 +483,7 @@ pub const PathWatcherManager = struct {
                     }
                 }
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         fn run(this: *DirectoryRegisterTask) void {
@@ -514,7 +514,7 @@ pub const PathWatcherManager = struct {
     };
 
     // this should only be called if thread pool is not null
-    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.jsc.Maybe(void) {
+    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
         const fd = path.fd;
         switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
             .err => |err| return .{ .err = err.withPath(path.path) },
@@ -914,7 +914,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: ?*anyopaque,
-) bun.jsc.Maybe(*PathWatcher) {
+) bun.sys.Maybe(*PathWatcher) {
     const manager = default_manager orelse brk: {
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();

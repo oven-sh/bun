@@ -213,7 +213,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -1683,7 +1683,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         // var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
@@ -2282,7 +2282,7 @@ pub const CreateListExamplesCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;

@@ -1549,20 +1549,22 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->CommonJSModuleObjectStructure(),
         filename, filename, dirname, SourceCode());
 
-    SourceCode sourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
     JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject), sourceCode);
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->filename(),
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), sourceCode);
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);

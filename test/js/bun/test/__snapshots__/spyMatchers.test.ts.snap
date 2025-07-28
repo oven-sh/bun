@@ -1,0 +1,1745 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`toHaveBeenCalled .not fails with any argument passed 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalled<d>()</>
+
+<b>Matcher error</>: this matcher must not have an expected argument
+
+Expected has type:  number
+Expected has value: <g>555</>
+`;
+
+exports[`toHaveBeenCalled .not passes when called 1`] = `
+<d>expect(</><r>spy</><d>).</>toHaveBeenCalled<d>()</>
+
+Expected number of calls: >= <g>1</>
+Received number of calls:    <r>0</>
+`;
+
+exports[`toHaveBeenCalled fails with any argument passed 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalled<d>()</>
+
+<b>Matcher error</>: this matcher must not have an expected argument
+
+Expected has type:  number
+Expected has value: <g>555</>
+`;
+
+exports[`toHaveBeenCalled includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>not<d>.</>toHaveBeenCalled<d>()</>
+
+Expected number of calls: <g>0</>
+Received number of calls: <r>1</>
+
+1: called with 0 arguments
+`;
+
+exports[`toHaveBeenCalled passes when called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalled<d>()</>
+
+Expected number of calls: <g>0</>
+Received number of calls: <r>1</>
+
+1: <r>"arg0"</>, <r>"arg1"</>, <r>"arg2"</>
+`;
+
+exports[`toHaveBeenCalled works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalled<d>()</>
+
+<b>Matcher error</>: <r>received</> value must be a mock or spy function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  object
+Expected has value: <g>{}</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 2`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  array
+Expected has value: <g>[]</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 3`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  boolean
+Expected has value: <g>true</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 4`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  string
+Expected has value: <g>"a"</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 5`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  map
+Expected has value: <g>Map {}</>
+`;
+
+exports[`toHaveBeenCalledTimes .not only accepts a number argument 6`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  function
+Expected has value: <g>[Function anonymous]</>
+`;
+
+exports[`toHaveBeenCalledTimes .not passes if function called less than expected times 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+Expected number of calls: <g>2</>
+Received number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledTimes .not passes if function called more than expected times 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+Expected number of calls: <g>2</>
+Received number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenCalledTimes .not works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock or spy function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveBeenCalledTimes includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+Expected number of calls: <g>2</>
+Received number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  object
+Expected has value: <g>{}</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 2`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  array
+Expected has value: <g>[]</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 3`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  boolean
+Expected has value: <g>true</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 4`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  string
+Expected has value: <g>"a"</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 5`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  map
+Expected has value: <g>Map {}</>
+`;
+
+exports[`toHaveBeenCalledTimes only accepts a number argument 6`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  function
+Expected has value: <g>[Function anonymous]</>
+`;
+
+exports[`toHaveBeenCalledTimes passes if function called equal to expected times 1`] = `
+<d>expect(</><r>spy</><d>).</>not<d>.</>toHaveBeenCalledTimes<d>(</><g>expected</><d>)</>
+
+Expected number of calls: not <g>2</>
+`;
+
+exports[`toHaveBeenCalledWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock or spy function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveBeenCalledWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>0</>
+`;
+
+exports[`toHaveBeenCalledWith works with Immutable.js objects 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>, <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Map {</>
+<g>-   "a" => "b",</>
+<g>-   "b" => "a",</>
+<r>+   1 => 2,</>
+<r>+   2 => 1,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Set {1, 2}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Set {</>
+<g>-   3,</>
+<g>-   4,</>
+<r>+   1,</>
+<r>+   2,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that don't match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <r>"bar1"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that don't match in number of arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <d>"bar"</>, <r>"plop"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that don't match in size even if one is an optional matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>optionalFn<></>
+Received: <d>"foo"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that don't match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>Any<String></>, <g>Any<Number></>
+Received: <d>"foo"</>, <r>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that don't match with matchers even when argument is undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>Any<String></>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with arguments that match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Any<String></>, <g>Any<String></>
+Received:     <r>0</>, <r>["foo", "bar"]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with many arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+Received
+       3:     <d>"foo"</>, <d>"bar"</>
+
+Number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenCalledWith works with many arguments that don't match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received
+       1: <d>"foo"</>, <r>"bar1"</>
+       2: <d>"foo"</>, <r>"bar2"</>
+       3: <d>"foo"</>, <r>"bar3"</>
+
+Number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenCalledWith works with objectContaining 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>ObjectContaining {"b": 3}</>
+Received
+       1: <r>{"a": 1, "b": 2, "c": 4}</>
+       2: <r>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenCalledWith works with objectContaining 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>ObjectContaining {"b": 7}</>
+Received
+       2:     <d>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenCalledWith works with objectContaining 3`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>ObjectNotContaining {"c": 4}</>
+Received
+       1: <r>{"a": 1, "b": 2, "c": 4}</>
+       2: <r>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenCalledWith works with trailing undefined arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with trailing undefined arguments if requested by the match query 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenCalledWith works with trailing undefined arguments when explicitly requested as optional by matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>optionalFn<></>
+Received:     <r>0</>, <r>["foo", undefined]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock or spy function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveBeenLastCalledWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>0</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with Immutable.js objects 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>, <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Map {</>
+<g>-   "a" => "b",</>
+<g>-   "b" => "a",</>
+<r>+   1 => 2,</>
+<r>+   2 => 1,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Set {1, 2}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Set {</>
+<g>-   3,</>
+<g>-   4,</>
+<r>+   1,</>
+<r>+   2,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that don't match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <r>"bar1"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that don't match in number of arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <d>"bar"</>, <r>"plop"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that don't match in size even if one is an optional matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>optionalFn<></>
+Received: <d>"foo"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that don't match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>Any<String></>, <g>Any<Number></>
+Received: <d>"foo"</>, <r>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that don't match with matchers even when argument is undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>Any<String></>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with arguments that match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>Any<String></>, <g>Any<String></>
+Received:     <r>0</>, <r>["foo", "bar"]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with many arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>"bar"</>
+Received
+       2:     <d>"foo"</>, <r>"bar1"</>
+->     3:     <d>"foo"</>, <d>"bar"</>
+
+Number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with many arguments that don't match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>, <g>"bar"</>
+Received
+       2: <d>"foo"</>, <r>"bar2"</>
+->     3: <d>"foo"</>, <r>"bar3"</>
+
+Number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with objectContaining 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>ObjectContaining {"b": 3}</>
+Received
+       1: <r>{"a": 1, "b": 2, "c": 4}</>
+->     2: <r>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with objectContaining 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>ObjectContaining {"b": 7}</>
+Received
+       1:     <r>{"a": 1, "b": 2, "c": 4}</>
+->     2:     <d>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with trailing undefined arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: <g>"foo"</>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with trailing undefined arguments if requested by the match query 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenLastCalledWith works with trailing undefined arguments when explicitly requested as optional by matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenLastCalledWith<d>(</><g>...expected</><d>)</>
+
+Expected: not <g>"foo"</>, <g>optionalFn<></>
+Received:     <r>0</>, <r>["foo", undefined]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith negative throw matcher error for n that is not integer 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has type:  number
+n has value: Infinity
+`;
+
+exports[`toHaveBeenNthCalledWith positive throw matcher error for n that is not integer 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has type:  number
+n has value: 0.1
+`;
+
+exports[`toHaveBeenNthCalledWith positive throw matcher error for n that is not positive integer 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has type:  number
+n has value: 0
+`;
+
+exports[`toHaveBeenNthCalledWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock or spy function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveBeenNthCalledWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>0</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with Immutable.js objects 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>, <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Map {</>
+<g>-   "a" => "b",</>
+<g>-   "b" => "a",</>
+<r>+   1 => 2,</>
+<r>+   2 => 1,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>Set {1, 2}</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+<g>- Expected</>
+<r>+ Received</>
+
+<d>  Set {</>
+<g>-   3,</>
+<g>-   4,</>
+<r>+   1,</>
+<r>+   2,</>
+<d>  }</>,
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that don't match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <r>"bar1"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that don't match in number of arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>, <g>"bar"</>
+Received: <d>"foo"</>, <d>"bar"</>, <r>"plop"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that don't match in size even if one is an optional matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>, <g>optionalFn<></>
+Received: <d>"foo"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that don't match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>Any<String></>, <g>Any<Number></>
+Received: <d>"foo"</>, <r>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that don't match with matchers even when argument is undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>, <g>Any<String></>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo"</>, <g>"bar"</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with arguments that match with matchers 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>Any<String></>, <g>Any<String></>
+Received:     <r>0</>, <r>["foo", "bar"]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with objectContaining 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>ObjectContaining {"b": 7}</>
+Received
+->     1: <r>{"a": 1, "b": 2, "c": 4}</>
+       2: <d>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with objectContaining 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>ObjectContaining {"b": 2}</>
+Received
+->     1:     <d>{"a": 1, "b": 2, "c": 4}</>
+       2:     <r>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with objectContaining 3`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>ObjectNotContaining {"b": 2}</>
+Received
+->     1: <r>{"a": 1, "b": 2, "c": 4}</>
+       2: <d>{"a": 3, "b": 7, "c": 4}</>
+
+Number of calls: <r>2</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with three calls 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo1"</>, <g>"bar"</>
+Received
+->     1:     <d>"foo1"</>, <d>"bar"</>
+       2:     <r>"foo"</>, <r>"bar1"</>
+
+Number of calls: <r>3</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with trailing undefined arguments 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>
+Received: <d>"foo"</>, <r>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with trailing undefined arguments if requested by the match query 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo"</>, <g>undefined</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveBeenNthCalledWith works with trailing undefined arguments when explicitly requested as optional by matcher 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveBeenNthCalledWith<d>(</>n<d>, </><g>...expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo"</>, <g>optionalFn<></>
+Received:     <r>0</>, <r>["foo", undefined]</>
+
+Number of calls: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith a call that throws is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith a call that throws undefined is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveLastReturnedWith toHaveLastReturnedWith incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>0</>
+Received
+       3: function call has not returned yet
+->     4: function call has not returned yet
+
+Number of returns: <r>0</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveLastReturnedWith toHaveLastReturnedWith works with three calls 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>"foo3"</>
+Received
+       2:     <r>"foo2"</>
+->     3:     <d>"foo3"</>
+
+Number of returns: <r>3</>
+`;
+
+exports[`toHaveLastReturnedWith toHaveReturnedWith incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received
+       3: function call has not returned yet
+->     4: function call has not returned yet
+
+Number of returns: <r>0</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveLastReturnedWith toHaveReturnedWith works with more calls than the limit 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"bar"</>
+Received
+       5: <r>"foo5"</>
+->     6: <r>"foo6"</>
+
+Number of returns: <r>6</>
+`;
+
+exports[`toHaveLastReturnedWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveLastReturnedWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveLastReturnedWith works with Immutable.js objects directly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with Immutable.js objects indirectly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>Map {"a" => "b", "b" => "a"}</>
+Received: <r>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>Set {3, 4}</>
+Received: <r>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with argument that does match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with argument that does not match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"bar"</>
+Received: <r>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveLastReturnedWith works with undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveLastReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>undefined</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith a call that throws is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith a call that throws undefined is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>6</>
+Received
+->     1: function call has not returned yet
+       2: function call has not returned yet
+
+Number of returns: <r>2</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith incomplete recursive calls are handled properly 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 2
+Expected: <g>3</>
+Received
+       1: function call has not returned yet
+->     2: function call has not returned yet
+       3: <r>1</>
+
+Number of returns: <r>2</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith incomplete recursive calls are handled properly 3`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 3
+Expected: not <g>1</>
+Received
+       2:     function call has not returned yet
+->     3:     <d>1</>
+       4:     <r>0</>
+
+Number of returns: <r>2</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith incomplete recursive calls are handled properly 4`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 4
+Expected: not <g>0</>
+Received
+       3:     <r>1</>
+->     4:     <d>0</>
+
+Number of returns: <r>2</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith negative throw matcher error for n that is not number 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has value: undefined
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith positive throw matcher error for n that is not integer 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has type:  number
+n has value: 0.1
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith positive throw matcher error for n that is not positive integer 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+<b>Matcher error</>: n must be a positive integer
+
+n has type:  number
+n has value: 0
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith should reject nth value greater than number of calls 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 4
+Expected: <g>"foo"</>
+Received
+       3: <d>"foo"</>
+
+Number of returns: <r>3</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith should replace 1st, 2nd, 3rd with first, second, third 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>"bar1"</>
+Received
+->     1: <r>"foo1"</>
+       2: <r>"foo2"</>
+
+Number of returns: <r>3</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith should replace 1st, 2nd, 3rd with first, second, third 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo1"</>
+Received
+->     1:     <d>"foo1"</>
+       2:     <r>"foo2"</>
+
+Number of returns: <r>3</>
+`;
+
+exports[`toHaveNthReturnedWith toHaveNthReturnedWith works with three calls 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo1"</>
+Received
+->     1:     <d>"foo1"</>
+       2:     <r>"foo2"</>
+
+Number of returns: <r>3</>
+`;
+
+exports[`toHaveNthReturnedWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveNthReturnedWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveNthReturnedWith works with Immutable.js objects directly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with Immutable.js objects indirectly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>Map {"a" => "b", "b" => "a"}</>
+Received: <r>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>Set {3, 4}</>
+Received: <r>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with argument that does match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with argument that does not match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: <g>"bar"</>
+Received: <r>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveNthReturnedWith works with undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveNthReturnedWith<d>(</>n<d>, </><g>expected</><d>)</>
+
+n: 1
+Expected: not <g>undefined</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturned .not fails with any argument passed 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+<b>Matcher error</>: this matcher must not have an expected argument
+
+Expected has type:  number
+Expected has value: <g>555</>
+`;
+
+exports[`toHaveReturned .not passes when a call throws undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturned<d>()</>
+
+Expected number of returns: >= <g>1</>
+Received number of returns:    <r>0</>
+Received number of calls:      <r>1</>
+`;
+
+exports[`toHaveReturned .not passes when all calls throw 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturned<d>()</>
+
+Expected number of returns: >= <g>1</>
+Received number of returns:    <r>0</>
+Received number of calls:      <r>2</>
+`;
+
+exports[`toHaveReturned .not passes when not returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturned<d>()</>
+
+Expected number of returns: >= <g>1</>
+Received number of returns:    <r>0</>
+`;
+
+exports[`toHaveReturned .not works only on jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveReturned fails with any argument passed 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturned<d>()</>
+
+<b>Matcher error</>: this matcher must not have an expected argument
+
+Expected has type:  number
+Expected has value: <g>555</>
+`;
+
+exports[`toHaveReturned includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+Expected number of returns: <g>0</>
+Received number of returns: <r>1</>
+
+1: <r>42</>
+`;
+
+exports[`toHaveReturned incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturned<d>()</>
+
+Expected number of returns: >= <g>1</>
+Received number of returns:    <r>0</>
+Received number of calls:      <r>4</>
+`;
+
+exports[`toHaveReturned passes when at least one call does not throw 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+Expected number of returns: <g>0</>
+Received number of returns: <r>2</>
+
+1: <r>42</>
+3: <r>42</>
+
+Received number of calls:   <r>3</>
+`;
+
+exports[`toHaveReturned passes when returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+Expected number of returns: <g>0</>
+Received number of returns: <r>1</>
+
+1: <r>42</>
+`;
+
+exports[`toHaveReturned passes when undefined is returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturned<d>()</>
+
+Expected number of returns: <g>0</>
+Received number of returns: <r>1</>
+
+1: <r>undefined</>
+`;
+
+exports[`toHaveReturned throw matcher error if received is spy 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturned<d>()</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function spy]</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  object
+Expected has value: <g>{}</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 2`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  array
+Expected has value: <g>[]</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 3`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  boolean
+Expected has value: <g>true</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 4`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  string
+Expected has value: <g>"a"</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 5`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  map
+Expected has value: <g>Map {}</>
+`;
+
+exports[`toHaveReturnedTimes .not only accepts a number argument 6`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  function
+Expected has value: <g>[Function anonymous]</>
+`;
+
+exports[`toHaveReturnedTimes .not passes if function called less than expected times 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: <g>2</>
+Received number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedTimes .not passes if function returned more than expected times 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: <g>2</>
+Received number of returns: <r>3</>
+`;
+
+exports[`toHaveReturnedTimes calls that return undefined are counted as returns 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: not <g>2</>
+`;
+
+exports[`toHaveReturnedTimes calls that throw are not counted 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: <g>3</>
+Received number of returns: <r>2</>
+Received number of calls:   <r>3</>
+`;
+
+exports[`toHaveReturnedTimes calls that throw undefined are not counted 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: not <g>2</>
+
+Received number of calls:       <r>3</>
+`;
+
+exports[`toHaveReturnedTimes includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: <g>1</>
+Received number of returns: <r>2</>
+`;
+
+exports[`toHaveReturnedTimes incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: not <g>2</>
+
+Received number of calls:       <r>4</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  object
+Expected has value: <g>{}</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 2`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  array
+Expected has value: <g>[]</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 3`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  boolean
+Expected has value: <g>true</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 4`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  string
+Expected has value: <g>"a"</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 5`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  map
+Expected has value: <g>Map {}</>
+`;
+
+exports[`toHaveReturnedTimes only accepts a number argument 6`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <g>expected</> value must be a non-negative integer
+
+Expected has type:  function
+Expected has value: <g>[Function anonymous]</>
+`;
+
+exports[`toHaveReturnedTimes passes if function returned equal to expected times 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+Expected number of returns: not <g>2</>
+`;
+
+exports[`toHaveReturnedTimes throw matcher error if received is spy 1`] = `
+<d>expect(</><r>received</><d>).</>not<d>.</>toHaveReturnedTimes<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function spy]</>
+`;
+
+exports[`toHaveReturnedWith a call that throws is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveReturnedWith a call that throws undefined is not considered to have returned 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received: function call threw an error
+
+Number of returns: <r>0</>
+Number of calls:   <r>1</>
+`;
+
+exports[`toHaveReturnedWith includes the custom mock name in the error message 1`] = `
+<d>expect(</><r>named-mock</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveReturnedWith toHaveReturnedWith incomplete recursive calls are handled properly 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>undefined</>
+Received
+       1: function call has not returned yet
+       2: function call has not returned yet
+       3: function call has not returned yet
+
+Number of returns: <r>0</>
+Number of calls:   <r>4</>
+`;
+
+exports[`toHaveReturnedWith toHaveReturnedWith works with more calls than the limit 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"bar"</>
+Received
+       1: <r>"foo1"</>
+       2: <r>"foo2"</>
+       3: <r>"foo3"</>
+
+Number of returns: <r>6</>
+`;
+
+exports[`toHaveReturnedWith works only on spies or jest.fn 1`] = `
+<d>expect(</><r>received</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+<b>Matcher error</>: <r>received</> value must be a mock function
+
+Received has type:  function
+Received has value: <r>[Function fn]</>
+`;
+
+exports[`toHaveReturnedWith works when not called 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"foo"</>
+
+Number of returns: <r>0</>
+`;
+
+exports[`toHaveReturnedWith works with Immutable.js objects directly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with Immutable.js objects indirectly created 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Immutable.Map {"a": {"b": "c"}}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with Map 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with Map 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>Map {"a" => "b", "b" => "a"}</>
+Received: <r>Map {1 => 2, 2 => 1}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with Set 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with Set 2`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>Set {3, 4}</>
+Received: <r>Set {1, 2}</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with argument that does match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with argument that does not match 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: <g>"bar"</>
+Received: <r>"foo"</>
+
+Number of returns: <r>1</>
+`;
+
+exports[`toHaveReturnedWith works with undefined 1`] = `
+<d>expect(</><r>jest.fn()</><d>).</>not<d>.</>toHaveReturnedWith<d>(</><g>expected</><d>)</>
+
+Expected: not <g>undefined</>
+
+Number of returns: <r>1</>
+`;

@@ -852,10 +852,9 @@ pub const Loader = struct {
 const Parser = struct {
     pos: usize = 0,
     src: string,
+    value_buffer: std.ArrayList(u8),
 
     const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
-    // You get 4k. I hope you don't need more than that.
-    threadlocal var value_buffer: [4096]u8 = undefined;
 
     fn skipLine(this: *Parser) void {
         if (strings.indexOfAny(this.src[this.pos..], "\n\r")) |i| {
@@ -912,10 +911,10 @@ const Parser = struct {
         return null;
     }
 
-    fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
+    fn parseQuoted(this: *Parser, comptime quote: u8) !?string {
         if (comptime Environment.allow_assert) bun.assert(this.src[this.pos] == quote);
         const start = this.pos;
-        const max_len = value_buffer.len;
+        this.value_buffer.clearRetainingCapacity(); // Reset the buffer
         var end = start + 1;
         while (end < this.src.len) : (end += 1) {
             switch (this.src[end]) {
@@ -929,52 +928,43 @@ const Parser = struct {
                         strings.indexOfChar(this.src[end..this.pos], '\n') != null or
                         strings.indexOfChar(this.src[end..this.pos], '\r') != null)
                     {
-                        var ptr: usize = 0;
                         var i = start;
-                        while (i < end and ptr < max_len) {
+                        while (i < end) {
                             switch (this.src[i]) {
                                 '\\' => if (comptime quote == '"') {
                                     if (comptime Environment.allow_assert) bun.assert(i + 1 < end);
                                     switch (this.src[i + 1]) {
                                         'n' => {
-                                            value_buffer[ptr] = '\n';
-                                            ptr += 1;
+                                            try this.value_buffer.append('\n');
                                             i += 2;
                                         },
                                         'r' => {
-                                            value_buffer[ptr] = '\r';
-                                            ptr += 1;
+                                            try this.value_buffer.append('\r');
                                             i += 2;
                                         },
                                         else => {
-                                            if (ptr + 1 < max_len) {
-                                                value_buffer[ptr] = this.src[i];
-                                                value_buffer[ptr + 1] = this.src[i + 1];
-                                            }
-                                            ptr += 2;
+                                            try this.value_buffer.append(this.src[i]);
+                                            try this.value_buffer.append(this.src[i + 1]);
                                             i += 2;
                                         },
                                     }
                                 } else {
-                                    value_buffer[ptr] = '\\';
-                                    ptr += 1;
+                                    try this.value_buffer.append('\\');
                                     i += 1;
                                 },
                                 '\r' => {
                                     i += 1;
                                     if (i >= end or this.src[i] != '\n') {
-                                        value_buffer[ptr] = '\n';
-                                        ptr += 1;
+                                        try this.value_buffer.append('\n');
                                     }
                                 },
                                 else => |c| {
-                                    value_buffer[ptr] = c;
-                                    ptr += 1;
+                                    try this.value_buffer.append(c);
                                     i += 1;
                                 },
                             }
                         }
-                        return value_buffer[0..ptr];
+                        return this.value_buffer.items;
                     }
                     this.pos = start;
                 },
@@ -984,14 +974,14 @@ const Parser = struct {
         return null;
     }
 
-    fn parseValue(this: *Parser, comptime is_process: bool) string {
+    fn parseValue(this: *Parser, comptime is_process: bool) !string {
         const start = this.pos;
         this.skipWhitespaces();
         var end = this.pos;
         if (end >= this.src.len) return this.src[this.src.len..];
         switch (this.src[end]) {
             inline '`', '"', '\'' => |quote| {
-                if (this.parseQuoted(quote)) |value| {
+                if (try this.parseQuoted(quote)) |value| {
                     return if (comptime is_process) value else value[1 .. value.len - 1];
                 }
             },
@@ -1008,22 +998,20 @@ const Parser = struct {
         return strings.trim(this.src[start..end], whitespace_chars);
     }
 
-    inline fn writeBackwards(ptr: usize, bytes: []const u8) usize {
-        const end = ptr;
-        const start = end - bytes.len;
-        bun.copy(u8, value_buffer[start..end], bytes);
-        return start;
+    inline fn writeBackwards(this: *Parser, bytes: []const u8) !void {
+        // For expandValue functionality
+        try this.value_buffer.insertSlice(0, bytes);
     }
 
-    fn expandValue(map: *Map, value: string) ?string {
+    fn expandValue(this: *Parser, map: *Map, value: string) !?string {
         if (value.len < 2) return null;
-        var ptr = value_buffer.len;
+        this.value_buffer.clearRetainingCapacity();
         var pos = value.len - 2;
         var last = value.len;
         while (true) : (pos -= 1) {
             if (value[pos] == '$') {
                 if (pos > 0 and value[pos - 1] == '\\') {
-                    ptr = writeBackwards(ptr, value[pos..last]);
+                    try this.writeBackwards(value[pos..last]);
                     pos -= 1;
                 } else {
                     var end = if (value[pos + 1] == '{') pos + 2 else pos + 1;
@@ -1047,8 +1035,8 @@ const Parser = struct {
                         break :brk value[value_start..end];
                     } else "";
                     if (end < value.len and value[end] == '}') end += 1;
-                    ptr = writeBackwards(ptr, value[end..last]);
-                    ptr = writeBackwards(ptr, lookup_value orelse default_value);
+                    try this.writeBackwards(value[end..last]);
+                    try this.writeBackwards(lookup_value orelse default_value);
                 }
                 last = pos;
             }
@@ -1057,8 +1045,10 @@ const Parser = struct {
                 break;
             }
         }
-        if (last > 0) ptr = writeBackwards(ptr, value[0..last]);
-        return value_buffer[ptr..];
+        if (last > 0) try this.writeBackwards(value[0..last]);
+        // Reverse the buffer since we built it backwards
+        std.mem.reverse(u8, this.value_buffer.items);
+        return this.value_buffer.items;
     }
 
     fn _parse(
@@ -1068,14 +1058,14 @@ const Parser = struct {
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,
-    ) void {
+    ) !void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
             const key = this.parseKey(true) orelse {
                 this.skipLine();
                 continue;
             };
-            const value = this.parseValue(is_process);
+            const value = try this.parseValue(is_process);
             const entry = map.map.getOrPut(key) catch unreachable;
             if (entry.found_existing) {
                 if (entry.index < count) {
@@ -1096,7 +1086,7 @@ const Parser = struct {
             while (it.next()) |entry| {
                 if (count > 0) {
                     count -= 1;
-                } else if (expandValue(map, entry.value_ptr.value)) |value| {
+                } else if (try this.expandValue(map, entry.value_ptr.value)) |value| {
                     allocator.free(entry.value_ptr.value);
                     entry.value_ptr.* = .{
                         .value = allocator.dupe(u8, value) catch unreachable,
@@ -1115,8 +1105,18 @@ const Parser = struct {
         comptime is_process: bool,
         comptime expand: bool,
     ) void {
-        var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process, expand);
+        // Create stack fallback allocator for temporary value buffer
+        var stack_fallback = std.heap.stackFallback(4096, allocator);
+        const temp_allocator = stack_fallback.get();
+        
+        var value_buffer = std.ArrayList(u8).init(temp_allocator);
+        defer value_buffer.deinit();
+        
+        var parser = Parser{ 
+            .src = source.contents,
+            .value_buffer = value_buffer,
+        };
+        parser._parse(allocator, map, override, is_process, expand) catch unreachable;
     }
 };
 

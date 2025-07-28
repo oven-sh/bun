@@ -169,7 +169,7 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       const content = api.readFile("/out.js");
-      
+
       // All __esm functions in the chain should be async because level4 has top-level await
       // and the async requirement propagates up through the dependency chain
       if (content.includes("__esm(") && content.includes("await")) {
@@ -177,7 +177,7 @@ describe("bundler", () => {
         if (badPattern.test(content)) {
           throw new Error("Found __esm(() => { await ... }) - missing async keyword in deep recursive chain!");
         }
-        
+
         // Should have multiple async __esm functions
         const asyncEsmCount = (content.match(/__esm\(async \(\) => \{/g) || []).length;
         if (asyncEsmCount === 0) {
@@ -212,7 +212,7 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       const content = api.readFile("/out.js");
-      
+
       // In cyclical imports where one module has top-level await,
       // all modules in the cycle should get async __esm functions
       if (content.includes("__esm(") && content.includes("await")) {
@@ -220,7 +220,7 @@ describe("bundler", () => {
         if (badPattern.test(content)) {
           throw new Error("Found __esm(() => { await ... }) - missing async keyword in cyclical imports!");
         }
-        
+
         // Should have multiple async __esm functions for the cyclical modules
         const asyncEsmCount = (content.match(/__esm\(async \(\) => \{/g) || []).length;
         if (asyncEsmCount < 2) {

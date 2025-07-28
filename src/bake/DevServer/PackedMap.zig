@@ -48,7 +48,6 @@ pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8, dev_allocator:
 
 fn destroy(self: *@This(), dev: *DevServer) void {
     dev.allocator.free(self.vlq());
-    // dev.allocator.free(self.quotedContents());
     bun.destroy(self);
 }
 

@@ -216,7 +216,7 @@ pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
 
     var map = envloader.Map.init(allocator);
     var p = envloader.Loader.init(&map, allocator);
-    p.loadFromString(str.slice(), true, false);
+    try p.loadFromString(str.slice(), true, false);
 
     var obj = jsc.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {

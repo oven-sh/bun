@@ -239,7 +239,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     var event_id: usize = 0;
     var events_processed: usize = 0;
-    
+
     while (events_processed < events.len) {
         var name_off: u8 = 0;
         var temp_name_list: [128]?[:0]u8 = undefined;
@@ -248,7 +248,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         // Process events one by one, batching when we hit limits
         while (events_processed < events.len) {
             const event = events[events_processed];
-            
+
             // Check if we're about to exceed the watch_events array capacity
             if (event_id >= this.watch_events.len) {
                 // Process current batch of events
@@ -261,7 +261,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                 name_off = 0;
                 temp_name_off = 0;
             }
-            
+
             // Check if we can fit this event's name in temp_name_list
             const will_have_name = event.name_len > 0;
             if (will_have_name and temp_name_off >= temp_name_list.len) {
@@ -276,7 +276,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                     temp_name_off = 0;
                 }
             }
-            
+
             this.watch_events[event_id] = watchEventFromInotifyEvent(
                 event,
                 @intCast(std.mem.indexOfScalar(
@@ -288,7 +288,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
                     continue;
                 }),
             );
-            
+
             // Safely handle event names with bounds checking
             if (event.name_len > 0 and temp_name_off < temp_name_list.len) {
                 temp_name_list[temp_name_off] = event.name();
@@ -303,7 +303,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
             event_id += 1;
             events_processed += 1;
         }
-        
+
         // Process any remaining events in the final batch
         if (event_id > 0) {
             switch (processINotifyEventBatch(this, event_id, temp_name_list[0..temp_name_off])) {
@@ -312,7 +312,6 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
             }
         }
         break;
-
     }
 
     return .success;
@@ -355,7 +354,7 @@ fn processINotifyEventBatch(this: *bun.Watcher, event_count: usize, temp_name_li
         // all_events.len == 0 is checked above, so last_event_index + 1 is safe
         this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off], this.watchlist);
     }
-    
+
     return .success;
 }
 

@@ -393,7 +393,7 @@ pub const Loader = struct {
                         const value: string = entry.value_ptr.value;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+                            const key_str = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
@@ -442,7 +442,7 @@ pub const Loader = struct {
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
-                        const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+                        const key = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.value.len > 0)
@@ -484,21 +484,21 @@ pub const Loader = struct {
         };
     }
 
-    pub fn loadProcess(this: *Loader) void {
+    pub fn loadProcess(this: *Loader) OOM!void {
         if (this.did_load_process) return;
 
-        this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
+        try this.map.map.ensureTotalCapacity(std.os.environ.len);
         for (std.os.environ) |_env| {
             var env = bun.span(_env);
             if (strings.indexOfChar(env, '=')) |i| {
                 const key = env[0..i];
                 const value = env[i + 1 ..];
                 if (key.len > 0) {
-                    this.map.put(key, value) catch unreachable;
+                    try this.map.put(key, value);
                 }
             } else {
                 if (env.len > 0) {
-                    this.map.put(env, "") catch unreachable;
+                    try this.map.put(env, "");
                 }
             }
         }
@@ -506,11 +506,11 @@ pub const Loader = struct {
     }
 
     // mostly for tests
-    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
+    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) OOM!void {
         const source = &logger.Source.initPathString("test", str);
         var value_buffer = std.ArrayList(u8).init(this.allocator);
         defer value_buffer.deinit();
-        Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
+        try Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -775,7 +775,7 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
-        Parser.parse(
+        try Parser.parse(
             source,
             this.allocator,
             this.map,
@@ -848,7 +848,7 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
-        Parser.parse(
+        try Parser.parse(
             source,
             this.allocator,
             this.map,
@@ -987,7 +987,7 @@ const Parser = struct {
         return null;
     }
 
-    fn parseValue(this: *Parser, comptime is_process: bool) !string {
+    fn parseValue(this: *Parser, comptime is_process: bool) OOM!string {
         const start = this.pos;
         this.skipWhitespaces();
         var end = this.pos;
@@ -1011,20 +1011,24 @@ const Parser = struct {
         return strings.trim(this.src[start..end], whitespace_chars);
     }
 
-    inline fn writeBackwards(this: *Parser, bytes: []const u8) !void {
-        // For expandValue functionality
-        try this.value_buffer.insertSlice(0, bytes);
+    inline fn writeBackwards(ptr: usize, bytes: []const u8, buffer: *std.ArrayList(u8)) usize {
+        const end = ptr;
+        const start = end - bytes.len;
+        buffer.insertSlice(start, bytes) catch unreachable;
+        return start;
     }
 
-    fn expandValue(this: *Parser, map: *Map, value: string) !?string {
+    fn expandValue(this: *Parser, map: *Map, value: string) OOM!?string {
         if (value.len < 2) return null;
+
         this.value_buffer.clearRetainingCapacity();
+
         var pos = value.len - 2;
         var last = value.len;
         while (true) : (pos -= 1) {
             if (value[pos] == '$') {
                 if (pos > 0 and value[pos - 1] == '\\') {
-                    try this.writeBackwards(value[pos..last]);
+                    try this.value_buffer.insertSlice(0, value[pos..last]);
                     pos -= 1;
                 } else {
                     var end = if (value[pos + 1] == '{') pos + 2 else pos + 1;
@@ -1048,8 +1052,8 @@ const Parser = struct {
                         break :brk value[value_start..end];
                     } else "";
                     if (end < value.len and value[end] == '}') end += 1;
-                    try this.writeBackwards(value[end..last]);
-                    try this.writeBackwards(lookup_value orelse default_value);
+                    try this.value_buffer.insertSlice(0, value[end..last]);
+                    try this.value_buffer.insertSlice(0, lookup_value orelse default_value);
                 }
                 last = pos;
             }
@@ -1058,9 +1062,9 @@ const Parser = struct {
                 break;
             }
         }
-        if (last > 0) try this.writeBackwards(value[0..last]);
-        // Reverse the buffer since we built it backwards
-        std.mem.reverse(u8, this.value_buffer.items);
+        if (last > 0) {
+            try this.value_buffer.insertSlice(0, value[0..last]);
+        }
         return this.value_buffer.items;
     }
 
@@ -1071,7 +1075,7 @@ const Parser = struct {
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,
-    ) !void {
+    ) OOM!void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
             const key = this.parseKey(true) orelse {
@@ -1079,7 +1083,7 @@ const Parser = struct {
                 continue;
             };
             const value = try this.parseValue(is_process);
-            const entry = map.map.getOrPut(key) catch unreachable;
+            const entry = try map.map.getOrPut(key);
             if (entry.found_existing) {
                 if (entry.index < count) {
                     // Allow keys defined later in the same file to override keys defined earlier
@@ -1090,7 +1094,7 @@ const Parser = struct {
                 }
             }
             entry.value_ptr.* = .{
-                .value = allocator.dupe(u8, value) catch unreachable,
+                .value = try allocator.dupe(u8, value),
                 .conditional = false,
             };
         }
@@ -1102,7 +1106,7 @@ const Parser = struct {
                 } else if (try this.expandValue(map, entry.value_ptr.value)) |value| {
                     allocator.free(entry.value_ptr.value);
                     entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, value) catch unreachable,
+                        .value = try allocator.dupe(u8, value),
                         .conditional = false,
                     };
                 }
@@ -1118,14 +1122,14 @@ const Parser = struct {
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,
-    ) void {
+    ) OOM!void {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clearRetainingCapacity();
-        var parser = Parser{ 
+        var parser = Parser{
             .src = source.contents,
             .value_buffer = value_buffer,
         };
-        parser._parse(allocator, map, override, is_process, expand) catch unreachable;
+        try parser._parse(allocator, map, override, is_process, expand);
     }
 };
 
@@ -1144,7 +1148,7 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]const u8 {
+    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) OOM![:null]?[*:0]const u8 {
         var env_map = &this.map;
 
         const envp_count = env_map.count();
@@ -1168,7 +1172,7 @@ pub const Map = struct {
     /// the keys and values, but instead points into the memory of the bun env map.
     ///
     /// To prevent
-    pub fn stdEnvMap(this: *Map, allocator: std.mem.Allocator) !StdEnvMapWrapper {
+    pub fn stdEnvMap(this: *Map, allocator: std.mem.Allocator) OOM!StdEnvMapWrapper {
         var env_map = std.process.EnvMap.init(allocator);
 
         var iter = this.map.iterator();
@@ -1226,7 +1230,7 @@ pub const Map = struct {
         return Map{ .map = HashTable.init(allocator) };
     }
 
-    pub inline fn put(this: *Map, key: string, value: string) !void {
+    pub inline fn put(this: *Map, key: string, value: string) OOM!void {
         if (Environment.isWindows and Environment.allow_assert) {
             bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
@@ -1236,7 +1240,7 @@ pub const Map = struct {
         });
     }
 
-    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) !void {
+    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) OOM!void {
         return this.map.ensureUnusedCapacity(additional_count);
     }
 
@@ -1250,7 +1254,7 @@ pub const Map = struct {
         });
     }
 
-    pub inline fn putAllocKeyAndValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+    pub inline fn putAllocKeyAndValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) OOM!void {
         const gop = try this.map.getOrPut(key);
         gop.value_ptr.* = .{
             .value = try allocator.dupe(u8, value),
@@ -1261,7 +1265,7 @@ pub const Map = struct {
         }
     }
 
-    pub inline fn putAllocKey(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+    pub inline fn putAllocKey(this: *Map, allocator: std.mem.Allocator, key: string, value: string) OOM!void {
         const gop = try this.map.getOrPut(key);
         gop.value_ptr.* = .{
             .value = value,
@@ -1272,14 +1276,14 @@ pub const Map = struct {
         }
     }
 
-    pub inline fn putAllocValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
+    pub inline fn putAllocValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) OOM!void {
         try this.map.put(key, .{
             .value = try allocator.dupe(u8, value),
             .conditional = false,
         });
     }
 
-    pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
+    pub inline fn getOrPutWithoutValue(this: *Map, key: string) OOM!GetOrPutResult {
         return this.map.getOrPut(key);
     }
 
@@ -1290,11 +1294,11 @@ pub const Map = struct {
         while (iter.next()) |entry| {
             _ = try writer.write("\n    ");
 
-            writer.write(entry.key_ptr.*) catch unreachable;
+            try writer.write(entry.key_ptr.*);
 
             _ = try writer.write(": ");
 
-            writer.write(entry.value_ptr.*) catch unreachable;
+            try writer.write(entry.value_ptr.*);
 
             if (iter.index <= self.map.count() - 1) {
                 _ = try writer.write(", ");
@@ -1311,14 +1315,14 @@ pub const Map = struct {
         return if (this.map.get(key)) |entry| entry.value else null;
     }
 
-    pub inline fn putDefault(this: *Map, key: string, value: string) !void {
+    pub inline fn putDefault(this: *Map, key: string, value: string) OOM!void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
             .conditional = false,
         });
     }
 
-    pub inline fn getOrPut(this: *Map, key: string, value: string) !void {
+    pub inline fn getOrPut(this: *Map, key: string, value: string) OOM!void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
             .conditional = false,
@@ -1329,7 +1333,7 @@ pub const Map = struct {
         _ = this.map.swapRemove(key);
     }
 
-    pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) !Map {
+    pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) OOM!Map {
         return .{ .map = try this.map.cloneWithAllocator(new_allocator) };
     }
 };
@@ -1353,3 +1357,4 @@ const logger = bun.logger;
 const s3 = bun.S3;
 const strings = bun.strings;
 const api = bun.schema.api;
+const OOM = bun.OOM;

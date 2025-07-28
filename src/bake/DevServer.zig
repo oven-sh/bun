@@ -2955,6 +2955,9 @@ fn sendBuiltInNotFound(resp: anytype) void {
 }
 
 fn printMemoryLine(dev: *DevServer) void {
+    if (comptime !bun.Environment.enableAllocScopes) {
+        return;
+    }
     if (!debug.isVisible()) return;
     Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),

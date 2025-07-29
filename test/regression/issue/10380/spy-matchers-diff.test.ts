@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 
 test("toHaveBeenCalledWith should show diff when assertion fails", () => {
-  const mockedFn = mock((args) => args);
+  const mockedFn = mock(args => args);
 
   const a = { a: { b: { c: { d: 1 } } } };
   const b = { a: { b: { c: { d: 2 } } } };
@@ -23,7 +23,7 @@ test("toHaveBeenCalledWith should show diff when assertion fails", () => {
 });
 
 test("toHaveBeenNthCalledWith should show diff when assertion fails", () => {
-  const mockedFn = mock((args) => args);
+  const mockedFn = mock(args => args);
 
   const a = { x: [1, 2, 3] };
   const b = { x: [1, 2, 4] };
@@ -43,7 +43,7 @@ test("toHaveBeenNthCalledWith should show diff when assertion fails", () => {
 });
 
 test("toHaveBeenLastCalledWith should show diff when assertion fails", () => {
-  const mockedFn = mock((args) => args);
+  const mockedFn = mock(args => args);
 
   const a = { nested: { value: "hello" } };
   const b = { nested: { value: "world" } };
@@ -85,7 +85,7 @@ test("toHaveBeenCalledWith should show diff for multiple arguments", () => {
 });
 
 test("toHaveBeenCalledWith should show diff for complex nested structures", () => {
-  const mockedFn = mock((args) => args);
+  const mockedFn = mock(args => args);
 
   const received = {
     users: [

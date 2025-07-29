@@ -12,6 +12,8 @@ import.meta.main;  // `true` if this file is directly executed by `bun run`
                    // `false` otherwise
 
 import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/index.js"
+
+import.meta.glob("./models/*.js"); // => { "./models/user.js": [Async Function], ... }
 ```
 
 {% table %}
@@ -65,5 +67,18 @@ import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/inde
 
 - `import.meta.url`
 - A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)
+
+---
+
+- `import.meta.glob`
+- Import multiple modules using glob patterns. Returns an object mapping file paths to lazy-loading functions.
+
+  ```ts
+  const modules = import.meta.glob('./modules/*.js');
+  // const modules = {
+  //   './modules/a.js': () => import('./modules/a.js'),
+  //   './modules/b.js': () => import('./modules/b.js'),
+  // }
+  ```
 
 {% /table %}

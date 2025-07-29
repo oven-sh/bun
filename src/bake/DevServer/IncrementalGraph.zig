@@ -127,7 +127,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 /// Content depends on `flags.kind`
                 /// See function wrappers to safely read into this data
                 content: union {
-                    /// Allocated by `dev.allocator`. Access with `.jsCode()`
+                    /// Access contents with `.jsCode()`.
                     /// When stale, the code is "", otherwise it contains at
                     /// least one non-whitespace character, as empty chunks
                     /// contain at least a function wrapper.
@@ -184,7 +184,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 comptime {
                     const d = std.debug;
                     if (!Environment.isDebug) {
-                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 3);
+                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 6);
                         d.assert(@alignOf(@This()) == @alignOf([*]u8));
                     }
                 }

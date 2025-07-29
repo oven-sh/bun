@@ -1380,8 +1380,8 @@ pub const LOW_SURROGATE_START = 0xDC00;
 pub const LOW_SURROGATE_END = 0xDFFF;
 
 pub fn utf16DecodeSurrogatePair(a: u32, b: u32) u32 {
-    std.debug.assert(a >= HIGH_SURROGATE_START and a <= HIGH_SURROGATE_END);
-    std.debug.assert(b >= LOW_SURROGATE_START and b <= LOW_SURROGATE_END);
+    bun.assert(a >= HIGH_SURROGATE_START and a <= HIGH_SURROGATE_END);
+    bun.assert(b >= LOW_SURROGATE_START and b <= LOW_SURROGATE_END);
     return 0x10000 + (((a & 0x03ff) << 10) | (b & 0x03ff));
 }
 

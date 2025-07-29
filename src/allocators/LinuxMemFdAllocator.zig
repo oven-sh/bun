@@ -76,7 +76,7 @@ const AllocatorInterface = struct {
     };
 };
 
-pub fn alloc(self: *Self, len: usize, offset: usize, flags: std.posix.MAP) bun.jsc.Maybe(bun.webcore.Blob.Store.Bytes) {
+pub fn alloc(self: *Self, len: usize, offset: usize, flags: std.posix.MAP) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
     var size = len;
 
     // size rounded up to nearest page
@@ -123,7 +123,7 @@ pub fn shouldUse(bytes: []const u8) bool {
     return bytes.len >= 1024 * 1024 * 8;
 }
 
-pub fn create(bytes: []const u8) bun.jsc.Maybe(bun.webcore.Blob.Store.Bytes) {
+pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
     if (comptime !bun.Environment.isLinux) {
         unreachable;
     }
@@ -183,6 +183,10 @@ pub fn create(bytes: []const u8) bun.jsc.Maybe(bun.webcore.Blob.Store.Bytes) {
             return .{ .err = err };
         },
     }
+}
+
+pub fn isInstance(allocator_: std.mem.Allocator) bool {
+    return allocator_.vtable == AllocatorInterface.VTable;
 }
 
 const bun = @import("bun");

@@ -874,11 +874,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
+        pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
             if (this.aborted or this.res.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
-                return .{ .result = {} };
+                return .success;
             }
 
             this.wrote = 0;
@@ -917,10 +917,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             log("start({d})", .{this.highWaterMark});
 
-            return .{ .result = {} };
+            return .success;
         }
 
-        fn flushFromJSNoWait(this: *@This()) jsc.Maybe(JSValue) {
+        fn flushFromJSNoWait(this: *@This()) bun.sys.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
 
             return .{ .result = JSValue.jsNumber(this.flushNoWait()) };
@@ -944,7 +944,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return 0;
         }
 
-        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) jsc.Maybe(JSValue) {
+        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
             log("flushFromJS({any})", .{wait});
             this.unregisterAutoFlusher();
 
@@ -977,12 +977,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = promise_value };
         }
 
-        pub fn flush(this: *@This()) jsc.Maybe(void) {
+        pub fn flush(this: *@This()) bun.sys.Maybe(void) {
             log("flush()", .{});
             this.unregisterAutoFlusher();
 
             if (!this.hasBackpressure() or this.done) {
-                return .{ .result = {} };
+                return .success;
             }
 
             if (this.res.hasResponded()) {
@@ -990,7 +990,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.signal.close(null);
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn write(this: *@This(), data: Result) Result.Writable {
@@ -1131,18 +1131,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         // In this case, it's always an error
-        pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
+        pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
             log("end({any})", .{err});
 
             if (this.requested_end) {
-                return .{ .result = {} };
+                return .success;
             }
 
             if (this.done or this.res.hasResponded()) {
                 this.signal.close(err);
                 this.markDone();
                 this.finalize();
-                return .{ .result = {} };
+                return .success;
             }
 
             this.requested_end = true;
@@ -1155,12 +1155,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 // we do not close the stream here
                 // this.res.endStream(false);
                 this.finalize();
-                return .{ .result = {} };
+                return .success;
             }
-            return .{ .result = {} };
+            return .success;
         }
 
-        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) jsc.Maybe(JSValue) {
+        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
             log("endFromJS()", .{});
 
             if (this.requested_end) {
@@ -1353,9 +1353,9 @@ pub const NetworkSink = struct {
         return null;
     }
 
-    pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
+    pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
         if (this.ended) {
-            return .{ .result = {} };
+            return .success;
         }
 
         switch (stream_start) {
@@ -1368,7 +1368,7 @@ pub const NetworkSink = struct {
         }
         this.ended = false;
         this.signal.start();
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn connect(this: *@This(), signal: Signal) void {
@@ -1398,11 +1398,11 @@ pub const NetworkSink = struct {
         }
     }
 
-    pub fn flush(_: *@This()) jsc.Maybe(void) {
-        return .{ .result = {} };
+    pub fn flush(_: *@This()) bun.sys.Maybe(void) {
+        return .success;
     }
 
-    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) jsc.Maybe(JSValue) {
+    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) bun.sys.Maybe(JSValue) {
         // still waiting for more data tobe flushed
         if (this.flushPromise.hasValue()) {
             return .{ .result = this.flushPromise.value() };
@@ -1483,9 +1483,9 @@ pub const NetworkSink = struct {
         return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
     }
 
-    pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
+    pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
         if (this.ended) {
-            return .{ .result = {} };
+            return .success;
         }
 
         // send EOF
@@ -1496,9 +1496,9 @@ pub const NetworkSink = struct {
         }
 
         this.signal.close(err);
-        return .{ .result = {} };
+        return .success;
     }
-    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) jsc.Maybe(JSValue) {
+    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) bun.sys.Maybe(JSValue) {
         _ = this.end(null);
         if (this.endPromise.hasValue()) {
             // we are already waiting for the end

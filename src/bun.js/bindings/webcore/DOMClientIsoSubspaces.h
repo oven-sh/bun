@@ -72,6 +72,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

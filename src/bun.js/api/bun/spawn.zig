@@ -386,7 +386,7 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return jsc.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
@@ -406,7 +406,7 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return jsc.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
@@ -430,9 +430,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-
-const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const errno = std.posix.errno;
 const fd_t = std.posix.fd_t;

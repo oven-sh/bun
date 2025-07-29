@@ -1,14 +1,13 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
-import { mkdir, rm, symlink } from "fs/promises";
+import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
-  setDefaultTimeout(10 * 60 * 1000);
   await registry.start();
 });
 
@@ -770,4 +769,78 @@ test("successfully removes and corrects symlinks", async () => {
   expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
     join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
   );
+});
+
+test("runs lifecycle scripts correctly", async () => {
+  // due to binary linking between preinstall and the remaining lifecycle scripts
+  // there is special handling for preinstall scripts we should test.
+  // 1. only preinstall
+  // 2. only postinstall (or any other script that isn't preinstall)
+  // 3. preinstall and any other script
+
+  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-lifecycle-scripts",
+      dependencies: {
+        "lifecycle-preinstall": "1.0.0",
+        "lifecycle-postinstall": "1.0.0",
+        "all-lifecycle-scripts": "1.0.0",
+      },
+      trustedDependencies: ["lifecycle-preinstall", "lifecycle-postinstall", "all-lifecycle-scripts"],
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const [
+    preinstallLink,
+    postinstallLink,
+    allScriptsLink,
+    preinstallFile,
+    postinstallFile,
+    allScriptsPreinstallFile,
+    allScriptsInstallFile,
+    allScriptsPostinstallFile,
+    bunDir,
+    lifecyclePreinstallDir,
+    lifecyclePostinstallDir,
+    allLifecycleScriptsDir,
+  ] = await Promise.all([
+    readlink(join(packageDir, "node_modules", "lifecycle-preinstall")),
+    readlink(join(packageDir, "node_modules", "lifecycle-postinstall")),
+    readlink(join(packageDir, "node_modules", "all-lifecycle-scripts")),
+    file(join(packageDir, "node_modules", "lifecycle-preinstall", "preinstall.txt")).text(),
+    file(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt")).text(),
+    file(join(packageDir, "node_modules", "all-lifecycle-scripts", "preinstall.txt")).text(),
+    file(join(packageDir, "node_modules", "all-lifecycle-scripts", "install.txt")).text(),
+    file(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt")).text(),
+    readdirSorted(join(packageDir, "node_modules", ".bun")),
+    readdirSorted(join(packageDir, "node_modules", ".bun", "lifecycle-preinstall@1.0.0", "node_modules")),
+    readdirSorted(join(packageDir, "node_modules", ".bun", "lifecycle-postinstall@1.0.0", "node_modules")),
+    readdirSorted(join(packageDir, "node_modules", ".bun", "all-lifecycle-scripts@1.0.0", "node_modules")),
+  ]);
+
+  expect(preinstallLink).toBe(join(".bun", "lifecycle-preinstall@1.0.0", "node_modules", "lifecycle-preinstall"));
+  expect(postinstallLink).toBe(join(".bun", "lifecycle-postinstall@1.0.0", "node_modules", "lifecycle-postinstall"));
+  expect(allScriptsLink).toBe(join(".bun", "all-lifecycle-scripts@1.0.0", "node_modules", "all-lifecycle-scripts"));
+
+  expect(preinstallFile).toBe("preinstall!");
+  expect(postinstallFile).toBe("postinstall!");
+  expect(allScriptsPreinstallFile).toBe("preinstall!");
+  expect(allScriptsInstallFile).toBe("install!");
+  expect(allScriptsPostinstallFile).toBe("postinstall!");
+
+  expect(bunDir).toEqual([
+    "all-lifecycle-scripts@1.0.0",
+    "lifecycle-postinstall@1.0.0",
+    "lifecycle-preinstall@1.0.0",
+    "node_modules",
+  ]);
+
+  expect(lifecyclePreinstallDir).toEqual(["lifecycle-preinstall"]);
+  expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
+  expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });

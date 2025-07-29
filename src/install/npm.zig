@@ -1129,6 +1129,9 @@ pub const PackageManifest = struct {
                                 var did_warn = std.atomic.Value(bool).init(false);
 
                                 pub fn warnOnce() void {
+                                    // .monotonic is okay because we only ever set this to true, and
+                                    // we don't rely on any side effects from a thread that
+                                    // previously set this to true.
                                     if (!did_warn.swap(true, .monotonic)) {
                                         // This is not an error. Nor is it really a warning.
                                         Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});

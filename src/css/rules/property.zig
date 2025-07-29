@@ -176,7 +176,7 @@ pub const PropertyRuleDeclarationParser = struct {
                 return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
     };
 

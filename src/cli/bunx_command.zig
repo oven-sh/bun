@@ -140,7 +140,7 @@ pub const BunxCommand = struct {
 
         // TODO: make this better
         if (package_json_read.err) |err| {
-            try (bun.jsc.Maybe(void){ .err = err }).unwrap();
+            try (bun.sys.Maybe(void){ .err = err }).unwrap();
         }
 
         const package_json_contents = package_json_read.bytes.items;

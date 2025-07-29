@@ -4153,7 +4153,12 @@ pub const Expect = struct {
     pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         const thisValue = callframe.this();
+        const firstArgument = callframe.argumentsAsArray(1)[0];
         defer this.postMatch(globalThis);
+
+        if (!firstArgument.isUndefined()) {
+            return globalThis.throwInvalidArguments("toHaveBeenCalled() must not have an argument", .{});
+        }
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalled", "");
 

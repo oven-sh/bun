@@ -4160,7 +4160,9 @@ pub const Expect = struct {
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         incrementExpectCallCounter();
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         const calls_length = try calls.getLength(globalThis);
@@ -4191,7 +4193,9 @@ pub const Expect = struct {
 
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         const calls_length = try calls.getLength(globalThis);
@@ -4224,7 +4228,9 @@ pub const Expect = struct {
 
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
@@ -4319,7 +4325,9 @@ pub const Expect = struct {
 
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         var pass = false;
@@ -4377,7 +4385,9 @@ pub const Expect = struct {
 
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
@@ -4435,7 +4445,9 @@ pub const Expect = struct {
 
         const calls = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getCalls, .{value});
         if (!calls.jsType().isArray()) {
-            return globalThis.throw("Expected value must be a mock function: {}", .{value});
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
         const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) try arguments[0].coerce(i32, globalThis) else 0;
@@ -4508,7 +4520,11 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
-        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        if (!returns.jsType().isArray()) {
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        }
 
         const return_count: i32 = if (known_index) |index| index else brk: {
             if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
@@ -4802,7 +4818,11 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
-        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        if (!returns.jsType().isArray()) {
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        }
 
         const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
         var pass = false;
@@ -4889,7 +4909,11 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
         const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
-        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        if (!returns.jsType().isArray()) {
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        }
 
         const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
         const index = @as(u32, @intCast(n - 1)); // Convert to 0-based index

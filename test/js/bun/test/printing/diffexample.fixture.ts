@@ -81,7 +81,7 @@ test("example 11 - Latin-1 in objects", () => {
   });
 });
 
-test("example 12 - zig large multiline diff", () => {
+test("example 12 - large multiline diff", () => {
   const received = `line one
 line two
 line three!
@@ -162,7 +162,7 @@ line 39`;
   expect(received).toEqual(expected);
 });
 
-test("example 13 - zig simple multiline diff with sections", () => {
+test("example 13 - simple multiline diff with sections", () => {
   const received = `=== diffdiff ===
 line one
 line two!
@@ -245,19 +245,19 @@ line seven
   expect(received).toEqual(expected);
 });
 
-test("example 14 - zig single line diff", () => {
+test("example 14 - single line diff", () => {
   const received = `"¡hello, world"`;
   const expected = `"hello, world!"`;
   expect(received).toEqual(expected);
 });
 
-test("example 15 - zig unicode char diff", () => {
+test("example 15 - unicode char diff", () => {
   const received = `Hello 👋 世界 🌎!`;
   const expected = `Hello 👋 世界 🌍!`;
   expect(received).toEqual(expected);
 });
 
-test("example 16 - zig indentation change diff", () => {
+test("example 16 - indentation change diff", () => {
   const received = `function main() {
     if (true) {
         print("Hello, world!");
@@ -271,7 +271,7 @@ test("example 16 - zig indentation change diff", () => {
   expect(received).toEqual(expected);
 });
 
-test("example 17 - zig very long string", () => {
+test("example 17 - very long string", () => {
   const receivedLines: string[] = [];
   const expectedLines: string[] = [];
   for (let i = 0; i < 1000; i++) {

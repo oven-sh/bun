@@ -399,7 +399,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
-                        escaped_source: *?[]u8,
+                        escaped_source: ?[]u8,
                     },
                 },
                 css: u64,
@@ -494,14 +494,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
-                                            source_map.escaped_source.*.?,
+                                            source_map.escaped_source.?,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;
                                     take.deinit();
-                                    if (source_map.escaped_source.*) |escaped_source| {
+                                    if (source_map.escaped_source) |escaped_source| {
                                         bun.default_allocator.free(escaped_source);
-                                        source_map.escaped_source.* = null;
                                     }
                                 }
 
@@ -589,9 +588,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (content.js.source_map) |source_map| {
                             var take = source_map.chunk.buffer;
                             take.deinit();
-                            if (source_map.escaped_source.*) |escaped_source| {
+                            if (source_map.escaped_source) |escaped_source| {
                                 bun.default_allocator.free(escaped_source);
-                                source_map.escaped_source.* = null;
                             }
                         }
                     }

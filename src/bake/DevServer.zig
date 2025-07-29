@@ -2059,7 +2059,7 @@ pub fn finalizeBundle(
         // TODO: investigate why linker.files is not indexed by linker's index
         // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
         // const quoted_contents = quoted_source_contents[linker_index];
-        const quoted_contents = &quoted_source_contents[part_range.source_index.get()];
+        const quoted_contents = quoted_source_contents[part_range.source_index.get()];
         switch (targets[part_range.source_index.get()].bakeGraph()) {
             inline else => |graph| try (switch (graph) {
                 .client => dev.client_graph,
@@ -2073,7 +2073,7 @@ pub fn finalizeBundle(
                         .code_allocator = compile_result.javascript.allocator(),
                         .source_map = .{
                             .chunk = source_map,
-                            .escaped_source = @ptrCast(quoted_contents),
+                            .escaped_source = quoted_contents,
                         },
                     },
                 },

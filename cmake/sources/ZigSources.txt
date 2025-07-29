@@ -10,6 +10,7 @@ src/allocators/NullableAllocator.zig
 src/analytics.zig
 src/analytics/schema.zig
 src/api/schema.zig
+src/asan.zig
 src/ast.zig
 src/ast/Ast.zig
 src/ast/ASTMemoryAllocator.zig

@@ -36,34 +36,7 @@ delete assert.AssertionError;
 delete assert.CallTracker;
 delete assert.strict;
 
-/**
- * @link https://nodejs.org/api/test.html#class-suitecontext
- */
-class SuiteContext {
-  #name: string | undefined;
-  #filePath: string | undefined;
-  #abortController?: AbortController;
-
-  constructor(name: string | undefined, filePath: string | undefined) {
-    this.#name = name;
-    this.#filePath = filePath || Bun.main;
-  }
-
-  get name(): string {
-    return this.#name!;
-  }
-
-  get filePath(): string {
-    return this.#filePath!;
-  }
-
-  get signal(): AbortSignal {
-    if (this.#abortController === undefined) {
-      this.#abortController = new AbortController();
-    }
-    return this.#abortController.signal;
-  }
-}
+let checkNotInsideTest: (ctx: TestContext | undefined, fn: string) => void;
 
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
@@ -143,25 +116,25 @@ class TestContext {
 
   before(arg0: unknown, arg1: unknown) {
     const { fn } = createHook(arg0, arg1);
-    const { beforeAll } = bunTest(this);
+    const { beforeAll } = bunTest();
     beforeAll(fn);
   }
 
   after(arg0: unknown, arg1: unknown) {
     const { fn } = createHook(arg0, arg1);
-    const { afterAll } = bunTest(this);
+    const { afterAll } = bunTest();
     afterAll(fn);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
     const { fn } = createHook(arg0, arg1);
-    const { beforeEach } = bunTest(this);
+    const { beforeEach } = bunTest();
     beforeEach(fn);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
     const { fn } = createHook(arg0, arg1);
-    const { afterEach } = bunTest(this);
+    const { afterEach } = bunTest();
     afterEach(fn);
   }
 
@@ -172,11 +145,9 @@ class TestContext {
   test(arg0: unknown, arg1: unknown, arg2: unknown) {
     const { name, fn, options } = createTest(arg0, arg1, arg2);
 
-    if (this.#insideTest) {
-      throwNotImplemented("test() inside another test()", 5090, "Use `bun:test` in the interim.");
-    }
+    this.#checkNotInsideTest("test");
 
-    const { test } = bunTest(this);
+    const { test } = bunTest();
     if (options.only) {
       test.only(name, fn);
     } else if (options.todo) {
@@ -191,90 +162,101 @@ class TestContext {
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
     const { name, fn } = createDescribe(arg0, arg1, arg2);
 
-    if (this.#insideTest) {
-      throwNotImplemented("describe() inside another test()", 5090, "Use `bun:test` in the interim.");
-    }
+    this.#checkNotInsideTest("describe");
 
-    const { describe } = bunTest(this);
+    const { describe } = bunTest();
     describe(name, fn);
+  }
+
+  #checkNotInsideTest(fn: string) {
+    if (this.#insideTest) {
+      throwNotImplemented(`${fn}() inside another test()`, 5090, "Use `bun:test` in the interim.");
+    }
+  }
+
+  static {
+    // expose this function to the rest of this file without exposing it to user JS
+    checkNotInsideTest = (ctx: TestContext | undefined, fn: string) => {
+      if (ctx) ctx.#checkNotInsideTest(fn);
+    };
   }
 }
 
-function bunTest(ctx: SuiteContext | TestContext) {
-  return jest(ctx.filePath);
+function bunTest() {
+  return jest(Bun.main);
 }
 
-let ctx = new TestContext(false, undefined, Bun.main, undefined);
+let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
+  const { describe } = bunTest();
   describe(name, fn);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
+  const { describe } = bunTest();
   describe.skip(name, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
+  const { describe } = bunTest();
   describe.todo(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
+  const { describe } = bunTest();
   describe.only(name, fn);
 };
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
+  const { test } = bunTest();
   test(name, fn, options);
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
+  const { test } = bunTest();
   test.skip(name, fn, options);
 };
 
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
+  const { test } = bunTest();
   test.todo(name, fn, options);
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
+  const { test } = bunTest();
   test.only(name, fn, options);
 };
 
 function before(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { beforeAll } = bunTest(ctx);
+  const { beforeAll } = bunTest();
   beforeAll(fn);
 }
 
 function after(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { afterAll } = bunTest(ctx);
+  const { afterAll } = bunTest();
   afterAll(fn);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { beforeEach } = bunTest(ctx);
+  const { beforeEach } = bunTest();
   beforeEach(fn);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { afterEach } = bunTest(ctx);
+  const { afterEach } = bunTest();
   afterEach(fn);
 }
 
@@ -319,8 +301,9 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
 function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
+  checkNotInsideTest(ctx, "test");
   const originalContext = ctx;
-  const context = new TestContext(true, name, ctx.filePath, originalContext);
+  const context = new TestContext(true, name, Bun.main, originalContext);
 
   const runTest = (done: (error?: unknown) => void) => {
     ctx = context;
@@ -352,8 +335,9 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = parseTestOptions(arg0, arg1, arg2);
 
+  checkNotInsideTest(ctx, "describe");
   const originalContext = ctx;
-  const context = new TestContext(false, name, ctx.filePath, originalContext);
+  const context = new TestContext(false, name, Bun.main, originalContext);
 
   const runDescribe = () => {
     ctx = context;

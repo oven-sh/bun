@@ -34,6 +34,9 @@ main: []const u8 = "",
 main_is_html_entrypoint: bool = false,
 main_resolved_path: bun.String = bun.String.empty,
 main_hash: u32 = 0,
+/// Set if code overrides Bun.main to a custom value, and then reset when the VM loads a new file
+/// (e.g. when bun:test starts testing a new file)
+overridden_main: jsc.Strong.Optional = .empty,
 entry_point: ServerEntryPoint = undefined,
 origin: URL = URL{},
 node_fs: ?*bun.api.node.fs.NodeFS = null,
@@ -1906,6 +1909,7 @@ pub fn deinit(this: *VirtualMachine) void {
     if (this.rare_data) |rare_data| {
         rare_data.deinit();
     }
+    this.overridden_main.deinit();
     this.has_terminated = true;
 }
 
@@ -2084,7 +2088,10 @@ extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
 pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     try this.ensureDebugger(true);
 
@@ -2152,7 +2159,10 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachi
 pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     this.eventLoop().ensureWaker();
 

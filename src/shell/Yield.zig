@@ -58,6 +58,8 @@ pub const Yield = union(enum) {
     /// Failed and threw a JS error
     failed,
     done,
+    /// The biggest issue with the shell (which is currently not a problem since JSExecutionTerminated happens at the top of the event loop) is that this will stop execution of the shell and it will essentially leak a bunch of memory.
+    /// This won't be a problem when `.kill()` is implemented.
     terminated,
 
     /// Used in debug builds to ensure the shell is not creating a callstack

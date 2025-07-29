@@ -155,8 +155,6 @@ pub const RefOrEmpty = union(enum(u1)) {
     };
 };
 
-const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const SourceMap = bun.sourcemap;

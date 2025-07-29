@@ -718,7 +718,7 @@ pub const Libc = enum(u8) {
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
-    const placeholder: u8 = 1 << 7;
+    const placeholder: u8 = 0;
 
     pub const all_value: u8 = glibc | musl | placeholder;
 
@@ -732,6 +732,7 @@ pub const Libc = enum(u8) {
     pub const valid_values_string = blk: {
         var result: []const u8 = "";
         for (NameMap.kvs, 0..) |kv, i| {
+            if (strings.eqlComptime(kv.key, "(placeholder)")) continue;
             if (i > 0) result = result ++ ", ";
             result = result ++ kv.key;
         }

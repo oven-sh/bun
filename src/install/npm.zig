@@ -599,7 +599,7 @@ pub fn Negatable(comptime T: type) type {
                 }
             }
             const included = kvs.len - removed;
-            const print_included = removed > kvs.len - removed;
+            const print_included = removed >= kvs.len - removed;
 
             const one = (print_included and included == 1) or (!print_included and removed == 1);
 
@@ -718,21 +718,17 @@ pub const Libc = enum(u8) {
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
-    const placeholder: u8 = 0;
 
-    pub const all_value: u8 = glibc | musl | placeholder;
+    pub const all_value: u8 = glibc | musl;
 
     pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
         .{ "musl", musl },
-        // somehow this is needed so it doesn't keep on showing up as negated every time
-        .{ "(placeholder)", placeholder },
     });
 
     pub const valid_values_string = blk: {
         var result: []const u8 = "";
         for (NameMap.kvs, 0..) |kv, i| {
-            if (strings.eqlComptime(kv.key, "(placeholder)")) continue;
             if (i > 0) result = result ++ ", ";
             result = result ++ kv.key;
         }

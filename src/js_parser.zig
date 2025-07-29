@@ -23508,7 +23508,7 @@ fn NewParser_(
 
             // Find matching files
             const source_dir = p.source.path.sourceDir();
-            var matched_files = std.StringHashMap(void).init(p.allocator);
+            var matched_files = bun.StringHashMap(void).init(p.allocator);
             defer matched_files.deinit();
 
             var glob_arena = bun.ArenaAllocator.init(p.allocator);
@@ -23542,10 +23542,17 @@ fn NewParser_(
                     .result => |path| path,
                 }) |path| {
                     const rel_path = if (strings.hasPrefix(path, source_dir)) path[source_dir.len + @intFromBool(path[source_dir.len] == '/') ..] else path;
-                    const normalized = if (strings.hasPrefix(rel_path, "./"))
-                        p.allocator.dupe(u8, rel_path) catch unreachable
+                    
+                    var path_buf: bun.PathBuffer = undefined;
+                    const slash_normalized = if (bun.Environment.isWindows)
+                        strings.normalizeSlashesOnly(&path_buf, rel_path, '/')
                     else
-                        std.fmt.allocPrint(p.allocator, "./{s}", .{rel_path}) catch unreachable;
+                        rel_path;
+                    
+                    const normalized = if (strings.hasPrefix(slash_normalized, "./"))
+                        p.allocator.dupe(u8, slash_normalized) catch unreachable
+                    else
+                        std.fmt.allocPrint(p.allocator, "./{s}", .{slash_normalized}) catch unreachable;
                     matched_files.put(normalized, {}) catch unreachable;
                 }
             }

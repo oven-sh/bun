@@ -621,8 +621,8 @@ exports[`indented inline snapshots 4`] = `
 \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m\x1B[0m\x1B[31m}\x1B[0m
 \x1B[31m+ \x1B[0m\x1B[31m\x1B[0m
 
-\x1B[32m- Expected  - 3\x1B[0m
-\x1B[31m+ Received  + 3\x1B[0m
+\x1B[32m- Expected  - 4\x1B[0m
+\x1B[31m+ Received  + 4\x1B[0m
 
 "
 `;

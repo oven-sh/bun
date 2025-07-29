@@ -74,7 +74,7 @@ import.meta.glob("./models/*.js"); // => { "./models/user.js": [Async Function],
 - Import multiple modules using glob patterns. Returns an object mapping file paths to lazy-loading functions.
 
   ```ts
-  const modules = import.meta.glob('./modules/*.js');
+  const modules = import.meta.glob("./modules/*.js");
   // const modules = {
   //   './modules/a.js': () => import('./modules/a.js'),
   //   './modules/b.js': () => import('./modules/b.js'),

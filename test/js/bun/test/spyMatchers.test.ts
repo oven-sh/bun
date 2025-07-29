@@ -25,10 +25,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
+import { describe, expect, jest, expect as jestExpect, test } from "bun:test";
 import * as Immutable from "immutable";
 import type { FunctionLike } from "jest-mock";
-import { expect as jestExpect, describe, test, jest } from "bun:test";
-import { expect } from "bun:test";
 
 jestExpect.extend({
   optionalFn(fn?: unknown) {

@@ -152,7 +152,7 @@ pub const Diff = struct {
 const colors = struct {
     const red = "\x1b[31m";
     const green = "\x1b[32m";
-    const cyan = "\x1b[36m";
+    const yellow = "\x1b[33m";
     const invert = "\x1b[7m";
     const underline = "\x1b[4m";
     const dim = "\x1b[2m";
@@ -337,7 +337,7 @@ fn printModifiedSegment(
 
 pub fn printHunkHeader(writer: anytype, config: DiffConfig, original_line_number: usize, original_line_count: usize, changed_line_number: usize, changed_line_count: usize) !void {
     if (config.enable_ansi_colors) {
-        try writer.print("{s}@@ -{},{} +{},{} @@{s}\n", .{ colors.cyan, original_line_number, original_line_count, changed_line_number, changed_line_count, colors.reset });
+        try writer.print("{s}@@ -{},{} +{},{} @@{s}\n", .{ colors.yellow, original_line_number, original_line_count, changed_line_number, changed_line_count, colors.reset });
     } else {
         try writer.print("@@ -{},{} +{},{} @@\n", .{ original_line_number, original_line_count, changed_line_number, changed_line_count });
     }

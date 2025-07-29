@@ -11,6 +11,7 @@ ref_count: RefCount,
 /// This is stored to allow lazy construction of source map files.
 vlq_ptr: [*]u8,
 vlq_len: u32,
+vlq_allocator: std.mem.Allocator,
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
@@ -31,18 +32,13 @@ end_state: struct {
 /// already counted for.
 bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8, dev_allocator: std.mem.Allocator) bun.ptr.RefPtr(PackedMap) {
+pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
     assert(chunk.buffer.list.items.len > 0);
-
-    const duped_vlq = dev_allocator.dupe(u8, chunk.buffer.list.items) catch bun.outOfMemory();
-
-    var take = chunk.buffer;
-    take.deinit();
-
     return .new(.{
         .ref_count = .init(),
-        .vlq_ptr = duped_vlq.ptr,
-        .vlq_len = @intCast(duped_vlq.len),
+        .vlq_ptr = chunk.buffer.list.items.ptr,
+        .vlq_len = @intCast(chunk.buffer.list.items.len),
+        .vlq_allocator = chunk.buffer.allocator,
         .quoted_contents_ptr = quoted_contents.ptr,
         .quoted_contents_len = @intCast(quoted_contents.len),
         .end_state = .{
@@ -52,8 +48,8 @@ pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8, dev_allocator:
     });
 }
 
-fn destroy(self: *@This(), dev: *DevServer) void {
-    dev.allocator.free(self.vlq());
+fn destroy(self: *@This(), _: *DevServer) void {
+    self.vlq_allocator.free(self.vlq());
     bun.destroy(self);
 }
 
@@ -83,7 +79,7 @@ pub fn quotedContents(self: *const @This()) []u8 {
 
 comptime {
     if (!Environment.isDebug) {
-        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 5);
+        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 7);
         assert_eql(@alignOf(@This()), @alignOf(usize));
     }
 }

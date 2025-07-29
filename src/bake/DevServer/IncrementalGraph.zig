@@ -485,7 +485,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
                                             source_map.escaped_source.*.?,
-                                            dev.allocator,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;

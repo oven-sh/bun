@@ -23581,7 +23581,7 @@ fn NewParser_(
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
-                
+
                 const import_expr = p.newExpr(E.Import{
                     .expr = p.newExpr(E.String{ .data = import_path }, loc),
                     .options = if (with_attrs) |attrs| p.newExpr(E.Object{ .properties = attrs.properties }, loc) else Expr.empty,

@@ -388,7 +388,7 @@ describe("import.meta.glob", () => {
         new Response(buildProc.stderr).text(),
         buildProc.exited,
       ]);
-      
+
       expect(buildExitCode).toBe(0);
       expect(buildStderr).toBe("");
 

@@ -1829,7 +1829,7 @@ pub const TestCommand = struct {
         // Count each file only once, regardless of repeat count
         reporter.summary().files += 1;
 
-        while (repeat_index <= repeat_count) : (repeat_index += 1) {
+        while (repeat_index < repeat_count) : (repeat_index += 1) {
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);

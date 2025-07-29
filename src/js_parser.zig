@@ -23,7 +23,6 @@ const Decl = G.Decl;
 const Property = G.Property;
 const Arg = G.Arg;
 const Allocator = std.mem.Allocator;
-const glob = @import("./glob.zig");
 pub const StmtNodeIndex = js_ast.StmtNodeIndex;
 pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
@@ -25088,6 +25087,7 @@ const string = []const u8;
 
 const FeatureFlags = @import("./feature_flags.zig");
 const _runtime = @import("./runtime.zig");
+const glob = @import("./glob.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 
 const Define = @import("./defines.zig").Define;

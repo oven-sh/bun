@@ -34,7 +34,7 @@ pub const ImportWatcher = union(enum) {
         dir_fd: bun.FD,
         package_json: ?*bun.PackageJSON,
         comptime copy_file_path: bool,
-    ) bun.jsc.Maybe(void) {
+    ) bun.sys.Maybe(void) {
         return switch (this) {
             inline .hot, .watch => |watcher| watcher.addFile(
                 fd,
@@ -45,7 +45,7 @@ pub const ImportWatcher = union(enum) {
                 package_json,
                 copy_file_path,
             ),
-            .none => .{ .result = {} },
+            .none => .success,
         };
     }
 };

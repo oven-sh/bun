@@ -153,6 +153,10 @@ fn remap(self: *anyopaque, buf: []u8, alignment: mem.Alignment, new_len: usize, 
     return @ptrCast(value);
 }
 
+pub fn isInstance(allocator_: Allocator) bool {
+    return allocator_.vtable == &c_allocator_vtable;
+}
+
 const c_allocator_vtable = Allocator.VTable{
     .alloc = &Self.alloc,
     .resize = &Self.resize,

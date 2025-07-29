@@ -669,9 +669,9 @@ pub const BundleV2 = struct {
         path = this.pathWithPrettyInitialized(path, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch bun.outOfMemory();
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch bun.outOfMemory();
 
-        try this.graph.input_files.append(bun.default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = .{
                 .path = path,
                 .contents = "",
@@ -730,9 +730,9 @@ pub const BundleV2 = struct {
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch bun.outOfMemory();
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch bun.outOfMemory();
 
-        try this.graph.input_files.append(bun.default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = .{
                 .path = path.*,
                 .contents = "",
@@ -916,14 +916,14 @@ pub const BundleV2 = struct {
         {
             // Add the runtime
             const rt = ParseTask.getRuntimeSource(this.transpiler.options.target);
-            try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
+            try this.graph.input_files.append(this.graph.allocator, Graph.InputFile{
                 .source = rt.source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
-            try this.graph.ast.append(bun.default_allocator, JSAst.empty);
+            try this.graph.ast.append(this.graph.allocator, JSAst.empty);
             try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
@@ -1194,9 +1194,9 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
-        this.graph.input_files.append(bun.default_allocator, .{
+        this.graph.input_files.append(this.graph.allocator, .{
             .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
@@ -1234,9 +1234,9 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
-        this.graph.input_files.append(bun.default_allocator, .{
+        this.graph.input_files.append(this.graph.allocator, .{
             .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
@@ -1290,12 +1290,12 @@ pub const BundleV2 = struct {
         var new_source: Logger.Source = source_without_index;
         const source_index = this.graph.input_files.len;
         new_source.index = Index.init(source_index);
-        try this.graph.input_files.append(default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = new_source,
             .loader = .js,
             .side_effects = .has_side_effects,
         });
-        try this.graph.ast.append(default_allocator, JSAst.empty);
+        try this.graph.ast.append(this.graph.allocator, JSAst.empty);
 
         const task = bun.new(ServerComponentParseTask, .{
             .data = data,
@@ -2113,10 +2113,10 @@ pub const BundleV2 = struct {
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
-                        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+                        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
                         const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
-                        this.graph.input_files.append(bun.default_allocator, .{
+                        this.graph.input_files.append(this.graph.allocator, .{
                             .source = .{
                                 .path = path,
                                 .contents = "",
@@ -2212,8 +2212,8 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
-        defer this.graph.ast.deinit(bun.default_allocator);
-        defer this.graph.input_files.deinit(bun.default_allocator);
+        defer this.graph.ast.deinit(this.graph.allocator);
+        defer this.graph.input_files.deinit(this.graph.allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();
@@ -3344,8 +3344,8 @@ pub const BundleV2 = struct {
 
                         diff += 1;
 
-                        graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
-                        graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+                        graph.input_files.append(this.graph.allocator, new_input_file) catch unreachable;
+                        graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
                         if (is_html_entrypoint) {
                             this.ensureClientTranspiler();
@@ -4107,6 +4107,16 @@ const ExternalFreeFunctionAllocator = struct {
         bun.default_allocator.destroy(info);
     }
 };
+
+/// Returns true if `allocator` definitely has a valid `.ptr`.
+/// May return false even if `.ptr` is valid.
+///
+/// This function should check whether `allocator` matches any internal allocator types known to
+/// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
+/// don't need to be checked.
+pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
+    return allocator.vtable == &ExternalFreeFunctionAllocator.vtable;
+}
 
 pub const std = @import("std");
 pub const lex = @import("../js_lexer.zig");

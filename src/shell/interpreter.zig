@@ -942,7 +942,7 @@ pub const Interpreter = struct {
             .interp = interp,
         };
         interp.exit_code = exit_code;
-        switch (try interp.run()) {
+        switch (interp.run()) {
             .err => |e| {
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
@@ -1007,7 +1007,7 @@ pub const Interpreter = struct {
         };
         const exit_code: ExitCode = 1;
         interp.exit_code = exit_code;
-        switch (try interp.run()) {
+        switch (interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
@@ -1072,7 +1072,7 @@ pub const Interpreter = struct {
         return .success;
     }
 
-    pub fn run(this: *ThisInterpreter) !Maybe(void) {
+    pub fn run(this: *ThisInterpreter) Maybe(void) {
         log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
@@ -1080,7 +1080,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        try root.start().run();
+        root.start().run();
 
         return .success;
     }
@@ -1098,7 +1098,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        try root.start().run();
+        root.start().run();
         if (globalThis.hasException()) return error.JSError;
 
         return .js_undefined;
@@ -1114,12 +1114,12 @@ pub const Interpreter = struct {
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) bun.JSExecutionTerminated!void {
+    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
         log("asyncCommandDone {}", .{@"async"});
         @"async".actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
-            try this.finish(this.exit_code.?).run();
+            this.finish(this.exit_code.?).run();
         }
     }
 
@@ -1152,7 +1152,7 @@ pub const Interpreter = struct {
                     defer loop.exit();
                     const stdout_js = this.getBufferedStdout(globalThis);
                     const stderr_js = this.getBufferedStderr(globalThis);
-                    resolve.callMaybeEmitUncaught(globalThis, .js_undefined, &.{ .jsNumberFromU16(exit_code), stdout_js, stderr_js }) catch return .terminated;
+                    resolve.callMaybeEmitUncaught(globalThis, .js_undefined, &.{ .jsNumberFromU16(exit_code), stdout_js, stderr_js }) catch {};
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
                 }

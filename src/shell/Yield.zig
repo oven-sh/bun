@@ -58,9 +58,6 @@ pub const Yield = union(enum) {
     /// Failed and threw a JS error
     failed,
     done,
-    /// The biggest issue with the shell (which is currently not a problem since JSExecutionTerminated happens at the top of the event loop) is that this will stop execution of the shell and it will essentially leak a bunch of memory.
-    /// This won't be a problem when `.kill()` is implemented.
-    terminated,
 
     /// Used in debug builds to ensure the shell is not creating a callstack
     /// that is too deep.
@@ -74,7 +71,7 @@ pub const Yield = union(enum) {
         return this.* == .done;
     }
 
-    pub fn run(this: Yield) bun.JSExecutionTerminated!void {
+    pub fn run(this: Yield) void {
         if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
@@ -125,7 +122,6 @@ pub const Yield = union(enum) {
                 }
                 return;
             },
-            .terminated => return error.JSExecutionTerminated,
         }
     }
 

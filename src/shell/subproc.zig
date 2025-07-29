@@ -903,7 +903,7 @@ pub const ShellSubprocess = struct {
         return this.process.wait(sync);
     }
 
-    pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) bun.JSExecutionTerminated!void {
+    pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         log("onProcessExit({x}, {any})", .{ @intFromPtr(this), status });
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
@@ -926,7 +926,7 @@ pub const ShellSubprocess = struct {
         if (exit_code) |code| {
             const cmd = this.cmd_parent;
             if (cmd.exit_code == null) {
-                try cmd.onExit(code);
+                cmd.onExit(code);
             }
         }
     }
@@ -1173,7 +1173,6 @@ pub const PipeReader = struct {
         return should_continue;
     }
 
-    // TODO: properly propagate exception upwards
     pub fn onReaderDone(this: *PipeReader) void {
         log("onReaderDone(0x{x}, {s})", .{ @intFromPtr(this), @tagName(this.out_type) });
         const owned = this.toOwnedSlice();
@@ -1184,7 +1183,7 @@ pub const PipeReader = struct {
         defer this.deref();
         defer if (this.process) |_| this.deref();
         defer if (this.process) |p| p.onCloseIO(this.kind(p));
-        this.trySignalDoneToCmd().run() catch return;
+        this.trySignalDoneToCmd().run();
     }
 
     pub fn trySignalDoneToCmd(
@@ -1292,7 +1291,6 @@ pub const PipeReader = struct {
         }
     }
 
-    // TODO: properly propagate exception upwards
     pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
         log("PipeReader(0x{x}) onReaderError {}", .{ @intFromPtr(this), err });
         if (this.state == .done) {
@@ -1304,7 +1302,7 @@ pub const PipeReader = struct {
         defer this.deref();
         defer if (this.process) |_| this.deref();
         defer if (this.process) |p| p.onCloseIO(this.kind(p));
-        this.trySignalDoneToCmd().run() catch return;
+        this.trySignalDoneToCmd().run();
     }
 
     pub fn close(this: *PipeReader) void {

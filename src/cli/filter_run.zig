@@ -95,7 +95,7 @@ pub const ProcessHandle = struct {
             .result => {},
             .err => |err| {
                 if (!process.hasExited())
-                    try process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage)) catch {};
             },
         }
     }

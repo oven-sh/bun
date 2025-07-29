@@ -534,11 +534,11 @@ fn initSubproc(this: *Cmd) Yield {
     if (did_exit_immediately) {
         if (subproc.process.hasExited()) {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
-            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage)) catch return .terminated;
+            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage)) catch {};
         } else {
             // process has already exited, but we haven't called wait4() yet
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            subproc.process.wait(false) catch return .terminated;
+            subproc.process.wait(false) catch {};
         }
     }
 
@@ -676,14 +676,14 @@ pub fn hasFinished(this: *Cmd) bool {
 }
 
 /// Called by Subprocess
-pub fn onExit(this: *Cmd, exit_code: ExitCode) bun.JSExecutionTerminated!void {
+pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     this.exit_code = exit_code;
 
     const has_finished = this.hasFinished();
     log("cmd exit code={d} has_finished={any} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
     if (has_finished) {
         this.state = .done;
-        try this.next().run();
+        this.next().run();
     }
 }
 

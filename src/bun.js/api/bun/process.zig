@@ -291,7 +291,7 @@ pub const Process = struct {
 
     pub fn watchOrReap(this: *Process) bun.sys.Maybe(bool) {
         if (this.hasExited()) {
-            this.onExit(this.status, &std.mem.zeroes(Rusage)) catch {}; // TODO: audit callers
+            this.onExit(this.status, &std.mem.zeroes(Rusage)) catch {}; // TODO: properly propagate exception upwards
             return .{ .result = true };
         }
 
@@ -299,7 +299,7 @@ pub const Process = struct {
             .err => |err| {
                 if (comptime Environment.isPosix) {
                     if (err.getErrno() == .SRCH) {
-                        this.wait(true) catch {}; // TODO: audit callers
+                        this.wait(true) catch {}; // TODO: properly propagate exception upwards
                         return .{ .result = this.hasExited() };
                     }
                 }

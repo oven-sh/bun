@@ -122,7 +122,6 @@ pub fn removeReader(this: *IOReader, reader_: anytype) void {
     }
 }
 
-// TODO: properly propagate exception upwards
 pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
     var this: *IOReader = @ptrCast(@alignCast(ptr));
     log("IOReader(0x{x}, fd={}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
@@ -132,7 +131,7 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
     while (i < this.readers.len()) {
         var r = this.readers.get(i);
         var remove = false;
-        r.onReadChunk(chunk, &remove).run() catch return false;
+        r.onReadChunk(chunk, &remove).run();
         if (remove) {
             this.readers.swapRemove(i);
         } else {
@@ -159,7 +158,6 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
     return should_continue;
 }
 
-// TODO: properly propagate exception upwards
 pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
     this.setReading(false);
     this.err = err.toShellSystemError();
@@ -167,11 +165,10 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
         r.onReaderDone(if (this.err) |*e| brk: {
             e.ref();
             break :brk e.*;
-        } else null).run() catch return;
+        } else null).run();
     }
 }
 
-// TODO: properly propagate exception upwards
 pub fn onReaderDone(this: *IOReader) void {
     log("IOReader(0x{x}) done", .{@intFromPtr(this)});
     this.setReading(false);
@@ -179,7 +176,7 @@ pub fn onReaderDone(this: *IOReader) void {
         r.onReaderDone(if (this.err) |*err| brk: {
             err.ref();
             break :brk err.*;
-        } else null).run() catch return;
+        } else null).run();
     }
 }
 

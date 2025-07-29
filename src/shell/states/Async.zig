@@ -109,7 +109,7 @@ pub fn next(this: *Async) Yield {
             return .suspended;
         },
         .done => {
-            this.base.interpreter.asyncCmdDone(this) catch return .terminated;
+            this.base.interpreter.asyncCmdDone(this);
             return .done;
         },
     }

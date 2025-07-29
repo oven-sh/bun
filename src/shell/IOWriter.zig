@@ -325,7 +325,6 @@ pub fn doFileWrite(this: *IOWriter) Yield {
     return this.bump(child);
 }
 
-// TODO: properly propagate exception upwards
 pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatus) void {
     if (bun.Environment.isPosix) bun.assert(this.flags.pollable);
 
@@ -334,7 +333,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
     if (this.writer_idx >= this.writers.len()) return;
     const child = this.writers.get(this.writer_idx);
     if (child.isDead()) {
-        this.bump(child).run() catch return;
+        this.bump(child).run();
     } else {
         if (child.bytelist) |bl| {
             const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
@@ -367,11 +366,11 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
             // So for a quick hack we're just going to have all writes return an error.
             bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data", .{ @intFromPtr(this), this.fd });
             this.flags.broken_pipe = true;
-            return this.brokenPipeForWriters() catch return;
+            return this.brokenPipeForWriters();
         }
 
         if (child.written >= child.len) {
-            this.bump(child).run() catch return;
+            this.bump(child).run();
         }
     }
 
@@ -390,7 +389,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
     }
 }
 
-pub fn brokenPipeForWriters(this: *IOWriter) bun.JSExecutionTerminated!void {
+pub fn brokenPipeForWriters(this: *IOWriter) void {
     bun.assert(this.flags.broken_pipe);
     var offset: usize = 0;
     const writers = this.writers.sliceMutable()[this.writer_idx..];
@@ -401,7 +400,7 @@ pub fn brokenPipeForWriters(this: *IOWriter) bun.JSExecutionTerminated!void {
         }
         log("IOWriter(0x{x}, fd={}) brokenPipeForWriters Writer(0x{x}) {s}(0x{x})", .{ @intFromPtr(this), this.fd, @intFromPtr(w), @tagName(w.ptr.ptr.tag()), w.ptr.ptr.repr._ptr });
         const err: jsc.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
-        try w.ptr.onIOWriterChunk(0, err).run();
+        w.ptr.onIOWriterChunk(0, err).run();
         offset += w.len;
         this.cancelChunks(w.ptr);
     }
@@ -443,7 +442,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
 
         seen.append(@intFromPtr(ptr)) catch bun.outOfMemory();
         // TODO: This probably shouldn't call .run()
-        w.ptr.onIOWriterChunk(0, this.err).run() catch {};
+        w.ptr.onIOWriterChunk(0, this.err).run();
     }
 
     this.total_bytes_written = 0;

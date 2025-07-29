@@ -402,7 +402,7 @@ fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
     return .continue_parsing;
 }
 
-pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) bun.JSExecutionTerminated!void {
+pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
     var exec = &this.state.exec;
     const tasks_done = switch (exec.state) {
         .idle => @panic("Invalid state"),
@@ -430,7 +430,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) bun.JSExecutionTerminate
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
         this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
-        try this.next().run();
+        this.next().run();
     }
 }
 

@@ -88,7 +88,7 @@ fn writeNoIO(this: *@This()) Yield {
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
-    this.task.enqueue() catch return .terminated;
+    this.task.enqueue() catch {};
     return .suspended;
 }
 
@@ -154,12 +154,12 @@ pub const YesTask = struct {
         }
     }
 
-    pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
+    pub fn runFromMainThread(this: *@This()) void {
         const yes: *Yes = @fieldParentPtr("task", this);
         return yes.writeNoIO().run();
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
         return this.runFromMainThread();
     }
 };

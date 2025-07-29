@@ -2061,11 +2061,10 @@ pub const Resolver = struct {
     }
 
     pub fn drainPendingCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, comptime request_type: type, comptime cares_type: type, comptime lookup_name: []const u8, result: ?*cares_type) bun.JSError!void {
-        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
-
         this.ref();
         defer this.deref();
 
+        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
         const key = this.getKey(index, cache_name, request_type);
         defer bun.default_allocator.destroy(key.lookup);
 
@@ -2106,11 +2105,11 @@ pub const Resolver = struct {
     }
 
     pub fn drainPendingHostCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) bun.JSError!void {
-        const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
-        defer bun.default_allocator.destroy(key.lookup);
-
         this.ref();
         defer this.deref();
+
+        const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
 
         var addr = result orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
@@ -2151,11 +2150,11 @@ pub const Resolver = struct {
 
     pub fn drainPendingHostNative(this: *Resolver, index: u8, globalObject: *jsc.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) bun.JSError!void {
         log("drainPendingHostNative", .{});
-        const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
-        defer bun.default_allocator.destroy(key.lookup);
-
         this.ref();
         defer this.deref();
+
+        const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
 
         var array = try result.toJS(globalObject) orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
@@ -2197,11 +2196,11 @@ pub const Resolver = struct {
     }
 
     pub fn drainPendingAddrCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) bun.JSError!void {
-        const key = this.getKey(index, "pending_addr_cache_cares", GetHostByAddrInfoRequest);
-        defer bun.default_allocator.destroy(key.lookup);
-
         this.ref();
         defer this.deref();
+
+        const key = this.getKey(index, "pending_addr_cache_cares", GetHostByAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
 
         var addr = result orelse {
             var pending: ?*CAresReverse = key.lookup.head.next;
@@ -2242,11 +2241,11 @@ pub const Resolver = struct {
     }
 
     pub fn drainPendingNameInfoCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) bun.JSError!void {
-        const key = this.getKey(index, "pending_nameinfo_cache_cares", GetNameInfoRequest);
-        defer bun.default_allocator.destroy(key.lookup);
-
         this.ref();
         defer this.deref();
+
+        const key = this.getKey(index, "pending_nameinfo_cache_cares", GetNameInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
 
         var name_info = result orelse {
             var pending: ?*CAresNameInfo = key.lookup.head.next;

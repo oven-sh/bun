@@ -1,5 +1,5 @@
 const PostgresSQLQuery = @This();
-
+const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -8,7 +8,7 @@ thisValue: JSRef = JSRef.empty(),
 
 status: Status = Status.pending,
 
-ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+ref_count: RefCount = RefCount.init(),
 
 flags: packed struct(u8) {
     is_done: bool = false,
@@ -19,6 +19,9 @@ flags: packed struct(u8) {
     result_mode: PostgresSQLQueryResultMode = .objects,
     _padding: u1 = 0,
 } = .{},
+
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub fn getTarget(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
     const thisValue = this.thisValue.get();
@@ -52,7 +55,7 @@ pub const Status = enum(u8) {
 };
 
 pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.load(.monotonic) > 1;
+    return this.ref_count.getCount() > 1;
 }
 
 pub fn deinit(this: *@This()) void {
@@ -73,18 +76,6 @@ pub fn finalize(this: *@This()) void {
         this.thisValue.weak = .zero;
     }
     this.deref();
-}
-
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count.fetchSub(1, .monotonic);
-
-    if (ref_count == 1) {
-        this.deinit();
-    }
-}
-
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count.fetchAdd(1, .monotonic) > 0);
 }
 
 pub fn onWriteFail(
@@ -303,13 +294,31 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
     var query_str = this.query.toUTF8(bun.default_allocator);
     defer query_str.deinit();
     var writer = connection.writer();
-
+    // We need a strong reference to the query so that it doesn't get GC'd
+    this.ref();
     if (this.flags.simple) {
         debug("executeQuery", .{});
+
+        const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
+            this.deref();
+            return globalObject.throwOutOfMemory();
+        };
+        // Query is simple and it's the only owner of the statement
+        stmt.* = .{
+            .signature = Signature.empty(),
+            .ref_count = 1,
+            .status = .parsing,
+        };
+        this.statement = stmt;
 
         const can_execute = !connection.hasQueryRunning();
         if (can_execute) {
             PostgresRequest.executeQuery(query_str.slice(), PostgresSQLConnection.Writer, writer) catch |err| {
+                // fail to run do cleanup
+                this.statement = null;
+                bun.default_allocator.destroy(stmt);
+                this.deref();
+
                 if (!globalObject.hasException())
                     return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to execute query", err));
                 return error.JSError;
@@ -320,21 +329,16 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
         } else {
             this.status = .pending;
         }
-        const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
+        connection.requests.writeItem(this) catch {
+            // fail to run do cleanup
+            this.statement = null;
+            bun.default_allocator.destroy(stmt);
+            this.deref();
+
             return globalObject.throwOutOfMemory();
         };
-        // Query is simple and it's the only owner of the statement
-        stmt.* = .{
-            .signature = Signature.empty(),
-            .ref_count = 1,
-            .status = .parsing,
-        };
-        this.statement = stmt;
-        // We need a strong reference to the query so that it doesn't get GC'd
-        connection.requests.writeItem(this) catch return globalObject.throwOutOfMemory();
-        this.ref();
-        this.thisValue.upgrade(globalObject);
 
+        this.thisValue.upgrade(globalObject);
         js.targetSetCached(this_value, globalObject, query);
         if (this.status == .running) {
             connection.flushDataAndResetTimeout();
@@ -347,6 +351,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
     const columns_value: JSValue = js.columnsGetCached(this_value) orelse .js_undefined;
 
     var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value, connection.prepared_statement_id, connection.flags.use_unnamed_prepared_statements) catch |err| {
+        this.deref();
         if (!globalObject.hasException())
             return globalObject.throwError(err, "failed to generate signature");
         return error.JSError;
@@ -363,12 +368,16 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
             };
             connection_entry_value = entry.value_ptr;
             if (entry.found_existing) {
-                this.statement = connection_entry_value.?.*;
-                this.statement.?.ref();
+                const stmt = connection_entry_value.?.*;
+                this.statement = stmt;
+                stmt.ref();
                 signature.deinit();
 
-                switch (this.statement.?.status) {
+                switch (stmt.status) {
                     .failed => {
+                        this.statement = null;
+                        stmt.deref();
+                        this.deref();
                         // If the statement failed, we need to throw the error
                         return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
                     },
@@ -379,6 +388,11 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
 
                             // bindAndExecute will bind + execute, it will change to running after binding is complete
                             PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                                // fail to run do cleanup
+                                this.statement = null;
+                                stmt.deref();
+                                this.deref();
+
                                 if (!globalObject.hasException())
                                     return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to bind and execute query", err));
                                 return error.JSError;
@@ -406,6 +420,11 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                 PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
                     signature.deinit();
+                    if (this.statement) |stmt| {
+                        this.statement = null;
+                        stmt.deref();
+                    }
+                    this.deref();
                     if (!globalObject.hasException())
                         return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to prepare and query", err));
                     return error.JSError;
@@ -419,6 +438,11 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
 
                 PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
                     signature.deinit();
+                    if (this.statement) |stmt| {
+                        this.statement = null;
+                        stmt.deref();
+                    }
+                    this.deref();
                     if (!globalObject.hasException())
                         return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to write query", err));
                     return error.JSError;
@@ -436,6 +460,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
         }
         {
             const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
+                this.deref();
                 return globalObject.throwOutOfMemory();
             };
             // we only have connection_entry_value if we are using named prepared statements
@@ -451,9 +476,8 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
             }
         }
     }
-    // We need a strong reference to the query so that it doesn't get GC'd
+
     connection.requests.writeItem(this) catch return globalObject.throwOutOfMemory();
-    this.ref();
     this.thisValue.upgrade(globalObject);
 
     js.targetSetCached(this_value, globalObject, query);

@@ -2233,6 +2233,7 @@ pub const BundleV2 = struct {
         }
 
         this.free_list.clearAndFree();
+        this.linker.graph.deinit();
     }
 
     pub fn runFromJSInNewThread(
@@ -3922,6 +3923,13 @@ pub const CompileResult = union(enum) {
                 .err => "",
             },
             .html => |*c| c.code,
+        };
+    }
+
+    pub fn allocator(this: *const CompileResult) ?std.mem.Allocator {
+        return switch (this.*) {
+            .javascript => |js| js.allocator(),
+            else => null,
         };
     }
 

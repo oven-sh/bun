@@ -1699,6 +1699,10 @@ pub const Chunk = struct {
                 return this.ctx.getBuffer();
             }
 
+            pub inline fn takeBuffer(this: *Format) MutableString {
+                return this.ctx.takeBuffer();
+            }
+
             pub inline fn getCount(this: Format) usize {
                 return this.ctx.getCount();
             }
@@ -1751,6 +1755,11 @@ pub const Chunk = struct {
             return this.data;
         }
 
+        pub fn takeBuffer(this: *VLQSourceMap) MutableString {
+            defer this.data = .initEmpty(this.data.allocator);
+            return this.data;
+        }
+
         pub fn getCount(this: VLQSourceMap) usize {
             return this.count;
         }
@@ -1787,6 +1796,10 @@ pub const Chunk = struct {
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
+            pub fn deinit(this: *ThisBuilder) void {
+                this.source_map.deinit();
+            }
+
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
                 var buffer = b.source_map.getBuffer();
@@ -1796,7 +1809,7 @@ pub const Chunk = struct {
                     buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
-                    .buffer = MutableString.initCopy(bun.default_allocator, buffer.list.items) catch bun.outOfMemory(),
+                    .buffer = b.source_map.takeBuffer(),
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,

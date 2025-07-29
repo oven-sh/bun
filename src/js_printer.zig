@@ -483,30 +483,14 @@ pub const RequireOrImportMeta = struct {
 };
 
 pub const PrintResult = union(enum) {
-    result: struct {
+    result: Success,
+    err: anyerror,
+
+    pub const Success = struct {
         code: []u8,
         code_allocator: ?std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
-    },
-    err: anyerror,
-
-    pub fn clone(
-        this: PrintResult,
-        allocator: std.mem.Allocator,
-    ) !PrintResult {
-        return switch (this) {
-            .result => PrintResult{
-                .result = .{
-                    .code = try allocator.dupe(u8, this.result.code),
-                    .code_allocator = allocator,
-                    .source_map = this.result.source_map,
-                },
-            },
-            .err => PrintResult{
-                .err = this.err,
-            },
-        };
-    }
+    };
 };
 
 // do not make this a packed struct

@@ -148,7 +148,7 @@ pub const LinkerContext = struct {
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *?[]const u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
+            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
                 if (quoted_source_contents.*) |slice| {
                     bun.default_allocator.free(slice);
@@ -2421,7 +2421,10 @@ pub const LinkerContext = struct {
             // 4. externals
             return .{ .joiner = j.* };
 
-        var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        var pieces = brk: {
+            errdefer j.deinit();
+            break :brk try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        };
         errdefer pieces.deinit();
         const complete_output = try j.done(allocator);
         var output = complete_output;

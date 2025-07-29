@@ -16,8 +16,8 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     defer arena.deinit();
 
     // Also generate the cross-chunk binding code
-    var cross_chunk_prefix: []u8 = &.{};
-    var cross_chunk_suffix: []u8 = &.{};
+    var cross_chunk_prefix: js_printer.PrintResult = undefined;
+    var cross_chunk_suffix: js_printer.PrintResult = undefined;
 
     var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
     var runtime_members = &runtime_scope.members;
@@ -68,7 +68,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
         cross_chunk_suffix = js_printer.print(
             worker.allocator,
             c.resolver.opts.target,
@@ -81,7 +81,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
     }
 
     // Generate the exports for the entry point, if there are any
@@ -107,6 +107,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .input = chunk.unique_key,
         },
     };
+    errdefer j.deinit();
     const output_format = c.options.output_format;
 
     var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
@@ -119,7 +120,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     // Start with the hashbang if there is one. This must be done before the
     // banner because it only works if it's literally the first character.
     if (chunk.isEntryPoint()) {
-        const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+        const is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
         const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
 
         if (hashbang.len > 0) {
@@ -199,10 +200,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         else => {}, // no wrapper
     }
 
-    if (cross_chunk_prefix.len > 0) {
+    if (cross_chunk_prefix.result.code.len > 0) {
         newline_before_comment = true;
-        line_offset.advance(cross_chunk_prefix);
-        j.push(cross_chunk_prefix, bun.default_allocator);
+        line_offset.advance(cross_chunk_prefix.result.code);
+        j.push(cross_chunk_prefix.result.code, cross_chunk_prefix.result.code_allocator);
     }
 
     // Concatenate the generated JavaScript chunks together
@@ -322,16 +323,16 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // Stick the entry point tail at the end of the file. Deliberately don't
         // include any source mapping information for this because it's automatically
         // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code, bun.default_allocator);
+        j.push(tail_code, entry_point_tail.allocator());
     }
 
     // Put the cross-chunk suffix inside the IIFE
-    if (cross_chunk_suffix.len > 0) {
+    if (cross_chunk_suffix.result.code.len > 0) {
         if (newline_before_comment) {
             j.pushStatic("\n");
         }
 
-        j.push(cross_chunk_suffix, bun.default_allocator);
+        j.push(cross_chunk_suffix.result.code, cross_chunk_suffix.result.code_allocator);
     }
 
     switch (output_format) {

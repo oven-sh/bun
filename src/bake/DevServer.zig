@@ -2041,7 +2041,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
-    const quoted_source_contents: []const ?[]const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
+    const quoted_source_contents: []const ?[]u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (

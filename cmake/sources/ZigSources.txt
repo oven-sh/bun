@@ -546,6 +546,7 @@ src/http/AsyncHTTP.zig
 src/http/CertificateInfo.zig
 src/http/Decompressor.zig
 src/http/Encoding.zig
+src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig

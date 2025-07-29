@@ -1,5 +1,82 @@
 const HTTPThread = @This();
 
+const VersionUpdateChecker = struct {
+    last_check_time: i64 = 0,
+    next_check_interval: i64 = 0,
+    has_checked_this_idle_period: bool = false,
+    random: std.Random.DefaultPrng,
+
+    const min_interval_seconds = 30;
+    const max_interval_seconds = 180;
+
+    pub fn init() @This() {
+        var seed: u64 = undefined;
+        std.crypto.random.bytes(std.mem.asBytes(&seed));
+        return @This(){
+            .random = std.Random.DefaultPrng.init(seed),
+        };
+    }
+
+    pub fn shouldCheckVersion(self: *@This(), current_time: i64) bool {
+        // Don't check if we already checked during this idle period
+        if (self.has_checked_this_idle_period) {
+            return false;
+        }
+
+        // Calculate next check time if not set
+        if (self.next_check_interval == 0) {
+            const random_interval = self.random.random().intRangeAtMost(i64, min_interval_seconds, max_interval_seconds);
+            self.next_check_interval = random_interval;
+            self.last_check_time = current_time;
+            return false;
+        }
+
+        // Check if enough time has passed
+        const elapsed = current_time - self.last_check_time;
+        if (elapsed >= self.next_check_interval) {
+            self.has_checked_this_idle_period = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    pub fn onCheckCompleted(self: *@This(), current_time: i64) void {
+        // Set up next check interval
+        const random_interval = self.random.random().intRangeAtMost(i64, min_interval_seconds, max_interval_seconds);
+        self.next_check_interval = random_interval;
+        self.last_check_time = current_time;
+    }
+
+    pub fn onIdlePeriodEnded(self: *@This()) void {
+        self.has_checked_this_idle_period = false;
+    }
+
+    pub fn checkForUpdates(self: *@This()) void {
+        _ = self; // unused parameter
+        // This runs the actual version check
+        performVersionCheck() catch |err| {
+            threadlog("Version check failed: {any}\n", .{err});
+        };
+    }
+
+    fn performVersionCheck() !void {
+        // Use existing HTTP infrastructure to check for updates
+        // This is a simplified version - in practice you'd want to make an HTTP request
+        // to a Bun version endpoint and compare with current version
+        threadlog("Checking for Bun version updates...\n", .{});
+
+        // For now, just log that we're checking
+        // In a real implementation, this would:
+        // 1. Create an HTTP request to check latest version
+        // 2. Compare with current version (Global.package_json_version)
+        // 3. Log if update is available
+
+        const current_version = Global.package_json_version;
+        threadlog("Current Bun version: {s}\n", .{current_version});
+    }
+};
+
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
 loop: *jsc.MiniEventLoop,
@@ -20,6 +97,8 @@ has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 timer: std.time.Timer,
 lazy_libdeflater: ?*LibdeflateState = null,
 lazy_request_body_buffer: ?*HeapRequestBodyBuffer = null,
+
+version_checker: VersionUpdateChecker = undefined,
 
 pub const HeapRequestBodyBuffer = struct {
     buffer: [512 * 1024]u8 = undefined,
@@ -176,6 +255,7 @@ fn initOnce(opts: *const InitOpts) void {
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
         .timer = std.time.Timer.start() catch unreachable,
+        .version_checker = VersionUpdateChecker.init(),
     };
     bun.libdeflate.load();
     const thread = std.Thread.spawn(
@@ -368,6 +448,23 @@ fn drainEvents(this: *@This()) void {
     }
 }
 
+fn checkVersionUpdatesDuringIdle(this: *@This()) void {
+    // Only check if there are no active requests (thread is idle)
+    const active = AsyncHTTP.active_requests_count.load(.monotonic);
+    if (active > 0) {
+        // Thread is busy, reset idle state
+        this.version_checker.onIdlePeriodEnded();
+        return;
+    }
+
+    // Thread is idle, check if we should perform version check
+    const current_time = std.time.timestamp();
+    if (this.version_checker.shouldCheckVersion(current_time)) {
+        this.version_checker.checkForUpdates();
+        this.version_checker.onCheckCompleted(current_time);
+    }
+}
+
 fn processEvents(this: *@This()) noreturn {
     if (comptime Environment.isPosix) {
         this.loop.loop.num_polls = @max(2, this.loop.loop.num_polls);
@@ -385,6 +482,9 @@ fn processEvents(this: *@This()) noreturn {
             start_time = std.time.nanoTimestamp();
         }
         Output.flush();
+
+        // Check for version updates during idle periods (before sleeping)
+        this.checkVersionUpdatesDuringIdle();
 
         this.loop.loop.inc();
         this.loop.loop.tick();

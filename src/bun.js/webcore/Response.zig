@@ -464,15 +464,35 @@ pub fn constructRedirect(
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
-            } else {
+                const status_number = init.toInt32();
+                // Validate redirect status codes (301, 302, 303, 307, 308)
+                if (status_number == 301 or status_number == 302 or status_number == 303 or status_number == 307 or status_number == 308) {
+                    response.init.status_code = @as(u16, @intCast(status_number));
+                } else {
+                    const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
+                    return globalThis.throwValue(err);
+                }
+            } else if (init.isObject()) {
+                // Only process object init values to prevent crash with non-object values
                 if (Response.Init.init(globalThis, init) catch |err|
                     if (err == error.JSError) return .zero else null) |_init|
                 {
-                    response.init = _init;
-                    response.init.status_code = 302;
+                    // Validate that status code is a valid redirect status if provided
+                    if (_init.status_code != 200) { // 200 is the default, so if it's changed, validate it
+                        if (_init.status_code == 301 or _init.status_code == 302 or _init.status_code == 303 or _init.status_code == 307 or _init.status_code == 308) {
+                            response.init = _init;
+                        } else {
+                            response.init.deinit(bun.default_allocator);
+                            const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
+                            return globalThis.throwValue(err);
+                        }
+                    } else {
+                        response.init = _init;
+                        response.init.status_code = 302; // Default redirect status
+                    }
                 }
             }
+            // Non-object, non-number init values are ignored (like strings, booleans, etc.)
         }
         if (globalThis.hasException()) {
             return .zero;

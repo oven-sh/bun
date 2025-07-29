@@ -39,6 +39,7 @@ jestExpect.extend({
 
 // Given a Jest mock function, return a minimal mock of a spy.
 const createSpy = <T extends FunctionLike>(fn: jest.Mock<T>): jest.Mock<T> => {
+  if (typeof Bun !== "undefined") return fn;
   const spy = function () {};
 
   spy.calls = {

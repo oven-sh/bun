@@ -1,3 +1,4 @@
+const start = Date.now();
 let isInstalled = false;
 try {
   const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
@@ -732,14 +733,17 @@ async function main() {
   }
 
   const now = Date.now();
-  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 24);
+  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 12);
 
   console.log(
     " ".repeat(sin) +
       (errors.length > 0 ? "✗" : "✓") +
       " cppbind.ts generated bindings to " +
       resultFilePath +
-      (errors.length > 0 ? " with errors" : ""),
+      (errors.length > 0 ? " with errors" : "") +
+      " in " +
+      (now - start) +
+      "ms",
   );
   if (errors.length > 0) {
     process.exit(1);

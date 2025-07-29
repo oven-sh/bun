@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
-  return output.replaceAll(/ \[[0-9\.]+ms\]/g, "").replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)");
+  return output
+    .replaceAll(/ \[[0-9\.]+ms\]/g, "")
+    .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)")
+    .replaceAll(
+      "test\\js\\bun\\test\\printing\\diffexample.fixture.ts:",
+      "test/js/bun/test/printing/diffexample.fixture.ts:",
+    );
 }
 function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");

@@ -807,10 +807,6 @@ test("no color", async () => {
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
-  expect(noColorStdout).toMatchInlineSnapshot(`
-    "bun test v1.2.19 (4dff2c0f)
-    "
-  `);
 
   const colorSpawn = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],

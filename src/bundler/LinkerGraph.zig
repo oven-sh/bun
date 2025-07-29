@@ -50,7 +50,7 @@ pub fn deinit(this: *LinkerGraph) void {
             bun.default_allocator.free(contents);
         }
     }
-    this.files.clearAndFree(bun.default_allocator);
+    this.files.clearAndFree(this.allocator);
 }
 
 pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {

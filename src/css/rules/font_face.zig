@@ -1,7 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -189,13 +186,13 @@ pub const UnicodeRange = struct {
                     .result => |vv| vv,
                     .err => {
                         input.reset(&after_number);
-                        return .{ .result = {} };
+                        return .success;
                     },
                 };
 
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
-                if (token.* == .delim or token.* == .number) return .{ .result = {} };
-                return .{ .result = {} };
+                if (token.* == .delim or token.* == .number) return .success;
+                return .success;
             },
             .delim => |c| {
                 if (c == '+') {
@@ -220,7 +217,7 @@ pub const UnicodeRange = struct {
             const start = input.state();
             if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
-            return .{ .result = {} };
+            return .success;
         }
     }
 
@@ -734,3 +731,8 @@ pub const FontFaceDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

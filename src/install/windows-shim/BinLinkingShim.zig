@@ -10,12 +10,6 @@
 //! - args always ends with a trailing space
 //!
 //! See 'bun_shim_impl.zig' for more details on how this file is consumed.
-const std = @import("std");
-
-const bun = @import("bun");
-const simdutf = bun.simdutf;
-
-const lastIndexOfScalar = std.mem.lastIndexOfScalar;
 
 fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
     return std.mem.eql(u8, a, b);
@@ -309,3 +303,9 @@ pub fn looseDecode(input: []const u8) ?Decoded {
         .flags = flags,
     };
 }
+
+const std = @import("std");
+const lastIndexOfScalar = std.mem.lastIndexOfScalar;
+
+const bun = @import("bun");
+const simdutf = bun.simdutf;

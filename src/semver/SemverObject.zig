@@ -1,12 +1,14 @@
-pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+const SemverObject = @This();
+
+pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    const object = jsc.JSValue.createEmptyObject(globalThis, 2);
 
     object.put(
         globalThis,
-        JSC.ZigString.static("satisfies"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("satisfies"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("satisfies"),
+            jsc.ZigString.static("satisfies"),
             2,
             SemverObject.satisfies,
             false,
@@ -15,10 +17,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("order"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("order"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("order"),
+            jsc.ZigString.static("order"),
             2,
             SemverObject.order,
             false,
@@ -29,9 +31,9 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn order(
-    globalThis: *JSC.JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+    callFrame: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -53,8 +55,8 @@ pub fn order(
     const right = right_string.toSlice(globalThis, allocator);
     defer right.deinit();
 
-    if (!strings.isAllASCII(left.slice())) return JSC.jsNumber(0);
-    if (!strings.isAllASCII(right.slice())) return JSC.jsNumber(0);
+    if (!strings.isAllASCII(left.slice())) return .jsNumber(0);
+    if (!strings.isAllASCII(right.slice())) return .jsNumber(0);
 
     const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
     const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
@@ -71,13 +73,13 @@ pub fn order(
     const right_version = right_result.version.max();
 
     return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
-        .eq => JSC.jsNumber(0),
-        .gt => JSC.jsNumber(1),
-        .lt => JSC.jsNumber(-1),
+        .eq => .jsNumber(0),
+        .gt => .jsNumber(1),
+        .lt => .jsNumber(-1),
     };
 }
 
-pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn satisfies(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -119,20 +121,19 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
     const right_version = right_group.getExactVersion();
 
     if (right_version != null) {
-        return JSC.jsBoolean(left_version.eql(right_version.?));
+        return .jsBoolean(left_version.eql(right_version.?));
     }
 
-    return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
+    return .jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
-const JSC = bun.JSC;
-const SlicedString = bun.Semver.SlicedString;
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
 
 const Query = bun.Semver.Query;
+const SlicedString = bun.Semver.SlicedString;
 const Version = bun.Semver.Version;
-const SemverObject = @This();

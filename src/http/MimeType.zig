@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-
-const Loader = @import("../options.zig").Loader;
-const ComptimeStringMap = bun.ComptimeStringMap;
-
 const MimeType = @This();
 
 value: string,
@@ -1631,3 +1623,12 @@ pub fn sniff(bytes: []const u8) ?MimeType {
 
     return null;
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const Loader = @import("../options.zig").Loader;
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const strings = bun.strings;

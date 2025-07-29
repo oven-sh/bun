@@ -1,19 +1,3 @@
-const Fs = @import("fs.zig");
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const CodePoint = bun.CodePoint;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-const default_allocator = bun.default_allocator;
-
-const options = @import("./options.zig");
-const import_record = @import("import_record.zig");
-const logger = bun.logger;
-const Options = options;
-const URL = @import("./url.zig").URL;
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {
@@ -1287,3 +1271,21 @@ pub fn NewBundler(
         // pub fn copyFileRange(this: *CSSBundler, buf: anytype) !void {}
     };
 }
+
+const string = []const u8;
+
+const Fs = @import("./fs.zig");
+const Options = options;
+const import_record = @import("./import_record.zig");
+const options = @import("./options.zig");
+const std = @import("std");
+const URL = @import("./url.zig").URL;
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;

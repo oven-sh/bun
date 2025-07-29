@@ -1,22 +1,3 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const ExtractData = Install.ExtractData;
-const PackageManager = Install.PackageManager;
-const Semver = bun.Semver;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const GitSHA = String;
-const Path = bun.path;
-const File = bun.sys.File;
-const OOM = bun.OOM;
-
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
@@ -504,7 +485,7 @@ pub const Repository = extern struct {
         url: string,
         attempt: u8,
     ) !std.fs.Dir {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
@@ -601,7 +582,7 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
     ) !ExtractData {
-        bun.Analytics.Features.git_dependencies += 1;
+        bun.analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
@@ -699,3 +680,26 @@ pub const Repository = extern struct {
         };
     }
 };
+
+const string = []const u8;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Environment = @import("../env.zig");
+const std = @import("std");
+const FileSystem = @import("../fs.zig").FileSystem;
+
+const Install = @import("./install.zig");
+const ExtractData = Install.ExtractData;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Path = bun.path;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const GitSHA = String;
+const String = Semver.String;

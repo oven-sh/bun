@@ -176,9 +176,15 @@ export default {
     page("cli/pm", "`bun pm`", {
       description: "Utilities relating to package management with Bun.",
     }),
+    page("cli/why", "`bun why`", {
+      description: "Explains why a package is installed in your project.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
+    }),
+    page("install/isolated", "Isolated installs", {
+      description: "Create strict dependency isolation, preventing phantom dependencies.",
     }),
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",

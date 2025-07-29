@@ -1,3 +1,5 @@
+const Export = @This();
+
 printing: bool = false,
 
 const Entry = struct {
@@ -21,7 +23,7 @@ pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), compti
     return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Export, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.printing);
     }
@@ -122,17 +124,21 @@ pub inline fn bltn(this: *Export) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellExport, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Export = @This();
-const JSC = bun.JSC;
-const std = @import("std");
 const log = debug;
+
+const std = @import("std");
+
+const interpreter = @import("../interpreter.zig");
 const EnvStr = interpreter.EnvStr;
+const Interpreter = interpreter.Interpreter;
+
+const Builtin = Interpreter.Builtin;
 const BuiltinIO = Interpreter.Builtin.BuiltinIO;
+
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;

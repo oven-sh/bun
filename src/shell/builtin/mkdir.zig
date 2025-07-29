@@ -1,3 +1,5 @@
+const Mkdir = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -8,13 +10,13 @@ state: union(enum) {
         output_waiting: u16 = 0,
         output_done: u16 = 0,
         args: []const [*:0]const u8,
-        err: ?JSC.SystemError = null,
+        err: ?jsc.SystemError = null,
     },
     waiting_write_err,
     done,
 } = .idle,
 
-pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| err.deref();
 
     switch (this.state) {
@@ -171,10 +173,10 @@ pub const ShellMkdirTask = struct {
     cwd_path: [:0]const u8,
     created_directories: ArrayList(u8),
 
-    err: ?JSC.SystemError = null,
-    task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    err: ?jsc.SystemError = null,
+    task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
 
     pub fn deinit(this: *ShellMkdirTask) void {
         this.created_directories.deinit();
@@ -208,7 +210,7 @@ pub const ShellMkdirTask = struct {
             .filepath = filepath,
             .created_directories = ArrayList(u8).init(bun.default_allocator),
             .event_loop = evtloop,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         };
         return task;
     }
@@ -227,7 +229,7 @@ pub const ShellMkdirTask = struct {
         this.runFromMainThread();
     }
 
-    fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+    fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellMkdirTask = @fieldParentPtr("task", task);
         debug("{} runFromThreadPool", .{this});
 
@@ -242,11 +244,11 @@ pub const ShellMkdirTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
-        var node_fs = JSC.Node.fs.NodeFS{};
+        var node_fs = jsc.Node.fs.NodeFS{};
         // Recursive
         if (this.opts.parents) {
-            const args = JSC.Node.fs.Arguments.Mkdir{
-                .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+            const args = jsc.Node.fs.Arguments.Mkdir{
+                .path = jsc.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = true,
                 .always_return_none = true,
             };
@@ -261,8 +263,8 @@ pub const ShellMkdirTask = struct {
                 },
             }
         } else {
-            const args = JSC.Node.fs.Arguments.Mkdir{
-                .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+            const args = jsc.Node.fs.Arguments.Mkdir{
+                .path = jsc.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = false,
                 .always_return_none = true,
             };
@@ -371,24 +373,29 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellMkdir, true);
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
+
+const log = debug;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
 
-const Mkdir = @This();
-const log = debug;
-const OutputTask = interpreter.OutputTask;
-const OutputSrc = interpreter.OutputSrc;
-const WorkPool = bun.JSC.WorkPool;
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
 const ResolvePath = bun.path;
+
+const jsc = bun.jsc;
+const WorkPool = bun.jsc.WorkPool;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;
+
+const std = @import("std");
 const ArrayList = std.ArrayList;

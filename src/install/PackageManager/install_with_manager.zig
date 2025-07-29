@@ -199,8 +199,6 @@ pub fn installWithManager(
                     lockfile.catalogs.count(&lockfile, builder);
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
-                    manager.lockfile.node_linker = lockfile.node_linker;
-
                     const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                     const len = @as(u32, @truncate(new_dependencies.len));
                     var packages = manager.lockfile.packages.slice();
@@ -741,27 +739,27 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        if (manager.lockfile.node_linker == .hoisted or
+        switch (manager.options.node_linker) {
+            .hoisted,
             // TODO
-            manager.lockfile.node_linker == .auto)
-        {
-            break :install_summary try installHoistedPackages(
+            .auto,
+            => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
                 workspace_filters.items,
                 install_root_dependencies,
                 log_level,
-            );
-        }
+            ),
 
-        break :install_summary installIsolatedPackages(
-            manager,
-            ctx,
-            install_root_dependencies,
-            workspace_filters.items,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
-        };
+            .isolated => break :install_summary installIsolatedPackages(
+                manager,
+                ctx,
+                install_root_dependencies,
+                workspace_filters.items,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            },
+        }
     };
 
     if (log_level != .silent) {
@@ -841,9 +839,10 @@ pub fn installWithManager(
             const output_in_foreground = true;
             try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
+            // .monotonic is okay because at this point, this value is only accessed from this
+            // thread.
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
-
                 manager.sleep();
             }
         }
@@ -988,7 +987,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
@@ -1002,9 +1001,8 @@ const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

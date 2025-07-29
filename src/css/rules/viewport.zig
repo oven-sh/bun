@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -28,3 +27,5 @@ pub const ViewportRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");

@@ -1,13 +1,8 @@
 //! Shared implementation of Web and Node `Worker`
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Output = bun.Output;
-const log = Output.scoped(.Worker, true);
-const std = @import("std");
-const JSValue = jsc.JSValue;
-const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
 const WebWorker = @This();
+
+const log = Output.scoped(.Worker, true);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -255,7 +250,7 @@ pub fn create(
 pub fn startWithErrorHandling(
     this: *WebWorker,
 ) void {
-    bun.Analytics.Features.workers_spawned += 1;
+    bun.analytics.Features.workers_spawned += 1;
     start(this) catch |err| {
         Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
     };
@@ -296,7 +291,7 @@ pub fn start(
         var diag: bun.clap.Diagnostic = .{};
         var iter: bun.clap.args.SliceIterator = .init(new_args.items);
 
-        var args = bun.clap.parseEx(bun.clap.Help, bun.CLI.Command.Tag.RunCommand.params(), &iter, .{
+        var args = bun.clap.parseEx(bun.clap.Help, bun.cli.Command.Tag.RunCommand.params(), &iter, .{
             .diagnostic = &diag,
             .allocator = bun.default_allocator,
 
@@ -573,7 +568,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
-    bun.Analytics.Features.workers_terminated += 1;
+    bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;
@@ -618,4 +613,13 @@ comptime {
     _ = WebWorker__updatePtr;
 }
 
+const std = @import("std");
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
 const assert = bun.assert;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

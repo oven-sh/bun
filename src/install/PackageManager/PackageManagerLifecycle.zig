@@ -248,6 +248,8 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
+/// Used to be called from multiple threads; now single-threaded
+/// TODO: re-evaluate whether some variables still need to be atomic
 pub fn spawnPackageLifecycleScripts(
     this: *PackageManager,
     ctx: Command.Context,
@@ -303,7 +305,7 @@ pub fn spawnPackageLifecycleScripts(
         }
 
         if (this.env.get("PATH")) |env_path| {
-            break :shell_bin bun.CLI.RunCommand.findShell(env_path, cwd);
+            break :shell_bin bun.cli.RunCommand.findShell(env_path, cwd);
         }
 
         break :shell_bin null;
@@ -362,7 +364,7 @@ fn addDependenciesToSet(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -372,8 +374,7 @@ const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

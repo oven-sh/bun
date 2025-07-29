@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const ArrayList = std.ArrayList;
-const Allocator = std.mem.Allocator;
-const SmolStr = @import("../string.zig").SmolStr;
-
-const assert = bun.assert;
 const log = bun.Output.scoped(.BRACES, false);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
@@ -525,9 +518,6 @@ fn buildExpansionTable(tokens: []Token, table: *std.ArrayList(ExpansionVariant))
     }
 }
 
-const Encoding = @import("./shell.zig").StringEncoding;
-const NewChars = @import("./shell.zig").ShellCharIter;
-
 pub const Lexer = NewLexer(.ascii);
 
 fn NewLexer(comptime encoding: Encoding) type {
@@ -739,7 +729,6 @@ fn NewLexer(comptime encoding: Encoding) type {
     };
 }
 
-const t = std.testing;
 test Lexer {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -768,3 +757,16 @@ test Lexer {
         );
     }
 }
+
+const SmolStr = @import("../string.zig").SmolStr;
+
+const Encoding = @import("./shell.zig").StringEncoding;
+const NewChars = @import("./shell.zig").ShellCharIter;
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;
+const t = std.testing;
+const Allocator = std.mem.Allocator;

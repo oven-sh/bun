@@ -50,15 +50,32 @@ jobs:
             exit 1
           fi
 
-          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/litespeedtech/ls-hpack/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
+          # Get the tag reference, which contains both SHA and type
+          TAG_REF=$(curl -sL "https://api.github.com/repos/litespeedtech/ls-hpack/git/refs/tags/$LATEST_TAG")
+          if [ -z "$TAG_REF" ]; then
+            echo "Error: Could not fetch tag reference for $LATEST_TAG"
+            exit 1
+          fi
+
+          LATEST_TAG_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
+          TAG_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
+          
           if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/litespeedtech/ls-hpack/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
-            exit 1
+
+          # If it's an annotated tag, we need to dereference it to get the commit SHA
+          # If it's a lightweight tag, the SHA already points to the commit
+          if [ "$TAG_TYPE" = "tag" ]; then
+            LATEST_SHA=$(curl -sL "https://api.github.com/repos/litespeedtech/ls-hpack/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
+            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+              echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG"
+              exit 1
+            fi
+          else
+            # For lightweight tags, the SHA is already the commit SHA
+            LATEST_SHA="$LATEST_TAG_SHA"
           fi
 
           if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then

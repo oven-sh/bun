@@ -1,25 +1,17 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const validators = @import("./../util/validators.zig");
-const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
-const sockaddr = SocketAddress.sockaddr;
-
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-const js = JSC.Codegen.JSBlockList;
 pub const fromJS = js.fromJS;
 pub const toJS = js.toJS;
 
 ref_count: RefCount = .init(),
-globalThis: *JSC.JSGlobalObject,
+globalThis: *jsc.JSGlobalObject,
 da_rules: std.ArrayList(Rule),
 mutex: bun.Mutex = .{},
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*@This() {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!*@This() {
     _ = callFrame;
     const ptr = @This().new(.{
         .globalThis = globalThis,
@@ -43,13 +35,13 @@ pub fn deinit(this: *@This()) void {
     bun.destroy(this);
 }
 
-pub fn isBlockList(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn isBlockList(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     _ = globalThis;
     const value = callframe.argumentsAsArray(1)[0];
     return .jsBoolean(value.as(@This()) != null);
 }
 
-pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
@@ -64,7 +56,7 @@ pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *J
     return .js_undefined;
 }
 
-pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
@@ -89,7 +81,7 @@ pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC
     return .js_undefined;
 }
 
-pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
@@ -110,7 +102,7 @@ pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JS
     return .js_undefined;
 }
 
-pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
@@ -161,10 +153,10 @@ pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return .jsBoolean(false);
 }
 
-pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+pub fn rules(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
-    var list = std.ArrayList(JSC.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();
+    var list = std.ArrayList(jsc.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();
     defer list.deinit();
     for (this.da_rules.items) |rule| {
         switch (rule) {
@@ -183,10 +175,10 @@ pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JS
             },
         }
     }
-    return JSC.JSArray.create(globalThis, list.items);
+    return jsc.JSArray.create(globalThis, list.items);
 }
 
-pub fn onStructuredCloneSerialize(this: *@This(), globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(JSC.conv) void) void {
+pub fn onStructuredCloneSerialize(this: *@This(), globalThis: *jsc.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void) void {
     _ = globalThis;
     this.mutex.lock();
     defer this.mutex.unlock();
@@ -197,7 +189,7 @@ pub fn onStructuredCloneSerialize(this: *@This(), globalThis: *JSC.JSGlobalObjec
 
 const StructuredCloneWriter = struct {
     ctx: *anyopaque,
-    impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(JSC.conv) void,
+    impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void,
 
     pub const Writer = std.io.Writer(@This(), Error, write);
     pub const Error = error{};
@@ -208,7 +200,7 @@ const StructuredCloneWriter = struct {
     }
 };
 
-pub fn onStructuredCloneDeserialize(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!JSC.JSValue {
+pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!jsc.JSValue {
     const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
     var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
     const reader = buffer_stream.reader();
@@ -233,3 +225,13 @@ fn _compare(l: sockaddr, r: sockaddr) ?std.math.Order {
 fn _compare_ipv6(l: sockaddr.in6, r: sockaddr.in6) std.math.Order {
     return std.math.order(@byteSwap((@as(u128, @bitCast(l.addr)))), @byteSwap((@as(u128, @bitCast(r.addr)))));
 }
+
+const std = @import("std");
+const validators = @import("../util/validators.zig");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const js = jsc.Codegen.JSBlockList;
+
+const SocketAddress = bun.jsc.GeneratedClassesList.SocketAddress;
+const sockaddr = SocketAddress.sockaddr;

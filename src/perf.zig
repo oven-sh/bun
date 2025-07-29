@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 pub const Ctx = union(enum) {
     disabled: Disabled,
     enabled: switch (bun.Environment.os) {
@@ -51,8 +48,6 @@ pub fn isEnabled() bool {
     is_enabled_once.call();
     return is_enabled.load(.seq_cst);
 }
-
-const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;
 
 /// Trace an event using the system profiler (Instruments).
 ///
@@ -158,3 +153,7 @@ pub const Linux = struct {
         _ = Bun__linux_trace_emit(@tagName(this.event).ptr, @intCast(duration));
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;

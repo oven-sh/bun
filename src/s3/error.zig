@@ -1,5 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
 pub const ErrorCodeAndMessage = struct {
     code: []const u8,
     message: []const u8,
@@ -14,7 +12,7 @@ pub fn getSignErrorMessage(comptime err: anyerror) [:0]const u8 {
         else => return "Failed to retrieve S3 content. Are the credentials correct?",
     };
 }
-pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn getJSSignError(err: anyerror, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     return switch (err) {
         error.MissingCredentials => return globalThis.ERR(.S3_MISSING_CREDENTIALS, getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
         error.InvalidMethod => return globalThis.ERR(.S3_INVALID_METHOD, getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
@@ -24,7 +22,7 @@ pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValu
         else => return globalThis.ERR(.S3_INVALID_SIGNATURE, getSignErrorMessage(error.SignError), .{}).toJS(),
     };
 }
-pub fn throwSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) bun.JSError {
+pub fn throwSignError(err: anyerror, globalThis: *jsc.JSGlobalObject) bun.JSError {
     return switch (err) {
         error.MissingCredentials => globalThis.ERR(.S3_MISSING_CREDENTIALS, getSignErrorMessage(error.MissingCredentials), .{}).throw(),
         error.InvalidMethod => globalThis.ERR(.S3_INVALID_METHOD, getSignErrorMessage(error.InvalidMethod), .{}).throw(),
@@ -66,21 +64,24 @@ const JSS3Error = extern struct {
         this.message.deref();
     }
 
-    pub fn toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toErrorInstance(this: *const @This(), global: *jsc.JSGlobalObject) jsc.JSValue {
         defer this.deinit();
 
         return S3Error__toErrorInstance(this, global);
     }
-    extern fn S3Error__toErrorInstance(this: *const @This(), global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
+    extern fn S3Error__toErrorInstance(this: *const @This(), global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 };
 
 pub const S3Error = struct {
     code: []const u8,
     message: []const u8,
 
-    pub fn toJS(err: *const @This(), globalObject: *JSC.JSGlobalObject, path: ?[]const u8) JSC.JSValue {
+    pub fn toJS(err: *const @This(), globalObject: *jsc.JSGlobalObject, path: ?[]const u8) jsc.JSValue {
         const value = JSS3Error.init(err.code, err.message, path).toErrorInstance(globalObject);
         bun.assert(!globalObject.hasException());
         return value;
     }
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;

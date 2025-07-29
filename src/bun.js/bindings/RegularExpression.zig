@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 pub const RegularExpression = opaque {
     pub const Flags = enum(u16) {
         none = 0,
@@ -55,3 +53,5 @@ pub const RegularExpression = opaque {
         Yarr__RegularExpression__deinit(this);
     }
 };
+
+const bun = @import("bun");

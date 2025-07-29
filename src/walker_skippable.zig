@@ -1,14 +1,4 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Walker = @This();
-const bun = @import("bun");
-const path = std.fs.path;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const OSPathSlice = bun.OSPathSlice;
-const OSPathSliceZ = bun.OSPathSliceZ;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
 stack: std.ArrayList(StackItem),
 name_buffer: NameBufferList,
@@ -179,3 +169,15 @@ pub fn walk(
         .skip_dirnames = skip_dirnames_,
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const path = std.fs.path;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const OSPathSlice = bun.OSPathSlice;
+const OSPathSliceZ = bun.OSPathSliceZ;

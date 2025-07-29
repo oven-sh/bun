@@ -1,20 +1,6 @@
 //! Originally, we tried using LIEF to inject the module graph into a MachO segment
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
-const bun = @import("bun");
-const std = @import("std");
-const Schema = bun.Schema.Api;
-const strings = bun.strings;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Syscall = bun.sys;
-const SourceMap = bun.sourcemap;
-const StringPointer = bun.StringPointer;
-
-const macho = bun.macho;
-const pe = bun.pe;
-const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
@@ -196,7 +182,7 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.webcore.Blob {
+        pub fn blob(this: *File, globalObject: *bun.jsc.JSGlobalObject) *bun.webcore.Blob {
             if (this.cached_blob == null) {
                 const store = bun.webcore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
@@ -732,6 +718,10 @@ pub const StandaloneModuleGraph = struct {
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);
                 };
+                // Set executable permissions when running on POSIX hosts, even for Windows targets
+                if (comptime !Environment.isWindows) {
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                }
                 return cloned_executable_fd;
             },
             else => {
@@ -1236,13 +1226,13 @@ pub const StandaloneModuleGraph = struct {
 
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
         defer {
-            bun.JSAst.Expr.Data.Store.reset();
-            bun.JSAst.Stmt.Data.Store.reset();
+            bun.ast.Expr.Data.Store.reset();
+            bun.ast.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
+        var json = bun.json.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse
@@ -1320,3 +1310,18 @@ pub const StandaloneModuleGraph = struct {
         bun.assert(header_list.items.len == string_payload_start_location);
     }
 };
+
+const std = @import("std");
+const w = std.os.windows;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const SourceMap = bun.sourcemap;
+const StringPointer = bun.StringPointer;
+const Syscall = bun.sys;
+const macho = bun.macho;
+const pe = bun.pe;
+const strings = bun.strings;
+const Schema = bun.schema.api;

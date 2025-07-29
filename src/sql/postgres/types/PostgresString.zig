@@ -2,7 +2,7 @@ pub const to = 25;
 pub const from = [_]short{1002};
 
 pub fn toJSWithType(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     comptime Type: type,
     value: Type,
 ) AnyPostgresError!JSValue {
@@ -31,15 +31,13 @@ pub fn toJSWithType(
 }
 
 pub fn toJS(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     value: anytype,
 ) !JSValue {
     var str = try toJSWithType(globalThis, @TypeOf(value), value);
     defer str.deinit();
     return str.toJS(globalThis);
 }
-
-// @sortImports
 
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
@@ -48,5 +46,5 @@ const Data = @import("../Data.zig").Data;
 const int_types = @import("./int_types.zig");
 const short = int_types.short;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

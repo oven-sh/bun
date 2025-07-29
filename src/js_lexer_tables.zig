@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = @import("string_types.zig").string;
-const CodePoint = @import("string_types.zig").CodePoint;
-const ComptimeStringMap = bun.ComptimeStringMap;
-
 pub const T = enum(u8) {
     t_end_of_file,
     // close brace is here so that we can do comparisons against EOF or close brace in one branch
@@ -803,3 +797,11 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwj", @as(CodePoint, 0x200D) },
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const CodePoint = bun.strings.CodePoint;

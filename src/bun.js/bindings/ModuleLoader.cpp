@@ -1152,22 +1152,18 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     bool wasModuleMock = pendingModule->wasModuleMock;
 
     JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+    if (!scope.exception() && !res.success) [[unlikely]] {
+        throwException(globalObject, scope, result);
+    }
     if (scope.exception()) [[unlikely]] {
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
         return retValue;
     }
-    if (res.success) {
-        scope.release();
-        promise->resolve(globalObject, result);
-        pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-        return JSValue::encode(jsUndefined());
-    } else {
-        throwException(globalObject, scope, result);
-        auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
-        pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-        return retValue;
-    }
+    scope.release();
+    promise->resolve(globalObject, result);
+    pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+    return JSValue::encode(jsUndefined());
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

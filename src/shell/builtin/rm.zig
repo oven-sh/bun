@@ -1,3 +1,5 @@
+const Rm = @This();
+
 opts: Opts,
 state: union(enum) {
     idle,
@@ -217,7 +219,7 @@ pub noinline fn next(this: *Rm) Yield {
                                     },
                                 };
                                 // this.state.exec.task.schedule();
-                                // return Maybe(void).success;
+                                // return .success;
                                 continue;
                             },
                             .illegal_option => {
@@ -260,7 +262,7 @@ pub noinline fn next(this: *Rm) Yield {
                         // }
 
                         // // yield execution to continue writing
-                        // return Maybe(void).success;
+                        // return .success;
                     },
                 }
             },
@@ -293,7 +295,7 @@ pub noinline fn next(this: *Rm) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
     if (comptime bun.Environment.allow_assert) {
         assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
@@ -464,9 +466,9 @@ pub const ShellRmTask = struct {
     err_mutex: bun.Mutex = .{},
     err: ?Syscall.Error = null,
 
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
-    task: JSC.WorkPoolTask = .{
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
+    task: jsc.WorkPoolTask = .{
         .callback = workPoolCallback,
     },
     join_style: JoinStyle,
@@ -504,9 +506,9 @@ pub const ShellRmTask = struct {
         need_to_wait: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         kind_hint: EntryKindHint,
-        task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
+        task: jsc.WorkPoolTask = .{ .callback = runFromThreadPool },
         deleted_entries: std.ArrayList(u8),
-        concurrent_task: JSC.EventLoopTask,
+        concurrent_task: jsc.EventLoopTask,
 
         const EntryKindHint = enum { idk, dir, file };
 
@@ -526,7 +528,7 @@ pub const ShellRmTask = struct {
             this.runFromMainThread();
         }
 
-        pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+        pub fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
             var this: *DirTask = @fieldParentPtr("task", task);
             this.runFromThreadPoolImpl();
         }
@@ -691,10 +693,10 @@ pub const ShellRmTask = struct {
                 .subtask_count = std.atomic.Value(usize).init(1),
                 .kind_hint = .idk,
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
-                .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
+                .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
             .event_loop = rm.bltn().parentCmd().base.eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
             .join_style = JoinStyle.fromPath(root_path),
@@ -703,7 +705,7 @@ pub const ShellRmTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn enqueue(this: *ShellRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool, kind_hint: DirTask.EntryKindHint) void {
@@ -736,7 +738,7 @@ pub const ShellRmTask = struct {
             .subtask_count = std.atomic.Value(usize).init(1),
             .kind_hint = kind_hint,
             .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
         };
 
         const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
@@ -744,7 +746,7 @@ pub const ShellRmTask = struct {
             assert(count > 0);
         }
 
-        JSC.WorkPool.schedule(&subtask.task);
+        jsc.WorkPool.schedule(&subtask.task);
     }
 
     pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
@@ -753,14 +755,14 @@ pub const ShellRmTask = struct {
 
     pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
         debug("deleted: {s}", .{path[0..path.len]});
-        if (!this.opts.verbose) return Maybe(void).success;
+        if (!this.opts.verbose) return .success;
         if (dir_task.deleted_entries.items.len == 0) {
             debug("DirTask(0x{x}, {s}) Incrementing output count (deleted={s})", .{ @intFromPtr(dir_task), dir_task.path, path });
             _ = this.rm.state.exec.incrementOutputCount(.output_count);
         }
         dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
         dir_task.deleted_entries.append('\n') catch bun.outOfMemory();
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn finishConcurrently(this: *ShellRmTask) void {
@@ -804,7 +806,7 @@ pub const ShellRmTask = struct {
             };
             while (delete_state.treat_as_dir) {
                 switch (ShellSyscall.rmdirat(dirfd, path)) {
-                    .result => return Maybe(void).success,
+                    .result => return .success,
                     .err => |e| {
                         switch (e.getErrno()) {
                             .NOENT => {
@@ -816,7 +818,7 @@ pub const ShellRmTask = struct {
                                 if (this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &delete_state).asErr()) |err| {
                                     return .{ .err = this.errorWithPath(err, path) };
                                 }
-                                if (!delete_state.treat_as_dir) return Maybe(void).success;
+                                if (!delete_state.treat_as_dir) return .success;
                                 if (delete_state.treat_as_dir) break :out_to_iter;
                             },
                             else => return .{ .err = this.errorWithPath(e, path) },
@@ -857,7 +859,7 @@ pub const ShellRmTask = struct {
         }
 
         if (this.error_signal.load(.seq_cst)) {
-            return Maybe(void).success;
+            return .success;
         }
 
         var iterator = DirIterator.iterate(fd, .u8);
@@ -877,7 +879,7 @@ pub const ShellRmTask = struct {
         }) |current| : (entry = iterator.next()) {
             debug("dir({s}) entry({s}, {s})", .{ path, current.name.slice(), @tagName(current.kind) });
             // TODO this seems bad maybe better to listen to kqueue/epoll event
-            if (fastMod(i, 4) == 0 and this.error_signal.load(.seq_cst)) return Maybe(void).success;
+            if (fastMod(i, 4) == 0 and this.error_signal.load(.seq_cst)) return .success;
 
             defer i += 1;
             switch (current.kind) {
@@ -910,10 +912,10 @@ pub const ShellRmTask = struct {
         if (dir_task.subtask_count.load(.seq_cst) > 1) {
             close_fd = true;
             dir_task.need_to_wait.store(true, .seq_cst);
-            return Maybe(void).success;
+            return .success;
         }
 
-        if (this.error_signal.load(.seq_cst)) return Maybe(void).success;
+        if (this.error_signal.load(.seq_cst)) return .success;
 
         if (bun.Environment.isWindows) {
             close_fd = false;
@@ -927,7 +929,7 @@ pub const ShellRmTask = struct {
                     .err => |e| return .{ .err = e },
                     else => {},
                 }
-                return Maybe(void).success;
+                return .success;
             },
             .err => |e| {
                 switch (e.getErrno()) {
@@ -937,7 +939,7 @@ pub const ShellRmTask = struct {
                                 .err => |e2| return .{ .err = e2 },
                                 else => {},
                             }
-                            return Maybe(void).success;
+                            return .success;
                         }
 
                         return .{ .err = this.errorWithPath(e, path) };
@@ -958,7 +960,7 @@ pub const ShellRmTask = struct {
             _ = is_absolute; // autofix
             _ = buf; // autofix
 
-            return Maybe(void).success;
+            return .success;
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
@@ -968,7 +970,7 @@ pub const ShellRmTask = struct {
             _ = is_absolute; // autofix
             _ = buf; // autofix
 
-            return Maybe(void).success;
+            return .success;
         }
     };
 
@@ -979,7 +981,7 @@ pub const ShellRmTask = struct {
         pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
             if (this.child_of_dir) {
                 this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
-                return Maybe(void).success;
+                return .success;
             }
             return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
         }
@@ -1003,7 +1005,7 @@ pub const ShellRmTask = struct {
             _ = buf; // autofix
 
             this.treat_as_dir = true;
-            return Maybe(void).success;
+            return .success;
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
@@ -1015,7 +1017,7 @@ pub const ShellRmTask = struct {
                 this.task.enqueueNoJoin(parent_dir_task, path, .dir);
                 this.enqueued = true;
             }
-            return Maybe(void).success;
+            return .success;
         }
     };
 
@@ -1070,14 +1072,14 @@ pub const ShellRmTask = struct {
                 if (@hasDecl(VTable, "onIsDir")) {
                     return VTable.onIsDir(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                 }
-                return Maybe(void).success;
+                return .success;
             }
 
             pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *bun.PathBuffer) Maybe(void) {
                 if (@hasDecl(VTable, "onDirNotEmpty")) {
                     return VTable.onDirNotEmpty(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                 }
-                return Maybe(void).success;
+                return .success;
             }
         };
         const dirfd = this.cwd;
@@ -1113,7 +1115,7 @@ pub const ShellRmTask = struct {
                                                 // not empty, process directory as we would normally
                                                 .NOTEMPTY => {
                                                     // this.enqueueNoJoin(parent_dir_task, path, .dir);
-                                                    // return Maybe(void).success;
+                                                    // return .success;
                                                     return Handler.onDirNotEmpty(vtable, parent_dir_task, path, is_absolute, buf);
                                                 },
                                                 // actually a file, the error is a permissions error
@@ -1156,7 +1158,7 @@ pub const ShellRmTask = struct {
         return out;
     }
 
-    pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+    pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {
         var this: *ShellRmTask = @alignCast(@fieldParentPtr("task", task));
         this.root_task.runFromThreadPoolImpl();
     }
@@ -1195,22 +1197,26 @@ pub fn writeFailingError(this: *Rm, buf: []const u8, exit_code: ExitCode) Yield 
 }
 
 const log = bun.Output.scoped(.Rm, true);
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
+const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const interpreter = @import("../interpreter.zig");
+const ShellSyscall = interpreter.ShellSyscall;
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Rm = @This();
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
 
-const ShellSyscall = interpreter.ShellSyscall;
-const Syscall = bun.sys;
-const assert = bun.assert;
-const ResolvePath = bun.path;
-const Allocator = std.mem.Allocator;
+const bun = @import("bun");
 const DirIterator = bun.DirIterator;
-const builtin = @import("builtin");
+const ResolvePath = bun.path;
+const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

@@ -1,10 +1,5 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 
 const Length = css.css_values.length.Length;
 const CSSNumber = css.css_values.number.CSSNumber;
@@ -964,7 +959,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return parseValueFirst(input);
                 },
             }
-            return Result(This).success;
+            return .success;
         }
 
         pub fn parseNameFirst(input: *css.Parser) Result(This) {
@@ -1572,3 +1567,9 @@ fn writeMinMax(
 
     return dest.writeChar(')');
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

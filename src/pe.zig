@@ -1,9 +1,3 @@
-const std = @import("std");
-const mem = std.mem;
-const Allocator = mem.Allocator;
-const bun = @import("bun");
-const strings = bun.strings;
-
 // Windows PE sections use standard file alignment (typically 512 bytes)
 // No special 16KB alignment needed like macOS code signing
 
@@ -403,3 +397,11 @@ pub const BUN_COMPILED_SECTION_NAME = ".bun";
 /// from the current process memory without loading the entire executable
 extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
 extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

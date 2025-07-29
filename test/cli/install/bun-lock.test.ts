@@ -472,7 +472,17 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
-  expect(out1).toMatchSnapshot();
+  expect(out1).toMatchInlineSnapshot(`
+    [
+      "preinstall",
+      "",
+      "+ optional-peer-deps@1.0.0 (v1.0.1 available)",
+      "+ optional-native@1.0.0",
+      "+ uses-what-bin@1.0.0 (v1.5.0 available)",
+      "",
+      "13 packages installed",
+    ]
+  `);
 
   await checkInstall();
 
@@ -494,7 +504,15 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
-  expect(out2).toMatchSnapshot();
+  expect(out2).toMatchInlineSnapshot(`
+    [
+      "preinstall",
+      "",
+      "+ bundled-1@1.0.0",
+      "",
+      "13 packages installed",
+    ]
+  `);
 
   await checkInstall();
 

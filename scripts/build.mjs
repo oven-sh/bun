@@ -224,6 +224,31 @@ async function spawn(command, args, options, label) {
     ...options,
   });
 
+  let killedManually = false;
+
+  function onKill() {
+    clearOnKill();
+    if (!subprocess.killed) {
+      killedManually = true;
+      subprocess.kill?.();
+    }
+  }
+
+  function clearOnKill() {
+    process.off("beforeExit", onKill);
+    process.off("SIGINT", onKill);
+    process.off("SIGTERM", onKill);
+  }
+
+  // Kill the entire process tree so everything gets cleaned up. On Windows, job
+  // control groups make this haappen automatically so we don't need to do this
+  // on Windows.
+  if (process.platform !== "win32") {
+    process.once("beforeExit", onKill);
+    process.once("SIGINT", onKill);
+    process.once("SIGTERM", onKill);
+  }
+
   let timestamp;
   subprocess.on("spawn", () => {
     timestamp = Date.now();
@@ -253,8 +278,14 @@ async function spawn(command, args, options, label) {
   }
 
   const { error, exitCode, signalCode } = await new Promise(resolve => {
-    subprocess.on("error", error => resolve({ error }));
-    subprocess.on("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
+    subprocess.on("error", error => {
+      clearOnKill();
+      resolve({ error });
+    });
+    subprocess.on("exit", (exitCode, signalCode) => {
+      clearOnKill();
+      resolve({ exitCode, signalCode });
+    });
   });
 
   if (done) {
@@ -301,7 +332,9 @@ async function spawn(command, args, options, label) {
   }
 
   if (signalCode) {
-    console.error(`Command killed: ${signalCode}`);
+    if (!killedManually) {
+      console.error(`Command killed: ${signalCode}`);
+    }
   } else {
     console.error(`Command exited: code ${exitCode}`);
   }

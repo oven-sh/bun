@@ -1,16 +1,9 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const bits = bun.bits;
-
 pub const css = @import("../css_parser.zig");
 const CSSString = css.CSSString;
 const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const Selector = parser.Selector;
 pub const SelectorList = parser.SelectorList;
@@ -1510,7 +1503,7 @@ pub fn shouldUnwrapIs(selectors: []const parser.Selector) bool {
 }
 
 fn hasTypeSelector(selector: *const parser.Selector) bool {
-    var iter = selector.iterRawParseOrderFrom(0);
+    var iter = selector.iterRawMatchOrder();
     const first = iter.next();
 
     if (isNamespace(if (first) |*f| f else null)) return isTypeSelector(if (iter.next()) |*n| n else null);
@@ -1623,3 +1616,10 @@ const CompoundSelectorIter = struct {
         return null;
     }
 };
+
+const bun = @import("bun");
+const bits = bun.bits;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

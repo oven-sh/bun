@@ -89,12 +89,15 @@ pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.m
     return order;
 }
 
-const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const BabyList = bun.BabyList;
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
+
 const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const ImportRecord = bun.ImportRecord;
+const Loader = bun.Loader;
+
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Part = bun.bundle_v2.Part;

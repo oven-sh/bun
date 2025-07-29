@@ -1,15 +1,7 @@
 // TODO: move all custom functions from the translated file into this file, then
 // the translated file can be provided by `zig translate-c`
-const boring = @import("./deps/boringssl.translated.zig");
 /// BoringSSL's translated C API
 pub const c = boring;
-
-const std = @import("std");
-const bun = @import("bun");
-const c_ares = @import("./deps/c_ares.zig");
-const strings = bun.strings;
-const builtin = @import("builtin");
-const X509 = @import("./bun.js/api/bun/x509.zig");
 
 var loaded = false;
 pub fn load() void {
@@ -67,18 +59,18 @@ pub fn initClient() *boring.SSL {
 // may result in deadlocks, crashes, or memory corruption.
 
 export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
-    return bun.Mimalloc.mi_malloc(size);
+    return bun.mimalloc.mi_malloc(size);
 }
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
-    const len = bun.Mimalloc.mi_usable_size(ptr);
+    const len = bun.mimalloc.mi_usable_size(ptr);
     @memset(@as([*]u8, @ptrCast(ptr))[0..len], 0);
-    bun.Mimalloc.mi_free(ptr);
+    bun.mimalloc.mi_free(ptr);
 }
 
 export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
-    return bun.Mimalloc.mi_usable_size(ptr);
+    return bun.mimalloc.mi_usable_size(ptr);
 }
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
@@ -211,8 +203,7 @@ pub fn checkServerIdentity(
     return false;
 }
 
-const JSC = bun.JSC;
-pub fn ERR_toJS(globalThis: *JSC.JSGlobalObject, err_code: u32) JSC.JSValue {
+pub fn ERR_toJS(globalThis: *jsc.JSGlobalObject, err_code: u32) jsc.JSValue {
     var outbuf: [128 + 1 + "BoringSSL ".len]u8 = undefined;
     @memset(&outbuf, 0);
     outbuf[0.."BoringSSL ".len].* = "BoringSSL ".*;
@@ -227,3 +218,13 @@ pub fn ERR_toJS(globalThis: *JSC.JSGlobalObject, err_code: u32) JSC.JSValue {
 
     return globalThis.ERR(.BORINGSSL, "{s}", .{error_message}).toJS();
 }
+
+const X509 = @import("./bun.js/api/bun/x509.zig");
+const boring = @import("./deps/boringssl.translated.zig");
+const builtin = @import("builtin");
+const c_ares = @import("./deps/c_ares.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;

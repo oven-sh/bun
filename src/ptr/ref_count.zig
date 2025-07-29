@@ -1,6 +1,3 @@
-const enable_debug = bun.Environment.isDebug;
-const enable_single_threaded_checks = enable_debug;
-
 pub const RefCountOptions = struct {
     /// Defaults to the type basename.
     debug_name: ?[]const u8 = null,
@@ -564,6 +561,10 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
 const unique_symbol = opaque {};
 
 const std = @import("std");
+
 const bun = @import("bun");
-const assert = bun.assert;
 const AllocationScope = bun.AllocationScope;
+const assert = bun.assert;
+
+const enable_debug = bun.Environment.isDebug;
+const enable_single_threaded_checks = enable_debug;

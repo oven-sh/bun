@@ -1,18 +1,3 @@
-const URL = @import("../url.zig").URL;
-const bun = @import("bun");
-const std = @import("std");
-const MutableString = bun.MutableString;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const logger = bun.logger;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSON = bun.JSON;
-const http = bun.http;
-const Semver = bun.Semver;
-const PackageManifest = @import("../install/npm.zig").PackageManifest;
-
 pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: string, property_path: ?string, json_output: bool) !void {
     const name, var version = bun.install.Dependency.splitNameAndVersionOrLatest(brk: {
         // Extremely best effort.
@@ -201,13 +186,13 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
 
     // Treat versions specially because npm does some normalization on there.
     if (json.getObject("versions")) |versions_object| {
-        const keys = try allocator.alloc(bun.JSAst.Expr, versions_object.data.e_object.properties.len);
+        const keys = try allocator.alloc(bun.ast.Expr, versions_object.data.e_object.properties.len);
         for (versions_object.data.e_object.properties.slice(), keys) |*prop, *key| {
             key.* = prop.key.?;
         }
-        const versions_array = bun.JSAst.Expr.init(
-            bun.JSAst.E.Array,
-            bun.JSAst.E.Array{
+        const versions_array = bun.ast.Expr.init(
+            bun.ast.E.Array,
+            bun.ast.E.Array{
                 .items = .init(keys),
             },
             .{ .start = -1 },
@@ -405,3 +390,20 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         }
     }
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const PackageManager = @import("../install/install.zig").PackageManager;
+const PackageManifest = @import("../install/npm.zig").PackageManifest;
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const http = bun.http;
+const logger = bun.logger;
+const strings = bun.strings;

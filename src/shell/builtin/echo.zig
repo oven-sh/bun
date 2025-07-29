@@ -1,3 +1,5 @@
+const Echo = @This();
+
 /// Should be allocated with the arena from Builtin
 output: std.ArrayList(u8),
 
@@ -41,7 +43,7 @@ pub fn start(this: *Echo) Yield {
     return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting or this.state == .waiting_write_err);
     }
@@ -67,14 +69,16 @@ pub inline fn bltn(this: *Echo) *Builtin {
 }
 
 const log = bun.Output.scoped(.echo, true);
-const bun = @import("bun");
-const ExitCode = bun.shell.ExitCode;
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Echo = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;

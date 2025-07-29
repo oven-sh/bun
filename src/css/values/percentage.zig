@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -471,3 +469,6 @@ pub const NumberOrPercentage = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

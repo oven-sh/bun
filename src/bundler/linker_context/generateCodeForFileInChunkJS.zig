@@ -677,33 +677,33 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
     stmts.items.len = end;
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
 const std = @import("std");
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const JSAst = bun.bundle_v2.JSAst;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
+const bun = @import("bun");
+const BabyList = bun.BabyList;
 const Logger = bun.logger;
 const options = bun.options;
+const strings = bun.strings;
+
+const Chunk = bun.bundle_v2.Chunk;
+const Index = bun.bundle_v2.Index;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const PartRange = bun.bundle_v2.PartRange;
+const genericPathWithPrettyInitialized = bun.bundle_v2.genericPathWithPrettyInitialized;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const Chunk = bun.bundle_v2.Chunk;
-const PartRange = bun.bundle_v2.PartRange;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
+const js_ast = bun.bundle_v2.js_ast;
 const B = js_ast.B;
-
 const Binding = js_ast.Binding;
-
-const genericPathWithPrettyInitialized = bun.bundle_v2.genericPathWithPrettyInitialized;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;

@@ -2,6 +2,8 @@
 //!
 //! N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
 
+const Which = @This();
+
 state: union(enum) {
     idle,
     one_arg,
@@ -15,7 +17,7 @@ state: union(enum) {
         },
     },
     done,
-    err: JSC.SystemError,
+    err: jsc.SystemError,
 } = .idle,
 
 pub fn start(this: *Which) Yield {
@@ -104,7 +106,7 @@ fn argComplete(this: *Which) Yield {
     return this.next();
 }
 
-pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Which, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .one_arg or
             (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -135,17 +137,19 @@ pub inline fn bltn(this: *Which) *Builtin {
 
 // --
 const log = bun.Output.scoped(.which, true);
-const Which = @This();
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-const JSC = bun.JSC;
-const assert = bun.assert;
 
 const interpreter = @import("../interpreter.zig");
+const EnvStr = interpreter.EnvStr;
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const EnvStr = interpreter.EnvStr;
+
+const bun = @import("bun");
+const assert = bun.assert;
+const jsc = bun.jsc;
 const which = bun.which;
+
+const shell = bun.shell;
+const Yield = bun.shell.Yield;

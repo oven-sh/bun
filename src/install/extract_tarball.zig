@@ -1,21 +1,3 @@
-const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const Output = bun.Output;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const DependencyID = Install.DependencyID;
-const PackageManager = Install.PackageManager;
-const Integrity = @import("./integrity.zig").Integrity;
-const Npm = @import("./npm.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Semver = bun.Semver;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const Environment = bun.Environment;
-const OOM = bun.OOM;
-
 const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
@@ -552,3 +534,24 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         },
     };
 }
+
+const string = []const u8;
+
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const FileSystem = @import("../fs.zig").FileSystem;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+
+const Install = @import("./install.zig");
+const DependencyID = Install.DependencyID;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;

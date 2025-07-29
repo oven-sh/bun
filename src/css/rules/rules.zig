@@ -1,8 +1,5 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 
-const ArrayList = std.ArrayListUnmanaged;
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -669,3 +666,8 @@ fn mergeStyleRules(
     }
     return false;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

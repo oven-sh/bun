@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 const Property = css.Property;
 const PropertyIdTag = css.PropertyIdTag;
@@ -850,3 +846,7 @@ pub fn NewSizeHandler(
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

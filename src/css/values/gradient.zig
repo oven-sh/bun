@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
@@ -1544,7 +1540,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                         if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |hint| {
                             closure.seen_stop.* = false;
                             closure.items.append(i.allocator(), .{ .hint = hint }) catch bun.outOfMemory();
-                            return Result(void).success;
+                            return .success;
                         }
                     }
 
@@ -1565,7 +1561,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                     }
 
                     closure.seen_stop.* = true;
-                    return Result(void).success;
+                    return .success;
                 }
             }.parse,
         ).asErr()) |e| return .{ .err = e };
@@ -1654,3 +1650,9 @@ pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(Gradie
 
     return stops;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

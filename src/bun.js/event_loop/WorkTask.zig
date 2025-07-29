@@ -4,7 +4,7 @@
 ///
 /// The Context type must implement:
 /// - `run(*Context, *WorkTask)` - performs the work on the thread pool
-/// - `then(*JSC.JSGlobalObject)` - handles the result on the JS thread (no automatic Promise resolution)
+/// - `then(*jsc.JSGlobalObject)` - handles the result on the JS thread (no automatic Promise resolution)
 ///
 /// Key differences from ConcurrentPromiseTask:
 /// - No automatic Promise creation or resolution
@@ -18,23 +18,23 @@ pub fn WorkTask(comptime Context: type) type {
         const This = @This();
         ctx: *Context,
         task: TaskType = .{ .callback = &runFromThreadPool },
-        event_loop: *JSC.EventLoop,
+        event_loop: *jsc.EventLoop,
         allocator: std.mem.Allocator,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         concurrent_task: ConcurrentTask = .{},
-        async_task_tracker: JSC.Debugger.AsyncTaskTracker,
+        async_task_tracker: jsc.Debugger.AsyncTaskTracker,
 
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
             var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-                .async_task_tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
+                .async_task_tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
             });
             this.ref.ref(this.event_loop.virtual_machine);
 
@@ -47,7 +47,7 @@ pub fn WorkTask(comptime Context: type) type {
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             const this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx, this);
         }
@@ -78,9 +78,11 @@ pub fn WorkTask(comptime Context: type) type {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
-const WorkPoolTask = JSC.WorkPoolTask;
-const ConcurrentTask = JSC.ConcurrentTask;
+
+const jsc = bun.jsc;
+const ConcurrentTask = jsc.ConcurrentTask;
+const WorkPool = jsc.WorkPool;
+const WorkPoolTask = jsc.WorkPoolTask;

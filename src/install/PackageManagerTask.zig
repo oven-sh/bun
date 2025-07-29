@@ -351,25 +351,11 @@ pub const Request = union {
     },
 };
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
-const bun = @import("bun");
-const DotEnv = bun.DotEnv;
-const Output = bun.Output;
-const Path = bun.path;
-const Semver = bun.Semver;
-const ThreadPool = bun.ThreadPool;
-const logger = bun.logger;
-const string = bun.string;
-const strings = bun.strings;
-const File = bun.sys.File;
-
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;
-
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;
@@ -382,3 +368,16 @@ const Repository = install.Repository;
 const Resolution = install.Resolution;
 const Task = install.Task;
 const invalid_package_id = install.invalid_package_id;
+
+const bun = @import("bun");
+const DotEnv = bun.DotEnv;
+const Output = bun.Output;
+const Path = bun.path;
+const Semver = bun.Semver;
+const ThreadPool = bun.ThreadPool;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;

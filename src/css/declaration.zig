@@ -1,15 +1,9 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
 
-const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
@@ -54,7 +48,7 @@ pub const DeclarationBlock = struct {
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
-            var symbols = bun.JSAst.Symbol.Map{};
+            var symbols = bun.ast.Symbol.Map{};
             var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
@@ -381,7 +375,7 @@ pub fn parse_declaration_impl(
         declarations.append(input.allocator(), property) catch bun.outOfMemory();
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const DeclarationHandler = struct {
@@ -458,3 +452,10 @@ pub const DeclarationHandler = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

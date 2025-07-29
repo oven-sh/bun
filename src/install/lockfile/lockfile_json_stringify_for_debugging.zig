@@ -403,19 +403,23 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
     }
 }
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
+const PathBuffer = bun.PathBuffer;
+const ExternalString = bun.Semver.ExternalString;
+
 const install = bun.install;
+const DependencyID = install.DependencyID;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const Repository = install.Repository;
+const invalid_package_id = install.invalid_package_id;
+
+const Dependency = install.Dependency;
+const Behavior = Dependency.Behavior;
+
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
 const PackageIndex = Lockfile.PackageIndex;
-const Dependency = install.Dependency;
-const DependencyID = install.DependencyID;
-const Behavior = Dependency.Behavior;
-const Npm = install.Npm;
 const Tree = Lockfile.Tree;
-const PackageID = install.PackageID;
-const invalid_package_id = install.invalid_package_id;
-const Repository = install.Repository;
-const ExternalString = bun.Semver.ExternalString;
-const PathBuffer = bun.PathBuffer;

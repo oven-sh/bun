@@ -1,3 +1,5 @@
+const SourceFileProjectGenerator = @This();
+
 // Generate project files based on the entry point and dependencies
 pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
     const react_component_export = findReactComponentExport(result.bundle_v2) orelse {
@@ -77,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 }
 
 // Create a file with given contents, returns if file was newly created
-fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
+fn createFile(filename: []const u8, contents: []const u8) bun.sys.Maybe(bool) {
     // Check if file exists and has same contents
     if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
@@ -246,7 +248,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
             },
         }) catch |err| {
             Output.err(err, "failed to install dependencies", .{});
@@ -359,7 +361,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
         },
     }) catch |err| {
         Output.err(err, "failed to start app", .{});
@@ -616,26 +618,6 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
     return null;
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-
-const logger = bun.logger;
-
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-
-const BundleV2 = bun.bundle_v2.BundleV2;
-const Command = bun.CLI.Command;
-const Example = @import("../cli/create_command.zig").Example;
-
 // Disabled until Tailwind v4 is supported.
 const enable_shadcn_ui = true;
 
@@ -867,4 +849,20 @@ pub const Template = union(Tag) {
     };
 };
 
-const SourceFileProjectGenerator = @This();
+const string = []const u8;
+
+const linker = @import("../linker.zig");
+const std = @import("std");
+const Example = @import("../cli/create_command.zig").Example;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const BundleV2 = bun.bundle_v2.BundleV2;
+const Command = bun.cli.Command;

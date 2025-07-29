@@ -372,7 +372,7 @@ describe("node:http", () => {
       });
     }
 
-    // it.only("check for expected fields", done => {
+    // test("check for expected fields", done => {
     //   runTest((server, port) => {
     //     const req = request({ host: "localhost", port, method: "GET" }, res => {
     //       console.log("called");

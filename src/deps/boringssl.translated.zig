@@ -1,18 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const C = @import("std").zig.c_builtins;
-const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
-const time_t = C.time_t;
-const va_list = C.va_list;
-const struct_timeval = C.struct_timeval;
-const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
-const struct_timespec = C.struct_timespec;
-const NULL = C.NULL;
-const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
-const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
-const timercmp = C.timercmp;
-const struct_tm = C.struct_tm;
-const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+const pthread_rwlock_t = if (bun.Environment.isPosix) std.c.pthread_rwlock_t else *anyopaque;
 /// `isize` alias. Kept for clarity.
 ///
 /// Docs from OpenSSL:
@@ -19280,3 +19266,19 @@ pub fn getError(this: *SSL, rc: c_int) SSL.Error!u32 {
         else => @as(u32, @intCast(rc)),
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const C = @import("std").zig.c_builtins;
+const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
+const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
+const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
+const NULL = C.NULL;
+const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+const struct_timespec = C.struct_timespec;
+const struct_timeval = C.struct_timeval;
+const struct_tm = C.struct_tm;
+const time_t = C.time_t;
+const timercmp = C.timercmp;
+const va_list = C.va_list;

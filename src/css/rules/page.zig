@@ -1,8 +1,5 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -359,7 +356,7 @@ pub const PageRuleParser = struct {
                     .column = loc.column,
                 },
             }) catch bun.outOfMemory();
-            return Result(AtRuleParser.AtRule).success;
+            return .success;
         }
 
         pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {
@@ -380,3 +377,8 @@ pub const PageRuleParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

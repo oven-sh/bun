@@ -533,7 +533,7 @@ if (isDockerEnabled()) {
     expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
   });
 
-  // t.only(
+  // test(
   //   "big query body",
   //   async () => {
   //     await sql`create table test (x int)`;

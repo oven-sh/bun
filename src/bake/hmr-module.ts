@@ -147,7 +147,7 @@ export class HMRModule {
 
   get importMeta() {
     const importMeta = {
-      url: `bun://${this.id}`,
+      url: `${location.origin}/${this.id}`,
       main: false,
       require: this.require.bind(this),
       // transpiler rewrites `import.meta.hot.*` to access `HMRModule.*`

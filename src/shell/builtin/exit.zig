@@ -1,3 +1,5 @@
+const Exit = @This();
+
 state: enum {
     idle,
     waiting_io,
@@ -49,7 +51,7 @@ pub fn next(this: *Exit) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_io);
     }
@@ -72,15 +74,17 @@ pub inline fn bltn(this: *Exit) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Exit = @This();
-const JSC = bun.JSC;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;

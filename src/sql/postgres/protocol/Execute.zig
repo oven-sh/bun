@@ -18,8 +18,6 @@ pub fn writeInternal(
 
 pub const write = WriteWrap(@This(), writeInternal).write;
 
-// @sortImports
-
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.zig").PortalOrPreparedStatement;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;

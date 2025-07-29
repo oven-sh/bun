@@ -25,7 +25,9 @@
 //!
 //! The DeferredTaskQueue is drained after the microtask queue, but before other tasks are executed. This avoids re-entrancy
 //! issues with the event loop.
+
 const DeferredTaskQueue = @This();
+
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 
 map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
@@ -62,5 +64,5 @@ pub fn deinit(this: *DeferredTaskQueue) void {
     this.map.deinit(bun.default_allocator);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

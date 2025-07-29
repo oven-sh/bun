@@ -22,7 +22,7 @@ describe("ResolveMessage", () => {
     }
   });
 
-  it.only("has code for esm", async () => {
+  it("has code for esm", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");
     } catch (e: any) {

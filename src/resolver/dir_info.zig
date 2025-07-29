@@ -1,15 +1,4 @@
-const bun = @import("bun");
-const std = @import("std");
-const string = bun.string;
-
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-
-const allocators = @import("../allocators.zig");
 const DirInfo = @This();
-const Fs = @import("../fs.zig");
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
 
 pub const Index = allocators.IndexType;
 
@@ -113,3 +102,15 @@ pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
 // 3. Store whether a directory has been queried and whether that query was successful.
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
 pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128, true);
+
+const string = []const u8;
+
+const Fs = @import("../fs.zig");
+const std = @import("std");
+const PackageJSON = @import("./package_json.zig").PackageJSON;
+const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+
+const bun = @import("bun");
+const FeatureFlags = bun.FeatureFlags;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const allocators = bun.allocators;

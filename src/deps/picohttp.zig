@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const c = @import("picohttpparser.zig");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const StringBuilder = bun.StringBuilder;
-const string = bun.string;
-const strings = bun.strings;
-
-const fmt = std.fmt;
-
-const assert = bun.assert;
-
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -377,3 +364,17 @@ pub const phr_parse_response = c.phr_parse_response;
 pub const phr_parse_headers = c.phr_parse_headers;
 pub const phr_decode_chunked = c.phr_decode_chunked;
 pub const phr_decode_chunked_is_in_data = c.phr_decode_chunked_is_in_data;
+
+const string = []const u8;
+
+const c = @import("./picohttpparser.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const strings = bun.strings;
+
+const std = @import("std");
+const fmt = std.fmt;

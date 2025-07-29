@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -303,3 +301,6 @@ pub const Angle = union(Tag) {
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub const AnglePercentage = css.css_values.percentage.DimensionPercentage(Angle);
+
+const bun = @import("bun");
+const std = @import("std");

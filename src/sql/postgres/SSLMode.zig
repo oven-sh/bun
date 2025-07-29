@@ -5,5 +5,3 @@ pub const SSLMode = enum(u8) {
     verify_ca = 3,
     verify_full = 4,
 };
-
-// @sortImports

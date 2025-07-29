@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// In some parts of lockfile serialization, Bun will use `std.mem.sliceAsBytes` to convert a struct into raw
 /// bytes to write. This makes lockfile serialization/deserialization much simpler/faster, at the cost of not
 /// having any pointers within these structs.
@@ -106,3 +104,5 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
         ));
     }
 }
+
+const std = @import("std");

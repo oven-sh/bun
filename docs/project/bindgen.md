@@ -20,7 +20,7 @@ this one:
 Given a file implementing a simple function, such as `add`
 
 ```zig#src/bun.js/math.zig
-pub fn add(global: *JSC.JSGlobalObject, a: i32, b: i32) !i32 {
+pub fn add(global: *jsc.JSGlobalObject, a: i32, b: i32) !i32 {
     return std.math.add(i32, a, b) catch {
         // Binding functions can return `error.OutOfMemory` and `error.JSError`.
         // Others like `error.Overflow` from `std.math.add` must be converted.
@@ -33,7 +33,7 @@ const gen = bun.gen.math; // "math" being this file's basename
 
 const std = @import("std");
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 ```
 
 Then describe the API schema using a `.bind.ts` function. The binding file goes next to the Zig file.

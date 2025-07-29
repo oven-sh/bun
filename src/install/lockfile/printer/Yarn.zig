@@ -1,3 +1,5 @@
+const Yarn = @This();
+
 pub fn print(
     this: *Printer,
     comptime Writer: type,
@@ -214,17 +216,20 @@ fn packages(
     }
 }
 
-const Yarn = @This();
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
-const assert = bun.assert;
 const IdentityContext = bun.IdentityContext;
+const assert = bun.assert;
+const strings = bun.strings;
+const String = bun.Semver.String;
+
 const PackageID = bun.install.PackageID;
-const Dependency = bun.install.Dependency;
 const Resolution = bun.install.Resolution;
+
+const Dependency = bun.install.Dependency;
+const Behavior = Dependency.Behavior;
+
 const Lockfile = bun.install.Lockfile;
 const Printer = bun.install.Lockfile.Printer;
-const String = bun.Semver.String;
-const Behavior = Dependency.Behavior;

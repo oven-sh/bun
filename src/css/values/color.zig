@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const bits = bun.bits;
-
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
 
@@ -3694,7 +3689,6 @@ pub fn polarToRectangular(l: f32, c: f32, h: f32) struct { f32, f32, f32 } {
 const D50: []const f32 = &.{ @floatCast(@as(f64, 0.3457) / @as(f64, 0.3585)), 1.00000, @floatCast((@as(f64, 1.0) - @as(f64, 0.3457) - @as(f64, 0.3585)) / @as(f64, 0.3585)) };
 // const D50: []const f32 = &.{ 0.9642956, 1.0, 0.82510453 };
 
-const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
 const color_conversions = struct {
     pub const convert_RGBA = struct {};
 
@@ -4720,3 +4714,10 @@ pub fn ImplementIntoCssColor(comptime T: type, space: ConvertTo) fn (*const T, A
     const ns = "convert_" ++ @tagName(space);
     return @field(color_conversions, ns).intoCssColor;
 }
+
+const std = @import("std");
+const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const bits = bun.bits;

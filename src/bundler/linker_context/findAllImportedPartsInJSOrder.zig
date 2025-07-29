@@ -203,16 +203,19 @@ pub fn findImportedPartsInJSOrder(
     chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
 }
 
-const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const BabyList = bun.BabyList;
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
+
 const std = @import("std");
-const Chunk = bun.bundle_v2.Chunk;
-const PartRange = bun.bundle_v2.PartRange;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const ImportRecord = bun.ImportRecord;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const Chunk = bun.bundle_v2.Chunk;
+const Index = bun.bundle_v2.Index;
 const JSMeta = bun.bundle_v2.JSMeta;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Part = bun.bundle_v2.Part;
+const PartRange = bun.bundle_v2.PartRange;
 const js_ast = bun.bundle_v2.js_ast;

@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-
 pub const ResolvedSource = extern struct {
     /// Specifier's lifetime is the caller from C++
     /// https://github.com/oven-sh/bun/issues/9521
@@ -33,3 +29,8 @@ pub const ResolvedSource = extern struct {
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

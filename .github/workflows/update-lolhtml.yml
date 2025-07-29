@@ -50,15 +50,27 @@ jobs:
             exit 1
           fi
 
-          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
+          # Get the commit SHA that the tag points to
+          # This handles both lightweight tags (direct commit refs) and annotated tags (tag objects)
+          TAG_REF_RESPONSE=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/refs/tags/$LATEST_TAG")
+          LATEST_TAG_SHA=$(echo "$TAG_REF_RESPONSE" | jq -r '.object.sha')
+          TAG_OBJECT_TYPE=$(echo "$TAG_REF_RESPONSE" | jq -r '.object.type')
+          
           if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
-            exit 1
+          
+          if [ "$TAG_OBJECT_TYPE" = "tag" ]; then
+            # This is an annotated tag, we need to get the commit it points to
+            LATEST_SHA=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
+            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+              echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $LATEST_TAG_SHA"
+              exit 1
+            fi
+          else
+            # This is a lightweight tag pointing directly to a commit
+            LATEST_SHA="$LATEST_TAG_SHA"
           fi
 
           if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then

@@ -201,18 +201,24 @@ pub fn addUrlForCss(
     }
 }
 
-// @sortImports
+pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
+pub const ConstValuesMap = Ast.ConstValuesMap;
+pub const NamedExports = Ast.NamedExports;
+pub const NamedImports = Ast.NamedImports;
+pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
+
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
+const Ast = js_ast.Ast;
 const BundledAst = js_ast.BundledAst;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;
@@ -222,10 +228,3 @@ const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;
 const TlaCheck = js_ast.TlaCheck;
-
-const Ast = js_ast.Ast;
-pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
-pub const ConstValuesMap = Ast.ConstValuesMap;
-pub const NamedExports = Ast.NamedExports;
-pub const NamedImports = Ast.NamedImports;
-pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;

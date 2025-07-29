@@ -3,7 +3,7 @@
 #include "BunBuiltinNames.h"
 #include "WebCoreJSBuiltins.h"
 
-extern "C" JSC::EncodedJSValue IPCSerialize(JSC::JSGlobalObject* global, JSC::JSValue message, JSC::JSValue handle)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(JSC::JSGlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -11,15 +11,15 @@ extern "C" JSC::EncodedJSValue IPCSerialize(JSC::JSGlobalObject* global, JSC::JS
     JSC::CallData callData = JSC::getCallData(serializeFunction);
 
     JSC::MarkedArgumentBuffer args;
-    args.append(message);
-    args.append(handle);
+    args.append(JSC::JSValue::decode(message));
+    args.append(JSC::JSValue::decode(handle));
 
     auto result = JSC::call(global, serializeFunction, callData, JSC::jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue IPCParse(JSC::JSGlobalObject* global, JSC::JSValue target, JSC::JSValue serialized, JSC::JSValue fd)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCParse(JSC::JSGlobalObject* global, JSC::EncodedJSValue target, JSC::EncodedJSValue serialized, JSC::EncodedJSValue fd)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -27,9 +27,9 @@ extern "C" JSC::EncodedJSValue IPCParse(JSC::JSGlobalObject* global, JSC::JSValu
     JSC::CallData callData = JSC::getCallData(parseFunction);
 
     JSC::MarkedArgumentBuffer args;
-    args.append(target);
-    args.append(serialized);
-    args.append(fd);
+    args.append(JSC::JSValue::decode(target));
+    args.append(JSC::JSValue::decode(serialized));
+    args.append(JSC::JSValue::decode(fd));
 
     auto result = JSC::call(global, parseFunction, callData, JSC::jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});

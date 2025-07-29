@@ -32,7 +32,7 @@ pub fn size(this: *const Store) SizeType {
     };
 }
 
-pub const Map = std.HashMap(u64, *JSC.WebCore.Blob.Store, bun.IdentityContext(u64), 80);
+pub const Map = std.HashMap(u64, *jsc.WebCore.Blob.Store, bun.IdentityContext(u64), 80);
 
 pub const Data = union(enum) {
     bytes: Bytes,
@@ -122,7 +122,7 @@ pub fn initS3(pathlike: node.PathLike, mime_type: ?MimeType, credentials: bun.S3
     });
     return store;
 }
-pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?MimeType, allocator: std.mem.Allocator) !*Store {
+pub fn initFile(pathlike: jsc.Node.PathOrFileDescriptor, mime_type: ?MimeType, allocator: std.mem.Allocator) !*Store {
     const store = Blob.Store.new(.{
         .data = .{
             .file = File.init(
@@ -209,7 +209,7 @@ pub const SerializeTag = enum(u8) {
 pub fn serialize(this: *Store, comptime Writer: type, writer: Writer) !void {
     switch (this.data) {
         .file => |file| {
-            const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = if (file.pathlike == .fd) .fd else .path;
+            const pathlike_tag: jsc.Node.PathOrFileDescriptor.SerializeTag = if (file.pathlike == .fd) .fd else .path;
             try writer.writeInt(u8, @intFromEnum(pathlike_tag), .little);
 
             switch (file.pathlike) {
@@ -224,7 +224,7 @@ pub fn serialize(this: *Store, comptime Writer: type, writer: Writer) !void {
             }
         },
         .s3 => |s3| {
-            const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = .path;
+            const pathlike_tag: jsc.Node.PathOrFileDescriptor.SerializeTag = .path;
             try writer.writeInt(u8, @intFromEnum(pathlike_tag), .little);
 
             const path_slice = s3.pathlike.slice();
@@ -248,26 +248,26 @@ pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Alloca
 
 /// A blob store that references a file on disk.
 pub const File = struct {
-    pathlike: JSC.Node.PathOrFileDescriptor,
+    pathlike: jsc.Node.PathOrFileDescriptor,
     mime_type: MimeType = MimeType.other,
     is_atty: ?bool = null,
     mode: bun.Mode = 0,
     seekable: ?bool = null,
     max_size: SizeType = Blob.max_size,
     // milliseconds since ECMAScript epoch
-    last_modified: JSC.JSTimeType = JSC.init_timestamp,
+    last_modified: jsc.JSTimeType = jsc.init_timestamp,
 
     pub fn unlink(this: *const File, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         return switch (this.pathlike) {
-            .path => |path_like| JSC.Node.fs.Async.unlink.create(globalThis, undefined, .{
+            .path => |path_like| jsc.Node.fs.Async.unlink.create(globalThis, undefined, .{
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try JSC.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try jsc.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
                     },
                 },
             }, globalThis.bunVM()),
-            .fd => JSC.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
+            .fd => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
         };
     }
     pub fn isSeekable(this: *const File) ?bool {
@@ -282,7 +282,7 @@ pub const File = struct {
         return null;
     }
 
-    pub fn init(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?MimeType) File {
+    pub fn init(pathlike: jsc.Node.PathOrFileDescriptor, mime_type: ?MimeType) File {
         return .{ .pathlike = pathlike, .mime_type = mime_type orelse MimeType.other };
     }
 };
@@ -327,7 +327,7 @@ pub const S3 = struct {
 
     pub fn unlink(this: *@This(), store: *Store, globalThis: *JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
         const Wrapper = struct {
-            promise: JSC.JSPromise.Strong,
+            promise: jsc.JSPromise.Strong,
             store: *Store,
             global: *JSGlobalObject,
 
@@ -353,18 +353,19 @@ pub const S3 = struct {
                 bun.destroy(wrap);
             }
         };
-        const promise = JSC.JSPromise.Strong.init(globalThis);
+        const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
         const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
+        store.ref();
+
         bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
         }), proxy);
-        store.ref();
 
         return value;
     }
@@ -375,7 +376,7 @@ pub const S3 = struct {
         }
 
         const Wrapper = struct {
-            promise: JSC.JSPromise.Strong,
+            promise: jsc.JSPromise.Strong,
             store: *Store,
             resolvedlistOptions: bun.S3.S3ListObjectsOptions,
             global: *JSGlobalObject,
@@ -410,7 +411,7 @@ pub const S3 = struct {
             }
         };
 
-        const promise = JSC.JSPromise.Strong.init(globalThis);
+        const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
         const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
         const proxy = if (proxy_url) |url| url.href else null;
@@ -559,17 +560,17 @@ pub const Bytes = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const strings = bun.strings;
 const assert = bun.assert;
+const strings = bun.strings;
+const webcore = bun.webcore;
 const MimeType = bun.http.MimeType;
-
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 const node = bun.api.node;
 
-const webcore = bun.webcore;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
 const Blob = webcore.Blob;
 const SizeType = Blob.SizeType;

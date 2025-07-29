@@ -1,14 +1,5 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-const bun = @import("bun");
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const uv = bun.windows.libuv;
-
-const Environment = bun.Environment;
-const FileDescriptor = bun.FileDescriptor;
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
 
 comptime {
     bun.assert(Environment.isWindows);
@@ -59,7 +50,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .mkdir, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
@@ -73,7 +64,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .chmod, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
@@ -86,7 +77,7 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fchmod, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn statfs(file_path: [:0]const u8) Maybe(bun.StatFS) {
@@ -112,7 +103,7 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .chown, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
@@ -126,7 +117,7 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fchown, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
@@ -139,7 +130,7 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .rmdir, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn unlink(file_path: [:0]const u8) Maybe(void) {
@@ -152,7 +143,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .unlink, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
@@ -192,7 +183,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
         // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .rename } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -206,7 +197,7 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .link, .path = from, .dest = to } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) Maybe(void) {
@@ -220,7 +211,7 @@ pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) May
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
@@ -233,7 +224,7 @@ pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .ftruncate, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
@@ -259,7 +250,7 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fsync(fd: FileDescriptor) Maybe(void) {
@@ -272,7 +263,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -406,3 +397,10 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 }
 
 pub const Tag = @import("./sys.zig").Tag;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptor = bun.FileDescriptor;
+const Maybe = bun.sys.Maybe;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const uv = bun.windows.libuv;

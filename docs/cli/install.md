@@ -183,6 +183,30 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 }
 ```
 
+## Installation strategies
+
+Bun supports two package installation strategies that determine how dependencies are organized in `node_modules`:
+
+### Hoisted installs (default for single projects)
+
+The traditional npm/Yarn approach that flattens dependencies into a shared `node_modules` directory:
+
+```bash
+$ bun install --linker hoisted
+```
+
+### Isolated installs
+
+A pnpm-like approach that creates strict dependency isolation to prevent phantom dependencies:
+
+```bash
+$ bun install --linker isolated
+```
+
+Isolated installs create a central package store in `node_modules/.bun/` with symlinks in the top-level `node_modules`. This ensures packages can only access their declared dependencies.
+
+For complete documentation on isolated installs, refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
 ## Configuration
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
@@ -213,11 +237,15 @@ dryRun = false
 
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
+
+# installation strategy: "hoisted" or "isolated"
+# default: "hoisted"
+linker = "hoisted"
 ```
 
 ## CI/CD
 
-Looking to speed up your CI? Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline.
+Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline:
 
 ```yaml#.github/workflows/release.yml
 name: bun-types
@@ -232,6 +260,33 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install
+      - name: Build app
+        run: bun run build
+```
+
+For CI/CD environments that want to enforce reproducible builds, use `bun ci` to fail the build if the package.json is out of sync with the lockfile:
+
+```bash
+$ bun ci
+```
+
+This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile. To use `bun ci` or `bun install --frozen-lockfile`, you must commit `bun.lock` to version control.
+
+And instead of running `bun install`, run `bun ci`.
+
+```yaml#.github/workflows/release.yml
+name: bun-types
+jobs:
+  build:
+    name: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun ci
       - name: Build app
         run: bun run build
 ```

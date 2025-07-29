@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -36,3 +35,5 @@ pub fn StartingStyleRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");

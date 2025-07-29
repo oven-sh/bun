@@ -258,7 +258,7 @@ function processDeclarator(
   if (declarator?.name === "PointerDeclarator") {
     if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
     const isConst = !!declarator.parent?.getChild("const") || rootmostType.type === "fn";
-    const isNonNull = !!declarator.parent?.getChild("nonnull");
+    const isNonNull = !!declarator.getChild("_Nonnull");
 
     return processDeclarator(ctx, declarator, {
       type: "pointer",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sep } from "node:path";
+import { normalizeBunSnapshot } from "harness";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -47,8 +47,9 @@ describe("2-arg form", () => {
 });
 
 test("print size", () => {
-  expect(Bun.inspect(new Response(Bun.file(import.meta.filename)))).toMatchInlineSnapshot(`
-    "Response (3.43 KB) {
+  expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
+    .toMatchInlineSnapshot(`
+    "Response (3.48 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -58,7 +59,7 @@ test("print size", () => {
       },
       redirected: false,
       bodyUsed: false,
-      FileRef ("${import.meta.dir}${sep}response.test.ts") {
+      FileRef ("<cwd>/test/js/web/fetch/response.test.ts") {
         type: "text/javascript;charset=utf-8"
       }
     }"

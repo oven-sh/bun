@@ -1033,11 +1033,12 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedVa
     }
     return encodedJSUndefined();
 }
-extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getReturns(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
     JSValue value = JSValue::decode(encodedValue);
     if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
-        return JSValue::encode(mock->getReturnValues());
+        RELEASE_AND_RETURN(scope, JSValue::encode(mock->getReturnValues()));
     }
     return encodedJSUndefined();
 }

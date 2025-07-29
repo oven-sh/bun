@@ -4525,7 +4525,7 @@ pub const Expect = struct {
 
         incrementExpectCallCounter();
 
-        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
@@ -4679,7 +4679,7 @@ pub const Expect = struct {
         const expected = arguments[0];
         incrementExpectCallCounter();
 
-        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
@@ -4829,7 +4829,7 @@ pub const Expect = struct {
         const expected = arguments[0];
         incrementExpectCallCounter();
 
-        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
@@ -4920,7 +4920,7 @@ pub const Expect = struct {
         }
 
         incrementExpectCallCounter();
-        const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
+        const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();

@@ -471,38 +471,41 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
-    // bun install has succeeded
-    const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
-    const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-    console.log("run in", cwd);
-    let exiting = false;
+    // TODO: remove windows exclusion here
+    if (isCI && !isWindows) {
+      // bun install has succeeded
+      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
+      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+      console.log("run in", cwd);
+      let exiting = false;
 
-    const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
-      stdio: ["ignore", "pipe", "inherit"],
-      cwd, // run in main repo
-      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
-    });
-    server.unref();
-    server.on("error", errorResolve);
-    server.on("exit", (code, signal) => {
-      if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
-    });
-    process.on("exit", () => {
-      exiting = true;
-      server.kill();
-    });
-    const lines = createInterface(server.stdout);
-    lines.on("line", line => {
-      portResolve({ port: parseInt(line) });
-    });
+      const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
+        stdio: ["ignore", "pipe", "inherit"],
+        cwd, // run in main repo
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      });
+      server.unref();
+      server.on("error", errorResolve);
+      server.on("exit", (code, signal) => {
+        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+      });
+      process.on("exit", () => {
+        exiting = true;
+        server.kill();
+      });
+      const lines = createInterface(server.stdout);
+      lines.on("line", line => {
+        portResolve({ port: parseInt(line) });
+      });
 
-    const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
-    if (typeof result.port != "number") {
-      server.kill();
-      console.warn("ci-remap server did not start:", result);
-    } else {
-      console.log("crash reports parsed on port", result.port);
-      remapPort = result.port;
+      const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
+      if (typeof result.port != "number") {
+        server.kill();
+        console.warn("ci-remap server did not start:", result);
+      } else {
+        console.log("crash reports parsed on port", result.port);
+        remapPort = result.port;
+      }
     }
 
     await Promise.all(

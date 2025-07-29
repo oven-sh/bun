@@ -27,7 +27,7 @@ heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
 gc_timer_state: GCTimerState = GCTimerState.pending,
 gc_repeating_timer: *uws.Timer = undefined,
 gc_timer_interval: i32 = 0,
-gc_repeating_timer_fast: bool = true,
+gc_repeating_timer_mode: GCTimerMode = .fast,
 disabled: bool = false,
 
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
@@ -77,22 +77,36 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
 // But if you have a long-running instance of Bun, you don't want the
 // program constantly using CPU doing GC for no reason
 //
-// So we have two settings for this GC timer:
+// So we have three settings for this GC timer:
 //
-//    - Fast: GC runs every 1 second
-//    - Slow: GC runs every 30 seconds
+//    - Fast: GC runs every 1 second (default)
+//    - Slow: GC runs every 30 seconds  
+//    - Very Slow: GC runs every 10 minutes (600 seconds)
 //
 // When the heap size is increasing, we always switch to fast mode
-// When the heap size has been the same or less for 30 seconds, we switch to slow mode
-pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
-    if (setting == .fast and !this.gc_repeating_timer_fast) {
-        this.gc_repeating_timer_fast = true;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-    } else if (setting == .slow and this.gc_repeating_timer_fast) {
-        this.gc_repeating_timer_fast = false;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+// When the heap size has been the same for 30 ticks, we switch to slow mode
+// When the heap size has been the same for a very large number of ticks (255), we switch to very slow mode
+pub fn updateGCRepeatTimer(this: *GarbageCollectionController, mode: GCTimerMode) void {
+    if (this.gc_repeating_timer_mode == mode) return;
+    
+    const old_mode = this.gc_repeating_timer_mode;
+    this.gc_repeating_timer_mode = mode;
+    
+    switch (mode) {
+        .fast => {
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        },
+        .slow => {
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
+            if (old_mode == .fast) {
+                this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            }
+        },
+        .very_slow => {
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 600_000, 600_000); // 10 minutes
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        },
     }
 }
 
@@ -103,9 +117,24 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
     if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
-        if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
-            // make the timer interval longer
-            this.updateGCRepeatTimer(.slow);
+        
+        // Transition to progressively slower modes based on heap stability
+        switch (this.gc_repeating_timer_mode) {
+            .fast => {
+                if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
+                    this.updateGCRepeatTimer(.slow);
+                }
+            },
+            .slow => {
+                // After a very large number of ticks in slow mode, switch to very slow
+                // Use 255 as the threshold since that's the max value for u8
+                if (this.heap_size_didnt_change_for_repeating_timer_ticks_count == 255) {
+                    this.updateGCRepeatTimer(.very_slow);
+                }
+            },
+            .very_slow => {
+                // Already at the slowest mode, stay here
+            },
         }
     } else {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
@@ -165,6 +194,12 @@ pub const GCTimerState = enum {
     pending,
     scheduled,
     run_on_next_tick,
+};
+
+pub const GCTimerMode = enum {
+    fast,
+    slow,
+    very_slow,
 };
 
 const std = @import("std");

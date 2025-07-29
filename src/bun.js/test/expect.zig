@@ -4667,16 +4667,11 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
 
-        if (arguments.len < 1) {
-            return globalThis.throwInvalidArguments("toHaveReturnedWith() requires 1 argument", .{});
-        }
-
-        const expected = arguments[0];
+        const expected = callframe.argumentsAsArray(1)[0];
         incrementExpectCallCounter();
 
         const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
@@ -4817,16 +4812,11 @@ pub const Expect = struct {
         jsc.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastReturnedWith", "<green>expected<r>");
 
-        if (arguments.len < 1) {
-            return globalThis.throwInvalidArguments("toHaveBeenLastReturnedWith() requires 1 argument", .{});
-        }
-
-        const expected = arguments[0];
+        const expected = callframe.argumentsAsArray(1)[0];
         incrementExpectCallCounter();
 
         const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
@@ -4898,16 +4888,10 @@ pub const Expect = struct {
     pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         const thisValue = callframe.this();
-        const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>");
 
-        if (arguments.len < 2) {
-            return globalThis.throwInvalidArguments("toHaveNthReturnedWith() requires 2 arguments (n, expected)", .{});
-        }
-
-        const nth_arg = arguments[0];
-        const expected = arguments[1];
+        const nth_arg, const expected = callframe.argumentsAsArray(2);
 
         // Validate n is a number
         if (!nth_arg.isAnyInt()) {

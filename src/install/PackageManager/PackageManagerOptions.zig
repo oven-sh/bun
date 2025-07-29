@@ -550,7 +550,7 @@ pub fn load(
             } else if (Npm.OperatingSystem.NameMap.get(os_str)) |os_value| {
                 this.target_os = @enumFromInt(os_value);
             } else {
-                Output.errGeneric("invalid --os value: '{s}'. Valid values are: " ++ Npm.OperatingSystem.validValuesString ++ ", *", .{os_str});
+                Output.errGeneric("invalid --os value: '{s}'. Valid values are: " ++ Npm.OperatingSystem.valid_values_string ++ ", *", .{os_str});
                 bun.Global.exit(1);
             }
         }
@@ -561,7 +561,7 @@ pub fn load(
             } else if (Npm.Architecture.NameMap.get(cpu_str)) |cpu_value| {
                 this.target_cpu = @enumFromInt(cpu_value);
             } else {
-                Output.errGeneric("invalid --cpu value: '{s}'. Valid values are: " ++ Npm.Architecture.validValuesString ++ ", *", .{cpu_str});
+                Output.errGeneric("invalid --cpu value: '{s}'. Valid values are: " ++ Npm.Architecture.valid_values_string ++ ", *", .{cpu_str});
                 bun.Global.exit(1);
             }
         }
@@ -572,7 +572,7 @@ pub fn load(
             } else if (Npm.Libc.NameMap.get(libc_str)) |libc_value| {
                 this.target_libc = @enumFromInt(libc_value);
             } else {
-                Output.errGeneric("invalid --libc value: '{s}'. Valid values are: " ++ Npm.Libc.validValuesString ++ ", *", .{libc_str});
+                Output.errGeneric("invalid --libc value: '{s}'. Valid values are: " ++ Npm.Libc.valid_values_string ++ ", *", .{libc_str});
                 bun.Global.exit(1);
             }
         }

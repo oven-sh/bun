@@ -823,9 +823,9 @@ pub const PackageJSON = struct {
                         }
                     }
                 }
-                if (json.get("cpu")) |os_field| {
-                    var temp = os_field.asArray();
-                    if (temp) |*array| {
+                if (json.get("cpu")) |cpu_field| {
+                    var cpu_array = cpu_field.asArray();
+                    if (cpu_array) |*array| {
                         var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -833,7 +833,7 @@ pub const PackageJSON = struct {
                             }
                         }
                         package_json.arch = arch.combine();
-                    } else if (os_field.asString(bun.default_allocator)) |str| {
+                    } else if (cpu_field.asString(bun.default_allocator)) |str| {
                         var arch = Architecture.none.negatable();
                         arch.apply(str);
                         package_json.arch = arch.combine();
@@ -841,8 +841,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (json.get("os")) |os_field| {
-                    var temp = os_field.asArray();
-                    if (temp) |*array| {
+                    var os_array = os_field.asArray();
+                    if (os_array) |*array| {
                         var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -858,8 +858,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (json.get("libc")) |libc_field| {
-                    var temp = libc_field.asArray();
-                    if (temp) |*array| {
+                    var libc_array = libc_field.asArray();
+                    if (libc_array) |*array| {
                         var libc = Libc.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {

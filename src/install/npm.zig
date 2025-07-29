@@ -682,7 +682,7 @@ pub const OperatingSystem = enum(u16) {
         else => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 
-    pub const validValuesString = blk: {
+    pub const valid_values_string = blk: {
         var result: []const u8 = "";
         for (NameMap.kvs, 0..) |kv, i| {
             if (i > 0) result = result ++ ", ";
@@ -718,18 +718,15 @@ pub const Libc = enum(u8) {
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
-    const placeholder: u8 = 1 << 7;
 
-    pub const all_value: u8 = glibc | musl | placeholder;
+    pub const all_value: u8 = glibc | musl;
 
     pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
         .{ "musl", musl },
-        // somehow this is needed so it doesn't keep on showing up as negated every time
-        .{ "(placeholder)", placeholder },
     });
 
-    pub const validValuesString = blk: {
+    pub const valid_values_string = blk: {
         var result: []const u8 = "";
         for (NameMap.kvs, 0..) |kv, i| {
             if (i > 0) result = result ++ ", ";
@@ -820,7 +817,7 @@ pub const Architecture = enum(u16) {
         .{ "x64", x64 },
     });
 
-    pub const validValuesString = blk: {
+    pub const valid_values_string = blk: {
         var result: []const u8 = "";
         for (NameMap.kvs, 0..) |kv, i| {
             if (i > 0) result = result ++ ", ";

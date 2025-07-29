@@ -320,3 +320,25 @@ test("not", () => {
 test("has end newline vs doesn't", () => {
   expect("Hello, World!\n").toEqual("Hello, World!");
 });
+
+test("extremely float64array", () => {
+  const length = 10000;
+  const expected = new Float64Array(length);
+  const received = new Float64Array(length);
+  for (let i = 0; i < length; i++) {
+    expected[i] = i;
+    received[i] = i + 1;
+  }
+  expect(received).toEqual(expected);
+});
+
+test("completely different long value does not truncate", () => {
+  const length = 100;
+  const expected = new Int32Array(length);
+  const received = new Int32Array(length);
+  for (let i = 0; i < length; i++) {
+    expected[i] = i;
+    received[i] = length - i - 1;
+  }
+  expect(received).toEqual(expected);
+});

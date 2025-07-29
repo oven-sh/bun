@@ -56,10 +56,8 @@ pub fn detectAndLoadOtherLockfile(
         var timer = std.time.Timer.start() catch unreachable;
         const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
         defer lockfile.close();
-        var lockfile_path_buf: bun.PathBuffer = undefined;
-        const lockfile_path = bun.getFdPathZ(lockfile.handle, &lockfile_path_buf) catch break :yarn;
         const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
-        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
+        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
             if (Environment.allow_assert) {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

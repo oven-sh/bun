@@ -557,8 +557,13 @@ pub fn migrateYarnLockfile(
     allocator: Allocator,
     log: *logger.Log,
     data: string,
-    abs_path: string,
+    dir: bun.FD,
 ) !LoadResult {
+    // todo yarn v2+ support
+    if (!strings.containsComptime(data, "# yarn lockfile v1")) {
+        return error.UnsupportedYarnLockfileVersion;
+    }
+
     var yarn_lock = YarnLock.init(allocator);
     defer yarn_lock.deinit();
 
@@ -568,11 +573,6 @@ pub fn migrateYarnLockfile(
     Install.initializeStore();
 
     var string_buf = this.stringBuf();
-
-    // read package.json to get specified dependencies
-    var path_buf: bun.PathBuffer = undefined;
-    const package_json_dir = std.fs.path.dirname(abs_path) orelse ".";
-    const package_json_path = bun.path.joinAbsStringBufZ(package_json_dir, &path_buf, &.{"package.json"}, .auto);
 
     var num_deps: u32 = 0;
     var root_dep_count: u32 = 0;
@@ -587,51 +587,52 @@ pub fn migrateYarnLockfile(
         root_dependencies.deinit();
     }
 
-    const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, allocator).unwrap() catch |err| {
-        Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
-        Global.exit(1);
-    };
-    defer allocator.free(package_json_contents);
+    {
+        // read package.json to get specified dependencies
+        const package_json_fd = bun.sys.File.openat(dir, "package.json", bun.O.RDONLY, 0).unwrap() catch return error.InvalidPackageJSON;
+        defer package_json_fd.close();
+        const package_json_contents = package_json_fd.readToEnd(allocator).unwrap() catch return error.InvalidPackageJSON;
+        defer allocator.free(package_json_contents);
 
-    const package_json_source = logger.Source.initPathString(package_json_path, package_json_contents);
-    const package_json_expr = JSON.parsePackageJSONUTF8WithOpts(
-        &package_json_source,
-        log,
-        allocator,
-        .{
-            .is_json = true,
-            .allow_comments = true,
-            .allow_trailing_commas = true,
-            .guess_indentation = true,
-        },
-    ) catch |err| {
-        Output.errGeneric("Failed to parse package.json: {s}", .{@errorName(err)});
-        Global.exit(1);
-    };
-    const package_json = package_json_expr.root;
+        const package_json_source = brk: {
+            var package_json_path_buf: bun.PathBuffer = undefined;
+            const package_json_path = bun.getFdPath(package_json_fd.handle, &package_json_path_buf) catch return error.InvalidPackageJSON;
+            break :brk logger.Source.initPathString(package_json_path, package_json_contents);
+        };
+        const package_json_expr = JSON.parsePackageJSONUTF8WithOpts(
+            &package_json_source,
+            log,
+            allocator,
+            .{
+                .is_json = true,
+                .allow_comments = true,
+                .allow_trailing_commas = true,
+                .guess_indentation = true,
+            },
+        ) catch return error.InvalidPackageJSON;
 
-    const package_name: ?[]const u8 = blk: {
-        if (package_json_expr.root.asProperty("name")) |name_prop| {
-            if (name_prop.expr.data == .e_string) {
-                const name_slice = name_prop.expr.data.e_string.string(allocator) catch "";
-                if (name_slice.len > 0) {
-                    break :blk try allocator.dupe(u8, name_slice);
+        const package_json = package_json_expr.root;
+
+        const package_name: ?[]const u8 = blk: {
+            if (package_json.asProperty("name")) |name_prop| {
+                if (name_prop.expr.data == .e_string) {
+                    const name_slice = name_prop.expr.data.e_string.string(allocator) catch "";
+                    if (name_slice.len > 0) {
+                        break :blk try allocator.dupe(u8, name_slice);
+                    }
                 }
             }
-        }
-        break :blk null;
-    };
-    defer if (package_name) |name| allocator.free(name);
-    const package_name_hash = if (package_name) |name| String.Builder.stringHash(name) else 0;
+            break :blk null;
+        };
+        defer if (package_name) |name| allocator.free(name);
+        const package_name_hash = if (package_name) |name| String.Builder.stringHash(name) else 0;
 
-    {
         const sections = [_]struct { key: []const u8, dep_type: DependencyType }{
             .{ .key = "dependencies", .dep_type = .production },
             .{ .key = "devDependencies", .dep_type = .development },
             .{ .key = "optionalDependencies", .dep_type = .optional },
             .{ .key = "peerDependencies", .dep_type = .peer },
         };
-
         for (sections) |section_info| {
             const prop = package_json.asProperty(section_info.key) orelse continue;
             if (prop.expr.data != .e_object) continue;
@@ -657,70 +658,70 @@ pub fn migrateYarnLockfile(
                 root_dep_count_from_package_json += 1;
             }
         }
+
+        root_dep_count = @max(root_dep_count_from_package_json, 10);
+        num_deps += root_dep_count;
+
+        for (yarn_lock.entries.items) |entry| {
+            if (entry.dependencies) |deps| {
+                num_deps += @intCast(deps.count());
+            }
+            if (entry.optionalDependencies) |deps| {
+                num_deps += @intCast(deps.count());
+            }
+            if (entry.peerDependencies) |deps| {
+                num_deps += @intCast(deps.count());
+            }
+            if (entry.devDependencies) |deps| {
+                num_deps += @intCast(deps.count());
+            }
+        }
+
+        const num_packages = @as(u32, @intCast(yarn_lock.entries.items.len + 1));
+
+        try this.buffers.dependencies.ensureTotalCapacity(allocator, num_deps);
+        try this.buffers.resolutions.ensureTotalCapacity(allocator, num_deps);
+        try this.packages.ensureTotalCapacity(allocator, num_packages);
+        try this.package_index.ensureTotalCapacity(num_packages);
+
+        const root_name = if (package_name) |name| try string_buf.appendWithHash(name, package_name_hash) else try string_buf.append("");
+
+        try this.packages.append(allocator, Lockfile.Package{
+            .name = root_name,
+            .name_hash = package_name_hash,
+            .resolution = Resolution.init(.{ .root = {} }),
+            .dependencies = .{},
+            .resolutions = .{},
+            .meta = .{
+                .id = 0,
+                .origin = .local,
+                .arch = .all,
+                .os = .all,
+                .man_dir = String{},
+                .has_install_script = .false,
+                .integrity = Integrity{},
+            },
+            .bin = Bin.init(),
+            .scripts = .{},
+        });
+
+        if (package_json.asProperty("resolutions")) |resolutions| {
+            var root_package = this.packages.get(0);
+            var string_builder = this.stringBuilder();
+
+            if (resolutions.expr.data == .e_object) {
+                string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
+            }
+            if (string_builder.cap > 0) {
+                try string_builder.allocate();
+            }
+            try this.overrides.parseAppend(manager, this, &root_package, log, &package_json_source, package_json, &string_builder);
+            this.packages.set(0, root_package);
+        }
     }
-
-    root_dep_count = @max(root_dep_count_from_package_json, 10);
-    num_deps += root_dep_count;
-
-    for (yarn_lock.entries.items) |entry| {
-        if (entry.dependencies) |deps| {
-            num_deps += @intCast(deps.count());
-        }
-        if (entry.optionalDependencies) |deps| {
-            num_deps += @intCast(deps.count());
-        }
-        if (entry.peerDependencies) |deps| {
-            num_deps += @intCast(deps.count());
-        }
-        if (entry.devDependencies) |deps| {
-            num_deps += @intCast(deps.count());
-        }
-    }
-
-    const num_packages = @as(u32, @intCast(yarn_lock.entries.items.len + 1));
-
-    try this.buffers.dependencies.ensureTotalCapacity(allocator, num_deps);
-    try this.buffers.resolutions.ensureTotalCapacity(allocator, num_deps);
-    try this.packages.ensureTotalCapacity(allocator, num_packages);
-    try this.package_index.ensureTotalCapacity(num_packages);
 
     var dependencies_buf = this.buffers.dependencies.items.ptr[0..num_deps];
     var resolutions_buf = this.buffers.resolutions.items.ptr[0..num_deps];
-
-    const root_name = if (package_name) |name| try string_buf.appendWithHash(name, package_name_hash) else try string_buf.append("");
-
-    try this.packages.append(allocator, Lockfile.Package{
-        .name = root_name,
-        .name_hash = package_name_hash,
-        .resolution = Resolution.init(.{ .root = {} }),
-        .dependencies = .{},
-        .resolutions = .{},
-        .meta = .{
-            .id = 0,
-            .origin = .local,
-            .arch = .all,
-            .os = .all,
-            .man_dir = String{},
-            .has_install_script = .false,
-            .integrity = Integrity{},
-        },
-        .bin = Bin.init(),
-        .scripts = .{},
-    });
-
-    if (package_json.asProperty("resolutions")) |resolutions| {
-        var root_package = this.packages.get(0);
-        var string_builder = this.stringBuilder();
-
-        if (resolutions.expr.data == .e_object) {
-            string_builder.cap += resolutions.expr.data.e_object.properties.len * 128;
-        }
-        if (string_builder.cap > 0) {
-            try string_builder.allocate();
-        }
-        try this.overrides.parseAppend(manager, this, &root_package, log, &package_json_source, package_json, &string_builder);
-        this.packages.set(0, root_package);
-    }
 
     var yarn_entry_to_package_id = try allocator.alloc(Install.PackageID, yarn_lock.entries.items.len);
     defer allocator.free(yarn_entry_to_package_id);

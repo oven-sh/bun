@@ -2,9 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
-  return output
-    .replaceAll(/\[[0-9\.]+ms\]/g, "[DURATION]")
-    .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)");
+  return output.replaceAll(/ \[[0-9\.]+ms\]/g, "").replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)");
 }
 function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
@@ -45,7 +43,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 1 [DURATION]
+    (fail) example 1
      6 | test("example 2", () => {
      7 |   expect({
      8 |     object1: "a",
@@ -70,7 +68,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 2 [DURATION]
+    (fail) example 2
     26 |   expectedLines[750] = "line 751 - MODIFIED"; // Change line 751
     27 |   expectedLines[900] = "line 901 - DIFFERENT"; // Change line 901
     28 |   expectedLines.splice(100, 0, "line 101 - INSERTED");
@@ -121,7 +119,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 3 - very long string with few changes [DURATION]
+    (fail) example 3 - very long string with few changes
     30 | 
     31 |   expect(originalString).toEqual(expectedString);
     32 | });
@@ -136,7 +134,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 4 - ansi colors don't get printed to console [DURATION]
+    (fail) example 4 - ansi colors don't get printed to console
     34 | test("example 4 - ansi colors don't get printed to console", () => {
     35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
     36 | });
@@ -151,7 +149,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 5 - Unicode characters [DURATION]
+    (fail) example 5 - Unicode characters
     38 | test("example 5 - Unicode characters", () => {
     39 |   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
     40 | });
@@ -171,7 +169,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 6 - Unicode with line breaks [DURATION]
+    (fail) example 6 - Unicode with line breaks
     47 |   expect({
     48 |     emoji: "🔥💧🌊",
     49 |     chinese: "测试字符串",
@@ -195,7 +193,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 7 - Mixed Unicode in objects [DURATION]
+    (fail) example 7 - Mixed Unicode in objects
     56 |     mixed: "Hello 世界 🌎",
     57 |   });
     58 | });
@@ -210,8 +208,8 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 8 - Latin-1 characters [DURATION]
-    (pass) example 9 - Latin-1 extended characters [DURATION]
+    (fail) example 8 - Latin-1 characters
+    (pass) example 9 - Latin-1 extended characters
     64 | test("example 9 - Latin-1 extended characters", () => {
     65 |   expect("© ® ™ £ € ¥ § ¶").toEqual("© ® ™ £ € ¥ § ¶");
     66 | });
@@ -231,7 +229,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 10 - Latin-1 with line breaks [DURATION]
+    (fail) example 10 - Latin-1 with line breaks
     72 | test("example 11 - Latin-1 in objects", () => {
     73 |   expect({
     74 |     french: "crème brûlée",
@@ -253,7 +251,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 11 - Latin-1 in objects [DURATION]
+    (fail) example 11 - Latin-1 in objects
     157 | line 35
     158 | line 36
     159 | line 37
@@ -311,7 +309,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 12 - zig large multiline diff [DURATION]
+    (fail) example 12 - zig large multiline diff
     240 | line six
     241 | line seven
     242 | 
@@ -378,7 +376,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 13 - zig simple multiline diff with sections [DURATION]
+    (fail) example 13 - zig simple multiline diff with sections
     246 | });
     247 | 
     248 | test("example 14 - zig single line diff", () => {
@@ -393,7 +391,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 14 - zig single line diff [DURATION]
+    (fail) example 14 - zig single line diff
     252 | });
     253 | 
     254 | test("example 15 - zig unicode char diff", () => {
@@ -408,7 +406,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 15 - zig unicode char diff [DURATION]
+    (fail) example 15 - zig unicode char diff
     266 | }\`;
     267 |   const expected = \`function main() {
     268 |     print("Hello, world!");
@@ -432,7 +430,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 16 - zig indentation change diff [DURATION]
+    (fail) example 16 - zig indentation change diff
     302 |   }
     303 | 
     304 |   // The Zig code adds a trailing newline to each string.
@@ -483,7 +481,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 17 - zig very long string [DURATION]
+    (fail) example 17 - zig very long string
     308 | });
     309 | 
     310 | test("example 18 - very long single line string", () => {
@@ -498,7 +496,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 18 - very long single line string [DURATION]
+    (fail) example 18 - very long single line string
     312 |   const received = "a".repeat(1000001);
     313 |   expect(received).toEqual(expected);
     314 | });
@@ -511,7 +509,7 @@ test("no color", async () => {
     Expected: not "Hello, World!"
 
           at <anonymous> (FILE:LINE)
-    (fail) not [DURATION]
+    (fail) not
     316 | test("not", () => {
     317 |   expect("Hello, World!").not.toEqual("Hello, World!");
     318 | });
@@ -530,12 +528,12 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) has end newline vs doesn't [DURATION]
+    (fail) has end newline vs doesn't
 
      1 pass
      19 fail
      20 expect() calls
-    Ran 20 tests across 1 file. [DURATION]
+    Ran 20 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

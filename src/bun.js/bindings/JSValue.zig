@@ -1146,14 +1146,15 @@ pub const JSValue = enum(i64) {
 
     /// Convert a JSValue to a string, potentially calling `toString` on the
     /// JSValue in JavaScript. Can throw an error.
+    ///
+    /// This keeps the WTF::StringImpl alive if it was originally a latin1
+    /// ASCII-only string.
+    ///
+    /// Otherwise, it will be cloned using the allocator.
     pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, global);
         defer str.deref();
 
-        // This keeps the WTF::StringImpl alive if it was originally a latin1
-        // ASCII-only string.
-        //
-        // Otherwise, it will be cloned using the allocator.
         return str.toUTF8(allocator);
     }
 

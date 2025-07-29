@@ -138,18 +138,6 @@ pub const ZigString = extern struct {
         return strings.isAllASCII(this.slice());
     }
 
-    pub fn clone(this: ZigString, allocator: std.mem.Allocator) !ZigString {
-        var sliced = this.toSlice(allocator);
-        if (!sliced.isAllocated()) {
-            var str = ZigString.init(try allocator.dupe(u8, sliced.slice()));
-            str.mark();
-            str.markUTF8();
-            return str;
-        }
-
-        return this;
-    }
-
     extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
 
     pub fn toJSONObject(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
@@ -375,16 +363,6 @@ pub const ZigString = extern struct {
         pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
             const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
-        }
-
-        // TODO: this is identical to `cloneIfNeeded`
-        pub fn clone(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
-            if (this.isAllocated()) {
-                return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };
-            }
-
-            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) !Slice {

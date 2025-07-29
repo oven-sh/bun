@@ -30,6 +30,8 @@ import {
 import { readFile } from "node:fs/promises";
 import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { createInterface } from "node:readline";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import pLimit from "./p-limit.mjs";
 import {
@@ -176,6 +178,25 @@ if (cliOptions.junit) {
 if (options["quiet"]) {
   isQuiet = true;
 }
+
+let coresDir;
+
+if (options["coredump-upload"]) {
+  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+  const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+  coresDir = sysctl.stdout;
+  if (sysctl.ok) {
+    if (coresDir.startsWith("|")) {
+      throw new Error("cores are being piped not saved");
+    }
+    // change /foo/bar/%e-%p.core to /foo/bar
+    coresDir = dirname(sysctl.stdout);
+  } else {
+    throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+  }
+}
+
+let remapPort = undefined;
 
 /**
  * @typedef {Object} TestExpectation
@@ -450,6 +471,43 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
+    // TODO: remove windows exclusion here
+    if (isCI && !isWindows) {
+      // bun install has succeeded
+      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
+      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+      console.log("run in", cwd);
+      let exiting = false;
+
+      const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
+        stdio: ["ignore", "pipe", "inherit"],
+        cwd, // run in main repo
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      });
+      server.unref();
+      server.on("error", errorResolve);
+      server.on("exit", (code, signal) => {
+        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+      });
+      process.on("exit", () => {
+        exiting = true;
+        server.kill();
+      });
+      const lines = createInterface(server.stdout);
+      lines.on("line", line => {
+        portResolve({ port: parseInt(line) });
+      });
+
+      const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
+      if (typeof result.port != "number") {
+        server.kill();
+        console.warn("ci-remap server did not start:", result);
+      } else {
+        console.log("crash reports parsed on port", result.port);
+        remapPort = result.port;
+      }
+    }
+
     await Promise.all(
       tests.map(testPath =>
         limit(() => {
@@ -469,7 +527,7 @@ async function runTests() {
               env.BUN_JSC_validateExceptionChecks = "1";
             }
             return runTest(title, async () => {
-              const { ok, error, stdout } = await spawnBun(execPath, {
+              const { ok, error, stdout, crashes } = await spawnBun(execPath, {
                 cwd: cwd,
                 args: [
                   subcommand,
@@ -482,7 +540,8 @@ async function runTests() {
                 stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
               });
               const mb = 1024 ** 3;
-              const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+              let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+              if (crashes) stdoutPreview += crashes;
               return {
                 testPath: title,
                 ok: ok,
@@ -642,19 +701,6 @@ async function runTests() {
 
   if (options["coredump-upload"]) {
     try {
-      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
-      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-      let coresDir = sysctl.stdout;
-      if (sysctl.ok) {
-        if (coresDir.startsWith("|")) {
-          throw new Error("cores are being piped not saved");
-        }
-        // change /foo/bar/%e-%p.core to /foo/bar
-        coresDir = dirname(sysctl.stdout);
-      } else {
-        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
-      }
-
       const coresDirBase = dirname(coresDir);
       const coresDirName = basename(coresDir);
       const coreFileNames = readdirSync(coresDir);
@@ -760,6 +806,7 @@ async function runTests() {
  * @property {number} timestamp
  * @property {number} duration
  * @property {string} stdout
+ * @property {number} [pid]
  */
 
 /**
@@ -810,6 +857,25 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
+      function unsafeBashEscape(str) {
+        if (!str) return "";
+        if (str.includes(" ")) return JSON.stringify(str);
+        return str;
+      }
+      if (process.env.SHOW_SPAWN_COMMANDS) {
+        console.log(
+          "SPAWNING COMMAND:\n" +
+            [
+              "echo -n | " +
+                Object.entries(env)
+                  .map(([key, value]) => `${unsafeBashEscape(key)}=${unsafeBashEscape(value)}`)
+                  .join(" "),
+              unsafeBashEscape(command),
+              ...args.map(unsafeBashEscape),
+            ].join(" ") +
+            " | cat",
+        );
+      }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,
@@ -921,6 +987,7 @@ async function spawnSafe(options) {
     stdout: buffer,
     timestamp: timestamp || Date.now(),
     duration: duration || 0,
+    pid: subprocess?.pid,
   };
 }
 
@@ -950,9 +1017,15 @@ function getCombinedPath(execPath) {
 }
 
 /**
+ * @typedef {object} SpawnBunResult
+ * @extends SpawnResult
+ * @property {string} [crashes]
+ */
+
+/**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
- * @returns {Promise<SpawnResult>}
+ * @returns {Promise<SpawnBunResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
@@ -971,11 +1044,13 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
-    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    ...(typeof remapPort == "number"
+      ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
+      : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
   if (basename(execPath).includes("asan")) {
@@ -999,7 +1074,8 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     bunEnv["TEMP"] = tmpdirPath;
   }
   try {
-    return await spawnSafe({
+    const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
+    const result = await spawnSafe({
       command: execPath,
       args,
       cwd,
@@ -1008,6 +1084,87 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
+    const newCores = options["coredump-upload"] ? readdirSync(coresDir).filter(c => !existingCores.includes(c)) : [];
+    let crashes = "";
+    if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
+      // warn if the main PID crashed and we don't have a core
+      if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
+        crashes += `main process killed by ${result.signalCode} but no core file found\n`;
+      }
+
+      if (newCores.length > 0) {
+        result.ok = false;
+        if (!isAlwaysFailure(result.error)) result.error = "core dumped";
+      }
+
+      for (const coreName of newCores) {
+        const corePath = join(coresDir, coreName);
+        let out = "";
+        const gdb = await spawnSafe({
+          command: "gdb",
+          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          timeout: 240_000,
+          stderr: () => {},
+          stdout(text) {
+            out += text;
+          },
+        });
+        if (!gdb.ok) {
+          crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
+        } else {
+          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
+          for (const line of out.split("\n")) {
+            // filter GDB output since it is pretty verbose
+            if (
+              line.startsWith("Program terminated") ||
+              line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+              line.startsWith("[Current thread is")
+            ) {
+              crashes += line + "\n";
+            }
+          }
+        }
+      }
+    }
+
+    // Skip this if the remap server didn't work or if Bun exited normally
+    // (tests in which a subprocess crashed should at least set exit code 1)
+    if (typeof remapPort == "number" && result.exitCode !== 0) {
+      try {
+        // When Bun crashes, it exits before the subcommand it runs to upload the crash report has necessarily finished.
+        // So wait a little bit to make sure that the crash report has at least started uploading
+        // (once the server sees the /ack request then /traces will wait for any crashes to finish processing)
+        // There is a bug that if a test causes crash reports but exits with code 0, the crash reports will instead
+        // be attributed to the next test that fails. I'm not sure how to fix this without adding a sleep in between
+        // all tests (which would slow down CI a lot).
+        await setTimeoutPromise(500);
+        const response = await fetch(`http://localhost:${remapPort}/traces`);
+        if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
+        const traces = await response.json();
+        if (traces.length > 0) {
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "crash reported";
+
+          crashes += `${traces.length} crashes reported during this test\n`;
+          for (const t of traces) {
+            if (t.failed_parse) {
+              crashes += "Trace string failed to parse:\n";
+              crashes += t.failed_parse + "\n";
+            } else if (t.failed_remap) {
+              crashes += "Parsed trace failed to remap:\n";
+              crashes += JSON.stringify(t.failed_remap, null, 2) + "\n";
+            } else {
+              crashes += "================\n";
+              crashes += t.remap + "\n";
+            }
+          }
+        }
+      } catch (e) {
+        crashes += "failed to fetch traces: " + e.toString() + "\n";
+      }
+    }
+    if (crashes.length > 0) result.crashes = crashes;
+    return result;
   } finally {
     try {
       rmSync(tmpdirPath, { recursive: true, force: true });
@@ -1093,7 +1250,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
 
-  const { ok, error, stdout } = await spawnBun(execPath, {
+  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
@@ -1101,7 +1258,8 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
     stdout: options.stdout,
     stderr: options.stderr,
   });
-  const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  if (crashes) stdoutPreview += crashes;
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -1276,11 +1434,12 @@ function parseTestStdout(stdout, testPath) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
-  const { ok, error, stdout, duration } = await spawnBun(execPath, {
+  let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
   });
+  if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
   const testPath = join(relativePath, "package.json");
   const status = ok ? "pass" : "fail";
@@ -1447,20 +1606,30 @@ async function getVendorTests(cwd) {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          await spawnSafe({
+          const { ok, error } = await spawnSafe({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
             cwd,
           });
+          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
         }
 
-        await spawnSafe({
+        let { ok, error } = await spawnSafe({
           command: "git",
           args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
           cwd: vendorPath,
         });
+        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
+
+        ({ ok, error } = await spawnSafe({
+          command: "git",
+          args: ["checkout", tag],
+          timeout: testTimeout,
+          cwd: vendorPath,
+        }));
+        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {
@@ -2015,7 +2184,9 @@ function isAlwaysFailure(error) {
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
-    error.includes("error: addresssanitizer")
+    error.includes("error: addresssanitizer") ||
+    error.includes("core dumped") ||
+    error.includes("crash reported")
   );
 }
 

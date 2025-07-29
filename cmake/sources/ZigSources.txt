@@ -379,6 +379,7 @@ src/collections/baby_list.zig
 src/collections/bit_set.zig
 src/collections/hive_array.zig
 src/collections/multi_array_list.zig
+src/collections/safety.zig
 src/compile_target.zig
 src/comptime_string_map.zig
 src/copy_file.zig

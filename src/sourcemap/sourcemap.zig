@@ -1679,10 +1679,6 @@ pub const Chunk = struct {
                 return .{ .ctx = Type.init(allocator, prepend_count) };
             }
 
-            pub inline fn deinit(this: *Format) void {
-                this.ctx.deinit();
-            }
-
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {
                 try this.ctx.appendLineSeparator();
             }
@@ -1727,10 +1723,6 @@ pub const Chunk = struct {
             }
 
             return map;
-        }
-
-        pub fn deinit(this: *VLQSourceMap) void {
-            this.data.deinit();
         }
 
         pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
@@ -1795,10 +1787,6 @@ pub const Chunk = struct {
             prepend_count: bool = false,
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
-
-            pub fn deinit(this: *ThisBuilder) void {
-                this.source_map.deinit();
-            }
 
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);

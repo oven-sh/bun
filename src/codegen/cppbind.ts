@@ -362,7 +362,7 @@ function generateZigType(type: CppType, parent: CppType | null) {
     const optionalChar = type.isNonNull ? "" : "?";
     const ptrChar = type.isMany ? "[*]" : "*";
     const constChar = type.isConst ? "const " : "";
-    return `${optionalChar}${constChar}${ptrChar}${generateZigType(type.child, type)}`;
+    return `${optionalChar}${ptrChar}${constChar}${generateZigType(type.child, type)}`;
   }
   if (type.type === "fn") {
     return `fn(${type.parameters.map(p => formatZigName(p.name) + ": " + generateZigType(p.type, null)).join(", ")}) callconv(.C) ${generateZigType(type.returnType, null)}`;

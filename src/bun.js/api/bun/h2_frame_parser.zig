@@ -581,12 +581,15 @@ const Handlers = struct {
             .{ "onFrameError", "frameError" },
         };
 
+        const handlers_obj = JSValue.createEmptyObject(globalObject, pairs.len + 1);
+
         inline for (pairs) |pair| {
             if (try opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable()) {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
+                handlers_obj.put(globalObject, jsc.ZigString.static(pair.@"0"), callback_value);
                 @field(handlers, pair.@"0") = callback_value.withAsyncContextIfNeeded(globalObject);
             }
         }
@@ -596,6 +599,7 @@ const Handlers = struct {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
+            handlers_obj.put(globalObject, jsc.ZigString.static("error"), callback_value);
             handlers.onError = callback_value.withAsyncContextIfNeeded(globalObject);
         }
 
@@ -614,7 +618,7 @@ const Handlers = struct {
             };
         }
 
-        handlers.strong_ctx.set(globalObject, opts);
+        handlers.strong_ctx.set(globalObject, handlers_obj);
 
         return handlers;
     }

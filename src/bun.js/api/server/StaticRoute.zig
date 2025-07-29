@@ -379,12 +379,13 @@ const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
-const Headers = bun.http.Headers;
 const api = bun.schema.api;
 const AnyServer = jsc.API.AnyServer;
 const writeStatus = bun.api.server.writeStatus;
 const AnyBlob = jsc.WebCore.Blob.Any;
+
 const ETag = bun.http.ETag;
+const Headers = bun.http.Headers;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

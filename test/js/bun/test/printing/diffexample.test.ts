@@ -920,6 +920,31 @@ test("color", async () => {
     \x1B[31m+ Received  + 7\x1B[0m
 
 
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    \x1B[36m@@ -1,8 +1,8 @@\x1B[0m
+      \x1B[0m\x1B[2m\x1B[0m
+      \x1B[0m\x1B[2mInt32Array [\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m  0,\x1B[0m
+      \x1B[0m\x1B[2m  1,\x1B[0m
+      \x1B[0m\x1B[2m  2,\x1B[0m
+      \x1B[0m\x1B[2m  3,\x1B[0m
+      \x1B[0m\x1B[2m  4,\x1B[0m
+      \x1B[0m\x1B[2m  5,\x1B[0m
+    \x1B[36m@@ -99998,8 +99998,8 @@\x1B[0m
+      \x1B[0m\x1B[2m  99995,\x1B[0m
+      \x1B[0m\x1B[2m  99996,\x1B[0m
+      \x1B[0m\x1B[2m  99997,\x1B[0m
+      \x1B[0m\x1B[2m  99998,\x1B[0m
+      \x1B[0m\x1B[2m  99999,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m  100000,\x1B[0m
+      \x1B[0m\x1B[2m]\x1B[0m
+      \x1B[0m\x1B[2m\x1B[0m
+
+    \x1B[32m- Expected  - 1\x1B[0m
+    \x1B[31m+ Received  + 1\x1B[0m
+
+
     "
   `);
   expect(spawn.exitCode).toBe(0);

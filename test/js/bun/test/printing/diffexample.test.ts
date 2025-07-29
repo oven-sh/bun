@@ -84,7 +84,9 @@ test("no color", async () => {
                                   ^
     error: expect(received).toEqual(expected)
 
-    @@ -99,7 +99,7 @@
+    @@ -97,11 +97,11 @@
+      line 96
+      line 97
       line 98
       line 99
       line 100
@@ -92,7 +94,11 @@ test("no color", async () => {
       line 101
       line 102
       line 103
-    @@ -499,7 +499,7 @@
+      line 104
+      line 105
+    @@ -497,11 +497,11 @@
+      line 495
+      line 496
       line 497
       line 498
       line 499
@@ -101,7 +107,11 @@ test("no color", async () => {
       line 501
       line 502
       line 503
-    @@ -750,7 +750,7 @@
+      line 504
+      line 505
+    @@ -748,11 +748,11 @@
+      line 746
+      line 747
       line 748
       line 749
       line 750
@@ -110,7 +120,11 @@ test("no color", async () => {
       line 752
       line 753
       line 754
-    @@ -900,7 +900,7 @@
+      line 755
+      line 756
+    @@ -898,11 +898,11 @@
+      line 896
+      line 897
       line 898
       line 899
       line 900
@@ -119,6 +133,8 @@ test("no color", async () => {
       line 902
       line 903
       line 904
+      line 905
+      line 906
 
     - Expected  - 4
     + Received  + 3
@@ -449,7 +465,9 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    @@ -99,7 +99,7 @@
+    @@ -97,11 +97,11 @@
+      line 95
+      line 96
       line 97
       line 98
       line 99
@@ -458,7 +476,11 @@ test("no color", async () => {
       line 101
       line 102
       line 103
-    @@ -199,7 +199,7 @@
+      line 104
+      line 105
+    @@ -197,11 +197,11 @@
+      line 195
+      line 196
       line 197
       line 198
       line 199
@@ -467,7 +489,11 @@ test("no color", async () => {
       line 201
       line 202
       line 203
-    @@ -299,7 +299,7 @@
+      line 204
+      line 205
+    @@ -297,11 +297,11 @@
+      line 295
+      line 296
       line 297
       line 298
       line 299
@@ -476,7 +502,11 @@ test("no color", async () => {
       line 301
       line 302
       line 303
-    @@ -400,7 +400,7 @@
+      line 304
+      line 305
+    @@ -398,11 +398,11 @@
+      line 396
+      line 397
       line 398
       line 399
       line 400
@@ -484,6 +514,8 @@ test("no color", async () => {
       line 401
       line 402
       line 403
+      line 404
+      line 405
 
     - Expected  - 3
     + Received  + 4
@@ -500,8 +532,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    Expected: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    Received: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999901 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    Expected: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999801 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    Received: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999801 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
           at <anonymous> (FILE:LINE)
@@ -549,14 +581,18 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    @@ -1,6 +1,6 @@
+    @@ -1,8 +1,8 @@
       
       Float64Array [
     -   0,
         1,
         2,
         3,
-    @@ -10000,6 +10000,6 @@
+        4,
+        5,
+    @@ -9998,8 +9998,8 @@
+        9995,
+        9996,
         9997,
         9998,
         9999,

@@ -3,10 +3,10 @@ const DMPUsize = diff_match_patch.DMP(usize);
 
 pub const DiffConfig = struct {
     min_bytes_before_chunking: usize = 2 * 1024, // 2kB
-    chunk_context_lines: usize = 3,
+    chunk_context_lines: usize = 5,
     enable_ansi_colors: bool,
     truncate_threshold: usize = 2 * 1024, // 2kb
-    truncate_context: usize = 50,
+    truncate_context: usize = 100,
 };
 
 fn removeTrailingNewline(text: []const u8) []const u8 {

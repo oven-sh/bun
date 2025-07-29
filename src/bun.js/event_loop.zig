@@ -646,9 +646,10 @@ pub const EventLoopTaskPtr = @import("./event_loop/EventLoopHandle.zig").EventLo
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
+pub const reportErrorOrTerminate = @import("./event_loop/Task.zig").reportErrorOrTerminate;
+
 const std = @import("std");
 const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;
-pub const reportErrorOrTerminate = @import("./event_loop/Task.zig").reportErrorOrTerminate;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

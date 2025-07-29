@@ -2128,6 +2128,10 @@ fn NewPrinter(
                         bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
                     },
+                    .import_meta_glob => {
+                        // This should not reach the printer - it should be transformed in the parser
+                        p.print("(function() { throw new Error('import.meta.glob was not transformed at build time'); })");
+                    },
                 },
 
                 .e_commonjs_export_identifier => |id| {

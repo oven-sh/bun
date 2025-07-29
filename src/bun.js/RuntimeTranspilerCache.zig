@@ -12,8 +12,7 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
-/// Version 16: Emojis in strings are preserved in unicode output (node/web)
-const expected_version = 16;
+const expected_version = 15;
 
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

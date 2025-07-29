@@ -1374,17 +1374,6 @@ pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement
     return utf16CodepointWithFFFDAndFirstInputChar(Type, input[0], input);
 }
 
-pub const HIGH_SURROGATE_START = 0xD800;
-pub const HIGH_SURROGATE_END = 0xDBFF;
-pub const LOW_SURROGATE_START = 0xDC00;
-pub const LOW_SURROGATE_END = 0xDFFF;
-
-pub fn utf16DecodeSurrogatePair(a: u32, b: u32) u32 {
-    bun.assert(a >= HIGH_SURROGATE_START and a <= HIGH_SURROGATE_END);
-    bun.assert(b >= LOW_SURROGATE_START and b <= LOW_SURROGATE_END);
-    return 0x10000 + (((a & 0x03ff) << 10) | (b & 0x03ff));
-}
-
 fn utf16CodepointWithFFFDAndFirstInputChar(comptime Type: type, char: std.meta.Elem(Type), input: Type) UTF16Replacement {
     const c0 = @as(u21, char);
 
@@ -1412,7 +1401,7 @@ fn utf16CodepointWithFFFDAndFirstInputChar(comptime Type: type, char: std.meta.E
             };
         // return error.ExpectedSecondSurrogateHalf;
 
-        return .{ .len = 2, .code_point = utf16DecodeSurrogatePair(c0, c1) };
+        return .{ .len = 2, .code_point = 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)) };
     } else if (c0 & ~@as(u21, 0x03ff) == 0xdc00) {
         // return error.UnexpectedSecondSurrogateHalf;
         return .{ .fail = true, .len = 1, .code_point = unicode_replacement };
@@ -1638,6 +1627,13 @@ pub fn convertUTF16toUTF8InBuffer(
     //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     // }
     return buf[0..result];
+}
+
+pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
+    return @as(
+        CodePointType,
+        @intCast(latin1ToCodepointBytesAssumeNotASCII16(char)),
+    );
 }
 
 const latin1_to_utf16_conversion_table = [256]u16{

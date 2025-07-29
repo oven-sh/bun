@@ -907,6 +907,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.option("--outdir")) |outdir| {
+            if (args.option("--outfile")) |_| {
+                Output.errGeneric("cannot use both --outdir and --outfile", .{});
+                Global.exit(1);
+            }
             if (outdir.len > 0) {
                 ctx.bundler_options.outdir = outdir;
             }

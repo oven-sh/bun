@@ -718,12 +718,15 @@ pub const Libc = enum(u8) {
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
+    const placeholder: u8 = 1 << 7;
 
-    pub const all_value: u8 = glibc | musl;
+    pub const all_value: u8 = glibc | musl | placeholder;
 
     pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
         .{ "musl", musl },
+        // somehow this is needed so it doesn't keep on showing up as negated every time
+        .{ "(placeholder)", placeholder },
     });
 
     pub const valid_values_string = blk: {
@@ -736,7 +739,7 @@ pub const Libc = enum(u8) {
     };
 
     pub inline fn has(this: Libc, other: u8) bool {
-        return (@intFromEnum(this) & other) != 0;
+        return (@intFromEnum(this) & other) != 0 or this == .none;
     }
 
     pub fn isMatch(this: Libc, target: ?Libc) bool {
@@ -744,7 +747,7 @@ pub const Libc = enum(u8) {
     }
 
     pub fn negatable(this: Libc) Negatable(Libc) {
-        return .{ .added = .none, .removed = this };
+        return .{ .added = this, .removed = .none };
     }
 
     pub const current: Libc = switch (Environment.os) {

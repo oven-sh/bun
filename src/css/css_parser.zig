@@ -5339,17 +5339,19 @@ const Tokenizer = struct {
                     if (single_quote) break;
                 },
                 '\\' => {
+                    this.advance(1); // skip the backslash
+
                     switch (this.nextByteUnchecked()) {
-                        // Escaped newline
+                        // skip newline
                         '\n', FORM_FEED_BYTE, '\r' => this.consumeNewline(),
+
                         else => {
-                            // keep the backslash as normal text
+                            // If not newline, keep the backslash
                             string_bytes.append(this.allocator, &[_]u8{'\\'});
 
-                            this.advance(1); // consome backslash
+                            this.advance(1); // skip again
 
                             if (!this.isEof()) {
-                                // also preserves the next byte literally
                                 const next_byte = this.nextByteUnchecked();
                                 string_bytes.append(this.allocator, &[_]u8{next_byte});
                                 this.advance(1);

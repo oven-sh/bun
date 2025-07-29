@@ -31,11 +31,11 @@ end_state: struct {
 /// already counted for.
 bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8, dev_allocator: std.mem.Allocator) bun.ptr.RefPtr(PackedMap) {
+pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
     assert(chunk.buffer.list.items.len > 0);
     return .new(.{
         .ref_count = .init(),
-        .vlq_ptr = (dev_allocator.dupe(u8, chunk.buffer.list.items) catch bun.outOfMemory()).ptr,
+        .vlq_ptr = chunk.buffer.list.items.ptr,
         .vlq_len = @intCast(chunk.buffer.list.items.len),
         .quoted_contents_ptr = quoted_contents.ptr,
         .quoted_contents_len = @intCast(quoted_contents.len),

@@ -1,3 +1,5 @@
+const ParameterDescription = @This();
+
 parameters: []int4 = &[_]int4{},
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
@@ -26,9 +28,6 @@ fn toInt32Slice(comptime Int: type, slice: []const u8) []align(1) const Int {
     return @as([*]align(1) const Int, @ptrCast(slice.ptr))[0 .. slice.len / @sizeOf((Int))];
 }
 
-// @sortImports
-
-const ParameterDescription = @This();
 const bun = @import("bun");
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;

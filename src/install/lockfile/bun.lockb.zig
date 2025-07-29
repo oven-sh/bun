@@ -1,3 +1,5 @@
+const Serializer = @This();
+
 pub const version = "bun-lockfile-format-v0\n";
 const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
@@ -554,28 +556,32 @@ pub fn load(
     return res;
 }
 
+const string = []const u8;
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Dependency = install.Dependency;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
-const Lockfile = install.Lockfile;
+const assert = bun.assert;
+const logger = bun.logger;
+const strings = bun.strings;
+const z_allocator = bun.z_allocator;
+
+const Semver = bun.Semver;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Dependency = install.Dependency;
 const PackageID = install.PackageID;
-const PackageIndex = Lockfile.PackageIndex;
 const PackageManager = install.PackageManager;
 const PackageNameAndVersionHash = install.PackageNameAndVersionHash;
 const PackageNameHash = install.PackageNameHash;
 const PatchedDep = install.PatchedDep;
-const Semver = bun.Semver;
-const Serializer = @This();
+const alignment_bytes_to_repeat_buffer = install.alignment_bytes_to_repeat_buffer;
+
+const Lockfile = install.Lockfile;
+const PackageIndex = Lockfile.PackageIndex;
 const Stream = Lockfile.Stream;
-const String = bun.Semver.String;
 const StringPool = Lockfile.StringPool;
 const VersionHashMap = Lockfile.VersionHashMap;
-const alignment_bytes_to_repeat_buffer = install.alignment_bytes_to_repeat_buffer;
-const assert = bun.assert;
-const bun = @import("bun");
-const install = bun.install;
-const logger = bun.logger;
-const std = @import("std");
-const string = []const u8;
-const strings = bun.strings;
-const z_allocator = bun.z_allocator;

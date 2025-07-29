@@ -247,31 +247,30 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     } };
 }
 
-const bun = @import("bun");
-const Loader = bun.Loader;
-const HTMLScanner = bun.bundle_v2.HTMLScanner;
-const Logger = bun.logger;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const debug = LinkerContext.debug;
-
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-const lol = bun.LOLHTML;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const ImportKind = bun.ImportKind;
+const ImportRecord = bun.ImportRecord;
+const Loader = bun.Loader;
+const Logger = bun.logger;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const default_allocator = bun.default_allocator;
+const lol = bun.LOLHTML;
+const strings = bun.strings;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
+const HTMLScanner = bun.bundle_v2.HTMLScanner;
+const Index = bun.bundle_v2.Index;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
+const debug = LinkerContext.debug;

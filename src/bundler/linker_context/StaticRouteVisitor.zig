@@ -2,6 +2,7 @@
 //! `source_index` imports a file with `"use client"`.
 //!
 //! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
+
 const StaticRouteVisitor = @This();
 
 c: *LinkerContext,
@@ -83,10 +84,10 @@ fn hasTransitiveUseClientImpl(
     return result;
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
+const std = @import("std");
 
 const ImportRecord = bun.bundle_v2.ImportRecord;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const UseDirective = bun.bundle_v2.UseDirective;

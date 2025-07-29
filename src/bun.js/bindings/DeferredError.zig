@@ -1,19 +1,13 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = @import("./ZigString.zig").ZigString;
-
 // Error's cannot be created off of the main thread. So we use this to store the
 // information until its ready to be materialized later.
 pub const DeferredError = struct {
     kind: Kind,
-    code: JSC.Node.ErrorCode,
+    code: jsc.Node.ErrorCode,
     msg: bun.String,
 
     pub const Kind = enum { plainerror, typeerror, rangeerror };
 
-    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
+    pub fn from(kind: Kind, code: jsc.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
         return .{
             .kind = kind,
             .code = code,
@@ -31,3 +25,10 @@ pub const DeferredError = struct {
         return err;
     }
 };
+
+const bun = @import("bun");
+const ZigString = @import("./ZigString.zig").ZigString;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

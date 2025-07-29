@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -325,7 +320,7 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const Api = struct {
+pub const api = struct {
     pub const Loader = enum(u8) {
         _none,
         jsx,
@@ -426,7 +421,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
+    pub const StackFramePosition = bun.jsc.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line
@@ -1956,7 +1951,7 @@ pub const Api = struct {
 
         _,
 
-        pub fn fromJS(global: *bun.JSC.JSGlobalObject, value: bun.JSC.JSValue) bun.JSError!?SourceMapMode {
+        pub fn fromJS(global: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!?SourceMapMode {
             if (value.isString()) {
                 const str = try value.toSliceOrNull(global);
                 defer str.deinit();
@@ -2880,13 +2875,13 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!api.NpmRegistry {
                 const url = bun.URL.parse(str);
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
@@ -2905,8 +2900,8 @@ pub const Api = struct {
                 return registry;
             }
 
-            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !api.NpmRegistry {
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 if (obj.get("url")) |url| {
                     try this.expectString(url);
@@ -2933,7 +2928,7 @@ pub const Api = struct {
                 return registry;
             }
 
-            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !api.NpmRegistry {
                 switch (expr.data) {
                     .e_string => |str| {
                         return this.parseRegistryURLString(str);
@@ -2943,7 +2938,7 @@ pub const Api = struct {
                     },
                     else => {
                         try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                        return std.mem.zeroes(Api.NpmRegistry);
+                        return std.mem.zeroes(api.NpmRegistry);
                     },
                 }
             }
@@ -3370,3 +3365,9 @@ pub const Api = struct {
         }
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const js_ast = bun.ast;

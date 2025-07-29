@@ -433,8 +433,8 @@ pub fn doPatchCommit(
         .posix,
     );
 
-    var nodefs = bun.JSC.Node.fs.NodeFS{};
-    const args = bun.JSC.Node.fs.Arguments.Mkdir{
+    var nodefs = bun.jsc.Node.fs.NodeFS{};
+    const args = bun.jsc.Node.fs.Arguments.Mkdir{
         .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
@@ -1083,7 +1083,8 @@ const PatchArgKind = enum {
     }
 };
 
-// @sortImports
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const Walker = @import("../../walker_skippable.zig");
 const std = @import("std");
@@ -1092,13 +1093,11 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const File = bun.sys.File;
 

@@ -1,38 +1,4 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Progress = bun.Progress;
-
-const logger = bun.logger;
-
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-
-const JSON = bun.JSON;
-const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = bun.Futex;
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -143,7 +109,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
         },
     }) catch return;
 }
@@ -247,7 +213,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -1517,7 +1483,7 @@ pub const CreateCommand = struct {
                 .stdin = .inherit,
 
                 .windows = if (Environment.isWindows) .{
-                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
                 },
             });
             _ = try process.unwrap();
@@ -1697,7 +1663,7 @@ pub const CreateCommand = struct {
             .entry_points = &[_]string{analyzer.entry_point},
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
     }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
@@ -1706,7 +1672,7 @@ pub const CreateCommand = struct {
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
         if (positionals.len == 0) {
-            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            bun.cli.Command.Tag.printHelp(.CreateCommand, false);
             Global.crash();
         }
 
@@ -1717,7 +1683,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         // var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
@@ -2316,7 +2282,7 @@ pub const CreateListExamplesCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
@@ -2456,4 +2422,35 @@ const GitHandler = struct {
     }
 };
 
+const string = []const u8;
+
+const CopyFile = @import("../copy_file.zig");
+const DotEnv = @import("../env_loader.zig");
 const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
+const Zlib = @import("../zlib.zig");
+const fs = @import("../fs.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const NPMClient = @import("../which_npm_client.zig").NPMClient;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const Archiver = bun.libarchive.Archiver;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

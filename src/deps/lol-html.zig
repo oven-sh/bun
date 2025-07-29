@@ -1,6 +1,4 @@
 pub const Error = error{Fail};
-const std = @import("std");
-const bun = @import("bun");
 pub const MemorySettings = extern struct {
     preallocated_parsing_buffer_size: usize,
     max_allowed_memory_usage: usize,
@@ -611,7 +609,7 @@ pub const HTMLString = extern struct {
         return bun.String.cloneUTF8(bytes);
     }
 
-    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+    pub fn toJS(this: HTMLString, globalThis: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
         var str = this.toString();
         defer str.deref();
         return str.toJS(globalThis);
@@ -868,3 +866,6 @@ pub const Encoding = enum {
         break :brk labels;
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");

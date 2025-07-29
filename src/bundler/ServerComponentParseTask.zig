@@ -51,7 +51,7 @@ fn taskCallbackWrap(thread_pool_task: *ThreadPoolLib.Task) void {
 
     switch (worker.ctx.loop().*) {
         .js => |jsc_event_loop| {
-            jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, ParseTask.onComplete));
+            jsc_event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(result, ParseTask.onComplete));
         },
         .mini => |*mini| {
             mini.enqueueTaskConcurrentWithExtraCtx(
@@ -203,35 +203,39 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
     }
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = bun.ThreadPool;
-const BabyList = @import("../baby_list.zig").BabyList;
-const OOM = bun.OOM;
-
-const JSAst = js_ast.BundledAst;
-pub const Index = @import("../ast/base.zig").Index;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const options = @import("../options.zig");
+const std = @import("std");
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const ThreadPoolLib = bun.ThreadPool;
+const default_allocator = bun.default_allocator;
+const js_parser = bun.js_parser;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const bundler = bun.bundle_v2;
 const AstBuilder = bundler.AstBuilder;
+const BundleV2 = bundler.BundleV2;

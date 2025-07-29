@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const c = bun.c;
-
 // -----------------------------------
 
 /// ZSTD_compress() :
@@ -185,3 +181,8 @@ pub const ZstdReaderArrayList = struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const c = bun.c;

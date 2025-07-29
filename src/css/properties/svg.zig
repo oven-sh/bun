@@ -1,6 +1,3 @@
-const std = @import("std");
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const LengthPercentage = css.css_values.length.LengthPercentage;
@@ -73,3 +70,6 @@ pub const TextRendering = css.DefineEnumProperty(@compileError(css.todo_stuff.de
 
 /// A value for the [image-rendering](https://www.w3.org/TR/SVG2/painting.html#ImageRendering) property.
 pub const ImageRendering = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

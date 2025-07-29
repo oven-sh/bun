@@ -5380,6 +5380,10 @@ pub fn NewWriter(
             return this.ctx.getMutableBuffer();
         }
 
+        pub fn takeBuffer(this: *Self) MutableString {
+            return this.ctx.takeBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5482,6 +5486,11 @@ pub const BufferWriter = struct {
 
     pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
         return &this.buffer;
+    }
+
+    pub fn takeBuffer(this: *BufferWriter) MutableString {
+        defer this.buffer = .initEmpty(this.buffer.allocator);
+        return this.buffer;
     }
 
     pub fn getWritten(this: *BufferWriter) []u8 {
@@ -5995,11 +6004,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
-    const buffer: *MutableString = printer.writer.ctx.getMutableBuffer();
+    var buffer = printer.writer.ctx.getMutableBuffer();
 
     return .{
         .result = .{
-            .code = buffer.toOwnedSlice(),
+            .code = buffer.slice(),
             .code_allocator = buffer.allocator,
             .source_map = source_map,
         },

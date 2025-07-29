@@ -34,11 +34,13 @@ bits_used_for_memory_cost_dedupe: u32 = 0,
 
 pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
     assert(chunk.buffer.list.items.len > 0);
+    var buffer = chunk.buffer;
+    const slice = buffer.toOwnedSlice();
     return .new(.{
         .ref_count = .init(),
-        .vlq_ptr = chunk.buffer.list.items.ptr,
-        .vlq_len = @intCast(chunk.buffer.list.items.len),
-        .vlq_allocator = chunk.buffer.allocator,
+        .vlq_ptr = slice.ptr,
+        .vlq_len = @intCast(slice.len),
+        .vlq_allocator = buffer.allocator,
         .quoted_contents_ptr = quoted_contents.ptr,
         .quoted_contents_len = @intCast(quoted_contents.len),
         .end_state = .{

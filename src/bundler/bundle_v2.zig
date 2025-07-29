@@ -3887,10 +3887,11 @@ pub const CompileResult = union(enum) {
             };
         }
 
-        pub fn allocator(this: @This()) ?std.mem.Allocator {
+        pub fn allocator(this: @This()) std.mem.Allocator {
             return switch (this.result) {
                 .result => |result| result.code_allocator,
-                else => null,
+                // empty slice can be freed by any allocator
+                else => bun.default_allocator,
             };
         }
     },
@@ -3912,7 +3913,7 @@ pub const CompileResult = union(enum) {
             .result = js_printer.PrintResult{
                 .result = .{
                     .code = "",
-                    .code_allocator = null,
+                    .code_allocator = bun.default_allocator,
                 },
             },
         },

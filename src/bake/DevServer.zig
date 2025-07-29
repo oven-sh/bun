@@ -2069,8 +2069,8 @@ pub fn finalizeBundle(
                 index,
                 .{
                     .js = .{
-                        .code = compile_result.code(),
-                        .code_allocator = compile_result.allocator(),
+                        .code = compile_result.javascript.code(),
+                        .code_allocator = compile_result.javascript.allocator(),
                         .source_map = .{
                             .chunk = source_map,
                             .escaped_source = @ptrCast(quoted_contents),

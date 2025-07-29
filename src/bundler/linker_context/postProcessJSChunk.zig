@@ -816,7 +816,7 @@ pub fn generateEntryPointTailJS(
                 .source_index = source_index,
                 .result = .{ .result = .{
                     .code = "",
-                    .code_allocator = null,
+                    .code_allocator = bun.default_allocator,
                 } },
             },
         };

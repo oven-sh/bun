@@ -133,7 +133,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// contain at least a function wrapper.
                     js_code: struct {
                         ptr: [*]const u8,
-                        allocator: ?std.mem.Allocator,
+                        allocator: std.mem.Allocator,
                     },
                     /// Access with `.cssAssetId()`
                     css_asset_id: u64,
@@ -184,12 +184,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 comptime {
                     const d = std.debug;
                     if (!Environment.isDebug) {
-                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 6);
+                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 5);
                         d.assert(@alignOf(@This()) == @alignOf([*]u8));
                     }
                 }
 
-                fn initJavaScript(code_slice: []const u8, code_allocator: ?std.mem.Allocator, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
+                fn initJavaScript(code_slice: []const u8, code_allocator: std.mem.Allocator, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
                     assert(flags.kind == .js or flags.kind == .asset);
                     assert(flags.source_map_state == std.meta.activeTag(source_map));
                     return .{
@@ -231,9 +231,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 fn freeJsCode(file: *@This()) void {
                     assert(file.flags.kind.hasInlinejscodeChunk());
-                    if (file.content.js_code.allocator) |allocator| {
-                        allocator.free(file.jsCode());
-                    }
+                    file.content.js_code.allocator.free(file.jsCode());
                 }
 
                 fn cssAssetId(file: @This()) u64 {
@@ -399,7 +397,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             content: union(enum) {
                 js: struct {
                     code: []const u8,
-                    code_allocator: ?std.mem.Allocator,
+                    code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
                         escaped_source: *?[]u8,

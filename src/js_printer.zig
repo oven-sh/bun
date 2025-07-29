@@ -488,7 +488,7 @@ pub const PrintResult = union(enum) {
 
     pub const Success = struct {
         code: []u8,
-        code_allocator: ?std.mem.Allocator,
+        code_allocator: std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
     };
 };
@@ -6004,11 +6004,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
-    var buffer = printer.writer.ctx.getMutableBuffer();
+    var buffer = printer.writer.takeBuffer();
 
     return .{
         .result = .{
-            .code = buffer.slice(),
+            .code = buffer.toOwnedSlice(),
             .code_allocator = buffer.allocator,
             .source_map = source_map,
         },

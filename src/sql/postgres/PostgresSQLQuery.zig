@@ -84,6 +84,8 @@ pub fn onWriteFail(
     globalObject: *jsc.JSGlobalObject,
     queries_array: JSValue,
 ) void {
+    this.ref();
+    defer this.deref();
     this.status = .fail;
     const thisValue = this.thisValue.get();
     defer this.thisValue.deinit();
@@ -102,10 +104,9 @@ pub fn onWriteFail(
     });
 }
 pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
-    this.status = .fail;
     this.ref();
     defer this.deref();
-
+    this.status = .fail;
     const thisValue = this.thisValue.get();
     defer this.thisValue.deinit();
     const targetValue = this.getTarget(globalObject, true);

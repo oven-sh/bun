@@ -345,5 +345,172 @@ describe("import.meta.glob", () => {
       expect(lines[0]).toBe('PATHS: ["./src/lib/helper.js","./src/lib/util.js","./src/main.js"]');
       expect(lines[1]).toBe("COUNT: 3");
     });
+
+    test("bundled code works with --splitting", async () => {
+      const dir = tempDirWithFiles("import-glob-splitting", {
+        "entry1.js": `
+          const modules = import.meta.glob('./shared/*.js');
+          export function getModules() {
+            return modules;
+          }
+          console.log('ENTRY1_MODULES:', Object.keys(modules).length);
+        `,
+        "entry2.js": `
+          const modules = import.meta.glob('./shared/*.js');
+          export function getModules() {
+            return modules;
+          }
+          console.log('ENTRY2_MODULES:', Object.keys(modules).length);
+        `,
+        "shared/util.js": `export default "util"; export const name = "util";`,
+        "shared/helper.js": `export default "helper"; export const name = "helper";`,
+        "test.js": `
+          import { getModules as getModules1 } from './dist/entry1.js';
+          import { getModules as getModules2 } from './dist/entry2.js';
+          
+          const modules1 = getModules1();
+          const modules2 = getModules2();
+          
+          console.log('TEST_MODULES1:', Object.keys(modules1).length);
+          console.log('TEST_MODULES2:', Object.keys(modules2).length);
+          console.log('SAME_KEYS:', JSON.stringify(Object.keys(modules1).sort()) === JSON.stringify(Object.keys(modules2).sort()));
+        `,
+      });
+
+      // Build with splitting
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry1.js", "entry2.js", "--splitting", "--outdir", "dist", "--target=bun"],
+        env: bunEnv,
+        cwd: dir,
+      });
+      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+        new Response(buildProc.stdout).text(),
+        new Response(buildProc.stderr).text(),
+        buildProc.exited,
+      ]);
+      
+      expect(buildExitCode).toBe(0);
+      expect(buildStderr).toBe("");
+
+      // Run the test file
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines).toContain("ENTRY1_MODULES: 2");
+      expect(lines).toContain("ENTRY2_MODULES: 2");
+      expect(lines).toContain("TEST_MODULES1: 2");
+      expect(lines).toContain("TEST_MODULES2: 2");
+      expect(lines).toContain("SAME_KEYS: true");
+    });
+
+    test("--splitting works with import option", async () => {
+      const dir = tempDirWithFiles("import-glob-splitting-import", {
+        "entry.js": `
+          const modules = import.meta.glob('./lib/*.js', { import: 'name' });
+          export async function loadNames() {
+            const names = [];
+            for (const [path, loader] of Object.entries(modules)) {
+              const name = await loader();
+              names.push(name);
+            }
+            return names;
+          }
+        `,
+        "lib/foo.js": `export const name = "foo"; export default "default-foo";`,
+        "lib/bar.js": `export const name = "bar"; export default "default-bar";`,
+        "test.js": `
+          import { loadNames } from './dist/entry.js';
+          loadNames().then(names => {
+            console.log('NAMES:', JSON.stringify(names.sort()));
+          });
+        `,
+      });
+
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--splitting", "--outdir", "dist", "--target=bun"],
+        env: bunEnv,
+        cwd: dir,
+      });
+      await buildProc.exited;
+
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toContain('NAMES: ["bar","foo"]');
+    });
+
+    test.todo("--splitting works with 'with' option", async () => {
+      const dir = tempDirWithFiles("import-glob-splitting-with", {
+        "entry.js": `
+          const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } });
+          export async function loadTexts() {
+            const texts = {};
+            for (const [path, loader] of Object.entries(modules)) {
+              texts[path] = await loader();
+            }
+            return texts;
+          }
+        `,
+        "assets/hello.txt": `Hello World`,
+        "assets/goodbye.txt": `Goodbye World`,
+        "test.js": `
+          import { loadTexts } from './dist/entry.js';
+          loadTexts().then(texts => {
+            console.log('COUNT:', Object.keys(texts).length);
+            console.log('HAS_HELLO:', texts['./assets/hello.txt'].includes('Hello'));
+            console.log('HAS_GOODBYE:', texts['./assets/goodbye.txt'].includes('Goodbye'));
+          });
+        `,
+      });
+
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--splitting", "--outdir", "dist", "--target=bun"],
+        env: bunEnv,
+        cwd: dir,
+      });
+      await buildProc.exited;
+
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines).toContain("COUNT: 2");
+      expect(lines).toContain("HAS_HELLO: true");
+      expect(lines).toContain("HAS_GOODBYE: true");
+    });
   });
 });

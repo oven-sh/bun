@@ -2041,7 +2041,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
-    const quoted_source_contents: []const ?[]u8 = bv2.linker.graph.files.items(.quoted_source_contents);
+    const quoted_source_contents: []?[]u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (
@@ -2070,10 +2070,10 @@ pub fn finalizeBundle(
                 .{
                     .js = .{
                         .code = compile_result.code(),
-                        .code_allocator = compile_result.javascript.allocator(),
+                        .code_allocator = compile_result.allocator(),
                         .source_map = .{
                             .chunk = source_map,
-                            .escaped_source = @constCast(@ptrCast(quoted_contents)),
+                            .escaped_source = @ptrCast(quoted_contents),
                         },
                     },
                 },

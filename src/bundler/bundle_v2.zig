@@ -3881,7 +3881,14 @@ pub const CompileResult = union(enum) {
         source_index: Index.Int,
         result: js_printer.PrintResult,
 
-        pub fn allocator(this: *const @This()) ?std.mem.Allocator {
+        pub fn code(this: @This()) []const u8 {
+            return switch (this.result) {
+                .result => |result| result.code,
+                else => "",
+            };
+        }
+
+        pub fn allocator(this: @This()) ?std.mem.Allocator {
             return switch (this.result) {
                 .result => |result| result.code_allocator,
                 else => null,
@@ -3914,10 +3921,7 @@ pub const CompileResult = union(enum) {
 
     pub fn code(this: *const CompileResult) []const u8 {
         return switch (this.*) {
-            .javascript => |r| switch (r.result) {
-                .result => |r2| r2.code,
-                else => "",
-            },
+            .javascript => |r| r.code(),
             .css => |*c| switch (c.result) {
                 .result => |v| v,
                 .err => "",

@@ -1132,11 +1132,11 @@ describe("Response", () => {
           "x-hello": "world",
           Location: "https://wrong.com",
         },
-        status: 408,
+        status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.headers.get("Location")).toBe("https://example.com");
-      expect(response.status).toBe(302);
+      expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
     });

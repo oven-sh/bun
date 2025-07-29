@@ -25,6 +25,10 @@ pub const JSValue = enum(i64) {
     pub const is_pointer = false;
     pub const JSType = @import("./JSType.zig").JSType;
 
+    pub fn format(_: JSValue, comptime _: []const u8, _: std.fmt.FormatOptions, _: anytype) !void {
+        @compileError("Formatting a JSValue directly is not allowed. Use jsc.ConsoleObject.Formatter");
+    }
+
     pub inline fn cast(ptr: anytype) JSValue {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }

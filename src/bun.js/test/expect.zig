@@ -4336,7 +4336,9 @@ pub const Expect = struct {
             var itr = try calls.arrayIterator(globalThis);
             while (try itr.next()) |callItem| {
                 if (callItem == .zero or !callItem.jsType().isArray()) {
-                    return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
+                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
+                    return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
                 }
 
                 if (try callItem.getLength(globalThis) != arguments.len) {
@@ -4399,7 +4401,9 @@ pub const Expect = struct {
             lastCallValue = try calls.getIndex(globalThis, totalCalls - 1);
 
             if (!lastCallValue.jsType().isArray()) {
-                return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
+                var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                defer formatter.deinit();
+                return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
             }
 
             if (try lastCallValue.getLength(globalThis) != arguments.len) {
@@ -4464,7 +4468,9 @@ pub const Expect = struct {
             nthCallValue = try calls.getIndex(globalThis, @as(u32, @intCast(nthCallNum)) - 1);
 
             if (!nthCallValue.jsType().isArray()) {
-                return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
+                var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                defer formatter.deinit();
+                return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
             }
 
             if (try nthCallValue.getLength(globalThis) != (arguments.len - 1)) {
@@ -4553,7 +4559,9 @@ pub const Expect = struct {
                 if (try times_value.get(globalThis, "type")) |type_string| {
                     if (type_string.isString()) {
                         break :brk try ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
-                            return globalThis.throw("Expected value must be a mock function with returns: {}", .{value});
+                            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                            defer formatter.deinit();
+                            return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toFmt(&formatter)});
                         };
                     }
                 }
@@ -4672,7 +4680,11 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const returns = try bun.jsc.fromJSHostCall(globalThis, @src(), JSMockFunction__getReturns, .{value});
-        if (!returns.jsType().isArray()) return globalThis.throw("Expected value must be a mock function: {}", .{value});
+        if (!returns.jsType().isArray()) {
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+            defer formatter.deinit();
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        }
 
         const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
         var pass = false;

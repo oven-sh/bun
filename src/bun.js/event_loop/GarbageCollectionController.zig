@@ -80,7 +80,7 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
 // So we have three settings for this GC timer:
 //
 //    - Fast: GC runs every 1 second (default)
-//    - Slow: GC runs every 30 seconds  
+//    - Slow: GC runs every 30 seconds
 //    - Very Slow: GC runs every 10 minutes (600 seconds)
 //
 // When the heap size is increasing, we always switch to fast mode
@@ -88,10 +88,10 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
 // When the heap size has been the same for a very large number of ticks (255), we switch to very slow mode
 pub fn updateGCRepeatTimer(this: *GarbageCollectionController, mode: GCTimerMode) void {
     if (this.gc_repeating_timer_mode == mode) return;
-    
+
     const old_mode = this.gc_repeating_timer_mode;
     this.gc_repeating_timer_mode = mode;
-    
+
     switch (mode) {
         .fast => {
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
@@ -117,7 +117,7 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
     if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
-        
+
         // Transition to progressively slower modes based on heap stability
         switch (this.gc_repeating_timer_mode) {
             .fast => {

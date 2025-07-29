@@ -58,7 +58,7 @@ pub fn detectAndLoadOtherLockfile(
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
         const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
-            if (Environment.allow_assert) {
+            if (Environment.isDebug) {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});

@@ -4319,7 +4319,7 @@ pub const Expect = struct {
         const thisValue = callframe.this();
         const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
-        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledWith", "<green>expected<r>");
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledWith", "<green>...expected<r>");
 
         incrementExpectCallCounter();
 
@@ -4327,18 +4327,18 @@ pub const Expect = struct {
         if (!calls.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+            return this.throw(globalThis, comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
         }
 
         var pass = false;
 
-        if (try calls.getLength(globalThis) > 0) {
+        const calls_count = @as(u32, @intCast(try calls.getLength(globalThis)));
+        if (calls_count > 0) {
             var itr = try calls.arrayIterator(globalThis);
             while (try itr.next()) |callItem| {
                 if (callItem == .zero or !callItem.jsType().isArray()) {
-                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                    defer formatter.deinit();
-                    return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
+                    // This indicates a malformed mock object, which is an internal error.
+                    return globalThis.throw("Internal error: expected mock call item to be an array of arguments.", .{});
                 }
 
                 if (try callItem.getLength(globalThis) != arguments.len) {
@@ -4361,18 +4361,70 @@ pub const Expect = struct {
             }
         }
 
-        const not = this.flags.not;
-        if (not) pass = !pass;
-        if (pass) return .js_undefined;
-
-        // handle failure
-        if (not) {
-            const signature = comptime getSignature("toHaveBeenCalledWith", "<green>expected<r>", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
+        if (pass != this.flags.not) {
+            return .js_undefined;
         }
 
-        const signature = comptime getSignature("toHaveBeenCalledWith", "<green>expected<r>", false);
-        return this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
+        // handle failure
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        defer formatter.deinit();
+
+        const expected_args_js_array = try JSValue.createEmptyArray(globalThis, arguments.len);
+        for (arguments, 0..) |arg, i| {
+            try expected_args_js_array.putIndex(globalThis, @intCast(i), arg);
+        }
+        expected_args_js_array.ensureStillAlive();
+
+        if (this.flags.not) {
+            const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", true);
+            return this.throw(globalThis, signature, "\n\nExpected mock function not to have been called with: <green>{any}<r>\nBut it was.", .{
+                expected_args_js_array.toFmt(&formatter),
+            });
+        }
+        const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false);
+
+        if (calls_count == 0) {
+            return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
+                expected_args_js_array.toFmt(&formatter),
+            });
+        }
+
+        // If there's only one call, provide a nice diff.
+        if (calls_count == 1) {
+            const received_call_args = try calls.getIndex(globalThis, 0);
+            const diff_format = DiffFormatter{
+                .expected = expected_args_js_array,
+                .received = received_call_args,
+                .globalThis = globalThis,
+                .not = false,
+            };
+            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+        }
+
+        // If there are multiple calls, list them all to help debugging.
+        const list_formatter = AllCallsWithArgsFormatter{
+            .globalThis = globalThis,
+            .calls = calls,
+            .formatter = &formatter,
+        };
+
+        const fmt =
+            \\    <green>Expected<r>: {any}
+            \\    <red>Received<r>:
+            \\{any}
+            \\
+            \\    Number of calls: {d}
+        ;
+
+        switch (Output.enable_ansi_colors) {
+            inline else => |colors| {
+                return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
+                    expected_args_js_array.toFmt(&formatter),
+                    list_formatter,
+                    calls_count,
+                });
+            },
+        }
     }
 
     pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4381,7 +4433,7 @@ pub const Expect = struct {
         const thisValue = callframe.this();
         const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
-        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>expected<r>");
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>...expected<r>");
 
         incrementExpectCallCounter();
 
@@ -4389,7 +4441,7 @@ pub const Expect = struct {
         if (!calls.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+            return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
         }
 
         const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
@@ -4419,22 +4471,41 @@ pub const Expect = struct {
             }
         }
 
-        const not = this.flags.not;
-        if (not) pass = !pass;
-        if (pass) return .js_undefined;
+        if (pass != this.flags.not) {
+            return .js_undefined;
+        }
 
         // handle failure
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        const received_fmt = lastCallValue.toFmt(&formatter);
 
-        if (not) {
-            const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>expected<r>", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
+        const expected_args_js_array = try JSValue.createEmptyArray(globalThis, arguments.len);
+        for (arguments, 0..) |arg, i| {
+            try expected_args_js_array.putIndex(globalThis, @intCast(i), arg);
+        }
+        expected_args_js_array.ensureStillAlive();
+
+        if (this.flags.not) {
+            const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
+            return this.throw(globalThis, signature, "\n\nExpected last call not to be with: <green>{any}<r>\nBut it was.", .{
+                expected_args_js_array.toFmt(&formatter),
+            });
+        }
+        const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
+
+        if (totalCalls == 0) {
+            return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
+                expected_args_js_array.toFmt(&formatter),
+            });
         }
 
-        const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>expected<r>", false);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
+        const diff_format = DiffFormatter{
+            .expected = expected_args_js_array,
+            .received = lastCallValue,
+            .globalThis = globalThis,
+            .not = false,
+        };
+        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
     }
 
     pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4443,7 +4514,7 @@ pub const Expect = struct {
         const thisValue = callframe.this();
         const arguments = callframe.arguments();
         defer this.postMatch(globalThis);
-        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>");
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>");
 
         incrementExpectCallCounter();
 
@@ -4451,34 +4522,37 @@ pub const Expect = struct {
         if (!calls.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+            return this.throw(globalThis, comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
         }
 
-        const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) try arguments[0].coerce(i32, globalThis) else 0;
-        if (nthCallNum < 1) {
-            return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
+        if (arguments.len == 0 or !arguments[0].isAnyInt()) {
+            return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer as the first argument", .{});
         }
+        const nthCallNumI32 = arguments[0].toInt32();
 
-        const totalCalls = try calls.getLength(globalThis);
+        if (nthCallNumI32 <= 0) {
+            return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() first argument must be a positive integer", .{});
+        }
+        const nthCallNum: u32 = @intCast(nthCallNumI32);
+
+        const totalCalls = @as(u32, @intCast(try calls.getLength(globalThis)));
+        var pass = totalCalls >= nthCallNum;
         var nthCallValue: JSValue = .zero;
 
-        var pass = totalCalls >= nthCallNum;
-
         if (pass) {
-            nthCallValue = try calls.getIndex(globalThis, @as(u32, @intCast(nthCallNum)) - 1);
+            nthCallValue = try calls.getIndex(globalThis, nthCallNum - 1);
+            const expected_args = arguments[1..];
 
             if (!nthCallValue.jsType().isArray()) {
-                var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                defer formatter.deinit();
-                return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
+                return globalThis.throw("Internal error: expected mock call item to be an array of arguments.", .{});
             }
 
-            if (try nthCallValue.getLength(globalThis) != (arguments.len - 1)) {
+            if (try nthCallValue.getLength(globalThis) != expected_args.len) {
                 pass = false;
             } else {
                 var itr = try nthCallValue.arrayIterator(globalThis);
                 while (try itr.next()) |callArg| {
-                    if (!try callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
+                    if (!try callArg.jestDeepEquals(expected_args[itr.i - 1], globalThis)) {
                         pass = false;
                         break;
                     }
@@ -4486,23 +4560,73 @@ pub const Expect = struct {
             }
         }
 
-        const not = this.flags.not;
-        if (not) pass = !pass;
-        if (pass) return .js_undefined;
+        if (pass != this.flags.not) {
+            return .js_undefined;
+        }
 
         // handle failure
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        const received_fmt = nthCallValue.toFmt(&formatter);
 
-        if (not) {
-            const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
+        const expected_args_slice = arguments[1..];
+        const expected_args_js_array = try JSValue.createEmptyArray(globalThis, expected_args_slice.len);
+        for (expected_args_slice, 0..) |arg, i| {
+            try expected_args_js_array.putIndex(globalThis, @intCast(i), arg);
+        }
+        expected_args_js_array.ensureStillAlive();
+
+        if (this.flags.not) {
+            const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
+            return this.throw(globalThis, signature, "\n\nExpected call #{d} not to be with: <green>{any}<r>\nBut it was.", .{
+                nthCallNum,
+                expected_args_js_array.toFmt(&formatter),
+            });
+        }
+        const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false);
+
+        // Handle case where function was not called enough times
+        if (totalCalls < nthCallNum) {
+            return this.throw(globalThis, signature, "\n\nThe mock function was called {d} time{s}, but call {d} was requested.", .{
+                totalCalls,
+                if (totalCalls == 1) "" else "s",
+                nthCallNum,
+            });
         }
 
-        const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", false);
-        return this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
+        // The call existed but didn't match. Show a diff.
+        const diff_format = DiffFormatter{
+            .expected = expected_args_js_array,
+            .received = nthCallValue,
+            .globalThis = globalThis,
+            .not = false,
+        };
+        return this.throw(globalThis, signature, "\n\nCall #{d}:\n{any}\n", .{ nthCallNum, diff_format });
     }
+
+    const AllCallsWithArgsFormatter = struct {
+        globalThis: *JSGlobalObject,
+        calls: JSValue,
+        formatter: *jsc.ConsoleObject.Formatter,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var printed_once = false;
+
+            const calls_count = @as(u32, @intCast(try self.calls.getLength(self.globalThis)));
+            if (calls_count == 0) {
+                try writer.writeAll("(no calls)");
+                return;
+            }
+
+            for (0..calls_count) |i| {
+                if (printed_once) try writer.writeAll("\n");
+                printed_once = true;
+
+                try writer.print("           {d: >4}: ", .{i + 1});
+                const call_args = try self.calls.getIndex(self.globalThis, @intCast(i));
+                try writer.print("{any}", .{call_args.toFmt(self.formatter)});
+            }
+        }
+    };
 
     const ReturnStatus = enum {
         throw,

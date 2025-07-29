@@ -30,6 +30,7 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
+      
       "a
     - d
     + b
@@ -37,6 +38,7 @@ test("no color", async () => {
     - d
     +  d
       e"
+      
 
     - Expected  - 2
     + Received  + 2
@@ -53,15 +55,19 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
+      
       {
-        object1: "a",
-    -   object2: " b",
-    +   object2: "b",
-        object3: "c
-    -   d",
-    +   d
-    +   e",
+        "object1": "a",
+    -   "object2": " b",
+    +   "object2": "b",
+        "object3": 
+      "c
+    - d"
+    + d
+    + e"
+      ,
       }
+      
 
     - Expected  - 2
     + Received  + 3
@@ -78,7 +84,7 @@ test("no color", async () => {
                                   ^
     error: expect(received).toEqual(expected)
 
-    @@ -98,7 +98,7 @@
+    @@ -99,7 +99,7 @@
       line 98
       line 99
       line 100
@@ -86,7 +92,7 @@ test("no color", async () => {
       line 101
       line 102
       line 103
-    @@ -498,7 +498,7 @@
+    @@ -499,7 +499,7 @@
       line 497
       line 498
       line 499
@@ -95,7 +101,7 @@ test("no color", async () => {
       line 501
       line 502
       line 503
-    @@ -749,7 +749,7 @@
+    @@ -750,7 +750,7 @@
       line 748
       line 749
       line 750
@@ -104,7 +110,7 @@ test("no color", async () => {
       line 752
       line 753
       line 754
-    @@ -899,7 +899,7 @@
+    @@ -900,7 +900,7 @@
       line 898
       line 899
       line 900
@@ -120,22 +126,8 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 3 - very long string with few changes
-    30 | 
-    31 |   expect(originalString).toEqual(expectedString);
-    32 | });
-    33 | 
-    34 | test("example 4 - ansi colors don't get printed to console", () => {
-    35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
-                                          ^
-    error: expect(received).toEqual(expected)
-
-    Expected: "\\u001B[32mhello\\u001B[0m"
-    Received: "\\u001B[31mhello\\u001B[0m"
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 4 - ansi colors don't get printed to console
-    34 | test("example 4 - ansi colors don't get printed to console", () => {
+    (todo) example 4 - ansi colors don't get printed to console
+    34 | test.todo("example 4 - ansi colors don't get printed to console", () => {
     35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
     36 | });
     37 | 
@@ -159,13 +151,16 @@ test("no color", async () => {
                                                                     ^
     error: expect(received).toEqual(expected)
 
+      
       "Line 1: 你好
       Line 2: مرحبا
     - Line 3: Привет"
+    - 
     + Line 3: Здравствуйте"
+    + 
 
-    - Expected  - 1
-    + Received  + 1
+    - Expected  - 2
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)
@@ -179,14 +174,16 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
+      
       {
-        arabic: "اختبار",
-    -   chinese: "测试文本",
-    +   chinese: "测试字符串",
-        emoji: "🔥💧🌊",
-    -   mixed: "Hello 世界 🌎",
-    +   mixed: "Hello 世界 🌍",
+        "arabic": "اختبار",
+    -   "chinese": "测试文本",
+    +   "chinese": "测试字符串",
+        "emoji": "🔥💧🌊",
+    -   "mixed": "Hello 世界 🌎",
+    +   "mixed": "Hello 世界 🌍",
       }
+      
 
     - Expected  - 2
     + Received  + 2
@@ -219,13 +216,16 @@ test("no color", async () => {
                                                                   ^
     error: expect(received).toEqual(expected)
 
+      
       "Línea 1: ñoño
       Línea 2: àèìòù
     - Línea 3: aeiou"
+    - 
     + Línea 3: äëïöü"
+    + 
 
-    - Expected  - 1
-    + Received  + 1
+    - Expected  - 2
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)
@@ -239,12 +239,14 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
+      
       {
-    -   french: "crème brulée",
-    +   french: "crème brûlée",
-        spanish: "niño español",
-        special: "½ ¼ ¾ ± × ÷",
+    -   "french": "crème brulée",
+    +   "french": "crème brûlée",
+        "spanish": "niño español",
+        "special": "½ ¼ ¾ ± × ÷",
       }
+      
 
     - Expected  - 1
     + Received  + 1
@@ -261,6 +263,7 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
+      
       "line one
       line two
     - line three
@@ -303,6 +306,7 @@ test("no color", async () => {
       line 37
       line 38
       line 39"
+      
 
     - Expected  - 4
     + Received  + 3
@@ -319,6 +323,7 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
+      
       "=== diffdiff ===
       line one
     - line two
@@ -369,10 +374,12 @@ test("no color", async () => {
       
     - === has newline at end vs doesn't ===
     - "
+    - 
     + === has newline at end vs doesn't ==="
+    + 
 
-    - Expected  - 14
-    + Received  + 9
+    - Expected  - 15
+    + Received  + 10
 
 
           at <anonymous> (FILE:LINE)
@@ -386,8 +393,8 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    Expected: "\\"hello, world!\\""
-    Received: "\\"¡hello, world\\""
+    Expected: ""hello, world!""
+    Received: ""¡hello, world""
 
 
           at <anonymous> (FILE:LINE)
@@ -416,14 +423,16 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
+      
       "function main() {
-    -     print(\\"Hello, world!\\");
-    -     print(\\"Goodbye, world!\\");
+    -     print("Hello, world!");
+    -     print("Goodbye, world!");
     +     if (true) {
-    +         print(\\"Hello, world!\\");
-    +         print(\\"Goodbye, world!\\");
+    +         print("Hello, world!");
+    +         print("Goodbye, world!");
     +     }
       }"
+      
 
     - Expected  - 2
     + Received  + 4
@@ -440,7 +449,7 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    @@ -98,7 +98,7 @@
+    @@ -99,7 +99,7 @@
       line 97
       line 98
       line 99
@@ -449,7 +458,7 @@ test("no color", async () => {
       line 101
       line 102
       line 103
-    @@ -198,7 +198,7 @@
+    @@ -199,7 +199,7 @@
       line 197
       line 198
       line 199
@@ -458,7 +467,7 @@ test("no color", async () => {
       line 201
       line 202
       line 203
-    @@ -298,7 +298,7 @@
+    @@ -299,7 +299,7 @@
       line 297
       line 298
       line 299
@@ -467,7 +476,7 @@ test("no color", async () => {
       line 301
       line 302
       line 303
-    @@ -399,7 +399,7 @@
+    @@ -400,7 +400,7 @@
       line 398
       line 399
       line 400
@@ -520,19 +529,22 @@ test("no color", async () => {
     error: expect(received).toEqual(expected)
 
     - "Hello, World!"
+    + 
     + "Hello, World!
     + "
+    + 
 
     - Expected  - 1
-    + Received  + 2
+    + Received  + 4
 
 
           at <anonymous> (FILE:LINE)
     (fail) has end newline vs doesn't
 
      1 pass
-     19 fail
-     20 expect() calls
+     1 todo
+     18 fail
+     19 expect() calls
     Ran 20 tests across 1 file.
     "
   `);
@@ -581,6 +593,7 @@ test("color", async () => {
   expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
+      \x1B[0m\x1B[2m\x1B[0m
       \x1B[0m\x1B[2m"a\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7mb\x1B[0m
@@ -588,6 +601,7 @@ test("color", async () => {
     \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m \x1B[0m\x1B[31md\x1B[0m
       \x1B[0m\x1B[2me"\x1B[0m
+      \x1B[0m\x1B[2m\x1B[0m
 
     \x1B[32m- Expected  - 2\x1B[0m
     \x1B[31m+ Received  + 2\x1B[0m
@@ -595,25 +609,27 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
+      \x1B[0m\x1B[2m\x1B[0m
       \x1B[0m\x1B[2m{\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  age: \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  age: \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
-      \x1B[0m\x1B[2m  logs: [\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "age": \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "age": \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
+      \x1B[0m\x1B[2m  "logs": [\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m    "\x1B[0m\x1B[32m\x1B[7mLogged into system",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Accessed dashboard",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Reviewed daily reports",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Updated project status",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Sent status email to team",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Scheduled follow-up meeting\x1B[0m\x1B[32m"\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Scheduled follow-up meeting\x1B[0m\x1B[32m",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m    "\x1B[0m\x1B[31m\x1B[7mEntered the building",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Checked in at reception",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Took elevator to floor 3",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Attended morning meeting",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Started working on project\x1B[0m\x1B[31m"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Started working on project\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m  ],\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  name: "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  name: "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "name": "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "name": "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
+      \x1B[0m\x1B[2m\x1B[0m
 
     \x1B[32m- Expected  - 8\x1B[0m
     \x1B[31m+ Received  + 7\x1B[0m

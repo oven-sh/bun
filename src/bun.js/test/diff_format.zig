@@ -38,16 +38,13 @@ pub const DiffFormatter = struct {
             const buf_writer = buffered_writer.writer();
             const Writer = @TypeOf(buf_writer);
 
-            const fmt_options = ConsoleObject.FormatOptions{
+            const fmt_options = JestPrettyFormat.FormatOptions{
                 .enable_colors = false,
                 .add_newline = false,
                 .flush = false,
-                .ordered_properties = true,
                 .quote_strings = true,
-                .max_depth = 100,
-                .multiline_strings = true,
             };
-            ConsoleObject.format2(
+            JestPrettyFormat.format(
                 .Debug,
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&received)),
@@ -61,7 +58,7 @@ pub const DiffFormatter = struct {
 
             buffered_writer_.context = &expected_buf;
 
-            ConsoleObject.format2(
+            JestPrettyFormat.format(
                 .Debug,
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&this.expected)),
@@ -94,6 +91,6 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;
-const ConsoleObject = jsc.ConsoleObject;
+const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

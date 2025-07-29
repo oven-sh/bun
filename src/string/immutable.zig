@@ -8,6 +8,15 @@ pub const Encoding = enum {
     utf8,
     latin1,
     utf16,
+
+    pub fn Unit(comptime self: @This()) type {
+        return switch (self) {
+            .ascii => u8,
+            .utf8 => u8,
+            .latin1 => u8,
+            .utf16 => u16,
+        };
+    }
 };
 
 /// Returned by classification functions that do not discriminate between utf8 and ascii.
@@ -2117,7 +2126,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
         data: []const u8,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+            try bun.js_printer.writePreQuotedString(flags.str_encoding, self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json);
         }
     };
 }
@@ -2262,7 +2271,6 @@ pub const eqlUtf16 = unicode.eqlUtf16;
 pub const isAllASCII = unicode.isAllASCII;
 pub const isValidUTF8 = unicode.isValidUTF8;
 pub const isValidUTF8WithoutSIMD = unicode.isValidUTF8WithoutSIMD;
-pub const latin1ToCodepointAssumeNotASCII = unicode.latin1ToCodepointAssumeNotASCII;
 pub const latin1ToCodepointBytesAssumeNotASCII = unicode.latin1ToCodepointBytesAssumeNotASCII;
 pub const latin1ToCodepointBytesAssumeNotASCII16 = unicode.latin1ToCodepointBytesAssumeNotASCII16;
 pub const literal = unicode.literal;
@@ -2289,6 +2297,11 @@ pub const u16Trail = unicode.u16Trail;
 pub const utf16Codepoint = unicode.utf16Codepoint;
 pub const utf16CodepointWithFFFD = unicode.utf16CodepointWithFFFD;
 pub const utf16EqlString = unicode.utf16EqlString;
+pub const utf16DecodeSurrogatePair = unicode.utf16DecodeSurrogatePair;
+pub const HIGH_SURROGATE_START = unicode.HIGH_SURROGATE_START;
+pub const HIGH_SURROGATE_END = unicode.HIGH_SURROGATE_END;
+pub const LOW_SURROGATE_START = unicode.LOW_SURROGATE_START;
+pub const LOW_SURROGATE_END = unicode.LOW_SURROGATE_END;
 pub const utf8ByteSequenceLength = unicode.utf8ByteSequenceLength;
 pub const utf8ByteSequenceLengthUnsafe = unicode.utf8ByteSequenceLengthUnsafe;
 pub const w = unicode.w;

@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { dedent, itBundled } from "./expectBundled";
 
 interface TemplateStringTest {
@@ -89,6 +89,20 @@ const templateStringTests: Record<string, TemplateStringTest> = {
 };
 
 describe("bundler", () => {
+  // Test for emoji output in bun build
+  itBundled("string/EmojiDirectOutput", {
+    files: {
+      "a.js": `console.log("😀");`,
+    },
+    outfile: "out.js",
+    onAfterBundle(api) {
+      const content = api.readFile("out.js");
+      expect(content).toContain("😀");
+      expect(content).not.toContain("\\ud83d");
+      expect(content).not.toContain("\\ude00");
+    },
+  });
+
   for (const key in templateStringTests) {
     const test = templateStringTests[key];
     if ([test.capture, test.captureRaw, test.print].filter(x => x !== undefined).length !== 1) {

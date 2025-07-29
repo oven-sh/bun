@@ -151,19 +151,19 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
-    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+pub fn writePreQuotedString(comptime encoding: strings.Encoding, text: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
-        const width = switch (comptime encoding) {
+        const width: u8 = switch (comptime encoding) {
             .latin1, .ascii => 1,
             .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            .utf16 => 1,
+            .utf16 => if (text[i] >= strings.HIGH_SURROGATE_START and text[i] <= strings.HIGH_SURROGATE_END and text.len > i + 1 and //
+                text[i + 1] >= strings.LOW_SURROGATE_START and text[i + 1] <= strings.LOW_SURROGATE_END) 2 else 1,
         };
         const clamped_width = @min(@as(usize, width), n -| i);
-        const c = switch (encoding) {
+        const c: i32 = switch (encoding) {
             .utf8 => strings.decodeWTF8RuneT(
                 &switch (clamped_width) {
                     // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
@@ -177,20 +177,9 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 i32,
                 0,
             ),
-            .ascii => brk: {
-                std.debug.assert(text[i] <= 0x7F);
-                break :brk text[i];
-            },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
-            .utf16 => brk: {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
-                break :brk @as(i32, text[i]);
-            },
+            .ascii, .latin1 => text[i],
+            .utf16 => if (text[i] >= strings.HIGH_SURROGATE_START and text[i] <= strings.HIGH_SURROGATE_END and text.len > i + 1 and //
+                text[i + 1] >= strings.LOW_SURROGATE_START and text[i + 1] <= strings.LOW_SURROGATE_END) @bitCast(strings.utf16DecodeSurrogatePair(text[i], text[i + 1])) else text[i],
         };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];
@@ -301,7 +290,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             },
 
             else => {
-                i += @as(usize, width);
+                i += @as(usize, clamped_width);
 
                 if (c <= 0xFF and !json) {
                     const k = @as(usize, @intCast(c));
@@ -352,13 +341,13 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
+    try writePreQuotedString(encoding, input, Writer, writer, '"', false, true);
     try writer.writeAll("\"");
 }
 
@@ -1553,20 +1542,18 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
         pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            const slice = std.mem.sliceAsBytes(text);
-
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }

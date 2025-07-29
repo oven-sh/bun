@@ -313,7 +313,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 12 - zig large multiline diff
+    (fail) example 12 - large multiline diff
     240 | line six
     241 | line seven
     242 | 
@@ -383,10 +383,10 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 13 - zig simple multiline diff with sections
+    (fail) example 13 - simple multiline diff with sections
     246 | });
     247 | 
-    248 | test("example 14 - zig single line diff", () => {
+    248 | test("example 14 - single line diff", () => {
     249 |   const received = \`"¡hello, world"\`;
     250 |   const expected = \`"hello, world!"\`;
     251 |   expect(received).toEqual(expected);
@@ -398,10 +398,10 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 14 - zig single line diff
+    (fail) example 14 - single line diff
     252 | });
     253 | 
-    254 | test("example 15 - zig unicode char diff", () => {
+    254 | test("example 15 - unicode char diff", () => {
     255 |   const received = \`Hello 👋 世界 🌎!\`;
     256 |   const expected = \`Hello 👋 世界 🌍!\`;
     257 |   expect(received).toEqual(expected);
@@ -413,7 +413,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 15 - zig unicode char diff
+    (fail) example 15 - unicode char diff
     266 | }\`;
     267 |   const expected = \`function main() {
     268 |     print("Hello, world!");
@@ -439,7 +439,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 16 - zig indentation change diff
+    (fail) example 16 - indentation change diff
     302 |   }
     303 | 
     304 |   // The Zig code adds a trailing newline to each string.
@@ -490,7 +490,7 @@ test("no color", async () => {
 
 
           at <anonymous> (FILE:LINE)
-    (fail) example 17 - zig very long string
+    (fail) example 17 - very long string
     308 | });
     309 | 
     310 | test("example 18 - very long single line string", () => {

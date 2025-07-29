@@ -183,6 +183,8 @@ pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
     }
     // TODO: catch exception, declare throw scope, re-throw
     // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
+    // update: this mayyy not be necessary since fromJSHostCall has a catch scope and doesn't clear the exception
+    //      verify and then either add the throw scope or delete this comment block
 }
 
 pub fn wrap1(comptime func: anytype) @"return": {

@@ -67,7 +67,7 @@ pub const FetchTasklet = struct {
     result: http.HTTPClientResult = .{},
     metadata: ?http.HTTPResponseMetadata = null,
     javascript_vm: *VirtualMachine = undefined,
-    global_this: *JSGlobalObject = undefined,
+    globalThis: *JSGlobalObject = undefined,
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
@@ -341,8 +341,8 @@ pub const FetchTasklet = struct {
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
-        if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-            const globalThis = this.global_this;
+        if (this.request_body.ReadableStream.get(this.globalThis)) |stream| {
+            const globalThis = this.globalThis;
             this.ref(); // lets only unref when sink is done
             // +1 because the task refs the sink
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
@@ -352,7 +352,7 @@ pub const FetchTasklet = struct {
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSExecutionTerminated!void {
         const success = this.result.isSuccess();
-        const globalThis = this.global_this;
+        const globalThis = this.globalThis;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         var buffer_reset = true;
         defer {
@@ -502,7 +502,7 @@ pub const FetchTasklet = struct {
                     };
 
                     if (old == .Locked) {
-                        return old.resolve(&response.body.value, this.global_this, response.getFetchHeaders());
+                        return old.resolve(&response.body.value, this.globalThis, response.getFetchHeaders());
                     }
                 }
             }
@@ -526,7 +526,7 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        const globalThis = this.global_this;
+        const globalThis = this.globalThis;
         defer {
             this.mutex.unlock();
             // if we are not done we wait until the next call
@@ -663,7 +663,7 @@ pub const FetchTasklet = struct {
                 const cert = certificate_info.cert;
                 var cert_ptr = cert.ptr;
                 if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                    const globalObject = this.global_this;
+                    const globalObject = this.globalThis;
                     defer x509.free();
                     const js_cert = X509.toJS(x509, globalObject) catch |err| {
                         switch (err) {
@@ -676,7 +676,7 @@ pub const FetchTasklet = struct {
                         this.is_waiting_abort = this.result.has_more;
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.global_this);
+                        this.tracker.didCancel(this.globalThis);
                         // we need to abort the request
                         if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
                         this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
@@ -695,7 +695,7 @@ pub const FetchTasklet = struct {
                         this.is_waiting_abort = this.result.has_more;
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.global_this);
+                        this.tracker.didCancel(this.globalThis);
 
                         // we need to abort the request
                         if (this.http) |http_| {
@@ -725,9 +725,9 @@ pub const FetchTasklet = struct {
         }
 
         if (this.signal) |signal| {
-            if (signal.reasonIfAborted(this.global_this)) |reason| {
+            if (signal.reasonIfAborted(this.globalThis)) |reason| {
                 defer this.clearAbortSignal();
-                return reason.toBodyValueError(this.global_this);
+                return reason.toBodyValueError(this.globalThis);
             }
         }
 
@@ -917,7 +917,7 @@ pub const FetchTasklet = struct {
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
                     .task = this,
-                    .global = this.global_this,
+                    .global = this.globalThis,
                     .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                 },
@@ -1022,9 +1022,9 @@ pub const FetchTasklet = struct {
     pub fn onResolve(this: *FetchTasklet) JSValue {
         log("onResolve", .{});
         const response = bun.new(Response, this.toResponse());
-        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
+        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.globalThis), response);
         response_js.ensureStillAlive();
-        this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
+        this.response = jsc.Weak(FetchTasklet).create(response_js, this.globalThis, .FetchResponse, this);
         this.native_response = response.ref();
         return response_js;
     }
@@ -1057,7 +1057,7 @@ pub const FetchTasklet = struct {
             .http = try allocator.create(http.AsyncHTTP),
             .javascript_vm = jsc_vm,
             .request_body = fetch_options.body,
-            .global_this = globalThis,
+            .globalThis = globalThis,
             .promise = promise,
             .request_headers = fetch_options.headers,
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
@@ -1157,10 +1157,10 @@ pub const FetchTasklet = struct {
         return fetch_tasklet;
     }
 
-    pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
+    pub fn abortListener(this: *FetchTasklet, reason: JSValue) bun.JSExecutionTerminated!void {
         log("abortListener", .{});
         reason.ensureStillAlive();
-        this.abort_reason.set(this.global_this, reason);
+        this.abort_reason.set(this.globalThis, reason);
         this.abortTask();
         if (this.sink) |sink| {
             sink.cancel(reason);
@@ -1222,7 +1222,7 @@ pub const FetchTasklet = struct {
                 return;
             }
             if (!jsError.isUndefinedOrNull()) {
-                this.abort_reason.set(this.global_this, jsError);
+                this.abort_reason.set(this.globalThis, jsError);
             }
             this.abortTask();
         } else {
@@ -1235,7 +1235,7 @@ pub const FetchTasklet = struct {
 
     pub fn abortTask(this: *FetchTasklet) void {
         this.signal_store.aborted.store(true, .monotonic);
-        this.tracker.didCancel(this.global_this);
+        this.tracker.didCancel(this.globalThis);
 
         if (this.http) |http_| {
             http.http_thread.scheduleShutdown(http_);

@@ -52,47 +52,34 @@ pub const JSValue = enum(i64) {
 
     pub const isTruthy = toBoolean;
 
-    const PropertyIteratorFn = *const fn (
-        globalObject_: *JSGlobalObject,
-        ctx_ptr: ?*anyopaque,
-        key: *ZigString,
-        value: JSValue,
-        is_symbol: bool,
-        is_private_symbol: bool,
-    ) callconv(.C) void;
+    const PropertyIteratorFn = fn (globalObject_: *JSGlobalObject, ctx_ptr: ?*anyopaque, key: *ZigString, value: JSValue, is_symbol: bool, is_private_symbol: bool) bun.JSError!void;
+    const PropertyIteratorFnC = fn (globalObject_: *JSGlobalObject, ctx_ptr: ?*anyopaque, key: *ZigString, value: JSValue, is_symbol: bool, is_private_symbol: bool) callconv(.c) void;
 
-    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const PropertyIteratorFnC) void;
+    extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const PropertyIteratorFnC) void;
+    extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const PropertyIteratorFnC) void;
 
-    pub fn forEachPropertyNonIndexed(
-        this: JSValue,
-        globalThis: *jsc.JSGlobalObject,
-        ctx: ?*anyopaque,
-        callback: PropertyIteratorFn,
-    ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyNonIndexed, .{ this, globalThis, ctx, callback });
+    pub fn forEachPropertyNonIndexed(this: JSValue, globalThis: *jsc.JSGlobalObject, ctx: ?*anyopaque, callback: PropertyIteratorFn) JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyNonIndexed, .{ this, globalThis, ctx, forEachPropertyWrap(callback) });
     }
 
-    pub fn forEachProperty(
-        this: JSValue,
-        globalThis: *jsc.JSGlobalObject,
-        ctx: ?*anyopaque,
-        callback: PropertyIteratorFn,
-    ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachProperty, .{ this, globalThis, ctx, callback });
+    pub fn forEachProperty(this: JSValue, globalThis: *jsc.JSGlobalObject, ctx: ?*anyopaque, callback: PropertyIteratorFn) JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachProperty, .{ this, globalThis, ctx, forEachPropertyWrap(callback) });
     }
 
-    pub fn forEachPropertyOrdered(
-        this: JSValue,
-        globalThis: *jsc.JSGlobalObject,
-        ctx: ?*anyopaque,
-        callback: PropertyIteratorFn,
-    ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyOrdered, .{ this, globalThis, ctx, callback });
+    pub fn forEachPropertyOrdered(this: JSValue, globalThis: *jsc.JSGlobalObject, ctx: ?*anyopaque, callback: PropertyIteratorFn) JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyOrdered, .{ this, globalThis, ctx, forEachPropertyWrap(callback) });
     }
 
     extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject) f64;
+
+    pub fn forEachPropertyWrap(comptime func: PropertyIteratorFn) PropertyIteratorFnC {
+        return struct {
+            pub fn wrapped(globalObject_: *JSGlobalObject, ctx_ptr: ?*anyopaque, key: *ZigString, value: JSValue, is_symbol: bool, is_private_symbol: bool) callconv(.c) void {
+                return func(globalObject_, ctx_ptr, key, value, is_symbol, is_private_symbol) catch |e| jsc.host_fn.voidFromJSError(e, globalObject_);
+            }
+        }.wrapped;
+    }
 
     /// Perform the ToNumber abstract operation, coercing a value to a number.
     /// Equivalent to `+value`
@@ -2090,9 +2077,14 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+        callback: fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void,
     ) bun.JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, callback });
+        const S = struct {
+            fn wrapped(vm: *VM, globalObject_: *JSGlobalObject, ctx_: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
+                return callback(vm, globalObject_, ctx_, nextValue) catch |e| return jsc.host_fn.voidFromJSError(e, globalObject_);
+            }
+        };
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, S.wrapped });
     }
 
     /// Same as `forEach` but accepts a typed context struct without need for @ptrCasts
@@ -2100,10 +2092,14 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: anytype,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+        callback: fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) bun.JSError!void,
     ) bun.JSError!void {
-        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
-        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, func });
+        const S = struct {
+            fn wrapped(vm: *VM, globalObject_: *JSGlobalObject, ctx_: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
+                return callback(vm, globalObject_, @ptrCast(@alignCast(ctx_)), nextValue) catch |e| return jsc.host_fn.voidFromJSError(e, globalObject_);
+            }
+        };
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, S.wrapped });
     }
 
     extern fn JSC__JSValue__isIterable(this: JSValue, globalObject: *JSGlobalObject) bool;

@@ -784,6 +784,7 @@ pub const H2FrameParser = struct {
             signal: *jsc.WebCore.AbortSignal,
             parser: *H2FrameParser,
             stream_id: u32,
+            globalThis: *jsc.JSGlobalObject,
 
             pub const new = bun.TrivialNew(SignalRef);
 
@@ -791,7 +792,7 @@ pub const H2FrameParser = struct {
                 return this.signal.aborted();
             }
 
-            pub fn abortListener(this: *SignalRef, reason: JSValue) void {
+            pub fn abortListener(this: *SignalRef, reason: JSValue) bun.JSExecutionTerminated!void {
                 log("abortListener", .{});
                 reason.ensureStillAlive();
                 const stream = this.parser.streams.getEntry(this.stream_id) orelse return;
@@ -1151,6 +1152,7 @@ pub const H2FrameParser = struct {
                 .signal = signal,
                 .parser = parser,
                 .stream_id = this.id,
+                .globalThis = parser.globalThis,
             });
             signal_ref.signal = signal.ref().listen(SignalRef, signal_ref, SignalRef.abortListener);
             //TODO: We should not need this ref counting here, since Parser owns Stream

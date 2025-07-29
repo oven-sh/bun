@@ -652,10 +652,10 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
                     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
+                    if (try item.jestDeepEquals(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -748,9 +748,9 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.isSameValue(entry.expected, entry.globalThis) catch return) {
+                    if (try item.isSameValue(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -1346,9 +1346,9 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
+                    if (try item.jestDeepEquals(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -2966,7 +2966,7 @@ pub const Expect = struct {
                             _: *JSGlobalObject,
                             any_: ?*anyopaque,
                             _: JSValue,
-                        ) callconv(.C) void {
+                        ) bun.JSError!void {
                             bun.cast(*bool, any_.?).* = true;
                         }
                     }.anythingInIterator);

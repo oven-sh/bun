@@ -95,7 +95,7 @@ pub const FSWatcher = struct {
                         try this.ctx.emitError(err);
                     },
                     .abort => {
-                        this.ctx.emitIfAborted();
+                        try this.ctx.emitIfAborted();
                     },
                     .close => {
                         try this.ctx.emit("", .close);
@@ -244,7 +244,7 @@ pub const FSWatcher = struct {
                     try ctx.emitError(err);
                 },
                 .abort => {
-                    ctx.emitIfAborted();
+                    try ctx.emitIfAborted();
                 },
                 .close => {
                     try ctx.emit("", .close);
@@ -442,20 +442,18 @@ pub const FSWatcher = struct {
         }
     }
 
-    pub fn emitIfAborted(this: *FSWatcher) void {
+    pub fn emitIfAborted(this: *FSWatcher) bun.JSError!void {
         if (this.signal) |s| {
             if (s.aborted()) {
                 const err = s.abortReason();
-                this.emitAbort(err);
+                try this.emitAbort(err);
             }
         }
     }
 
-    pub fn emitAbort(this: *FSWatcher, err: jsc.JSValue) void {
+    pub fn emitAbort(this: *FSWatcher, err: jsc.JSValue) bun.JSError!void {
         if (this.closed) return;
         _ = this.pending_activity_count.fetchAdd(1, .monotonic);
-        defer this.close() catch {}; // TODO: properly propagate exception upwards
-        defer this.unrefTask();
 
         err.ensureStillAlive();
         if (this.js_this != .zero) {
@@ -467,9 +465,11 @@ pub const FSWatcher = struct {
                     EventType.@"error".toJS(this.globalThis),
                     if (err.isEmptyOrUndefinedOrNull()) jsc.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
                 };
-                _ = listener.call(this.globalThis, this.globalThis.toJSValue(), &args) catch {}; // TODO: properly propagate exception upwards
+                _ = listener.call(this.globalThis, this.globalThis.toJSValue(), &args) catch this.globalThis.clearException();
             }
         }
+        this.unrefTask();
+        try this.close();
     }
     pub fn emitError(this: *FSWatcher, err: bun.sys.Error) bun.JSError!void {
         if (this.closed) return;
@@ -484,8 +484,7 @@ pub const FSWatcher = struct {
                     EventType.@"error".toJS(globalObject),
                     err.toJS(globalObject),
                 };
-                // TODO: investigate correct errdefer behavior with respect to `this.close()` here
-                _ = try listener.call(globalObject, globalObject.toJSValue(), &args);
+                _ = listener.call(globalObject, globalObject.toJSValue(), &args) catch {};
             }
         }
         try this.close();
@@ -520,12 +519,7 @@ pub const FSWatcher = struct {
     }
 
     fn emitJS(listener: jsc.JSValue, globalObject: *jsc.JSGlobalObject, filename: jsc.JSValue, comptime event_type: EventType) bun.JSExecutionTerminated!void {
-        var args = [_]jsc.JSValue{
-            event_type.toJS(globalObject),
-            filename,
-        };
-
-        _ = listener.call(globalObject, globalObject.toJSValue(), &args) catch |err| try globalObject.reportActiveExceptionAsUnhandled(err);
+        try listener.callMaybeEmitUncaught(globalObject, globalObject.toJSValue(), &.{ event_type.toJS(globalObject), filename });
     }
 
     pub fn doRef(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {

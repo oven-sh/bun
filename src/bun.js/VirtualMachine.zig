@@ -1922,7 +1922,7 @@ pub fn printException(
     comptime Writer: type,
     writer: Writer,
     comptime allow_side_effects: bool,
-) void {
+) bun.JSError!void {
     var formatter = ConsoleObject.Formatter{
         .globalThis = this.global,
         .quote_strings = false,
@@ -1931,9 +1931,9 @@ pub fn printException(
     };
     defer formatter.deinit();
     if (Output.enable_ansi_colors) {
-        this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
+        try this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
     } else {
-        this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
+        try this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
     }
 }
 
@@ -1968,7 +1968,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
             @TypeOf(writer),
             writer,
             true,
-        );
+        ) catch return; // TODO: properly propagate exception upwards
     } else {
         var formatter = ConsoleObject.Formatter{
             .globalThis = this.global,
@@ -1979,7 +1979,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
         };
         defer formatter.deinit();
         switch (Output.enable_ansi_colors) {
-            inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
+            inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true) catch return, // TODO: properly propagate exception upwards
         }
     }
 }
@@ -2350,7 +2350,7 @@ pub fn printErrorlikeObject(
     writer: Writer,
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
-) void {
+) bun.JSError!void {
     var was_internal = false;
 
     defer {
@@ -2381,22 +2381,22 @@ pub fn printErrorlikeObject(
             current_exception_list: ?*ExceptionList = null,
             formatter: *ConsoleObject.Formatter,
 
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, true);
+            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
+                try iterator(vm, globalObject, nextValue, ctx.?, true);
             }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, false);
+            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
+                try iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) bun.JSError!void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
+                try globalObject.bunVM().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
+            try value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
+            try value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
         }
         return;
     }

@@ -13,16 +13,13 @@ pub const AbortSignal = opaque {
         this: *AbortSignal,
         comptime Context: type,
         ctx: *Context,
-        comptime cb: *const fn (*Context, JSValue) void,
+        comptime cb: *const fn (*Context, JSValue) bun.JSError!void,
     ) *AbortSignal {
         const Wrapper = struct {
             const call = cb;
-            pub fn callback(
-                ptr: ?*anyopaque,
-                reason: JSValue,
-            ) callconv(.C) void {
+            pub fn callback(ptr: ?*anyopaque, reason: JSValue) callconv(.C) void {
                 const val = bun.cast(*Context, ptr.?);
-                call(val, reason);
+                call(val, reason) catch |e| return bun.jsc.host_fn.voidFromJSError(e, val.globalThis);
             }
         };
 

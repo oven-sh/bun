@@ -754,8 +754,9 @@ pub const FilePoll = struct {
         this.deactivate(event_loop_ctx.platformEventLoop());
     }
 
+    const ShouldTickAgain = enum(c_int) { no, yes };
     /// Returns 'no' if error.JSExecutionTerminated is encountered and the event loop should stop.
-    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) enum(c_int) { no, yes } {
+    pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) ShouldTickAgain {
         var tag = Pollable.from(tagged_pointer);
 
         if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))

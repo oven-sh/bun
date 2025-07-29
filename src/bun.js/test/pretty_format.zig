@@ -659,32 +659,32 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
-                    const key = jsc.JSObject.getIndex(nextValue, globalObject, 0) catch return; // TODO: properly propagate exception upwards
-                    const value = jsc.JSObject.getIndex(nextValue, globalObject, 1) catch return; // TODO: properly propagate exception upwards
+                    const key = try jsc.JSObject.getIndex(nextValue, globalObject, 0);
+                    const value = try jsc.JSObject.getIndex(nextValue, globalObject, 1);
                     this.formatter.writeIndent(Writer, this.writer) catch return;
-                    const key_tag = Tag.get(key, globalObject) catch return; // TODO: properly propagate exception upwards
+                    const key_tag = try Tag.get(key, globalObject);
 
-                    this.formatter.format(
+                    try this.formatter.format(
                         key_tag,
                         Writer,
                         this.writer,
                         key,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch return; // TODO: properly propagate exception upwards
+                    );
                     this.writer.writeAll(" => ") catch return;
-                    const value_tag = Tag.get(value, globalObject) catch return; // TODO: properly propagate exception upwards
-                    this.formatter.format(
+                    const value_tag = try Tag.get(value, globalObject);
+                    try this.formatter.format(
                         value_tag,
                         Writer,
                         this.writer,
                         value,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch return; // TODO: properly propagate exception upwards
+                    );
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch return;
                     this.writer.writeAll("\n") catch return;
                 }
@@ -695,19 +695,19 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
-                    const key_tag = Tag.get(nextValue, globalObject) catch return; // TODO: properly propagate exception upwards
-                    this.formatter.format(
+                    const key_tag = try Tag.get(nextValue, globalObject);
+                    try this.formatter.format(
                         key_tag,
                         Writer,
                         this.writer,
                         nextValue,
                         this.formatter.globalThis,
                         enable_ansi_colors,
-                    ) catch return; // TODO: properly propagate exception upwards
+                    );
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch return;
                     this.writer.writeAll("\n") catch return;
                 }
@@ -763,7 +763,7 @@ pub const JestPrettyFormat = struct {
                     value: JSValue,
                     is_symbol: bool,
                     is_private_symbol: bool,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     if (is_private_symbol) return;
 
                     const key = key_.?[0];
@@ -779,11 +779,11 @@ pub const JestPrettyFormat = struct {
                         .failed = false,
                     };
 
-                    const tag = Tag.get(value, globalThis) catch return; // TODO: properly propagate exception upwards
+                    const tag = try Tag.get(value, globalThis);
 
                     if (tag.cell.isHidden()) return;
                     if (ctx.i == 0) {
-                        handleFirstProperty(ctx, globalThis, ctx.parent) catch return; // TODO: properly propagate exception upwards
+                        try handleFirstProperty(ctx, globalThis, ctx.parent);
                     } else {
                         this.printComma(Writer, writer_, enable_ansi_colors) catch return;
                     }
@@ -864,7 +864,7 @@ pub const JestPrettyFormat = struct {
                         }
                     }
 
-                    this.format(tag, Writer, ctx.writer, value, globalThis, enable_ansi_colors) catch return; // TODO: properly propagate exception upwards
+                    try this.format(tag, Writer, ctx.writer, value, globalThis, enable_ansi_colors);
 
                     if (tag.cell.isStringLike()) {
                         if (comptime enable_ansi_colors) {

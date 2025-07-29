@@ -733,7 +733,7 @@ async function main() {
   }
 
   const now = Date.now();
-  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 12);
+  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
 
   console.log(
     " ".repeat(sin) +

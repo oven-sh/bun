@@ -646,11 +646,10 @@ pub fn deinit(dev: *DevServer) void {
         .next_bundle = {
             var r = dev.next_bundle.requests.first;
             while (r) |request| {
-                defer dev.deferred_request_pool.put(request);
                 // TODO: deinitializing in this state is almost certainly an assertion failure.
                 // This code is shipped in release because it is only reachable by experimenntal server components.
                 bun.debugAssert(request.data.handler != .server_handler);
-                request.data.deinit();
+                defer request.data.deref();
                 r = request.next;
             }
             dev.next_bundle.route_queue.deinit(allocator);
@@ -1088,6 +1087,8 @@ fn deferRequest(
     const method = bun.http.Method.which(req.method()) orelse .POST;
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
+        .dev = dev,
+        .ref_count = .init(),
         .handler = switch (kind) {
             .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
             .server_handler => .{
@@ -1095,6 +1096,7 @@ fn deferRequest(
             },
         },
     };
+    deferred.data.ref();
     resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
     requests_array.prepend(deferred);
 }
@@ -1533,8 +1535,20 @@ pub const DeferredRequest = struct {
     pub const List = std.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{});
+
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
+    dev: *DevServer,
+
+    /// This struct can have at most 2 references it:
+    /// - The dev server (`dev.current_bundle.requests`)
+    /// - uws.Response as a user data pointer
+    ref_count: RefCount,
+
+    // expose `ref` and `deref` as public methods
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     const Handler = union(enum) {
         /// For a .framework route. This says to call and render the page.
@@ -1560,10 +1574,15 @@ pub const DeferredRequest = struct {
         assert(this.handler == .aborted);
     }
 
+    /// *WARNING*: Do not call this directly, instead call `.deref()`
+    ///
     /// Calling this is only required if the desired handler is going to be avoided,
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
-    fn deinit(this: *DeferredRequest) void {
+    fn deinitImpl(this: *DeferredRequest) void {
+        bun.assert(this.ref_count.active_counts == 0);
+
+        defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
             .bundled_html_page, .aborted => {},
@@ -1572,17 +1591,18 @@ pub const DeferredRequest = struct {
 
     /// Deinitializes state by aborting the connection.
     fn abort(this: *DeferredRequest) void {
-        switch (this.handler) {
+        var handler = this.handler;
+        this.handler = .aborted;
+        switch (handler) {
             .server_handler => |*saved| {
-                saved.response.endWithoutBody(true);
-                saved.deinit();
+                saved.ctx.onAbort(saved.response);
+                saved.js_request.deinit();
             },
             .bundled_html_page => |r| {
                 r.response.endWithoutBody(true);
             },
-            .aborted => return,
+            .aborted => {},
         }
-        this.handler = .aborted;
     }
 };
 
@@ -1997,8 +2017,8 @@ pub fn finalizeBundle(
             Output.debug("current_bundle.requests.first != null. this leaves pending requests without an error page!", .{});
         }
         while (current_bundle.requests.popFirst()) |node| {
-            defer dev.deferred_request_pool.put(node);
             const req = &node.data;
+            defer req.deref();
             req.abort();
         }
     }
@@ -2504,8 +2524,8 @@ pub fn finalizeBundle(
 
         var inspector_agent = dev.inspector();
         while (current_bundle.requests.popFirst()) |node| {
-            defer dev.deferred_request_pool.put(node);
             const req = &node.data;
+            defer req.deref();
 
             const rb = dev.routeBundlePtr(req.route_bundle_index);
             rb.server_state = .possible_bundling_failures;
@@ -2608,8 +2628,8 @@ pub fn finalizeBundle(
     defer dev.graph_safety_lock.lock();
 
     while (current_bundle.requests.popFirst()) |node| {
-        defer dev.deferred_request_pool.put(node);
         const req = &node.data;
+        defer req.deref();
 
         const rb = dev.routeBundlePtr(req.route_bundle_index);
         rb.server_state = .loaded;
@@ -3951,7 +3971,7 @@ pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
 pub fn onPluginsRejected(dev: *DevServer) !void {
     dev.plugin_state = .err;
     while (dev.next_bundle.requests.popFirst()) |item| {
-        defer dev.deferred_request_pool.put(item);
+        defer item.data.deref();
         item.data.abort();
     }
     dev.next_bundle.route_queue.clearRetainingCapacity();

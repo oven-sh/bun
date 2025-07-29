@@ -4512,94 +4512,108 @@ pub const Expect = struct {
         pub const Map = bun.ComptimeEnumMap(ReturnStatus);
     };
 
-    inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime known_index: ?i32) bun.JSError!JSValue {
-        jsc.markBinding(@src());
-
-        const thisValue = callframe.this();
-        const arguments = callframe.arguments_old(1).slice();
-        defer this.postMatch(globalThis);
-
-        const name = comptime if (known_index != null and known_index.? == 0) "toHaveReturned" else "toHaveReturnedTimes";
-
-        const value: JSValue = try this.getValue(globalThis, thisValue, name, if (known_index != null and known_index.? == 0) "" else "<green>expected<r>");
-
-        incrementExpectCallCounter();
-
-        const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
+    fn jestMockIterator(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!bun.jsc.JSArrayIterator {
+        const returns: bun.jsc.JSValue = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
             return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
         }
 
-        const return_count: i32 = if (known_index) |index| index else brk: {
+        return try returns.arrayIterator(globalThis);
+    }
+    fn jestMockReturnObject_type(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!ReturnStatus {
+        if (try value.fastGet(globalThis, .type)) |type_string| {
+            if (type_string.isString()) {
+                if (try ReturnStatus.Map.fromJS(globalThis, type_string)) |val| return val;
+            }
+        }
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        defer formatter.deinit();
+        return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toFmt(&formatter)});
+    }
+    fn jestMockReturnObject_value(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!JSValue {
+        return (try value.get(globalThis, "value")) orelse .js_undefined;
+    }
+
+    inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime mode: enum { toHaveReturned, toHaveReturnedTimes }) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments();
+        defer this.postMatch(globalThis);
+
+        const value: JSValue = try this.getValue(globalThis, thisValue, @tagName(mode), "<green>expected<r>");
+
+        incrementExpectCallCounter();
+
+        var returns = try jestMockIterator(globalThis, value);
+
+        const expected_success_count: i32 = if (mode == .toHaveReturned) brk: {
+            if (arguments.len > 0 and !arguments[0].isUndefined()) {
+                return globalThis.throwInvalidArguments(@tagName(mode) ++ "() must not have an argument", .{});
+            }
+            break :brk 1;
+        } else brk: {
             if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
-                return globalThis.throwInvalidArguments(name ++ "() requires 1 non-negative integer argument", .{});
+                return globalThis.throwInvalidArguments(@tagName(mode) ++ "() requires 1 non-negative integer argument", .{});
             }
 
             break :brk try arguments[0].coerce(i32, globalThis);
         };
 
         var pass = false;
-        const index: u32 = @as(u32, @intCast(return_count)) -| 1;
 
-        const times_value = returns.getDirectIndex(
-            globalThis,
-            index,
-        );
-
-        const total_count = try returns.getLength(globalThis);
-
-        const return_status: ReturnStatus = brk: {
-            // Returns is an array of:
-            //
-            //  { type: "throw" | "incomplete" | "return", value: any}
-            //
-            if (total_count >= return_count and times_value.isCell()) {
-                if (try times_value.get(globalThis, "type")) |type_string| {
-                    if (type_string.isString()) {
-                        break :brk try ReturnStatus.Map.fromJS(globalThis, type_string) orelse {
-                            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                            defer formatter.deinit();
-                            return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toFmt(&formatter)});
-                        };
-                    }
-                }
+        var actual_success_count: i32 = 0;
+        var total_call_count: i32 = 0;
+        while (try returns.next()) |item| {
+            switch (try jestMockReturnObject_type(globalThis, item)) {
+                .@"return" => actual_success_count += 1,
+                else => {},
             }
+            total_call_count += 1;
+        }
 
-            break :brk ReturnStatus.incomplete;
+        pass = switch (mode) {
+            .toHaveReturned => actual_success_count >= expected_success_count,
+            .toHaveReturnedTimes => actual_success_count == expected_success_count,
         };
-        if (globalThis.hasException())
-            return .zero;
-
-        pass = return_status == ReturnStatus.@"return";
 
         const not = this.flags.not;
         if (not) pass = !pass;
         if (pass) return .js_undefined;
 
-        if (!pass and return_status == ReturnStatus.throw) {
-            const signature = comptime getSignature(name, "<green>expected<r>", false);
-            const fmt = signature ++ "\n\n" ++ "Function threw an exception\n{any}\n";
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            defer formatter.deinit();
-            return globalThis.throwPretty(fmt, .{((try times_value.get(globalThis, "value")) orelse JSValue.js_undefined).toFmt(&formatter)});
-        }
-
         switch (not) {
             inline else => |is_not| {
-                const signature = comptime getSignature(name, "<green>expected<r>", is_not);
-                return this.throw(globalThis, signature, "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{ return_count, total_count });
+                const signature = comptime getSignature(@tagName(mode), "<green>expected<r>", is_not);
+                const str: []const u8, const spc: []const u8 = switch (mode) {
+                    .toHaveReturned => switch (not) {
+                        false => .{ ">= ", "   " },
+                        true => .{ "< ", "  " },
+                    },
+                    .toHaveReturnedTimes => switch (not) {
+                        false => .{ "== ", "   " },
+                        true => .{ "!= ", "   " },
+                    },
+                };
+                return this.throw(globalThis, signature,
+                    \\
+                    \\
+                    \\Expected number of succesful returns: {s}<green>{d}<r>
+                    \\Received number of succesful returns: {s}<red>{d}<r>
+                    \\Received number of calls:             {s}<red>{d}<r>
+                    \\
+                , .{ str, expected_success_count, spc, actual_success_count, spc, total_call_count });
             },
         }
     }
 
     pub fn toHaveReturned(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        return toHaveReturnedTimesFn(this, globalThis, callframe, 1);
+        return toHaveReturnedTimesFn(this, globalThis, callframe, .toHaveReturned);
     }
 
     pub fn toHaveReturnedTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        return toHaveReturnedTimesFn(this, globalThis, callframe, null);
+        return toHaveReturnedTimesFn(this, globalThis, callframe, .toHaveReturnedTimes);
     }
 
     // Formatter for when there are multiple returns or errors
@@ -4609,35 +4623,32 @@ pub const Expect = struct {
         formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const len = try self.returns.getLength(self.globalThis);
             var printed_once = false;
 
-            for (0..len) |i| {
+            var num_returns: i32 = 0;
+            var num_calls: i32 = 0;
+
+            var iter = try self.returns.arrayIterator(self.globalThis);
+            while (try iter.next()) |item| {
                 if (printed_once) try writer.writeAll("\n");
                 printed_once = true;
 
-                const call_idx = i + 1;
-                try writer.print("           {d: >2}: ", .{call_idx});
+                num_calls += 1;
+                try writer.print("           {d: >2}: ", .{num_calls});
 
-                const result = self.returns.getDirectIndex(self.globalThis, @truncate(i));
-                if (result.isObject()) {
-                    const result_type: JSValue = (try result.get(self.globalThis, "type")) orelse .js_undefined;
-                    if (result_type.isString()) {
-                        const type_str = try result_type.toBunString(self.globalThis);
-                        defer type_str.deref();
-
-                        if (type_str.eqlComptime("return")) {
-                            const result_value: JSValue = (try result.get(self.globalThis, "value")) orelse .js_undefined;
-                            try writer.print("{any}", .{result_value.toFmt(self.formatter)});
-                        } else if (type_str.eqlComptime("throw")) {
-                            try writer.writeAll("function call threw an error");
-                        } else {
-                            try writer.writeAll("<incomplete call>");
-                        }
-                        continue;
-                    }
+                const value = try jestMockReturnObject_value(self.globalThis, item);
+                switch (try jestMockReturnObject_type(self.globalThis, item)) {
+                    .@"return" => {
+                        try writer.print("{any}", .{value.toFmt(self.formatter)});
+                        num_returns += 1;
+                    },
+                    .throw => {
+                        try writer.print("function call threw an error: {any}", .{value.toFmt(self.formatter)});
+                    },
+                    .incomplete => {
+                        try writer.print("<incomplete call>", .{});
+                    },
                 }
-                try writer.writeAll("<unknown call result>");
             }
         }
     };

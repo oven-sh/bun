@@ -30,7 +30,6 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-      
       "a
     - d
     + b
@@ -38,7 +37,6 @@ test("no color", async () => {
     - d
     +  d
       e"
-      
 
     - Expected  - 2
     + Received  + 2
@@ -55,7 +53,6 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-      
       {
         "object1": "a",
     -   "object2": " b",
@@ -67,7 +64,6 @@ test("no color", async () => {
     + e"
       ,
       }
-      
 
     - Expected  - 2
     + Received  + 3
@@ -84,7 +80,7 @@ test("no color", async () => {
                                   ^
     error: expect(received).toEqual(expected)
 
-    @@ -97,11 +97,11 @@
+    @@ -96,11 +96,11 @@
       line 96
       line 97
       line 98
@@ -96,7 +92,7 @@ test("no color", async () => {
       line 103
       line 104
       line 105
-    @@ -497,11 +497,11 @@
+    @@ -496,11 +496,11 @@
       line 495
       line 496
       line 497
@@ -109,7 +105,7 @@ test("no color", async () => {
       line 503
       line 504
       line 505
-    @@ -748,11 +748,11 @@
+    @@ -747,11 +747,11 @@
       line 746
       line 747
       line 748
@@ -122,7 +118,7 @@ test("no color", async () => {
       line 754
       line 755
       line 756
-    @@ -898,11 +898,11 @@
+    @@ -897,11 +897,11 @@
       line 896
       line 897
       line 898
@@ -167,16 +163,13 @@ test("no color", async () => {
                                                                     ^
     error: expect(received).toEqual(expected)
 
-      
       "Line 1: 你好
       Line 2: مرحبا
     - Line 3: Привет"
-    - 
     + Line 3: Здравствуйте"
-    + 
 
-    - Expected  - 2
-    + Received  + 2
+    - Expected  - 1
+    + Received  + 1
 
 
           at <anonymous> (FILE:LINE)
@@ -190,7 +183,6 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-      
       {
         "arabic": "اختبار",
     -   "chinese": "测试文本",
@@ -199,7 +191,6 @@ test("no color", async () => {
     -   "mixed": "Hello 世界 🌎",
     +   "mixed": "Hello 世界 🌍",
       }
-      
 
     - Expected  - 2
     + Received  + 2
@@ -232,16 +223,13 @@ test("no color", async () => {
                                                                   ^
     error: expect(received).toEqual(expected)
 
-      
       "Línea 1: ñoño
       Línea 2: àèìòù
     - Línea 3: aeiou"
-    - 
     + Línea 3: äëïöü"
-    + 
 
-    - Expected  - 2
-    + Received  + 2
+    - Expected  - 1
+    + Received  + 1
 
 
           at <anonymous> (FILE:LINE)
@@ -255,14 +243,12 @@ test("no color", async () => {
               ^
     error: expect(received).toEqual(expected)
 
-      
       {
     -   "french": "crème brulée",
     +   "french": "crème brûlée",
         "spanish": "niño español",
         "special": "½ ¼ ¾ ± × ÷",
       }
-      
 
     - Expected  - 1
     + Received  + 1
@@ -279,7 +265,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-      
       "line one
       line two
     - line three
@@ -322,7 +307,6 @@ test("no color", async () => {
       line 37
       line 38
       line 39"
-      
 
     - Expected  - 4
     + Received  + 3
@@ -339,7 +323,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-      
       "=== diffdiff ===
       line one
     - line two
@@ -390,12 +373,10 @@ test("no color", async () => {
       
     - === has newline at end vs doesn't ===
     - "
-    - 
     + === has newline at end vs doesn't ==="
-    + 
 
-    - Expected  - 15
-    + Received  + 10
+    - Expected  - 14
+    + Received  + 9
 
 
           at <anonymous> (FILE:LINE)
@@ -439,7 +420,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-      
       "function main() {
     -     print("Hello, world!");
     -     print("Goodbye, world!");
@@ -448,7 +428,6 @@ test("no color", async () => {
     +         print("Goodbye, world!");
     +     }
       }"
-      
 
     - Expected  - 2
     + Received  + 4
@@ -465,7 +444,7 @@ test("no color", async () => {
                                    ^
     error: expect(received).toEqual(expected)
 
-    @@ -97,11 +97,11 @@
+    @@ -96,11 +96,11 @@
       line 95
       line 96
       line 97
@@ -478,7 +457,7 @@ test("no color", async () => {
       line 103
       line 104
       line 105
-    @@ -197,11 +197,11 @@
+    @@ -196,11 +196,11 @@
       line 195
       line 196
       line 197
@@ -491,7 +470,7 @@ test("no color", async () => {
       line 203
       line 204
       line 205
-    @@ -297,11 +297,11 @@
+    @@ -296,11 +296,11 @@
       line 295
       line 296
       line 297
@@ -504,7 +483,7 @@ test("no color", async () => {
       line 303
       line 304
       line 305
-    @@ -398,11 +398,11 @@
+    @@ -397,11 +397,11 @@
       line 396
       line 397
       line 398
@@ -561,13 +540,11 @@ test("no color", async () => {
     error: expect(received).toEqual(expected)
 
     - "Hello, World!"
-    + 
     + "Hello, World!
     + "
-    + 
 
     - Expected  - 1
-    + Received  + 4
+    + Received  + 2
 
 
           at <anonymous> (FILE:LINE)
@@ -581,8 +558,7 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-    @@ -1,8 +1,8 @@
-      
+    @@ -1,7 +1,7 @@
       Float64Array [
     -   0,
         1,
@@ -590,7 +566,7 @@ test("no color", async () => {
         3,
         4,
         5,
-    @@ -9998,8 +9998,8 @@
+    @@ -9997,7 +9997,7 @@
         9995,
         9996,
         9997,
@@ -598,7 +574,6 @@ test("no color", async () => {
         9999,
     +   10000,
       ]
-      
 
     - Expected  - 1
     + Received  + 1
@@ -615,7 +590,6 @@ test("no color", async () => {
                              ^
     error: expect(received).toEqual(expected)
 
-      
       Int32Array [
     -   0,
     -   1,
@@ -817,7 +791,6 @@ test("no color", async () => {
     +   1,
     +   0,
       ]
-      
 
     - Expected  - 99
     + Received  + 99
@@ -878,7 +851,6 @@ test("color", async () => {
   expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-      \x1B[0m\x1B[2m\x1B[0m
       \x1B[0m\x1B[2m"a\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7mb\x1B[0m
@@ -886,7 +858,6 @@ test("color", async () => {
     \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m \x1B[0m\x1B[31md\x1B[0m
       \x1B[0m\x1B[2me"\x1B[0m
-      \x1B[0m\x1B[2m\x1B[0m
 
     \x1B[32m- Expected  - 2\x1B[0m
     \x1B[31m+ Received  + 2\x1B[0m
@@ -894,7 +865,6 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-      \x1B[0m\x1B[2m\x1B[0m
       \x1B[0m\x1B[2m{\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m  "age": \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "age": \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
@@ -914,7 +884,6 @@ test("color", async () => {
     \x1B[32m- \x1B[0m\x1B[32m  "name": "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "name": "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
-      \x1B[0m\x1B[2m\x1B[0m
 
     \x1B[32m- Expected  - 8\x1B[0m
     \x1B[31m+ Received  + 7\x1B[0m
@@ -922,8 +891,7 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    \x1B[33m@@ -1,8 +1,8 @@\x1B[0m
-      \x1B[0m\x1B[2m\x1B[0m
+    \x1B[33m@@ -1,7 +1,7 @@\x1B[0m
       \x1B[0m\x1B[2mInt32Array [\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m\x1B[7m  0,\x1B[0m
       \x1B[0m\x1B[2m  1,\x1B[0m
@@ -931,7 +899,7 @@ test("color", async () => {
       \x1B[0m\x1B[2m  3,\x1B[0m
       \x1B[0m\x1B[2m  4,\x1B[0m
       \x1B[0m\x1B[2m  5,\x1B[0m
-    \x1B[33m@@ -99998,8 +99998,8 @@\x1B[0m
+    \x1B[33m@@ -99997,7 +99997,7 @@\x1B[0m
       \x1B[0m\x1B[2m  99995,\x1B[0m
       \x1B[0m\x1B[2m  99996,\x1B[0m
       \x1B[0m\x1B[2m  99997,\x1B[0m
@@ -939,7 +907,6 @@ test("color", async () => {
       \x1B[0m\x1B[2m  99999,\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m  100000,\x1B[0m
       \x1B[0m\x1B[2m]\x1B[0m
-      \x1B[0m\x1B[2m\x1B[0m
 
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m

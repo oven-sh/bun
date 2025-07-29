@@ -71,8 +71,12 @@ pub const DiffFormatter = struct {
             buffered_writer.flush() catch unreachable;
         }
 
-        const received_slice = received_buf.slice();
-        const expected_slice = expected_buf.slice();
+        var received_slice = received_buf.slice();
+        var expected_slice = expected_buf.slice();
+        if (std.mem.startsWith(u8, received_slice, "\n")) received_slice = received_slice[1..];
+        if (std.mem.startsWith(u8, expected_slice, "\n")) expected_slice = expected_slice[1..];
+        if (std.mem.endsWith(u8, received_slice, "\n")) received_slice = received_slice[0 .. received_slice.len - 1];
+        if (std.mem.endsWith(u8, expected_slice, "\n")) expected_slice = expected_slice[0 .. expected_slice.len - 1];
 
         try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, .{
             .enable_ansi_colors = Output.enable_ansi_colors,

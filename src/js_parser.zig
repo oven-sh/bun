@@ -23542,13 +23542,13 @@ fn NewParser_(
                     .result => |path| path,
                 }) |path| {
                     const rel_path = if (strings.hasPrefix(path, source_dir)) path[source_dir.len + @intFromBool(path[source_dir.len] == '/') ..] else path;
-                    
+
                     var path_buf: bun.PathBuffer = undefined;
                     const slash_normalized = if (bun.Environment.isWindows)
                         strings.normalizeSlashesOnly(&path_buf, rel_path, '/')
                     else
                         rel_path;
-                    
+
                     const normalized = if (strings.hasPrefix(slash_normalized, "./"))
                         p.allocator.dupe(u8, slash_normalized) catch unreachable
                     else

@@ -1,3 +1,5 @@
+//! Tested in test/js/bun/test/printing/diffexample.test.ts. If modified, the snapshots will need to be updated.
+
 const DMP = diff_match_patch.DMP(u8);
 const DMPUsize = diff_match_patch.DMP(usize);
 

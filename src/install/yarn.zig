@@ -1713,8 +1713,6 @@ const Tree = Lockfile.Tree;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSON = bun.json;
-const Output = bun.Output;
 const logger = bun.logger;
 const strings = bun.strings;

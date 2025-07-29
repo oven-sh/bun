@@ -43,7 +43,7 @@ pub const Lazy = union(enum) {
     };
 
     pub extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
-    pub fn openFileBlob(file: *Blob.Store.File) jsc.Maybe(OpenedFileBlob) {
+    pub fn openFileBlob(file: *Blob.Store.File) bun.sys.Maybe(OpenedFileBlob) {
         var this = OpenedFileBlob{ .fd = bun.invalid_fd };
         var file_buf: bun.PathBuffer = undefined;
         var is_nonblocking = false;

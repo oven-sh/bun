@@ -610,7 +610,7 @@ pub const FSWatcher = struct {
         return .js_undefined;
     }
 
-    pub fn init(args: Arguments) bun.jsc.Maybe(*FSWatcher) {
+    pub fn init(args: Arguments) bun.sys.Maybe(*FSWatcher) {
         const joined_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(joined_buf);
         const file_path: [:0]const u8 = brk: {

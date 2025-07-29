@@ -110,6 +110,7 @@ pub const Features = struct {
     pub var csrf_verify: usize = 0;
     pub var csrf_generate: usize = 0;
     pub var unsupported_uv_function: usize = 0;
+    pub var exited: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });

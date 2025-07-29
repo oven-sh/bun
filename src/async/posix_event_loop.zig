@@ -796,11 +796,11 @@ pub const FilePoll = struct {
 
     pub const OneShotFlag = enum { dispatch, one_shot, none };
 
-    pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) jsc.Maybe(void) {
+    pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) bun.sys.Maybe(void) {
         return registerWithFd(this, loop, flag, if (one_shot) .one_shot else .none, this.fd);
     }
 
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) jsc.Maybe(void) {
+    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
@@ -833,7 +833,7 @@ pub const FilePoll = struct {
                 &event,
             );
             this.flags.insert(.was_ever_registered);
-            if (jsc.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 this.deactivate(loop);
                 return errno;
             }
@@ -919,7 +919,7 @@ pub const FilePoll = struct {
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
             if (changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
-                return jsc.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
@@ -928,9 +928,7 @@ pub const FilePoll = struct {
 
             if (errno != .SUCCESS) {
                 this.deactivate(loop);
-                return jsc.Maybe(void){
-                    .err = bun.sys.Error.fromCode(errno, .kqueue),
-                };
+                return .initErr(bun.sys.Error.fromCode(errno, .kqueue));
             }
         } else {
             @compileError("unsupported platform");
@@ -945,7 +943,7 @@ pub const FilePoll = struct {
         });
         this.flags.remove(.needs_rearm);
 
-        return jsc.Maybe(void).success;
+        return .success;
     }
 
     const invalid_fd = bun.invalid_fd;
@@ -954,11 +952,11 @@ pub const FilePoll = struct {
         return @intCast(this.fd);
     }
 
-    pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) jsc.Maybe(void) {
+    pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) bun.sys.Maybe(void) {
         return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) jsc.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) bun.sys.Maybe(void) {
         if (Environment.allow_assert) {
             bun.assert(fd.native() >= 0 and fd != bun.invalid_fd);
         }
@@ -967,7 +965,7 @@ pub const FilePoll = struct {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
 
             // no-op
-            return jsc.Maybe(void).success;
+            return .success;
         }
 
         bun.assert(fd != invalid_fd);
@@ -982,7 +980,7 @@ pub const FilePoll = struct {
 
             if (this.flags.contains(.poll_machport))
                 break :brk .machport;
-            return jsc.Maybe(void).success;
+            return .success;
         };
 
         if (this.flags.contains(.needs_rearm) and !force_unregister) {
@@ -991,7 +989,7 @@ pub const FilePoll = struct {
             this.flags.remove(.poll_readable);
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_machport);
-            return jsc.Maybe(void).success;
+            return .success;
         }
 
         log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
@@ -1004,7 +1002,7 @@ pub const FilePoll = struct {
                 null,
             );
 
-            if (jsc.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
@@ -1071,14 +1069,14 @@ pub const FilePoll = struct {
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
             if (changelist[0].flags == std.c.EV.ERROR) {
-                return jsc.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
 
             const errno = bun.sys.getErrno(rc);
             switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return jsc.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
+                std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
         } else {
@@ -1094,7 +1092,7 @@ pub const FilePoll = struct {
         this.flags.remove(.poll_process);
         this.flags.remove(.poll_machport);
 
-        return jsc.Maybe(void).success;
+        return .success;
     }
 };
 

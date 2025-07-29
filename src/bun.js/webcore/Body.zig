@@ -1430,15 +1430,17 @@ pub const ValueBufferer = struct {
             },
         }
     }
+
     fn onStreamPipe(sink: *@This(), stream: jsc.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+        var stream_ = stream;
         const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
         defer {
             if (stream_needs_deinit) {
-                if (stream == .owned_and_done) {
-                    stream.owned_and_done.listManaged(allocator).deinit();
-                } else {
-                    stream.owned.listManaged(allocator).deinit();
+                switch (stream_) {
+                    .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
+                    .owned => |*owned| owned.listManaged(allocator).deinit(),
+                    else => unreachable,
                 }
             }
         }

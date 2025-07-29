@@ -94,3 +94,4 @@ vendor/elysia/test/lifecycle/error.test.ts
 vendor/elysia/test/cookie/signature.test.ts
 vendor/elysia/test/cookie/response.test.ts
 vendor/elysia/test/aot/response.test.ts
+test/regression/issue/21311.test.ts

@@ -230,7 +230,7 @@ pub const Process = struct {
         } else if (comptime Environment.isWindows) {}
     }
 
-    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const jsc.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const bun.sys.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
@@ -250,7 +250,7 @@ pub const Process = struct {
         try this.wait(false);
     }
 
-    fn onWaitPid(this: *Process, waitpid_result: *const jsc.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
+    fn onWaitPid(this: *Process, waitpid_result: *const bun.sys.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) bun.JSExecutionTerminated!void {
         if (comptime !Environment.isPosix) {
             @compileError("not implemented on this platform");
         }
@@ -289,7 +289,7 @@ pub const Process = struct {
         try this.onExit(status, &rusage_result);
     }
 
-    pub fn watchOrReap(this: *Process) jsc.Maybe(bool) {
+    pub fn watchOrReap(this: *Process) bun.sys.Maybe(bool) {
         if (this.hasExited()) {
             this.onExit(this.status, &std.mem.zeroes(Rusage)) catch {}; // TODO: audit callers
             return .{ .result = true };
@@ -310,10 +310,10 @@ pub const Process = struct {
         }
     }
 
-    pub fn watch(this: *Process) jsc.Maybe(void) {
+    pub fn watch(this: *Process) bun.sys.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
-            return jsc.Maybe(void){ .result = {} };
+            return .success;
         }
 
         if (WaiterThread.shouldUseWaiterThread()) {
@@ -321,7 +321,7 @@ pub const Process = struct {
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return jsc.Maybe(void){ .result = {} };
+            return .success;
         }
 
         const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
@@ -340,7 +340,7 @@ pub const Process = struct {
         )) {
             .result => {
                 this.ref();
-                return jsc.Maybe(void){ .result = {} };
+                return .success;
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
@@ -352,14 +352,14 @@ pub const Process = struct {
         unreachable;
     }
 
-    pub fn rewatchPosix(this: *Process) jsc.Maybe(void) {
+    pub fn rewatchPosix(this: *Process) bun.sys.Maybe(void) {
         if (WaiterThread.shouldUseWaiterThread()) {
             if (this.poller != .waiter_thread)
                 this.poller = .{ .waiter_thread = .{} };
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return jsc.Maybe(void){ .result = {} };
+            return .success;
         }
 
         if (this.poller == .fd) {
@@ -735,7 +735,7 @@ const WaiterThreadPosix = struct {
             pub const ConcurrentQueue = bun.UnboundedQueue(TaskQueueEntry, .next);
 
             pub const ResultTask = struct {
-                result: jsc.Maybe(PosixSpawn.WaitPidResult),
+                result: bun.sys.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
                 rusage: Rusage,
 
@@ -757,7 +757,7 @@ const WaiterThreadPosix = struct {
             };
 
             pub const ResultTaskMini = struct {
-                result: jsc.Maybe(PosixSpawn.WaitPidResult),
+                result: bun.sys.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
                 task: jsc.AnyTaskWithExtraContext = .{},
 
@@ -796,23 +796,29 @@ const WaiterThreadPosix = struct {
                     }
                 }
 
-                var queue: []*T = this.active.items;
                 var i: usize = 0;
-                while (queue.len > 0 and i < queue.len) {
-                    const process = queue[i];
+                while (i < this.active.items.len) {
+                    var remove = false;
+                    defer {
+                        if (remove) {
+                            _ = this.active.orderedRemove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    const process = this.active.items[i];
                     const pid = process.pid;
                     // this case shouldn't really happen
                     if (pid == 0) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
                         continue;
                     }
 
                     var rusage = std.mem.zeroes(Rusage);
                     const result = PosixSpawn.wait4(pid, std.posix.W.NOHANG, &rusage);
                     if (result == .err or (result == .result and result.result.pid == pid)) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
 
                         switch (process.event_loop) {
                             .js => |event_loop| {
@@ -842,8 +848,6 @@ const WaiterThreadPosix = struct {
                             },
                         }
                     }
-
-                    i += 1;
                 }
             }
         };
@@ -1116,7 +1120,7 @@ pub const PosixSpawnResult = struct {
             0;
     }
 
-    pub fn pifdFromPid(this: *PosixSpawnResult) jsc.Maybe(PidFDType) {
+    pub fn pifdFromPid(this: *PosixSpawnResult) bun.sys.Maybe(PidFDType) {
         if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
             return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
         }
@@ -1190,7 +1194,7 @@ pub fn spawnProcess(
     options: *const SpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !jsc.Maybe(SpawnProcessResult) {
+) !bun.sys.Maybe(SpawnProcessResult) {
     if (comptime Environment.isPosix) {
         return spawnProcessPosix(
             options,
@@ -1209,7 +1213,7 @@ pub fn spawnProcessPosix(
     options: *const PosixSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !jsc.Maybe(PosixSpawnResult) {
+) !bun.sys.Maybe(PosixSpawnResult) {
     bun.analytics.Features.spawn += 1;
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
@@ -1510,7 +1514,7 @@ pub fn spawnProcessWindows(
     options: *const WindowsSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !jsc.Maybe(WindowsSpawnResult) {
+) !bun.sys.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
     bun.analytics.Features.spawn += 1;
 
@@ -2229,9 +2233,9 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
 const Subprocess = jsc.Subprocess;

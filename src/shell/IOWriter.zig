@@ -157,7 +157,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
 pub fn eventLoop(this: *IOWriter) jsc.EventLoopHandle {
@@ -730,7 +730,7 @@ pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
 
 /// TODO: This function and `drainBufferedData` are copy pastes from
 /// `PipeWriter.zig`, it would be nice to not have to do that
-fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) jsc.Maybe(usize)) bun.io.WriteResult {
+fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) bun.sys.Maybe(usize)) bun.io.WriteResult {
     var offset: usize = 0;
 
     while (offset < buf.len) {
@@ -841,9 +841,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const assert = bun.assert;
-
 const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;

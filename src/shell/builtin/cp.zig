@@ -364,7 +364,7 @@ pub const ShellCpTask = struct {
     pub fn ensureDest(nodefs: *jsc.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
         return switch (nodefs.mkdirRecursiveOSPath(dest, jsc.Node.Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| Maybe(void){ .err = err },
-            .result => Maybe(void).success,
+            .result => .success,
         };
     }
 

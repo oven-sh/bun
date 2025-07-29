@@ -839,9 +839,10 @@ pub fn installWithManager(
             const output_in_foreground = true;
             try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
+            // .monotonic is okay because at this point, this value is only accessed from this
+            // thread.
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
-
                 try manager.sleep();
             }
         }

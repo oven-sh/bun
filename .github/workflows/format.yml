@@ -55,4 +55,7 @@ jobs:
       - name: Clang Format
         run: |
           bun run clang-format
+      - name: Ban Words
+        run: |
+          bun ./test/internal/ban-words.test.ts
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

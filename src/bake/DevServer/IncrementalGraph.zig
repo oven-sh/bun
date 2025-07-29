@@ -275,8 +275,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
             /// The file the import statement references.
             imported: FileIndex,
 
+            /// Next edge in the "imports" linked list for the `dependency` file.
+            /// Used to iterate through all files that `dependency` imports.
             next_import: EdgeIndex.Optional,
+
+            /// Next edge in the "dependencies" linked list for the `imported` file.
+            /// Used to iterate through all files that import `imported`.
             next_dependency: EdgeIndex.Optional,
+
+            /// Previous edge in the "dependencies" linked list for the `imported` file.
+            /// Enables bidirectional traversal and efficient removal from the middle of the list.
             prev_dependency: EdgeIndex.Optional,
         };
 
@@ -681,23 +689,39 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
-            igLog("detach edge={d} | id={d} {} -> id={d} {}", .{
+            const imported = edge.imported.get();
+            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, true);
+            log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
                 bun.fmt.quote(g.bundled_files.keys()[edge.dependency.get()]),
-                edge.imported.get(),
+                imported,
                 bun.fmt.quote(g.bundled_files.keys()[edge.imported.get()]),
+                if (g.first_dep.items[imported].unwrap()) |first_dep| first_dep.get() else 42069000,
             });
+
+            // Delete this edge by connecting the previous dependency to the
+            // next dependency and vice versa
             if (edge.prev_dependency.unwrap()) |prev| {
                 const prev_dependency = &g.edges.items[prev.get()];
                 prev_dependency.next_dependency = edge.next_dependency;
+
+                if (edge.next_dependency.unwrap()) |next| {
+                    const next_dependency = &g.edges.items[next.get()];
+                    next_dependency.prev_dependency = edge.prev_dependency;
+                }
             } else {
+                // If no prev dependency, this better be the first one!
                 assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
-                g.first_dep.items[edge.imported.get()] = .none;
-            }
-            if (edge.next_dependency.unwrap()) |next| {
-                const next_dependency = &g.edges.items[next.get()];
-                next_dependency.prev_dependency = edge.prev_dependency;
+
+                // The edge has no prev dependency, but it *might* have a next dependency!
+                if (edge.next_dependency.unwrap()) |next| {
+                    const next_dependency = &g.edges.items[next.get()];
+                    next_dependency.prev_dependency = .none;
+                    g.first_dep.items[edge.imported.get()] = next.toOptional();
+                } else {
+                    g.first_dep.items[edge.imported.get()] = .none;
+                }
             }
         }
 

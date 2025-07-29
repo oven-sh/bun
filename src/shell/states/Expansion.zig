@@ -811,7 +811,7 @@ pub const ShellGlobTask = struct {
             this.result.append(path) catch bun.outOfMemory();
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn runFromMainThread(this: *This) bun.JSExecutionTerminated!void {
@@ -852,11 +852,11 @@ const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const assert = bun.assert;
+const Maybe = bun.sys.Maybe;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const Maybe = jsc.Maybe;
 
 const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;

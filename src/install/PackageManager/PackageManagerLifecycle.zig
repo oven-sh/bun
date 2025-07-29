@@ -248,6 +248,8 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
+/// Used to be called from multiple threads; now single-threaded
+/// TODO: re-evaluate whether some variables still need to be atomic
 pub fn spawnPackageLifecycleScripts(
     this: *PackageManager,
     ctx: Command.Context,

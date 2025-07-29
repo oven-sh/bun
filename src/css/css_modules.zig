@@ -149,7 +149,7 @@ pub const CssModule = struct {
             return .{ .err = css.PrinterErrorKind.invalid_composes_selector };
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn addDashed(this: *CssModule, allocator: Allocator, local: []const u8, source_index: u32) void {

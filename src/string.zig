@@ -89,7 +89,7 @@ pub const String = extern struct {
                     }
                 }
 
-                return .{ @constCast((try utf8_slice.clone(allocator)).slice()), true };
+                return .{ @constCast((try utf8_slice.cloneIfNeeded(allocator)).slice()), true };
             },
             .StaticZigString => return .{ try this.value.StaticZigString.toOwnedSlice(allocator), false },
             else => return .{ &[_]u8{}, false },

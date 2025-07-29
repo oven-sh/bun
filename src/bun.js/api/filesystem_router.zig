@@ -87,7 +87,7 @@ pub const FileSystemRouter = struct {
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (try val.getLength(globalThis) == 0) continue;
-                extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
+                extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable).slice()[1..]);
             }
         }
 
@@ -99,7 +99,7 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
-            asset_prefix_slice = (try asset_prefix.toSlice(globalThis, allocator)).clone(allocator) catch unreachable;
+            asset_prefix_slice = (try asset_prefix.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable;
         }
         const orig_log = vm.transpiler.resolver.log;
         var log = Log.Log.init(allocator);
@@ -271,7 +271,7 @@ pub const FileSystemRouter = struct {
 
         var path: ZigString.Slice = brk: {
             if (argument.isString()) {
-                break :brk (try argument.toSlice(globalThis, globalThis.allocator())).clone(globalThis.allocator()) catch unreachable;
+                break :brk (try argument.toSlice(globalThis, globalThis.allocator())).cloneIfNeeded(globalThis.allocator()) catch unreachable;
             }
 
             if (argument.isCell()) {
@@ -294,7 +294,7 @@ pub const FileSystemRouter = struct {
 
         if (strings.hasPrefixComptime(path.slice(), "http://") or strings.hasPrefixComptime(path.slice(), "https://") or strings.hasPrefixComptime(path.slice(), "file://")) {
             const prev_path = path;
-            path = ZigString.init(URL.parse(path.slice()).pathname).toSliceFast(globalThis.allocator()).clone(globalThis.allocator()) catch unreachable;
+            path = ZigString.init(URL.parse(path.slice()).pathname).toSliceFast(globalThis.allocator()).cloneIfNeeded(globalThis.allocator()) catch unreachable;
             prev_path.deinit();
         }
 

@@ -106,8 +106,8 @@ pub const VTable = struct {
     pub const WriteUTF16Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
     pub const WriteUTF8Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
     pub const WriteLatin1Fn = *const (fn (this: *anyopaque, data: streams.Result) streams.Result.Writable);
-    pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) jsc.Maybe(void));
-    pub const ConnectFn = *const (fn (this: *anyopaque, signal: streams.Signal) jsc.Maybe(void));
+    pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) bun.sys.Maybe(void));
+    pub const ConnectFn = *const (fn (this: *anyopaque, signal: streams.Signal) bun.sys.Maybe(void));
 
     connect: ConnectFn,
     write: WriteUTF8Fn,
@@ -122,7 +122,7 @@ pub const VTable = struct {
             pub fn onWrite(this: *anyopaque, data: streams.Result) streams.Result.Writable {
                 return Wrapped.write(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
             }
-            pub fn onConnect(this: *anyopaque, signal: streams.Signal) jsc.Maybe(void) {
+            pub fn onConnect(this: *anyopaque, signal: streams.Signal) bun.sys.Maybe(void) {
                 return Wrapped.connect(@as(*Wrapped, @ptrCast(@alignCast(this))), signal);
             }
             pub fn onWriteLatin1(this: *anyopaque, data: streams.Result) streams.Result.Writable {
@@ -131,7 +131,7 @@ pub const VTable = struct {
             pub fn onWriteUTF16(this: *anyopaque, data: streams.Result) streams.Result.Writable {
                 return Wrapped.writeUTF16(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
             }
-            pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) jsc.Maybe(void) {
+            pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) bun.sys.Maybe(void) {
                 return Wrapped.end(@as(*Wrapped, @ptrCast(@alignCast(this))), err);
             }
         };
@@ -146,9 +146,9 @@ pub const VTable = struct {
     }
 };
 
-pub fn end(this: *Sink, err: ?Syscall.Error) jsc.Maybe(void) {
+pub fn end(this: *Sink, err: ?Syscall.Error) bun.sys.Maybe(void) {
     if (this.status == .closed) {
-        return .{ .result = {} };
+        return .success;
     }
 
     this.status = .closed;
@@ -492,7 +492,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "flushFromJS")) {
                 const wait = callframe.argumentsCount() > 0 and callframe.argument(0).isBoolean() and callframe.argument(0).asBoolean();
-                const maybe_value: jsc.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
+                const maybe_value: bun.sys.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
                 return switch (maybe_value) {
                     .result => |value| value,
                     .err => |err| return globalThis.throwValue(err.toJS(globalThis)),

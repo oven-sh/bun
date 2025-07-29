@@ -2233,7 +2233,6 @@ pub const BundleV2 = struct {
         }
 
         this.free_list.clearAndFree();
-        this.linker.graph.deinit();
     }
 
     pub fn runFromJSInNewThread(

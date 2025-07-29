@@ -231,7 +231,7 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn ref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const old_count = counter.active_counts.fetchAdd(1, .seq_cst);
+            const old_count = counter.active_counts.fetchAdd(1, .release);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x}   ref {d} -> {d}", .{
                     @intFromPtr(self),
@@ -245,7 +245,7 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn deref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const old_count = counter.active_counts.fetchSub(1, .seq_cst);
+            const old_count = counter.active_counts.fetchSub(1, .release);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x} deref {d} -> {d}", .{
                     @intFromPtr(self),
@@ -272,24 +272,24 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         pub fn hasOneRef(counter: *const @This()) bool {
             if (enable_debug) counter.debug.assertValid();
-            return counter.active_counts.load(.seq_cst) == 1;
+            return counter.active_counts.load(.acquire) == 1;
         }
 
         pub fn getCount(counter: *const @This()) u32 {
-            return counter.active_counts.load(.seq_cst);
+            return counter.active_counts.load(.acquire);
         }
 
         pub fn dumpActiveRefs(count: *@This()) void {
             if (enable_debug) {
                 const ptr: *T = @alignCast(@fieldParentPtr(field_name, count));
-                count.debug.dump(@typeName(T), ptr, count.active_counts.load(.seq_cst));
+                count.debug.dump(@typeName(T), ptr, count.active_counts.load(.acquire));
             }
         }
 
         /// The active_counts value is 0 after the destructor is called.
         pub fn assertNoRefs(count: *const @This()) void {
             if (enable_debug) {
-                bun.assert(count.active_counts.load(.seq_cst) == 0);
+                bun.assert(count.active_counts.load(.acquire) == 0);
             }
         }
 

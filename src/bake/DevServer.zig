@@ -2061,7 +2061,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
-    const quoted_source_contents: []const []const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
+    const quoted_source_contents: []?[]u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (
@@ -2074,7 +2074,7 @@ pub fn finalizeBundle(
             bun.assert(compile_result.javascript.result == .result);
             bun.assert(dev.server_transpiler.options.source_map != .none);
             bun.assert(!part_range.source_index.isRuntime());
-            break :brk .empty;
+            break :brk .initEmpty();
         };
         // TODO: investigate why linker.files is not indexed by linker's index
         // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
@@ -2087,13 +2087,16 @@ pub fn finalizeBundle(
             }).receiveChunk(
                 &ctx,
                 index,
-                .{ .js = .{
-                    .code = compile_result.code(),
-                    .source_map = .{
-                        .chunk = source_map,
-                        .escaped_source = @constCast(quoted_contents),
+                .{
+                    .js = .{
+                        .code = compile_result.javascript.code(),
+                        .code_allocator = compile_result.javascript.allocator(),
+                        .source_map = .{
+                            .chunk = source_map,
+                            .escaped_source = quoted_contents,
+                        },
                     },
-                } },
+                },
                 graph == .ssr,
             ),
         }
@@ -2179,6 +2182,7 @@ pub fn finalizeBundle(
             index,
             .{ .js = .{
                 .code = generated_js,
+                .code_allocator = dev.allocator,
                 .source_map = null,
             } },
             false,
@@ -2971,6 +2975,9 @@ fn sendBuiltInNotFound(resp: anytype) void {
 }
 
 fn printMemoryLine(dev: *DevServer) void {
+    if (comptime !bun.Environment.enableAllocScopes) {
+        return;
+    }
     if (!debug.isVisible()) return;
     Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),

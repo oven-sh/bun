@@ -145,12 +145,6 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     return len;
 }
 
-pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
-    var bytes = output_;
-    try quoteForJSONBuffer(text, &bytes, ascii_only);
-    return bytes;
-}
-
 pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
@@ -347,7 +341,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
         }
     }
 }
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
@@ -489,28 +483,14 @@ pub const RequireOrImportMeta = struct {
 };
 
 pub const PrintResult = union(enum) {
-    result: struct {
-        code: []u8,
-        source_map: ?SourceMap.Chunk = null,
-    },
+    result: Success,
     err: anyerror,
 
-    pub fn clone(
-        this: PrintResult,
-        allocator: std.mem.Allocator,
-    ) !PrintResult {
-        return switch (this) {
-            .result => PrintResult{
-                .result = .{
-                    .code = try allocator.dupe(u8, this.result.code),
-                    .source_map = this.result.source_map,
-                },
-            },
-            .err => PrintResult{
-                .err = this.err,
-            },
-        };
-    }
+    pub const Success = struct {
+        code: []u8,
+        code_allocator: std.mem.Allocator,
+        source_map: ?SourceMap.Chunk = null,
+    };
 };
 
 // do not make this a packed struct
@@ -5410,6 +5390,10 @@ pub fn NewWriter(
             return this.ctx.getMutableBuffer();
         }
 
+        pub fn takeBuffer(this: *Self) MutableString {
+            return this.ctx.takeBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5512,6 +5496,11 @@ pub const BufferWriter = struct {
 
     pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
         return &this.buffer;
+    }
+
+    pub fn takeBuffer(this: *BufferWriter) MutableString {
+        defer this.buffer = .initEmpty(this.buffer.allocator);
+        return this.buffer;
     }
 
     pub fn getWritten(this: *BufferWriter) []u8 {
@@ -5818,10 +5807,12 @@ pub fn printAst(
 
     if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
+
+            defer source_maps_chunk.deinit();
 
             try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
@@ -5831,7 +5822,9 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 
@@ -6021,9 +6014,12 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
+    var buffer = printer.writer.takeBuffer();
+
     return .{
         .result = .{
-            .code = written,
+            .code = buffer.toOwnedSlice(),
+            .code_allocator = buffer.allocator,
             .source_map = source_map,
         },
     };
@@ -6072,7 +6068,9 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
+            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer chunk.deinit();
+            try handler.onSourceMapChunk(chunk, source);
         }
     }
 

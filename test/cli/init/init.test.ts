@@ -424,7 +424,7 @@ test("bun init creates launch.json for React templates with browser debugging", 
   const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
   expect(launch.version).toBe("0.2.0");
   expect(launch.configurations).toHaveLength(2);
-  
+
   // Check Bun debugger configuration
   expect(launch.configurations[0]).toMatchObject({
     name: "Debug Bun",
@@ -432,7 +432,7 @@ test("bun init creates launch.json for React templates with browser debugging", 
     request: "launch",
     program: "${workspaceFolder}/src/index.tsx",
   });
-  
+
   // Check Chrome browser debugger configuration
   expect(launch.configurations[1]).toMatchObject({
     name: "Launch Chrome",
@@ -445,16 +445,13 @@ test("bun init creates launch.json for React templates with browser debugging", 
 
 test("bun init does not overwrite existing .vscode/extensions.json", async () => {
   const temp = tmpdirSync();
-  
+
   // Create .vscode directory and existing extensions.json
   fs.mkdirSync(path.join(temp, ".vscode"));
   const existingExtensions = {
     recommendations: ["ms-vscode.vscode-typescript-next"],
   };
-  fs.writeFileSync(
-    path.join(temp, ".vscode/extensions.json"),
-    JSON.stringify(existingExtensions, null, 2)
-  );
+  fs.writeFileSync(path.join(temp, ".vscode/extensions.json"), JSON.stringify(existingExtensions, null, 2));
 
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init", "-y"],
@@ -473,7 +470,7 @@ test("bun init does not overwrite existing .vscode/extensions.json", async () =>
 
 test("bun init does not overwrite existing .vscode/launch.json", async () => {
   const temp = tmpdirSync();
-  
+
   // Create .vscode directory and existing launch.json
   fs.mkdirSync(path.join(temp, ".vscode"));
   const existingLaunch = {
@@ -487,10 +484,7 @@ test("bun init does not overwrite existing .vscode/launch.json", async () => {
       },
     ],
   };
-  fs.writeFileSync(
-    path.join(temp, ".vscode/launch.json"),
-    JSON.stringify(existingLaunch, null, 2)
-  );
+  fs.writeFileSync(path.join(temp, ".vscode/launch.json"), JSON.stringify(existingLaunch, null, 2));
 
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init", "-y"],
@@ -505,7 +499,7 @@ test("bun init does not overwrite existing .vscode/launch.json", async () => {
   // Check that existing launch.json was not overwritten
   const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
   expect(launch).toEqual(existingLaunch);
-  
+
   // But extensions.json should still be created
   expect(fs.existsSync(path.join(temp, ".vscode/extensions.json"))).toBe(true);
 }, 30_000);

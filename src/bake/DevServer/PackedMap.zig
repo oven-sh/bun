@@ -11,6 +11,7 @@ ref_count: RefCount,
 /// This is stored to allow lazy construction of source map files.
 vlq_ptr: [*]u8,
 vlq_len: u32,
+vlq_allocator: std.mem.Allocator,
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
@@ -31,24 +32,26 @@ end_state: struct {
 /// already counted for.
 bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(source_map: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
-    assert(source_map.buffer.list.items.len > 0);
+pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
+    assert(chunk.buffer.list.items.len > 0);
+    var buffer = chunk.buffer;
+    const slice = buffer.toOwnedSlice();
     return .new(.{
         .ref_count = .init(),
-        .vlq_ptr = source_map.buffer.list.items.ptr,
-        .vlq_len = @intCast(source_map.buffer.list.items.len),
+        .vlq_ptr = slice.ptr,
+        .vlq_len = @intCast(slice.len),
+        .vlq_allocator = buffer.allocator,
         .quoted_contents_ptr = quoted_contents.ptr,
         .quoted_contents_len = @intCast(quoted_contents.len),
         .end_state = .{
-            .original_line = source_map.end_state.original_line,
-            .original_column = source_map.end_state.original_column,
+            .original_line = chunk.end_state.original_line,
+            .original_column = chunk.end_state.original_column,
         },
     });
 }
 
-fn destroy(self: *@This(), dev: *DevServer) void {
-    dev.allocator.free(self.vlq());
-    dev.allocator.free(self.quotedContents());
+fn destroy(self: *@This(), _: *DevServer) void {
+    self.vlq_allocator.free(self.vlq());
     bun.destroy(self);
 }
 
@@ -78,7 +81,7 @@ pub fn quotedContents(self: *const @This()) []u8 {
 
 comptime {
     if (!Environment.isDebug) {
-        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 5);
+        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 7);
         assert_eql(@alignOf(@This()), @alignOf(usize));
     }
 }
@@ -155,6 +158,8 @@ pub const RefOrEmpty = union(enum(u1)) {
         };
     };
 };
+
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

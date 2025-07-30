@@ -22,9 +22,9 @@
 /// - Added `zero()` method that zero-initializes all allocated memory
 /// - Uses `@memset(self.allocatedBytes(), 0)` to clear the entire backing buffer
 ///
-/// ### 3. Modified Growth Strategy
-/// - Modified capacity growth algorithm 
-/// - Different initial capacity calculation based on cache line optimization
+/// ### 3. Simplified Growth Strategy
+/// - Simplified capacity growth algorithm to `capacity + capacity/2 + 8`
+/// - Removed upstream's cache line optimization calculations
 ///
 /// ### 4. API Enhancements
 /// - Added `memoryCost()` method for memory usage tracking

@@ -566,6 +566,10 @@ pub fn installWithManager(
         manager.verifyResolutions(log_level);
     }
 
+    if (manager.subcommand == .add and manager.options.security_provider != null) {
+        try performSecurityScanAfterResolution(manager, original_cwd);
+    }
+
     // append scripts to lockfile before generating new metahash
     manager.loadRootLifecycleScripts(root);
     defer {
@@ -1027,3 +1031,333 @@ const Package = Lockfile.Package;
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+
+fn performSecurityScanAfterResolution(
+    manager: *PackageManager,
+    _: string,
+) !void {
+    const security_provider = manager.options.security_provider orelse return;
+
+    if (manager.options.dry_run or !manager.options.do.install_packages) return;
+    if (manager.update_requests.len == 0) return;
+
+    var json_buf = std.ArrayList(u8).init(manager.allocator);
+    defer json_buf.deinit();
+    var writer = json_buf.writer();
+
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+    const packages = manager.lockfile.packages.slice();
+    const names = packages.items(.name);
+    const resolutions = packages.items(.resolution);
+
+    try writer.writeAll("[\n");
+    var first = true;
+
+    for (manager.update_requests) |update| {
+        const package_id = update.package_id;
+        if (package_id == invalid_package_id) continue;
+        if (package_id >= packages.len) continue;
+
+        const resolution = resolutions[package_id];
+        const name = names[package_id].slice(string_buf);
+
+        const version = switch (resolution.tag) {
+            .npm => resolution.value.npm.version.slice(string_buf),
+            .local_tarball => resolution.value.local_tarball.slice(string_buf),
+            .remote_tarball => resolution.value.remote_tarball.slice(string_buf),
+            .folder => resolution.value.folder.slice(string_buf),
+            .git => resolution.value.git.url.slice(string_buf),
+            .github => resolution.value.github.url.slice(string_buf),
+            .workspace => "workspace",
+            .symlink => "link",
+            else => continue,
+        };
+
+        const requested_range = if (update.version.tag == .uninitialized or update.version.literal.isEmpty())
+            "latest"
+        else
+            update.version.literal.slice(update.version_buf);
+
+        if (!first) try writer.writeAll(",\n");
+        first = false;
+
+        try writer.print(
+            \\  {{
+            \\    "name": "{s}",
+            \\    "version": "{s}",
+            \\    "requestedRange": "{s}",
+            \\    "registryUrl": "{s}"
+            \\  }}
+        , .{ name, version, requested_range, manager.options.scope.url.href });
+    }
+    try writer.writeAll("\n]");
+
+    var code_buf = std.ArrayList(u8).init(manager.allocator);
+    defer code_buf.deinit();
+    var code_writer = code_buf.writer();
+
+    try code_writer.print(
+        \\try {{
+        \\  const {{provider}} = await import('{s}');
+        \\  const packages = {s};
+        \\
+        \\  if (provider.version !== '1') {{
+        \\    throw new Error('Security provider must be version 1');
+        \\  }}
+        \\
+        \\  const result = await provider.onInstall({{packages:packages}});
+        \\
+        \\  if (!Array.isArray(result)) {{
+        \\    console.error('Security provider must return an array of advisories');
+        \\    process.exit(1);
+        \\  }}
+        \\
+        \\  const fs = require('fs');
+        \\  const data = JSON.stringify({{advisories: result}});
+        \\  fs.writeSync(3, data);
+        \\  fs.closeSync(3);
+        \\
+        \\  process.exit(0);
+        \\}} catch (error) {{
+        \\  console.error(error);
+        \\  process.exit(1);
+        \\}}
+    , .{ security_provider, json_buf.items });
+
+    const exec_path = bun.selfExePath() catch unreachable;
+    const code_z = manager.allocator.dupeZ(u8, code_buf.items) catch bun.outOfMemory();
+    defer manager.allocator.free(code_z);
+
+    const exec_path_z = manager.allocator.dupeZ(u8, exec_path) catch bun.outOfMemory();
+    defer manager.allocator.free(exec_path_z);
+
+    const argv = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
+
+    const options = bun.spawn.SpawnOptions{
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .stdin = .ignore,
+        .extra_fds = &[_]bun.spawn.SpawnOptions.Stdio{
+            .buffer,
+        },
+    };
+
+    const spawn_result = switch (try bun.spawn.spawnProcess(&options, @constCast(@ptrCast(&argv)), @ptrCast(std.os.environ.ptr))) {
+        .err => |err| {
+            Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
+            Global.exit(1);
+        },
+        .result => |res| res,
+    };
+
+    if (spawn_result.extra_pipes.items.len == 0) {
+        Output.errGeneric("Failed to create IPC pipe", .{});
+        Global.exit(1);
+    }
+    const ipc_fd = spawn_result.extra_pipes.items[0];
+    defer ipc_fd.close();
+
+    // Wait for the process to exit first
+    const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
+
+    var ipc_data = std.ArrayList(u8).init(manager.allocator);
+    defer ipc_data.deinit();
+
+    // Now read all available data from the pipe
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        switch (bun.sys.read(ipc_fd, &buf)) {
+            .err => |err| {
+                // EAGAIN means no more data available (WOULDBLOCK is the same as EAGAIN on Darwin)
+                if (err.getErrno() == .AGAIN) {
+                    break;
+                }
+                Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
+                break;
+            },
+            .result => |bytes_read| {
+                if (bytes_read == 0) {
+                    break;
+                }
+                try ipc_data.appendSlice(buf[0..bytes_read]);
+            },
+        }
+    }
+
+    const status = bun.spawn.Status.from(spawn_result.pid, &wait_result) orelse {
+        Output.errGeneric("Failed to get security provider exit status", .{});
+        Global.exit(1);
+    };
+
+    if (ipc_data.items.len > 0) {
+        const json_source = logger.Source{
+            .contents = ipc_data.items,
+            .path = bun.fs.Path.init("security-advisories.json"),
+        };
+
+        var temp_log = logger.Log.init(manager.allocator);
+        defer temp_log.deinit();
+
+        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
+            Output.errGeneric("Security provider returned invalid JSON: {s}", .{@errorName(err)});
+            if (ipc_data.items.len < 1000) {
+                // If the response is reasonably small, show it to help debugging
+                Output.errGeneric("Response: {s}", .{ipc_data.items});
+            }
+            if (temp_log.errors > 0) {
+                temp_log.print(Output.errorWriter()) catch {};
+            }
+            Global.exit(1);
+        };
+
+        var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
+        defer advisories_list.deinit();
+
+        // The JSON must be an object
+        if (json_expr.data != .e_object) {
+            Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
+            Global.exit(1);
+        }
+
+        const obj = json_expr.data.e_object;
+
+        // The object must have an "advisories" field
+        const advisories_expr = obj.get("advisories") orelse {
+            Output.errGeneric("Security provider response missing required 'advisories' field", .{});
+            Global.exit(1);
+        };
+
+        // The "advisories" field must be an array
+        if (advisories_expr.data != .e_array) {
+            Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
+            Global.exit(1);
+        }
+
+        const array = advisories_expr.data.e_array;
+        for (array.items.slice(), 0..) |item, i| {
+            if (item.data != .e_object) {
+                Output.errGeneric("Security advisory at index {d} must be an object, got: {s}", .{ i, @tagName(item.data) });
+                Global.exit(1);
+            }
+
+            const item_obj = item.data.e_object;
+
+            const name_expr = item_obj.get("name") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'name' field", .{i});
+                Global.exit(1);
+            };
+            const name_str = name_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'name' field must be a string", .{i});
+                Global.exit(1);
+            };
+            if (name_str.len == 0) {
+                Output.errGeneric("Security advisory at index {d} 'name' field cannot be empty", .{i});
+                Global.exit(1);
+            }
+
+            const desc_expr = item_obj.get("description") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'description' field", .{i});
+                Global.exit(1);
+            };
+            const desc_str = desc_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'description' field must be a string", .{i});
+                Global.exit(1);
+            };
+
+            const url_expr = item_obj.get("url") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'url' field", .{i});
+                Global.exit(1);
+            };
+            const url_str = url_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'url' field must be a string", .{i});
+                Global.exit(1);
+            };
+
+            // Level is optional, defaults to "warn"
+            var level = SecurityAdvisoryLevel.warn;
+            if (item_obj.get("level")) |level_expr| {
+                if (level_expr.asString(manager.allocator)) |level_str| {
+                    if (std.mem.eql(u8, level_str, "fatal")) {
+                        level = .fatal;
+                    } else if (std.mem.eql(u8, level_str, "warn")) {
+                        level = .warn;
+                    } else {
+                        Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
+                        Global.exit(1);
+                    }
+                }
+            }
+
+            const advisory = SecurityAdvisory{
+                .level = level,
+                .package = name_str,
+                .url = url_str,
+                .description = desc_str,
+            };
+
+            try advisories_list.append(advisory);
+        }
+
+        if (advisories_list.items.len > 0) {
+            var has_fatal = false;
+            var has_warn = false;
+
+            Output.pretty("\n<red>Security advisories found:<r>\n", .{});
+            for (advisories_list.items) |advisory| {
+                switch (advisory.level) {
+                    .fatal => {
+                        has_fatal = true;
+                        Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
+                    },
+                    .warn => {
+                        has_warn = true;
+                        Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
+                    },
+                }
+
+                if (advisory.description) |desc| {
+                    Output.pretty("    {s}\n", .{desc});
+                }
+                if (advisory.url) |url| {
+                    Output.pretty("    <cyan>{s}<r>\n", .{url});
+                }
+            }
+
+            if (has_fatal) {
+                Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n", .{});
+                Global.exit(1);
+            } else if (has_warn) {
+                // TODO: Prompt user to continue
+                Output.pretty("\n<yellow>Security warnings found. Continuing anyway...<r>\n", .{});
+            }
+        }
+    }
+
+    if (!status.isOK()) {
+        switch (status) {
+            .exited => |exited| {
+                if (exited.code != 0) {
+                    Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+                    Global.exit(1);
+                }
+            },
+            .signaled => |signal| {
+                Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
+                Global.exit(1);
+            },
+            else => {
+                Output.errGeneric("Security provider failed", .{});
+                Global.exit(1);
+            },
+        }
+    }
+}
+
+const SecurityAdvisoryLevel = enum { fatal, warn };
+
+const SecurityAdvisory = struct {
+    level: SecurityAdvisoryLevel,
+    package: []const u8,
+    url: ?[]const u8,
+    description: ?[]const u8,
+};

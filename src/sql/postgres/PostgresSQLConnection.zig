@@ -952,7 +952,7 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
     }
 
     // cleanup requests
-    this.cleanUpRequests();
+    this.cleanUpRequests(js_reason);
 }
 
 pub fn disconnect(this: *@This()) void {

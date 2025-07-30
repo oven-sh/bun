@@ -968,6 +968,7 @@ fn current(this: *PostgresSQLConnection) ?*PostgresSQLQuery {
     if (this.requests.readableLength() == 0) {
         return null;
     }
+
     return this.requests.peekItem(0);
 }
 
@@ -1062,9 +1063,39 @@ pub fn bufferedReader(this: *PostgresSQLConnection) protocol.NewReader(Reader) {
     };
 }
 
+fn cleanupSuccessQuery(this: *PostgresSQLConnection, item: *PostgresSQLQuery) void {
+    if (item.flags.simple) {
+        this.nonpipelinable_requests -= 1;
+    } else if (item.flags.pipelined) {
+        this.pipelined_requests -= 1;
+    } else if (this.flags.waiting_to_prepare) {
+        this.flags.waiting_to_prepare = false;
+    }
+}
 fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
+    defer {
+        while (this.requests.readableLength() > 0) {
+            const result = this.requests.peekItem(0);
+            // An item maybe in the success or failed state and still be inside the queue (see deinit later comments)
+            // so we do the cleanup her
+            switch (result.status) {
+                .success => {
+                    this.cleanupSuccessQuery(result);
+                    result.deref();
+                    this.requests.discard(1);
+                    continue;
+                },
+                .fail => {
+                    result.deref();
+                    this.requests.discard(1);
+                    continue;
+                },
+                else => break, // trully current item
+            }
+        }
+    }
     while (this.requests.readableLength() > offset and !this.flags.has_backpressure) {
         if (this.vm.isShuttingDown()) return this.close();
 
@@ -1263,13 +1294,7 @@ fn advance(this: *PostgresSQLConnection) void {
                 return;
             },
             .success => {
-                if (req.flags.simple) {
-                    this.nonpipelinable_requests -= 1;
-                } else if (req.flags.pipelined) {
-                    this.pipelined_requests -= 1;
-                } else if (this.flags.waiting_to_prepare) {
-                    this.flags.waiting_to_prepare = false;
-                }
+                this.cleanupSuccessQuery(req);
                 if (offset > 0) {
                     // deinit later
                     req.status = .fail;

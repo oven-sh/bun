@@ -14,7 +14,7 @@ pub fn MultiArrayList(comptime T: type) type {
         bytes: [*]align(@alignOf(T)) u8 = undefined,
         len: usize = 0,
         capacity: usize = 0,
-        alloc_ptr: CheckedAllocPtr = .{},
+        alloc_ptr: bun.safety.AllocPtr = .{},
 
         pub const empty: Self = .{
             .bytes = undefined,
@@ -617,7 +617,6 @@ pub fn MultiArrayList(comptime T: type) type {
 }
 
 const builtin = @import("builtin");
-const CheckedAllocPtr = @import("./safety.zig").AllocPtr;
 
 const bun = @import("bun");
 const assert = bun.assert;

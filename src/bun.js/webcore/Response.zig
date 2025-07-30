@@ -426,6 +426,17 @@ pub fn constructJSON(
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
+
+fn validateRedirectStatusCode(globalThis: *jsc.JSGlobalObject, status_code: i32) bun.JSError!u16 {
+    switch (status_code) {
+        301, 302, 303, 307, 308 => return @intCast(status_code),
+        else => {
+            const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
+            return globalThis.throwValue(err);
+        },
+    }
+}
+
 pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
@@ -464,36 +475,17 @@ pub fn constructRedirect(
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                const status_number = init.toInt32();
-                // Validate redirect status codes (301, 302, 303, 307, 308)
-                if (status_number == 301 or status_number == 302 or status_number == 303 or status_number == 307 or status_number == 308) {
-                    response.init.status_code = @as(u16, @intCast(status_number));
-                } else {
-                    const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
-                    return globalThis.throwValue(err);
-                }
-            } else if (init.isObject()) {
-                // Only process object init values to prevent crash with non-object values
-                if (Response.Init.init(globalThis, init) catch |err|
-                    if (err == error.JSError) return .zero else null) |_init|
-                {
-                    // Validate that status code is a valid redirect status if provided
-                    if (_init.status_code != 200) { // 200 is the default, so if it's changed, validate it
-                        if (_init.status_code == 301 or _init.status_code == 302 or _init.status_code == 303 or _init.status_code == 307 or _init.status_code == 308) {
-                            response.init = _init;
-                        } else {
-                            response.init.deinit(bun.default_allocator);
-                            const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
-                            return globalThis.throwValue(err);
-                        }
-                    } else {
-                        response.init = _init;
-                        response.init.status_code = 302; // Default redirect status
-                    }
+                response.init.status_code = try validateRedirectStatusCode(globalThis, init.toInt32());
+            } else if (try Response.Init.init(globalThis, init)) |_init| {
+                errdefer response.init.deinit(bun.default_allocator);
+                response.init = _init;
+
+                if (_init.status_code != 200) {
+                    response.init.status_code = try validateRedirectStatusCode(globalThis, _init.status_code);
                 }
             }
-            // Non-object, non-number init values are ignored (like strings, booleans, etc.)
         }
+
         if (globalThis.hasException()) {
             return .zero;
         }
@@ -642,7 +634,13 @@ pub const Init = struct {
         if (!response_init.isCell())
             return null;
 
-        if (response_init.jsType() == .DOMWrapper) {
+        const js_type = response_init.jsType();
+
+        if (!js_type.isObject()) {
+            return null;
+        }
+
+        if (js_type == .DOMWrapper) {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {

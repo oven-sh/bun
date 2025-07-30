@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { bunExe, bunEnv, isCI } from "../../harness";
+import { bunExe, bunEnv, isCI, isMusl } from "../../harness";
 
 // Tests that intentionally abort and should not generate core dumps when they abort
 // due to a Node-API error
@@ -19,7 +19,10 @@ export async function build(dir: string) {
       // on linux CI, node-gyp will default to g++ and the version installed there is very old,
       // so we make it use clang instead
       ...(process.platform == "linux" && isCI
-        ? { "CC": "/usr/lib/llvm-19/bin/clang", CXX: "/usr/lib/llvm-19/bin/clang++" }
+        ? {
+            CC: !isMusl ? "/usr/lib/llvm-19/bin/clang" : "/usr/lib/llvm19/bin/clang",
+            CXX: !isMusl ? "/usr/lib/llvm-19/bin/clang++" : "/usr/lib/llvm19/bin/clang++",
+          }
         : {}),
     },
   });

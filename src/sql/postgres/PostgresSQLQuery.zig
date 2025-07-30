@@ -258,7 +258,6 @@ pub fn doDone(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFra
 pub fn setPendingValue(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const result = callframe.argument(0);
     const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
-
     js.pendingValueSetCached(thisValue, globalObject, result);
     return .js_undefined;
 }

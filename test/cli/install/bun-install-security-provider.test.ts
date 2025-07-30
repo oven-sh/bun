@@ -334,6 +334,20 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
+  run("advisory missing level field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Missing level",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'level' field");
+    },
+  });
+
   run("advisory url field not string", {
     scanner: async () => [
       {
@@ -375,7 +389,7 @@ describe("Invalid Advisory Formats", () => {
     ],
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 0 'level' field must be 'fatal' or 'warn'");
+      expect(err).toContain("Security advisory at index 0 'level' field must be a string");
     },
   });
 
@@ -573,7 +587,7 @@ describe("Edge Cases", () => {
     },
   });
 
-  run("advisory without optional level field defaults to warn", {
+  run("advisory without level field", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -581,14 +595,13 @@ describe("Edge Cases", () => {
         url: "https://example.com",
       } as any,
     ],
-    expectedExitCode: 0,
-    expect: ({ out }) => {
-      expect(out).toContain("WARN: bar");
-      expect(out).toContain("No level specified");
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'level' field");
     },
   });
 
-  run("null values in optional fields", {
+  run("null values in level field", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -597,9 +610,9 @@ describe("Edge Cases", () => {
         url: "https://example.com",
       },
     ],
-    expectedExitCode: 0, // null level should default to warn
-    expect: ({ out }) => {
-      expect(out).toContain("WARN: bar");
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be a string");
     },
   });
 });

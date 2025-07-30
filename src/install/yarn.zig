@@ -13,6 +13,7 @@ pub const YarnLock = struct {
         file: ?string = null,
         os: ?[]const []const u8 = null,
         cpu: ?[]const []const u8 = null,
+        libc: ?[]const []const u8 = null,
         git_repo_name: ?string = null,
 
         pub fn deinit(self: *Entry, allocator: Allocator) void {
@@ -31,6 +32,9 @@ pub const YarnLock = struct {
             }
             if (self.os) |os_list| {
                 allocator.free(os_list);
+            }
+            if (self.libc) |libc_list| {
+                allocator.free(libc_list);
             }
             if (self.cpu) |cpu_list| {
                 allocator.free(cpu_list);
@@ -416,6 +420,14 @@ pub const YarnLock = struct {
                             try cpu_list.append(trimmed_cpu);
                         }
                         current_entry.?.cpu = try cpu_list.toOwnedSlice();
+                    } else if (strings.eqlComptime(key, "libc")) {
+                        var libc_list = std.ArrayList([]const u8).init(self.allocator);
+                        var libc_it = strings.split(value[1 .. value.len - 1], ",");
+                        while (libc_it.next()) |libc| {
+                            const trimmed_libc = strings.trim(libc, " \"");
+                            try libc_list.append(trimmed_libc);
+                        }
+                        current_entry.?.libc = try libc_list.toOwnedSlice();
                     }
                 }
             }

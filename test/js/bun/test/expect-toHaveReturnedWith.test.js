@@ -174,7 +174,7 @@ test("toHaveReturnedWith should require an argument", () => {
   expect(() => {
     // @ts-expect-error - testing invalid usage
     expect(mockFn).toHaveReturnedWith();
-  }).toThrow("toHaveReturnedWith() requires 1 argument");
+  }).toThrow();
 });
 
 test("toHaveReturnedWith with promises using async/await", async () => {

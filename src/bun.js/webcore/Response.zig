@@ -426,6 +426,17 @@ pub fn constructJSON(
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
+
+fn validateRedirectStatusCode(globalThis: *jsc.JSGlobalObject, status_code: i32) bun.JSError!u16 {
+    switch (status_code) {
+        301, 302, 303, 307, 308 => return @intCast(status_code),
+        else => {
+            const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
+            return globalThis.throwValue(err);
+        },
+    }
+}
+
 pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
@@ -464,16 +475,17 @@ pub fn constructRedirect(
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
-            } else {
-                if (Response.Init.init(globalThis, init) catch |err|
-                    if (err == error.JSError) return .zero else null) |_init|
-                {
-                    response.init = _init;
-                    response.init.status_code = 302;
+                response.init.status_code = try validateRedirectStatusCode(globalThis, init.toInt32());
+            } else if (try Response.Init.init(globalThis, init)) |_init| {
+                errdefer response.init.deinit(bun.default_allocator);
+                response.init = _init;
+
+                if (_init.status_code != 200) {
+                    response.init.status_code = try validateRedirectStatusCode(globalThis, _init.status_code);
                 }
             }
         }
+
         if (globalThis.hasException()) {
             return .zero;
         }
@@ -622,7 +634,13 @@ pub const Init = struct {
         if (!response_init.isCell())
             return null;
 
-        if (response_init.jsType() == .DOMWrapper) {
+        const js_type = response_init.jsType();
+
+        if (!js_type.isObject()) {
+            return null;
+        }
+
+        if (js_type == .DOMWrapper) {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {

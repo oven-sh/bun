@@ -1042,8 +1042,8 @@ fn performSecurityScanAfterResolution(
     if (manager.update_requests.len == 0) return;
 
     var json_buf = std.ArrayList(u8).init(manager.allocator);
-    defer json_buf.deinit();
     var writer = json_buf.writer();
+    defer json_buf.deinit();
 
     const string_buf = manager.lockfile.buffers.string_bytes.items;
     const packages = manager.lockfile.packages.slice();
@@ -1061,13 +1061,22 @@ fn performSecurityScanAfterResolution(
         const resolution = resolutions[package_id];
         const name = names[package_id].slice(string_buf);
 
+        var version_buf: [256]u8 = undefined;
         const version = switch (resolution.tag) {
-            .npm => resolution.value.npm.version.slice(string_buf),
+            .npm => std.fmt.bufPrint(&version_buf, "{}", .{resolution.value.npm.version.fmt(string_buf)}) catch "",
             .local_tarball => resolution.value.local_tarball.slice(string_buf),
             .remote_tarball => resolution.value.remote_tarball.slice(string_buf),
             .folder => resolution.value.folder.slice(string_buf),
-            .git => resolution.value.git.url.slice(string_buf),
-            .github => resolution.value.github.url.slice(string_buf),
+            .git => blk: {
+                var stream = std.io.fixedBufferStream(&version_buf);
+                resolution.value.git.formatAs("git+", string_buf, "", .{}, stream.writer()) catch break :blk "";
+                break :blk stream.getWritten();
+            },
+            .github => blk: {
+                var stream = std.io.fixedBufferStream(&version_buf);
+                resolution.value.github.formatAs("github:", string_buf, "", .{}, stream.writer()) catch break :blk "";
+                break :blk stream.getWritten();
+            },
             .workspace => "workspace",
             .symlink => "link",
             else => continue,
@@ -1242,16 +1251,16 @@ fn performSecurityScanAfterResolution(
 
             const item_obj = item.data.e_object;
 
-            const name_expr = item_obj.get("name") orelse {
-                Output.errGeneric("Security advisory at index {d} missing required 'name' field", .{i});
+            const name_expr = item_obj.get("package") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'package' field", .{i});
                 Global.exit(1);
             };
             const name_str = name_expr.asString(manager.allocator) orelse {
-                Output.errGeneric("Security advisory at index {d} 'name' field must be a string", .{i});
+                Output.errGeneric("Security advisory at index {d} 'package' field must be a string", .{i});
                 Global.exit(1);
             };
             if (name_str.len == 0) {
-                Output.errGeneric("Security advisory at index {d} 'name' field cannot be empty", .{i});
+                Output.errGeneric("Security advisory at index {d} 'package' field cannot be empty", .{i});
                 Global.exit(1);
             }
 

@@ -7,6 +7,7 @@ import {
   dummyRegistry,
   package_dir,
   read,
+  root_url,
   setHandler,
   write,
 } from "./dummy.registry.js";
@@ -19,24 +20,25 @@ afterEach(dummyAfterEach);
 function run(
   name: string,
   options: {
-    scanner: Bun.Install.Security.Provider["onInstall"];
+    scanner: Bun.Install.Security.Provider["onInstall"] | string;
     fails: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
   },
 ) {
   test(name, async () => {
     const urls: string[] = [];
-    setHandler(dummyRegistry(urls, { "0.0.5": { as: "0.0.5" } }));
+    setHandler(dummyRegistry(urls));
 
-    await write(
-      "./scanner.ts",
-      `
-      export default {
-        version: "1",
-        onInstall: ${options.scanner.toString()},
-      } satisfies Bun.Install.Security.Provider;
-      `,
-    );
+    if (typeof options.scanner === "string") {
+      await write("./scanner.ts", options.scanner);
+    } else {
+      const s = `export const provider = {
+  version: "1", 
+  onInstall: ${options.scanner.toString()},
+};`;
+
+      await write("./scanner.ts", s);
+    }
 
     const bunfig = await read("./bunfig.toml").text();
     await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + 'provider = "./scanner.ts"');
@@ -47,23 +49,19 @@ function run(
       dependencies: {},
     });
 
-    const pkg = "pkg";
-
     const { out, err } = await runBunInstall(bunEnv, package_dir, {
-      packages: [pkg],
+      packages: ["bar"],
       allowErrors: true,
       allowWarnings: false,
       savesLockfile: false,
       expectedExitCode: 1,
     });
 
-    expect(urls).toEqual([]);
-
-    expect(out).toContain(`Security scanner is checking packages: ${pkg}`);
-
     if (options.fails) {
-      expect(err).toContain("Installation cancelled due to fatal security advisories");
+      expect(out).toContain("Installation cancelled due to fatal security issues");
     }
+
+    expect(urls).toEqual([root_url + "/bar", root_url + "/bar-0.0.2.tgz"]);
 
     await options.expect?.({ out, err });
   });
@@ -98,18 +96,22 @@ run("expect output to contain the advisory", {
 
 run("stdout contains all input package metadata", {
   fails: true,
-  scanner: async ({ packages }) => [
-    {
-      package: packages[0].name,
-      description: "Advisory 1 description",
-      level: "fatal",
-      url: "https://example.com/advisory-1",
-    },
-  ],
+  scanner: async ({ packages }) => {
+    console.log(JSON.stringify(packages));
+
+    return [
+      {
+        package: packages[0].name,
+        description: "Advisory 1 description",
+        level: "fatal",
+        url: "https://example.com/advisory-1",
+      },
+    ];
+  },
   expect: ({ out }) => {
-    expect(out).toContain('"version": "1.0.0"');
-    expect(out).toContain('"name": "pkg"');
-    expect(out).toContain('"requestedRange": "latest"');
-    expect(out).toContain('"registryUrl": "https://registry.npmjs.org"');
+    expect(out).toContain('\"version\":\"0.0.2\"');
+    expect(out).toContain('\"name\":\"bar\"');
+    expect(out).toContain('\"requestedRange\":\"^0.0.2\"');
+    expect(out).toContain(`\"registryUrl\":\"${root_url}/\"`);
   },
 });

@@ -697,6 +697,7 @@ pub fn migrateYarnLockfile(
                 .origin = .local,
                 .arch = .all,
                 .os = .all,
+                .libc = .none,
                 .man_dir = String{},
                 .has_install_script = .false,
                 .integrity = Integrity{},

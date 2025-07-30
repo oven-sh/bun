@@ -20,51 +20,73 @@ afterEach(dummyAfterEach);
 function run(
   name: string,
   options: {
+    testTimeout?: number;
     scanner: Bun.Install.Security.Provider["onInstall"] | string;
-    fails: boolean;
+    fails?: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
+    expectedExitCode?: number;
+    bunfigProvider?: string | false;
+    packages?: string[];
+    scannerFile?: string;
   },
 ) {
-  test(name, async () => {
-    const urls: string[] = [];
-    setHandler(dummyRegistry(urls));
+  test(
+    name,
+    async () => {
+      const urls: string[] = [];
+      setHandler(dummyRegistry(urls));
 
-    if (typeof options.scanner === "string") {
-      await write("./scanner.ts", options.scanner);
-    } else {
-      const s = `export const provider = {
+      // Write scanner file
+      const scannerPath = options.scannerFile || "./scanner.ts";
+      if (typeof options.scanner === "string") {
+        await write(scannerPath, options.scanner);
+      } else {
+        const s = `export const provider = {
   version: "1", 
   onInstall: ${options.scanner.toString()},
 };`;
+        await write(scannerPath, s);
+      }
 
-      await write("./scanner.ts", s);
-    }
+      // Configure bunfig
+      const bunfig = await read("./bunfig.toml").text();
+      if (options.bunfigProvider !== false) {
+        const providerPath = options.bunfigProvider || "./scanner.ts";
+        await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + `provider = "${providerPath}"`);
+      }
 
-    const bunfig = await read("./bunfig.toml").text();
-    await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + 'provider = "./scanner.ts"');
+      await write("package.json", {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {},
+      });
 
-    await write("package.json", {
-      name: "my-app",
-      version: "1.0.0",
-      dependencies: {},
-    });
+      const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
+      const packages = options.packages || ["bar"];
 
-    const { out, err } = await runBunInstall(bunEnv, package_dir, {
-      packages: ["bar"],
-      allowErrors: true,
-      allowWarnings: false,
-      savesLockfile: false,
-      expectedExitCode: 1,
-    });
+      const { out, err } = await runBunInstall(bunEnv, package_dir, {
+        packages,
+        allowErrors: true,
+        allowWarnings: false,
+        savesLockfile: false,
+        expectedExitCode,
+      });
 
-    if (options.fails) {
-      expect(out).toContain("Installation cancelled due to fatal security issues");
-    }
+      if (options.fails) {
+        expect(out).toContain("Installation cancelled due to fatal security issues");
+      }
 
-    expect(urls).toEqual([root_url + "/bar", root_url + "/bar-0.0.2.tgz"]);
+      // Only check URLs if we're actually installing packages
+      if (packages.length > 0 && packages[0] === "bar") {
+        expect(urls).toEqual([root_url + "/bar", root_url + "/bar-0.0.2.tgz"]);
+      }
 
-    await options.expect?.({ out, err });
-  });
+      await options.expect?.({ out, err });
+    },
+    {
+      timeout: options.testTimeout ?? 5_000,
+    },
+  );
 }
 
 run("basic", {
@@ -114,4 +136,470 @@ run("stdout contains all input package metadata", {
     expect(out).toContain('\"requestedRange\":\"^0.0.2\"');
     expect(out).toContain(`\"registryUrl\":\"${root_url}/\"`);
   },
+});
+
+// Edge case tests
+describe("Security Provider Edge Cases", () => {
+  run("provider module not found", {
+    scanner: "dummy", // We need a scanner but will override the path
+    bunfigProvider: "./non-existent-scanner.ts",
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Cannot find module");
+    },
+  });
+
+  run("provider module throws during import", {
+    scanner: `throw new Error("Module failed to load");`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Module failed to load");
+    },
+  });
+
+  run("provider missing version field", {
+    scanner: `export const provider = {
+      onInstall: async () => []
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider must be version 1");
+    },
+  });
+
+  run("provider wrong version", {
+    scanner: `export const provider = {
+      version: "2",
+      onInstall: async () => []
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider must be version 1");
+    },
+  });
+
+  run("provider missing onInstall", {
+    scanner: `export const provider = {
+      version: "1"
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("provider.onInstall is not a function");
+    },
+  });
+
+  run("provider onInstall not a function", {
+    scanner: `export const provider = {
+      version: "1",
+      onInstall: "not a function"
+    };`,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("provider.onInstall is not a function");
+    },
+  });
+});
+
+// Invalid return value tests
+describe("Invalid Return Values", () => {
+  run("provider returns non-array", {
+    scanner: async () => "not an array" as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider must return an array of advisories");
+    },
+  });
+
+  run("provider returns null", {
+    scanner: async () => null as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider must return an array of advisories");
+    },
+  });
+
+  run("provider returns undefined", {
+    scanner: async () => undefined as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider must return an array of advisories");
+    },
+  });
+
+  run("provider throws exception", {
+    scanner: async () => {
+      throw new Error("Scanner failed");
+    },
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Scanner failed");
+    },
+  });
+
+  run("provider returns non-object in array", {
+    scanner: async () => ["not an object"] as any,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 must be an object");
+    },
+  });
+});
+
+// Invalid advisory format tests
+describe("Invalid Advisory Formats", () => {
+  run("advisory missing package field", {
+    scanner: async () => [
+      {
+        description: "Missing package field",
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'package' field");
+    },
+  });
+
+  run("advisory package field not string", {
+    scanner: async () => [
+      {
+        package: 123,
+        description: "Package is number",
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'package' field must be a string");
+    },
+  });
+
+  run("advisory package field empty string", {
+    scanner: async () => [
+      {
+        package: "",
+        description: "Empty package name",
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'package' field cannot be empty");
+    },
+  });
+
+  run("advisory missing description field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'description' field");
+    },
+  });
+
+  run("advisory description field not string", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: { text: "object description" },
+        level: "fatal",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'description' field must be a string");
+    },
+  });
+
+  run("advisory missing url field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Missing URL",
+        level: "fatal",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 missing required 'url' field");
+    },
+  });
+
+  run("advisory url field not string", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "URL is boolean",
+        level: "fatal",
+        url: true,
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'url' field must be a string");
+    },
+  });
+
+  run("advisory invalid level", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Invalid level",
+        level: "critical",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be 'fatal' or 'warn'");
+    },
+  });
+
+  run("advisory level not string", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Level is number",
+        level: 1,
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 0 'level' field must be 'fatal' or 'warn'");
+    },
+  });
+
+  // Mixed valid/invalid advisories
+  run("second advisory invalid", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Valid advisory",
+        level: "warn",
+        url: "https://example.com/1",
+      },
+      {
+        package: "baz",
+        // missing description
+        level: "fatal",
+        url: "https://example.com/2",
+      } as any,
+    ],
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security advisory at index 1 missing required 'description' field");
+    },
+  });
+});
+
+describe("Process Behavior", () => {
+  run("provider process exits early", {
+    scanner: `
+      console.log("Starting...");
+      process.exit(42);
+    `,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security provider failed with exit code: 42");
+    },
+  });
+
+  run("provider async timeout", {
+    testTimeout: 30_000 + 5_000,
+    scanner: async () => {
+      await new Promise(resolve => setTimeout(resolve, 30_000));
+      return [];
+    },
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toMatchInlineSnapshot(`"Security provider timed out after 30 seconds"`);
+    },
+  });
+});
+
+describe("Large Data Handling", () => {
+  run("provider returns many advisories", {
+    scanner: async ({ packages }) => {
+      const advisories: any[] = [];
+
+      for (let i = 0; i < 1000; i++) {
+        advisories.push({
+          package: packages[0].name,
+          description: `Advisory ${i} description with a very long text that might cause buffer issues`,
+          level: i % 10 === 0 ? "fatal" : "warn",
+          url: `https://example.com/advisory-${i}`,
+        });
+      }
+
+      return advisories;
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Advisory 0 description");
+      expect(out).toContain("Advisory 99 description");
+      expect(out).toContain("Advisory 999 description");
+    },
+  });
+
+  run("provider with very large response", {
+    scanner: async ({ packages }) => {
+      const longString = Buffer.alloc(10000, 65).toString(); // 10k of 'A's
+      return [
+        {
+          package: packages[0].name,
+          description: longString,
+          level: "fatal",
+          url: "https://example.com",
+        },
+      ];
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("AAAA");
+    },
+  });
+});
+
+describe("Warning Level Advisories", () => {
+  run("only warning level advisories", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "This is just a warning",
+        level: "warn",
+        url: "https://example.com/warning",
+      },
+    ],
+    expectedExitCode: 0, // Should continue with warnings
+    expect: ({ out }) => {
+      expect(out).toContain("WARN: bar");
+      expect(out).toContain("This is just a warning");
+      expect(out).toContain("Security warnings found. Continuing anyway...");
+      expect(out).not.toContain("Installation cancelled");
+    },
+  });
+
+  run("mixed fatal and warn advisories", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Warning advisory",
+        level: "warn",
+        url: "https://example.com/warning",
+      },
+      {
+        package: packages[0].name,
+        description: "Fatal advisory",
+        level: "fatal",
+        url: "https://example.com/fatal",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("WARN: bar");
+      expect(out).toContain("FATAL: bar");
+      expect(out).toContain("Installation cancelled due to fatal security issues");
+    },
+  });
+});
+
+describe("Multiple Package Scanning", () => {
+  run("multiple packages scanned", {
+    packages: ["bar", "baz"],
+    scanner: async ({ packages }) => {
+      return packages.map((pkg, i) => ({
+        package: pkg.name,
+        description: `Security issue in ${pkg.name}`,
+        level: "fatal",
+        url: `https://example.com/${pkg.name}`,
+      }));
+    },
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Security issue in bar");
+      expect(out).toContain("Security issue in baz");
+    },
+  });
+});
+
+describe("Edge Cases", () => {
+  run("empty advisories array", {
+    scanner: async () => [],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).not.toContain("Security advisories found");
+    },
+  });
+
+  run("special characters in advisory", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Advisory with \"quotes\" and 'single quotes' and \n newlines \t tabs",
+        level: "fatal",
+        url: "https://example.com/path?param=value&other=123#hash",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("quotes");
+      expect(out).toContain("single quotes");
+    },
+  });
+
+  run("unicode in advisory fields", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Security issue with emoji 🔒 and unicode ñ é ü",
+        level: "fatal",
+        url: "https://example.com/unicode",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("🔒");
+      expect(out).toContain("ñ é ü");
+    },
+  });
+
+  run("advisory without optional level field defaults to warn", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "No level specified",
+        url: "https://example.com",
+      } as any,
+    ],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("WARN: bar");
+      expect(out).toContain("No level specified");
+    },
+  });
+
+  run("null values in optional fields", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: "Advisory with null level",
+        level: null as any,
+        url: "https://example.com",
+      },
+    ],
+    expectedExitCode: 0, // null level should default to warn
+    expect: ({ out }) => {
+      expect(out).toContain("WARN: bar");
+    },
+  });
 });

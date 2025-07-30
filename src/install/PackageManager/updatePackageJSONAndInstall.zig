@@ -68,7 +68,7 @@ const SecurityAdvisory = struct {
 fn performSecurityScanOnAdds(
     manager: *PackageManager,
     updates: []const UpdateRequest,
-    original_cwd: string,
+    _: string,
 ) !void {
     const security_provider = manager.options.security_provider orelse {
         return;

@@ -1157,7 +1157,7 @@ fn performSecurityScanAfterResolution(
             }
         }
 
-        const poll_timeout: c_int = if (process_exited) 100 else 1000; // 100ms if exited, 1s otherwise
+        const poll_timeout: c_int = if (process_exited) 10 else 50; // 10ms if exited, 50ms otherwise
         const rc = std.c.poll(&poll_fds, 1, poll_timeout);
 
         switch (bun.sys.getErrno(rc)) {

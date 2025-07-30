@@ -1819,8 +1819,7 @@ fn NewPrinter(
             // When bundling with a loader applied, the transformation has already happened
             // so we don't need the import options anymore
             if (!import_options.isMissing()) {
-                const loader_was_applied = p.options.bundling and record.loader != null;
-                if (!loader_was_applied) {
+                if (!p.options.bundling or record.loader == null) {
                     p.printWhitespacer(ws(", "));
                     p.printExpr(import_options, .comma, .{});
                 }

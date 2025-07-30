@@ -89,7 +89,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper.isUndefinedOrNull() ? nullptr : moduleWrapper.asCell()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceOrigin sourceOrigin { {}, *fetcher };

@@ -1136,52 +1136,91 @@ fn performSecurityScanAfterResolution(
     var process_exited = false;
     var wait_result: bun.spawn.WaitPidResult = undefined;
 
+    var poll_fds = [_]std.c.pollfd{
+        .{
+            .fd = @intCast(ipc_fd.cast()),
+            .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
+            .revents = 0,
+        },
+    };
+
     while (true) {
-        switch (bun.sys.read(ipc_fd, &buf)) {
-            .err => |err| {
-                if (err.getErrno() == .AGAIN) {
-                    if (!process_exited) {
-                        switch (bun.spawn.waitpid(spawn_result.pid, std.posix.W.NOHANG)) {
-                            .result => |res| {
-                                if (res.pid > 0) {
-                                    // Process has exited
-                                    process_exited = true;
-                                    wait_result = res;
-                                    // Try reading one more time in case there's buffered data
-                                    std.time.sleep(10 * std.time.ns_per_ms);
-                                    continue;
-                                }
-                            },
-                            .err => {},
-                        }
-
-                        std.time.sleep(10 * std.time.ns_per_ms);
-                        continue;
-                    } else {
-                        break;
+        if (!process_exited) {
+            switch (bun.spawn.waitpid(spawn_result.pid, std.posix.W.NOHANG)) {
+                .result => |res| {
+                    if (res.pid > 0) {
+                        process_exited = true;
+                        wait_result = res;
                     }
-                }
-                Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
-                break;
-            },
-            .result => |bytes_read| {
-                if (bytes_read == 0) {
-                    break;
-                }
-                try ipc_data.appendSlice(buf[0..bytes_read]);
-            },
+                },
+                .err => {},
+            }
         }
-    }
 
-    if (!process_exited) {
-        switch (bun.spawn.waitpid(spawn_result.pid, 0)) {
-            .result => |res| {
-                wait_result = res;
-            },
-            .err => |err| {
-                Output.errGeneric("Failed to wait for security provider: {s}", .{@tagName(err.getErrno())});
+        const poll_timeout: c_int = if (process_exited) 100 else 1000; // 100ms if exited, 1s otherwise
+        const rc = std.c.poll(&poll_fds, 1, poll_timeout);
+
+        switch (bun.sys.getErrno(rc)) {
+            .SUCCESS => {},
+            .AGAIN, .INTR => continue,
+            else => |err| {
+                Output.errGeneric("Failed to poll IPC pipe: {s}", .{@tagName(err)});
                 Global.exit(1);
             },
+        }
+
+        if (rc == 0) {
+            if (process_exited) {
+                // Give it one more chance to read any buffered data
+                switch (bun.sys.read(ipc_fd, &buf)) {
+                    .err => break,
+                    .result => |bytes_read| {
+                        if (bytes_read > 0) {
+                            try ipc_data.appendSlice(buf[0..bytes_read]);
+                        }
+                        break;
+                    },
+                }
+            }
+            continue;
+        }
+
+        if (poll_fds[0].revents & (std.posix.POLL.IN) != 0) {
+            while (true) {
+                switch (bun.sys.read(ipc_fd, &buf)) {
+                    .err => |err| {
+                        if (err.getErrno() == .AGAIN) {
+                            break; // No more data available right now
+                        }
+                        Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
+                        break;
+                    },
+                    .result => |bytes_read| {
+                        if (bytes_read == 0) {
+                            // EOF - pipe closed
+                            if (!process_exited) {
+                                // Wait for process to exit
+                                switch (bun.spawn.waitpid(spawn_result.pid, 0)) {
+                                    .result => |res| {
+                                        wait_result = res;
+                                        process_exited = true;
+                                    },
+                                    .err => |err| {
+                                        Output.errGeneric("Failed to wait for security provider: {s}", .{@tagName(err.getErrno())});
+                                        Global.exit(1);
+                                    },
+                                }
+                            }
+                            break;
+                        }
+                        try ipc_data.appendSlice(buf[0..bytes_read]);
+                    },
+                }
+            }
+        }
+
+        if (poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP) != 0) {
+            break;
         }
     }
 

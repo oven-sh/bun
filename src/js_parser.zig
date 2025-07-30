@@ -5135,18 +5135,20 @@ fn NewParser_(
                 if (state.import_record_tag) |tag| {
                     p.import_records.items[import_record_index].tag = tag;
                 }
-                
+
                 if (state.import_options.data == .e_object) {
                     const obj = state.import_options.data.e_object;
                     for (obj.properties.slice()) |prop| {
-                        if (prop.key != null and prop.value != null and 
-                            prop.key.?.data == .e_string and prop.value.?.data == .e_object) {
+                        if (prop.key != null and prop.value != null and
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_object)
+                        {
                             const key_str = prop.key.?.data.e_string.slice(p.allocator);
                             if (strings.eqlComptime(key_str, "with")) {
                                 const with_obj = prop.value.?.data.e_object;
                                 for (with_obj.properties.slice()) |with_prop| {
                                     if (with_prop.key != null and with_prop.value != null and
-                                        with_prop.key.?.data == .e_string and with_prop.value.?.data == .e_string) {
+                                        with_prop.key.?.data == .e_string and with_prop.value.?.data == .e_string)
+                                    {
                                         const with_key = with_prop.key.?.data.e_string.slice(p.allocator);
                                         if (strings.eqlComptime(with_key, "type")) {
                                             const type_value = with_prop.value.?.data.e_string.slice(p.allocator);
@@ -23608,11 +23610,12 @@ fn NewParser_(
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
-                
+
                 if (with_attrs) |attrs| {
                     for (attrs.properties.slice()) |prop| {
-                        if (prop.key != null and prop.value != null and 
-                            prop.key.?.data == .e_string and prop.value.?.data == .e_string) {
+                        if (prop.key != null and prop.value != null and
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_string)
+                        {
                             const key_str = prop.key.?.data.e_string.slice(p.allocator);
                             if (strings.eqlComptime(key_str, "type")) {
                                 const value_str = prop.value.?.data.e_string.slice(p.allocator);

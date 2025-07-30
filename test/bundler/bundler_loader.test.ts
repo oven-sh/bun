@@ -54,7 +54,7 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
-      
+
       itBundled("bun/loader-text-js-file", {
         target,
         files: {
@@ -67,7 +67,7 @@ export default "Hello from JS";`,
         },
         run: { stdout: `console.log("This should not be executed!");\nexport default "Hello from JS";` },
       });
-      
+
       itBundled("bun/loader-text-dynamic-import", {
         target,
         files: {
@@ -80,7 +80,7 @@ export const data = "test";`,
         },
         run: { stdout: `console.log("This should not run!");\nexport const data = "test";` },
       });
-      
+
       // Verify that without type: "text", JS files are executed normally
       itBundled("bun/loader-js-normal-execution", {
         target,

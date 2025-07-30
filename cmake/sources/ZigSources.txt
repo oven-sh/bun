@@ -634,6 +634,7 @@ src/install/resolvers/folder_resolver.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
+src/install/yarn.zig
 src/interchange.zig
 src/interchange/json.zig
 src/interchange/toml.zig

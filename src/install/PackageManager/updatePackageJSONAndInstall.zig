@@ -86,17 +86,19 @@ fn performSecurityScanOnAdds(
         if (i > 0) try writer.writeAll(",\n");
 
         const name = update.getName();
-        const version_str = update.version.literal.slice(update.version_buf);
+        // For the requested range, we need to check if a version was specified
+        const requested_range = if (update.version.tag == .uninitialized or update.version.literal.isEmpty())
+            "latest"
+        else 
+            update.version.literal.slice(update.version_buf);
 
         try writer.print(
             \\  {{
             \\    "name": "{s}",
-            \\    "version": "{s}",
-            \\    "registryUrl": "{s}",
             \\    "requestedRange": "{s}",
-            // \\    "integrity": ""
+            \\    "registryUrl": "{s}"
             \\  }}
-        , .{ name, version_str, manager.options.scope.url.href, version_str });
+        , .{ name, requested_range, manager.options.scope.url.href });
     }
     try writer.writeAll("\n]");
 

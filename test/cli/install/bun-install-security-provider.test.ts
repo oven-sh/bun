@@ -17,7 +17,7 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
-function run(
+function test(
   name: string,
   options: {
     testTimeout?: number;
@@ -30,7 +30,7 @@ function run(
     scannerFile?: string;
   },
 ) {
-  test(
+  it(
     name,
     async () => {
       const urls: string[] = [];
@@ -82,7 +82,7 @@ function run(
   );
 }
 
-run("basic", {
+test("basic", {
   fails: true,
   scanner: async ({ packages }) => [
     {
@@ -94,7 +94,7 @@ run("basic", {
   ],
 });
 
-run("expect output to contain the advisory", {
+test("expect output to contain the advisory", {
   fails: true,
   scanner: async ({ packages }) => [
     {
@@ -109,7 +109,7 @@ run("expect output to contain the advisory", {
   },
 });
 
-run("stdout contains all input package metadata", {
+test("stdout contains all input package metadata", {
   fails: true,
   scanner: async ({ packages }) => {
     console.log(JSON.stringify(packages));
@@ -133,7 +133,7 @@ run("stdout contains all input package metadata", {
 
 // Edge case tests
 describe("Security Provider Edge Cases", () => {
-  run("provider module not found", {
+  test("provider module not found", {
     scanner: "dummy", // We need a scanner but will override the path
     bunfigProvider: "./non-existent-scanner.ts",
     expectedExitCode: 1,
@@ -142,7 +142,7 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider module throws during import", {
+  test("provider module throws during import", {
     scanner: `throw new Error("Module failed to load");`,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -150,7 +150,7 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider missing version field", {
+  test("provider missing version field", {
     scanner: `export const provider = {
       scan: async () => []
     };`,
@@ -160,7 +160,7 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider wrong version", {
+  test("provider wrong version", {
     scanner: `export const provider = {
       version: "2",
       scan: async () => []
@@ -171,7 +171,7 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider missing scan", {
+  test("provider missing scan", {
     scanner: `export const provider = {
       version: "1"
     };`,
@@ -181,7 +181,7 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider scan not a function", {
+  test("provider scan not a function", {
     scanner: `export const provider = {
       version: "1",
       scan: "not a function"
@@ -195,7 +195,7 @@ describe("Security Provider Edge Cases", () => {
 
 // Invalid return value tests
 describe("Invalid Return Values", () => {
-  run("provider returns non-array", {
+  test("provider returns non-array", {
     scanner: async () => "not an array" as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -203,7 +203,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  run("provider returns null", {
+  test("provider returns null", {
     scanner: async () => null as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -211,7 +211,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  run("provider returns undefined", {
+  test("provider returns undefined", {
     scanner: async () => undefined as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -219,7 +219,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  run("provider throws exception", {
+  test("provider throws exception", {
     scanner: async () => {
       throw new Error("Scanner failed");
     },
@@ -229,7 +229,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  run("provider returns non-object in array", {
+  test("provider returns non-object in array", {
     scanner: async () => ["not an object"] as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -240,7 +240,7 @@ describe("Invalid Return Values", () => {
 
 // Invalid advisory format tests
 describe("Invalid Advisory Formats", () => {
-  run("advisory missing package field", {
+  test("advisory missing package field", {
     scanner: async () => [
       {
         description: "Missing package field",
@@ -254,7 +254,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory package field not string", {
+  test("advisory package field not string", {
     scanner: async () => [
       {
         package: 123,
@@ -269,7 +269,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory package field empty string", {
+  test("advisory package field empty string", {
     scanner: async () => [
       {
         package: "",
@@ -284,7 +284,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory missing description field", {
+  test("advisory missing description field", {
     scanner: async () => [
       {
         package: "bar",
@@ -298,7 +298,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory description field not string", {
+  test("advisory description field not string", {
     scanner: async () => [
       {
         package: "bar",
@@ -313,7 +313,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory missing url field", {
+  test("advisory missing url field", {
     scanner: async () => [
       {
         package: "bar",
@@ -327,7 +327,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory missing level field", {
+  test("advisory missing level field", {
     scanner: async () => [
       {
         package: "bar",
@@ -341,7 +341,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory url field not string", {
+  test("advisory url field not string", {
     scanner: async () => [
       {
         package: "bar",
@@ -356,7 +356,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory invalid level", {
+  test("advisory invalid level", {
     scanner: async () => [
       {
         package: "bar",
@@ -371,7 +371,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("advisory level not string", {
+  test("advisory level not string", {
     scanner: async () => [
       {
         package: "bar",
@@ -386,7 +386,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  run("second advisory invalid", {
+  test("second advisory invalid", {
     scanner: async () => [
       {
         package: "bar",
@@ -409,7 +409,7 @@ describe("Invalid Advisory Formats", () => {
 });
 
 describe("Process Behavior", () => {
-  run("provider process exits early", {
+  test("provider process exits early", {
     scanner: `
       console.log("Starting...");
       process.exit(42);
@@ -434,7 +434,7 @@ describe("Process Behavior", () => {
 });
 
 describe("Large Data Handling", () => {
-  run("provider returns many advisories", {
+  test("provider returns many advisories", {
     scanner: async ({ packages }) => {
       const advisories: any[] = [];
 
@@ -457,7 +457,7 @@ describe("Large Data Handling", () => {
     },
   });
 
-  run("provider with very large response", {
+  test("provider with very large response", {
     scanner: async ({ packages }) => {
       const longString = Buffer.alloc(10000, 65).toString(); // 10k of 'A's
       return [
@@ -477,7 +477,7 @@ describe("Large Data Handling", () => {
 });
 
 describe("Warning Level Advisories", () => {
-  run("only warning level advisories", {
+  test("only warning level advisories", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -495,7 +495,7 @@ describe("Warning Level Advisories", () => {
     },
   });
 
-  run("mixed fatal and warn advisories", {
+  test("mixed fatal and warn advisories", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -520,7 +520,7 @@ describe("Warning Level Advisories", () => {
 });
 
 describe("Multiple Package Scanning", () => {
-  run("multiple packages scanned", {
+  test("multiple packages scanned", {
     packages: ["bar", "qux"],
     scanner: async ({ packages }) => {
       return packages.map((pkg, i) => ({
@@ -539,7 +539,7 @@ describe("Multiple Package Scanning", () => {
 });
 
 describe("Edge Cases", () => {
-  run("empty advisories array", {
+  test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,
     expect: ({ out }) => {
@@ -547,7 +547,7 @@ describe("Edge Cases", () => {
     },
   });
 
-  run("special characters in advisory", {
+  test("special characters in advisory", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -563,7 +563,7 @@ describe("Edge Cases", () => {
     },
   });
 
-  run("unicode in advisory fields", {
+  test("unicode in advisory fields", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -579,7 +579,7 @@ describe("Edge Cases", () => {
     },
   });
 
-  run("advisory without level field", {
+  test("advisory without level field", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -593,7 +593,7 @@ describe("Edge Cases", () => {
     },
   });
 
-  run("null values in level field", {
+  test("null values in level field", {
     scanner: async ({ packages }) => [
       {
         package: packages[0].name,
@@ -606,5 +606,119 @@ describe("Edge Cases", () => {
     expect: ({ err }) => {
       expect(err).toContain("Security advisory at index 0 'level' field must be a string");
     },
+  });
+});
+
+describe("Transitive Dependencies", () => {
+  test("scanner receives direct and transitive dependencies", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        console.log("Scanning:", pkg.name);
+      }
+
+      return [];
+    },
+    packages: ["baz"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Scanning: baz");
+      expect(out).toContain("Scanning: bar");
+    },
+  });
+
+  test("scanner receives all metadata for transitive dependencies", {
+    scanner: async ({ packages }) => {
+      console.log(JSON.stringify(packages, null, 2));
+
+      // Find the transitive dependency
+      const transDep = packages.find(p => p.name === "no-deps");
+      expect(transDep).toBeDefined();
+      expect(transDep.version).toBe("0.0.1");
+      expect(transDep.registryUrl).toContain("http://localhost:");
+
+      return [];
+    },
+    packages: ["a-dep"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      // Verify scanner output contains transitive dep info
+      expect(out).toContain('"name":"no-deps"');
+      expect(out).toContain('"version":"0.0.1"');
+    },
+  });
+
+  test("scanner can flag vulnerabilities in transitive dependencies", {
+    scanner: async ({ packages }) => {
+      const transDep = packages.find(p => p.name === "no-deps");
+      if (transDep) {
+        return [
+          {
+            package: transDep.name,
+            description: "Vulnerability in transitive dependency",
+            level: "fatal",
+            url: "https://example.com/transitive-vuln",
+          },
+        ];
+      }
+      return [];
+    },
+    packages: ["a-dep"],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("FATAL: no-deps");
+      expect(out).toContain("Vulnerability in transitive dependency");
+    },
+  });
+
+  test("scanner receives deep transitive dependencies", {
+    scanner: async ({ packages }) => {
+      console.log(
+        `Deep deps test - received ${packages.length} packages:`,
+        packages.map(p => p.name),
+      );
+
+      // When installing deep-a, should get: deep-a -> deep-b -> deep-c
+      expect(packages.length).toBe(3);
+      expect(packages.map(p => p.name).sort()).toEqual(["deep-a", "deep-b", "deep-c"]);
+
+      return [];
+    },
+    packages: ["deep-a"],
+    expectedExitCode: 0,
+  });
+
+  test("scanner handles multiple dependency trees", {
+    scanner: async ({ packages }) => {
+      console.log(
+        `Multiple trees - received ${packages.length} packages:`,
+        packages.map(p => p.name),
+      );
+
+      // Installing both a-dep and another package
+      // Should get: a-dep -> no-deps, plus bar
+      expect(packages.length).toBe(3);
+      expect(packages.map(p => p.name).sort()).toEqual(["a-dep", "bar", "no-deps"]);
+
+      return [];
+    },
+    packages: ["a-dep", "bar"],
+    expectedExitCode: 0,
+  });
+
+  test("scanner receives peer dependencies", {
+    scanner: async ({ packages }) => {
+      console.log(
+        `Peer deps test - received ${packages.length} packages:`,
+        packages.map(p => p.name),
+      );
+
+      // When installing peer, should also get its peer dependency
+      expect(packages.find(p => p.name === "peer")).toBeDefined();
+      expect(packages.find(p => p.name === "no-deps")).toBeDefined();
+
+      return [];
+    },
+    packages: ["peer"],
+    expectedExitCode: 0,
   });
 });

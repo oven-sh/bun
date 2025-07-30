@@ -158,7 +158,7 @@ See [Test > Lifecycle](https://bun.com/docs/test/lifecycle) for complete documen
 
 ## Mocks
 
-Create mock functions with the `mock` function. Mocks are automatically reset between tests.
+Create mock functions with the `mock` function.
 
 ```ts
 import { test, expect, mock } from "bun:test";

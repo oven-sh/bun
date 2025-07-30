@@ -2509,9 +2509,6 @@ export async function main() {
   const results = await runTests();
   const ok = results.every(({ ok }) => ok);
 
-  console.log("Final RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
-  console.log("Final committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
-
   let waitForUser = false;
   while (isCI) {
     const userCount = getLoggedInUserCountOrDetails();
@@ -2539,13 +2536,3 @@ export async function main() {
 }
 
 await main();
-
-function getCommitted() {
-  let child;
-  if (process.platform === "win32") {
-    child = spawnSync("wmic", ["process", "where", `processid=${process.pid}`, "get", "PageFileUsage"]);
-  } else {
-    child = spawnSync("ps", ["-o", "vsz", "-p", process.pid.toString()]);
-  }
-  return parseInt(child.stdout.toString().split("\n")[1].trim());
-}

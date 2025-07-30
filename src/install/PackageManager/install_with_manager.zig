@@ -993,45 +993,6 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 
 const string = []const u8;
 
-const std = @import("std");
-const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
-const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const Output = bun.Output;
-const Path = bun.path;
-const Progress = bun.Progress;
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const strings = bun.strings;
-const Command = bun.cli.Command;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;
-
-const Dependency = bun.install.Dependency;
-const DependencyID = bun.install.DependencyID;
-const Features = bun.install.Features;
-const PackageID = bun.install.PackageID;
-const PackageInstall = bun.install.PackageInstall;
-const PackageNameHash = bun.install.PackageNameHash;
-const PatchTask = bun.install.PatchTask;
-const Resolution = bun.install.Resolution;
-const TextLockfile = bun.install.TextLockfile;
-const invalid_package_id = bun.install.invalid_package_id;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;
-
-const PackageManager = bun.install.PackageManager;
-const Options = PackageManager.Options;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-
 fn performSecurityScanAfterResolution(
     manager: *PackageManager,
     _: string,
@@ -1370,3 +1331,42 @@ const SecurityAdvisory = struct {
     url: ?[]const u8,
     description: ?[]const u8,
 };
+
+const std = @import("std");
+const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
+const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Path = bun.path;
+const Progress = bun.Progress;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;
+const Command = bun.cli.Command;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;
+
+const Dependency = bun.install.Dependency;
+const DependencyID = bun.install.DependencyID;
+const Features = bun.install.Features;
+const PackageID = bun.install.PackageID;
+const PackageInstall = bun.install.PackageInstall;
+const PackageNameHash = bun.install.PackageNameHash;
+const PatchTask = bun.install.PatchTask;
+const Resolution = bun.install.Resolution;
+const TextLockfile = bun.install.TextLockfile;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const Lockfile = bun.install.Lockfile;
+const Package = Lockfile.Package;
+
+const PackageManager = bun.install.PackageManager;
+const Options = PackageManager.Options;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

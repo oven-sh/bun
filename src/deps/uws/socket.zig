@@ -617,7 +617,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 host.ptr,
                 port,
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
-                // 24 bytes because of the extra space for the ssl socket this avoid reallocating the socket when upgrading
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
             ) orelse return error.FailedToOpenSocket;

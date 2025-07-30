@@ -86,9 +86,10 @@ const string = []const u8;
 
 const std = @import("std");
 const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
+
 const printDiffFile = @import("./diff/printDiff.zig");
-const printDiffMain = printDiffFile.printDiffMain;
 const DiffConfig = printDiffFile.DiffConfig;
+const printDiffMain = printDiffFile.printDiffMain;
 
 const bun = @import("bun");
 const MutableString = bun.MutableString;

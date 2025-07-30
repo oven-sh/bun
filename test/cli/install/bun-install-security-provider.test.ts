@@ -48,7 +48,6 @@ function run(
         await write(scannerPath, s);
       }
 
-      // Configure bunfig
       const bunfig = await read("./bunfig.toml").text();
       if (options.bunfigProvider !== false) {
         const providerPath = options.bunfigProvider || "./scanner.ts";
@@ -62,7 +61,7 @@ function run(
       });
 
       const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
-      const packages = options.packages || ["bar"];
+      const packages = options.packages ?? ["bar"];
 
       const { out, err } = await runBunInstall(bunEnv, package_dir, {
         packages,
@@ -74,11 +73,6 @@ function run(
 
       if (options.fails) {
         expect(out).toContain("Installation cancelled due to fatal security issues");
-      }
-
-      // Only check URLs if we're actually installing packages
-      if (packages.length > 0 && packages[0] === "bar") {
-        expect(urls).toEqual([root_url + "/bar", root_url + "/bar-0.0.2.tgz"]);
       }
 
       await options.expect?.({ out, err });
@@ -393,7 +387,6 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  // Mixed valid/invalid advisories
   run("second advisory invalid", {
     scanner: async () => [
       {

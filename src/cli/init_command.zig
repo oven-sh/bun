@@ -1091,7 +1091,7 @@ const Template = enum {
 
         return false;
     }
-    
+
     fn isVSCodeInstalled() bool {
         // Give some way to opt-out.
         if (bun.getenvTruthy("BUN_VSCODE_EXTENSION_DISABLED")) {
@@ -1128,7 +1128,7 @@ const Template = enum {
         if (Environment.isLinux) {
             const pathbuffer = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(pathbuffer);
-            
+
             if (bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "code") != null) {
                 return true;
             }
@@ -1143,36 +1143,36 @@ const Template = enum {
 
         return null;
     }
-    
+
     fn createVSCodeExtensionsJson() void {
         // Only create if VS Code or Cursor is installed
         if (isVSCodeInstalled() or isCursorInstalled()) {
             // Create .vscode directory if it doesn't exist
             bun.makePath(bun.FD.cwd().stdDir(), ".vscode") catch {};
-            
+
             // Create extensions.json if it doesn't exist
             if (!bun.sys.exists(".vscode/extensions.json")) {
-                const extensions_json_content = 
+                const extensions_json_content =
                     \\{
                     \\  "recommendations": [
                     \\    "oven.bun-vscode"
                     \\  ]
                     \\}
                 ;
-                
+
                 InitCommand.Assets.createNew(".vscode/extensions.json", extensions_json_content) catch {};
             }
         }
     }
-    
+
     fn createVSCodeLaunchJson(entry_point: []const u8, template: Template) void {
         // Only create if VS Code or Cursor is installed and launch.json doesn't exist
         if ((isVSCodeInstalled() or isCursorInstalled()) and !bun.sys.exists(".vscode/launch.json")) {
             // Create .vscode directory if it doesn't exist
             bun.makePath(bun.FD.cwd().stdDir(), ".vscode") catch {};
-            
+
             if (template.isReact()) {
-                const react_launch_json = 
+                const react_launch_json =
                     \\{
                     \\  "version": "0.2.0",
                     \\  "configurations": [
@@ -1207,7 +1207,7 @@ const Template = enum {
             } else if (entry_point.len > 0) {
                 // For non-React templates, create a simple launch configuration
                 // Use a generic entry point that works for most cases
-                const simple_launch_json = 
+                const simple_launch_json =
                     \\{
                     \\  "version": "0.2.0",
                     \\  "configurations": [

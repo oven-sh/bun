@@ -1152,7 +1152,7 @@ pub const H2FrameParser = struct {
                 .signal = signal,
                 .parser = parser,
                 .stream_id = this.id,
-                .globalThis = parser.globalThis,
+                .globalThis = parser.globalThis, // TODO: remove this when `AbortSignal` + `voidFromJSError` no longer needs it
             });
             signal_ref.signal = signal.ref().listen(SignalRef, signal_ref, SignalRef.abortListener);
             //TODO: We should not need this ref counting here, since Parser owns Stream

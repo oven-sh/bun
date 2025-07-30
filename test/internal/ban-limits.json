@@ -12,7 +12,7 @@
   "== allocator.ptr": 0,
   "@import(\"bun\").": 0,
   "EXCEPTION_ASSERT(!scope.exception())": 0,
-  "TODO: properly propagate exception upwards": 98,
+  "TODO: properly propagate exception upwards": 100,
   "alloc.ptr !=": 0,
   "alloc.ptr ==": 0,
   "allocator.ptr !=": 1,

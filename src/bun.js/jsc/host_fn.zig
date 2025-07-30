@@ -175,6 +175,7 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
 }
 
 // For when bubbling up errors to functions that require a C ABI boundary
+// TODO: make this not need a 'globalThis'
 pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
     switch (err) {
         error.JSError => {},

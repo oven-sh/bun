@@ -785,6 +785,7 @@ pub const InitCommand = struct {
         switch (template) {
             .blank, .typescript_library => {
                 Template.createAgentRule();
+                Template.createVSCodeExtensionsJson();
 
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
@@ -1089,12 +1090,75 @@ const Template = enum {
 
         return false;
     }
+    
+    fn isVSCodeInstalled() bool {
+        // Give some way to opt-out.
+        if (bun.getenvTruthy("BUN_VSCODE_EXTENSION_DISABLED")) {
+            return false;
+        }
+
+        // Detect if they're currently using vscode.
+        if (bun.getenvZAnyCase("VSCODE_PID")) |env| {
+            if (env.len > 0) {
+                return true;
+            }
+        }
+
+        if (Environment.isMac) {
+            if (bun.sys.exists("/Applications/Visual Studio Code.app")) {
+                return true;
+            }
+        }
+
+        if (Environment.isWindows) {
+            if (bun.getenvZAnyCase("USER")) |user| {
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
+                const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", .{user}) catch {
+                    return false;
+                };
+
+                if (bun.sys.exists(path)) {
+                    return true;
+                }
+            }
+        }
+
+        if (Environment.isLinux) {
+            const pathbuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(pathbuffer);
+            
+            if (bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "code") != null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
     fn getCursorRule() ?*const TemplateFile {
         if (isCursorInstalled()) {
             return &cursor_rule;
         }
 
         return null;
+    }
+    
+    fn createVSCodeExtensionsJson() void {
+        // Only create if VS Code or Cursor is installed and the file doesn't already exist
+        if ((isVSCodeInstalled() or isCursorInstalled()) and !bun.sys.exists(".vscode/extensions.json")) {
+            // Create .vscode directory if it doesn't exist
+            bun.makePath(bun.FD.cwd().stdDir(), ".vscode") catch {};
+            
+            const extensions_json_content = 
+                \\{
+                \\  "recommendations": [
+                \\    "oven.bun-vscode"
+                \\  ]
+                \\}
+            ;
+            
+            InitCommand.Assets.createNew(".vscode/extensions.json", extensions_json_content) catch {};
+        }
     }
 
     const ReactBlank = struct {
@@ -1176,6 +1240,7 @@ const Template = enum {
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
         Template.createAgentRule();
+        Template.createVSCodeExtensionsJson();
 
         inline for (comptime this.files()) |file| {
             const path = file.path;

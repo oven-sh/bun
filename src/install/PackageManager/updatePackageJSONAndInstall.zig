@@ -120,8 +120,13 @@ fn performSecurityScanOnAdds(
         \\    process.exit(1);
         \\  }}
         \\
-        \\  // TODO: Send result through IPC channel instead of stderr
-        \\  // process.send({{ type: 'advisories', data: result }});
+        \\  // Write result to IPC channel (fd 3)
+        \\  const fs = require('fs');
+        \\  fs.writeFileSync(3, JSON.stringify(result));
+        \\
+        \\  // Exit with code 1 if there are fatal advisories
+        \\  const hasFatal = result.some(a => a.level === 'fatal');
+        \\  process.exit(hasFatal ? 1 : 0);
         \\}} catch (error) {{
         \\  console.error('Security provider failed:');
         \\  console.error(error);
@@ -138,7 +143,14 @@ fn performSecurityScanOnAdds(
 
     const argv = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
 
-    const options = bun.spawn.SpawnOptions{};
+    const options = bun.spawn.SpawnOptions{
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .stdin = .ignore,
+        .extra_fds = &[_]bun.spawn.SpawnOptions.Stdio{
+            .buffer,
+        },
+    };
 
     const spawn_result = switch (try bun.spawn.spawnProcess(&options, @constCast(@ptrCast(&argv)), @ptrCast(std.os.environ.ptr))) {
         .err => |err| {
@@ -148,6 +160,33 @@ fn performSecurityScanOnAdds(
         .result => |res| res,
     };
 
+    if (spawn_result.extra_pipes.items.len == 0) {
+        Output.errGeneric("Failed to create IPC pipe", .{});
+        Global.exit(1);
+    }
+    const ipc_fd = spawn_result.extra_pipes.items[0];
+    defer ipc_fd.close();
+
+    var ipc_data = std.ArrayList(u8).init(manager.allocator);
+    defer ipc_data.deinit();
+
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const read_result = bun.sys.read(ipc_fd, &buf);
+        switch (read_result) {
+            .err => |err| {
+                if (err.getErrno() != .AGAIN) {
+                    Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
+                }
+                break;
+            },
+            .result => |bytes_read| {
+                if (bytes_read == 0) break;
+                try ipc_data.appendSlice(buf[0..bytes_read]);
+            },
+        }
+    }
+
     const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
 
     const status = bun.spawn.Status.from(spawn_result.pid, &wait_result) orelse {
@@ -155,24 +194,70 @@ fn performSecurityScanOnAdds(
         Global.exit(1);
     };
 
+    if (ipc_data.items.len > 0) {
+        const advisories = std.json.parseFromSlice([]SecurityAdvisory, manager.allocator, ipc_data.items, .{
+            .ignore_unknown_fields = true,
+        }) catch |err| {
+            Output.errGeneric("Failed to parse security advisories: {s}", .{@errorName(err)});
+            Output.errGeneric("Raw data: {s}", .{ipc_data.items});
+            Global.exit(1);
+        };
+        defer advisories.deinit();
+
+        if (advisories.value.len > 0) {
+            var has_fatal = false;
+            var has_warn = false;
+
+            Output.pretty("\n<red>Security advisories found:<r>\n", .{});
+            for (advisories.value) |advisory| {
+                switch (advisory.level) {
+                    .fatal => {
+                        has_fatal = true;
+                        Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
+                    },
+                    .warn => {
+                        has_warn = true;
+                        Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
+                    },
+                }
+
+                if (advisory.description) |desc| {
+                    Output.pretty("    {s}\n", .{desc});
+                }
+                if (advisory.url) |url| {
+                    Output.pretty("    <cyan>{s}<r>\n", .{url});
+                }
+            }
+
+            if (has_fatal) {
+                Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n", .{});
+                Global.exit(1);
+            } else if (has_warn) {
+                // TODO: Prompt user to continue
+                Output.pretty("\n<yellow>Security warnings found. Continuing anyway...<r>\n", .{});
+            }
+        }
+    }
+
     if (!status.isOK()) {
         switch (status) {
             .exited => |exited| {
-                Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+                // Only error if exit code is non-zero AND we didn't already handle fatal advisories
+                if (exited.code != 0 and ipc_data.items.len == 0) {
+                    Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+                    Global.exit(1);
+                }
             },
             .signaled => |signal| {
                 Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
+                Global.exit(1);
             },
             else => {
                 Output.errGeneric("Security provider failed", .{});
+                Global.exit(1);
             },
         }
-        Global.exit(1);
     }
-
-    // TODO: Implement IPC channel for structured communication with security provider
-    // Currently we inherit stdout/stderr so the provider can log freely,
-    // but we need an IPC channel to receive the security advisories
 }
 
 fn updatePackageJSONAndInstallWithManagerWithUpdates(

@@ -30,13 +30,13 @@ declare module "bun" {
          */
         requestedRange: string;
 
-        /**
-         * Integrity hash provided from the registry
-         *
-         * Bun will usually verify this, but it's possible there are cases where
-         * it was not validated.
-         */
-        integrity: string;
+        // /**
+        //  * Integrity hash provided from the registry
+        //  *
+        //  * Bun will usually verify this, but it's possible there are cases where
+        //  * it was not validated.
+        //  */
+        // integrity: string;
       }
 
       /**

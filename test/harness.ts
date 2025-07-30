@@ -236,6 +236,19 @@ export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: 
   return makeTreeSyncFromDirectoryTree(base, filesOrAbsolutePathToCopyFolderFrom);
 }
 
+class DeletablePathString extends String {
+  constructor(value: string) {
+    super(value);
+  }
+
+  [Symbol.dispose]() {
+    rmSync(this.toString(), { recursive: true, force: true });
+  }
+  [Symbol.asyncDispose]() {
+    return rm(this.toString(), { recursive: true, force: true });
+  }
+}
+
 /**
  * Recursively create files within a new temporary directory.
  *
@@ -256,16 +269,18 @@ export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: 
 export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
-): string {
+): string & { [Symbol.dispose](): void; [Symbol.asyncDispose](): Promise<void> } {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
-  return base;
+  return new DeletablePathString(base) as any;
 }
 
-export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
+export function tempDirWithFilesAnon(
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & { [Symbol.dispose](): void; [Symbol.asyncDispose](): Promise<void> } {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
-  return base;
+  return new DeletablePathString(base) as any;
 }
 
 export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {

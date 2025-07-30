@@ -895,7 +895,7 @@ test("color", async () => {
 
     \x1B[33m@@ -1,7 +1,7 @@\x1B[0m
       \x1B[0m\x1B[2mInt32Array [\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m  0,\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  0,\x1B[0m
       \x1B[0m\x1B[2m  1,\x1B[0m
       \x1B[0m\x1B[2m  2,\x1B[0m
       \x1B[0m\x1B[2m  3,\x1B[0m
@@ -907,7 +907,7 @@ test("color", async () => {
       \x1B[0m\x1B[2m  99997,\x1B[0m
       \x1B[0m\x1B[2m  99998,\x1B[0m
       \x1B[0m\x1B[2m  99999,\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m  100000,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  100000,\x1B[0m
       \x1B[0m\x1B[2m]\x1B[0m
 
     \x1B[32m- Expected  - 1\x1B[0m

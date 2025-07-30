@@ -185,10 +185,7 @@ describe("import.meta.glob", () => {
       ]);
       expect(JSON.parse(lines[1].split(": ")[1])).toEqual(["./config/app.js", "./lib/helper.js"]);
       expect(JSON.parse(lines[2].split(": ")[1])).toEqual([]);
-      expect(JSON.parse(lines[3].split(": ")[1])).toEqual([
-        "./src/components/button.js",
-        "./src/main.js",
-      ]);
+      expect(JSON.parse(lines[3].split(": ")[1])).toEqual(["./src/components/button.js", "./src/main.js"]);
     });
 
     test("handles empty results gracefully", () => {
@@ -295,7 +292,7 @@ describe("import.meta.glob", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
       const lines = stdout.trim().split("\n");
-      
+
       expect(lines[0]).toContain("./data/config.json");
       expect(lines[0]).toContain("./data/nested/deep.json");
       expect(lines[1]).toBe("COMPLEX_COUNT: 4");
@@ -587,7 +584,9 @@ describe("import.meta.glob", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
       expect(stdout).toContain("COUNT: 3");
-      expect(stdout).toContain(`SCRIPT_TEXT: console.log("This should be text, not executed!"); export default "js-module";`);
+      expect(stdout).toContain(
+        `SCRIPT_TEXT: console.log("This should be text, not executed!"); export default "js-module";`,
+      );
     });
   });
 });

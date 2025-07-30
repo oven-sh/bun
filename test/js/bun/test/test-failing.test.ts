@@ -1,6 +1,6 @@
 import { fail } from "assert";
 import { $ } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { bunExe } from "harness";
 import path from "path";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures");

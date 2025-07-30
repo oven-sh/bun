@@ -21,7 +21,7 @@ function run(
   name: string,
   options: {
     testTimeout?: number;
-    scanner: Bun.Install.Security.Provider["onInstall"] | string;
+    scanner: Bun.Install.Security.Provider["scan"] | string;
     fails?: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
     expectedExitCode?: number;
@@ -43,7 +43,7 @@ function run(
       } else {
         const s = `export const provider = {
   version: "1", 
-  onInstall: ${options.scanner.toString()},
+  scan: ${options.scanner.toString()},
 };`;
         await write(scannerPath, s);
       }
@@ -153,7 +153,7 @@ describe("Security Provider Edge Cases", () => {
 
   run("provider missing version field", {
     scanner: `export const provider = {
-      onInstall: async () => []
+      scan: async () => []
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -164,7 +164,7 @@ describe("Security Provider Edge Cases", () => {
   run("provider wrong version", {
     scanner: `export const provider = {
       version: "2",
-      onInstall: async () => []
+      scan: async () => []
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -172,24 +172,24 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  run("provider missing onInstall", {
+  run("provider missing scan", {
     scanner: `export const provider = {
       version: "1"
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("provider.onInstall is not a function");
+      expect(err).toContain("provider.scan is not a function");
     },
   });
 
-  run("provider onInstall not a function", {
+  run("provider scan not a function", {
     scanner: `export const provider = {
       version: "1",
-      onInstall: "not a function"
+      scan: "not a function"
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("provider.onInstall is not a function");
+      expect(err).toContain("provider.scan is not a function");
     },
   });
 });

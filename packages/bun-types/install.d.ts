@@ -49,7 +49,7 @@ declare module "bun" {
          * Level represents the degree of danger for a security advisory
          *
          * Bun behaves differently depending on the values returned from the
-         * {@link Provider.onInstall `onInstall`} hook:
+         * {@link Provider.scan `scan`} hook:
          *
          * > In any case, Bun *always* pretty prints *all* the advisories,
          * > but...
@@ -81,7 +81,7 @@ declare module "bun" {
       }
 
       /**
-       * The callback argument for the `onInstall` hook
+       * The callback argument for the `scan` hook
        */
       export interface OnInstallInfo {
         packages: Package[];
@@ -101,7 +101,7 @@ declare module "bun" {
 
         /**
          * Perform an advisory check when a user ran `bun add <package>
-         * [...packages]`
+         * [...packages]` or other related/similar commands.
          *
          * If this function throws an error, Bun will immediately stop the
          * install process and print the error to the user.
@@ -113,7 +113,7 @@ declare module "bun" {
          *
          * @returns A list of advisories.
          */
-        onInstall: (info: OnInstallInfo) => Promise<Advisory[]>;
+        scan: (info: OnInstallInfo) => Promise<Advisory[]>;
       };
     }
   }

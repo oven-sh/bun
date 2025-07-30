@@ -74,7 +74,6 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
-const napiTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
@@ -1288,9 +1287,6 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
-  }
-  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
-    return napiTimeout;
   }
   return testTimeout;
 }

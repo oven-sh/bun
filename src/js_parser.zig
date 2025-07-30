@@ -5135,6 +5135,33 @@ fn NewParser_(
                 if (state.import_record_tag) |tag| {
                     p.import_records.items[import_record_index].tag = tag;
                 }
+                
+                if (state.import_options.data == .e_object) {
+                    const obj = state.import_options.data.e_object;
+                    for (obj.properties.slice()) |prop| {
+                        if (prop.key != null and prop.value != null and 
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_object) {
+                            const key_str = prop.key.?.data.e_string.slice(p.allocator);
+                            if (strings.eqlComptime(key_str, "with")) {
+                                const with_obj = prop.value.?.data.e_object;
+                                for (with_obj.properties.slice()) |with_prop| {
+                                    if (with_prop.key != null and with_prop.value != null and
+                                        with_prop.key.?.data == .e_string and with_prop.value.?.data == .e_string) {
+                                        const with_key = with_prop.key.?.data.e_string.slice(p.allocator);
+                                        if (strings.eqlComptime(with_key, "type")) {
+                                            const type_value = with_prop.value.?.data.e_string.slice(p.allocator);
+                                            if (options.Loader.fromString(type_value)) |loader| {
+                                                p.import_records.items[import_record_index].loader = loader;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
@@ -23581,10 +23608,33 @@ fn NewParser_(
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+                
+                if (with_attrs) |attrs| {
+                    for (attrs.properties.slice()) |prop| {
+                        if (prop.key != null and prop.value != null and 
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_string) {
+                            const key_str = prop.key.?.data.e_string.slice(p.allocator);
+                            if (strings.eqlComptime(key_str, "type")) {
+                                const value_str = prop.value.?.data.e_string.slice(p.allocator);
+                                if (options.Loader.fromString(value_str)) |loader| {
+                                    p.import_records.items[import_record_index].loader = loader;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 const import_expr = p.newExpr(E.Import{
                     .expr = p.newExpr(E.String{ .data = import_path }, loc),
-                    .options = if (with_attrs) |attrs| p.newExpr(E.Object{ .properties = attrs.properties }, loc) else Expr.empty,
+                    .options = if (with_attrs) |attrs| blk: {
+                        var with_props = p.allocator.alloc(G.Property, 1) catch unreachable;
+                        with_props[0] = .{
+                            .key = p.newExpr(E.String{ .data = "with" }, loc),
+                            .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
+                        };
+                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.init(with_props) }, loc);
+                    } else Expr.empty,
                     .import_record_index = import_record_index,
                 }, loc);
 

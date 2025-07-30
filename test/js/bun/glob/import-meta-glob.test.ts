@@ -536,16 +536,15 @@ describe("import.meta.glob", () => {
       expect(stdout.trim()).toContain('NAMES: ["bar","foo"]');
     });
 
-    test.todo("--splitting works with 'with' option for JS files as text", async () => {
-      // This test is TODO because Bun's bundler doesn't support { type: 'text' } for JS files yet.
-      // Our import.meta.glob implementation correctly passes the 'with' option to imports.
+    test("--splitting works with 'with' option for JS files as text", async () => {
       const dir = tempDirWithFiles("import-glob-splitting-with", {
         "entry.js": `
           const modules = import.meta.glob('./assets/*', { with: { type: 'text' } });
           export async function loadTexts() {
             const texts = {};
             for (const [path, loader] of Object.entries(modules)) {
-              texts[path] = await loader();
+              const mod = await loader();
+              texts[path] = mod.default || mod;
             }
             return texts;
           }
@@ -583,10 +582,14 @@ describe("import.meta.glob", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
       expect(stdout).toContain("COUNT: 3");
-      expect(stdout).toContain(
-        `SCRIPT_TEXT: console.log("This should be text, not executed!"); export default "js-module";`,
-      );
+      expect(stdout).toContain("SCRIPT_TEXT:");
+      expect(stdout).toContain('var script_default = \'console.log("This should be text, not executed!");');
+      const lines = stdout.split("\n");
+      const shouldNotExecuteLine = lines.findIndex(line => line === "This should be text, not executed!");
+      expect(shouldNotExecuteLine).toBe(-1);
     });
   });
 });

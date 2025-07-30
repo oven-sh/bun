@@ -54,6 +54,45 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      
+      itBundled("bun/loader-text-js-file", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import hello from './hello.js' with {type: "text"};
+        console.write(hello);
+      `,
+          "/hello.js": `console.log("This should not be executed!");
+export default "Hello from JS";`,
+        },
+        run: { stdout: `console.log("This should not be executed!");\nexport default "Hello from JS";` },
+      });
+      
+      itBundled("bun/loader-text-dynamic-import", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        const mod = await import('./script.js', { with: { type: 'text' } });
+        console.write(mod.default);
+      `,
+          "/script.js": `console.log("This should not run!");
+export const data = "test";`,
+        },
+        run: { stdout: `console.log("This should not run!");\nexport const data = "test";` },
+      });
+      
+      // Verify that without type: "text", JS files are executed normally
+      itBundled("bun/loader-js-normal-execution", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import { message } from './module.js';
+        console.write(message);
+      `,
+          "/module.js": `export const message = "executed";`,
+        },
+        run: { stdout: "executed" },
+      });
     });
   }
 

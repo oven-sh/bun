@@ -353,7 +353,7 @@ pub fn onClose(this: *PostgresSQLConnection) void {
         if (this.status == .failed) return;
 
         this.status = .failed;
-        this.cleanUpRequests();
+        this.cleanUpRequests(null);
     } else {
         const loop = this.vm.eventLoop();
         loop.enter();

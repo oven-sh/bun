@@ -521,7 +521,7 @@ describe("Warning Level Advisories", () => {
 
 describe("Multiple Package Scanning", () => {
   run("multiple packages scanned", {
-    packages: ["bar", "baz"],
+    packages: ["bar", "qux"],
     scanner: async ({ packages }) => {
       return packages.map((pkg, i) => ({
         package: pkg.name,
@@ -533,7 +533,7 @@ describe("Multiple Package Scanning", () => {
     fails: true,
     expect: ({ out }) => {
       expect(out).toContain("Security issue in bar");
-      expect(out).toContain("Security issue in baz");
+      expect(out).toContain("Security issue in qux");
     },
   });
 });

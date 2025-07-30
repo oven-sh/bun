@@ -49,7 +49,7 @@ declare module "bun" {
          * Level represents the degree of danger for a security advisory
          *
          * Bun behaves differently depending on the values returned from the
-         * {@link Provider.scan `scan`} hook:
+         * {@link Provider.scan `scan()`} hook:
          *
          * > In any case, Bun *always* pretty prints *all* the advisories,
          * > but...
@@ -57,8 +57,9 @@ declare module "bun" {
          * > → if any **fatal**, Bun will immediately cancel the installation
          * > and quit with a non-zero exit code
          * >
-         * > → else if any **warn**, Bun will ask the user if they'd like to
-         * > continue with the install
+         * > → else if any **warn**, Bun will either ask the user if they'd like
+         * > to continue with the install if in a TTY environment, or
+         * > immediately exit if not.
          */
         level: "fatal" | "warn";
 
@@ -78,13 +79,6 @@ declare module "bun" {
          * will print to the user.
          */
         description: string | null;
-      }
-
-      /**
-       * The callback argument for the `scan` hook
-       */
-      export interface OnInstallInfo {
-        packages: Package[];
       }
 
       export type Provider = {
@@ -113,7 +107,7 @@ declare module "bun" {
          *
          * @returns A list of advisories.
          */
-        scan: (info: OnInstallInfo) => Promise<Advisory[]>;
+        scan: (info: { packages: Package[] }) => Promise<Advisory[]>;
       };
     }
   }

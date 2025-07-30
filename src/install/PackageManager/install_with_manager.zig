@@ -1127,18 +1127,39 @@ fn performSecurityScanAfterResolution(
     const ipc_fd = spawn_result.extra_pipes.items[0];
     defer ipc_fd.close();
 
-    const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
+    _ = bun.sys.setNonblocking(ipc_fd);
 
     var ipc_data = std.ArrayList(u8).init(manager.allocator);
     defer ipc_data.deinit();
 
     var buf: [4096]u8 = undefined;
+    var process_exited = false;
+    var wait_result: bun.spawn.WaitPidResult = undefined;
+
     while (true) {
         switch (bun.sys.read(ipc_fd, &buf)) {
             .err => |err| {
-                // EAGAIN means no more data available (WOULDBLOCK is the same as EAGAIN on Darwin)
                 if (err.getErrno() == .AGAIN) {
-                    break;
+                    if (!process_exited) {
+                        switch (bun.spawn.waitpid(spawn_result.pid, std.posix.W.NOHANG)) {
+                            .result => |res| {
+                                if (res.pid > 0) {
+                                    // Process has exited
+                                    process_exited = true;
+                                    wait_result = res;
+                                    // Try reading one more time in case there's buffered data
+                                    std.time.sleep(10 * std.time.ns_per_ms);
+                                    continue;
+                                }
+                            },
+                            .err => {},
+                        }
+
+                        std.time.sleep(10 * std.time.ns_per_ms);
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
                 Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
                 break;
@@ -1152,10 +1173,42 @@ fn performSecurityScanAfterResolution(
         }
     }
 
-    const status = bun.spawn.Status.from(spawn_result.pid, &wait_result) orelse {
+    if (!process_exited) {
+        switch (bun.spawn.waitpid(spawn_result.pid, 0)) {
+            .result => |res| {
+                wait_result = res;
+            },
+            .err => |err| {
+                Output.errGeneric("Failed to wait for security provider: {s}", .{@tagName(err.getErrno())});
+                Global.exit(1);
+            },
+        }
+    }
+
+    const maybe_wait_result = bun.sys.Maybe(bun.spawn.WaitPidResult){ .result = wait_result };
+    const status = bun.spawn.Status.from(spawn_result.pid, &maybe_wait_result) orelse {
         Output.errGeneric("Failed to get security provider exit status", .{});
         Global.exit(1);
     };
+
+    if (ipc_data.items.len == 0) {
+        switch (status) {
+            .exited => |exit| {
+                if (exit.code != 0) {
+                    Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
+                } else {
+                    Output.errGeneric("Security provider exited without sending any data (possible deadlock prevented)", .{});
+                }
+            },
+            .signaled => |sig| {
+                Output.errGeneric("Security provider terminated by signal {s} without sending data", .{@tagName(sig)});
+            },
+            else => {
+                Output.errGeneric("Security provider terminated abnormally without sending data", .{});
+            },
+        }
+        Global.exit(1);
+    }
 
     if (ipc_data.items.len > 0) {
         const json_source = logger.Source{
@@ -1189,13 +1242,11 @@ fn performSecurityScanAfterResolution(
 
         const obj = json_expr.data.e_object;
 
-        // The object must have an "advisories" field
         const advisories_expr = obj.get("advisories") orelse {
             Output.errGeneric("Security provider response missing required 'advisories' field", .{});
             Global.exit(1);
         };
 
-        // The "advisories" field must be an array
         if (advisories_expr.data != .e_array) {
             Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
             Global.exit(1);

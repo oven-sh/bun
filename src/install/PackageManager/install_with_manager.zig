@@ -1243,20 +1243,22 @@ fn performSecurityScanAfterResolution(
                 Global.exit(1);
             };
 
-            // Level is optional, defaults to "warn"
-            var level = SecurityAdvisoryLevel.warn;
-            if (item_obj.get("level")) |level_expr| {
-                if (level_expr.asString(manager.allocator)) |level_str| {
-                    if (std.mem.eql(u8, level_str, "fatal")) {
-                        level = .fatal;
-                    } else if (std.mem.eql(u8, level_str, "warn")) {
-                        level = .warn;
-                    } else {
-                        Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
-                        Global.exit(1);
-                    }
-                }
-            }
+            const level_expr = item_obj.get("level") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
+                Global.exit(1);
+            };
+            const level_str = level_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'level' field must be a string", .{i});
+                Global.exit(1);
+            };
+            const level = if (std.mem.eql(u8, level_str, "fatal"))
+                SecurityAdvisoryLevel.fatal
+            else if (std.mem.eql(u8, level_str, "warn"))
+                SecurityAdvisoryLevel.warn
+            else {
+                Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
+                Global.exit(1);
+            };
 
             const advisory = SecurityAdvisory{
                 .level = level,

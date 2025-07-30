@@ -1364,6 +1364,8 @@ fn performSecurityScanAfterResolution(
 
             Output.pretty("\n<red>Security advisories found:<r>\n", .{});
             for (advisories_list.items) |advisory| {
+                Output.print("\n");
+
                 switch (advisory.level) {
                     .fatal => {
                         has_fatal = true;

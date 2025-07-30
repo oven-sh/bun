@@ -76,6 +76,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .server => void,
         },
 
+        /// Source maps for server chunks
+        current_chunk_source_maps: if (side == .server) ArrayListUnmanaged(PackedMap.RefOrEmpty) else void = if (side == .server) .empty,
+
+        /// File indices for server chunks to track which file each chunk comes from
+        current_chunk_file_indices: if (side == .server) ArrayListUnmanaged(FileIndex) else void = if (side == .server) .empty,
+
         pub const empty: @This() = .{
             .bundled_files = .empty,
             .stale_files = .empty,
@@ -89,6 +95,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .current_chunk_parts = .empty,
 
             .current_css_files = if (side == .client) .empty,
+            .current_chunk_source_maps = if (side == .server) .empty else {},
+            .current_chunk_file_indices = if (side == .server) .empty else {},
         };
 
         pub const File = switch (side) {
@@ -314,6 +322,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .current_chunk_len = {},
                 .current_chunk_parts = g.current_chunk_parts.deinit(allocator),
                 .current_css_files = if (side == .client) g.current_css_files.deinit(allocator),
+                .current_chunk_source_maps = if (side == .server) {
+                    for (g.current_chunk_source_maps.items) |source_map| {
+                        source_map.deref(&g.owner().*);
+                    }
+                    g.current_chunk_source_maps.deinit(allocator);
+                },
+                .current_chunk_file_indices = if (side == .server) g.current_chunk_file_indices.deinit(allocator),
             };
         }
 
@@ -344,6 +359,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             source_maps += ptr.data.memoryCostWithDedupe(new_dedupe_bits);
                         },
                         .empty => {},
+                    }
+                }
+            } else if (side == .server) {
+                graph += DevServer.memoryCostArrayList(g.current_chunk_source_maps);
+                graph += DevServer.memoryCostArrayList(g.current_chunk_file_indices);
+                for (g.current_chunk_source_maps.items) |source_map| {
+                    if (source_map == .ref) {
+                        source_maps += source_map.ref.data.memoryCostWithDedupe(new_dedupe_bits);
                     }
                 }
             }
@@ -576,10 +599,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     if (content == .js) {
                         try g.current_chunk_parts.append(dev.allocator, content.js.code);
                         g.current_chunk_len += content.js.code.len;
+
+                        // Track the file index for this chunk
+                        try g.current_chunk_file_indices.append(dev.allocator, file_index);
+
+                        // Store the source map instead of freeing it
                         if (content.js.source_map) |source_map| {
-                            var take = source_map.chunk.buffer;
-                            take.deinit();
-                            dev.allocator.free(source_map.escaped_source);
+                            const packed_map = PackedMap.newNonEmpty(source_map.chunk, source_map.escaped_source);
+                            try g.current_chunk_source_maps.append(dev.allocator, .{
+                                .ref = packed_map,
+                            });
+                        } else {
+                            try g.current_chunk_source_maps.append(dev.allocator, PackedMap.RefOrEmpty.blank_empty);
                         }
                     }
                 },
@@ -1546,7 +1577,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g.owner().graph_safety_lock.assertLocked();
             g.current_chunk_len = 0;
             g.current_chunk_parts.clearRetainingCapacity();
-            if (side == .client) g.current_css_files.clearRetainingCapacity();
+            if (side == .client) {
+                g.current_css_files.clearRetainingCapacity();
+            } else if (side == .server) {
+                g.current_chunk_source_maps.clearRetainingCapacity();
+                g.current_chunk_file_indices.clearRetainingCapacity();
+            }
         }
 
         const TakeJSBundleOptions = switch (side) {
@@ -1559,6 +1595,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             },
             .server => struct {
                 kind: ChunkKind,
+                script_id: SourceMapStore.Key,
             },
         };
 
@@ -1650,11 +1687,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .server => try w.writeAll("})"),
                     },
                 }
-                if (side == .client) {
-                    try w.writeAll("\n//# sourceMappingURL=" ++ DevServer.client_prefix ++ "/");
-                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
-                    try w.writeAll(".js.map\n");
+                // Append source map URL for both client and server bundles
+                try w.writeAll("\n//# sourceMappingURL=");
+                switch (side) {
+                    .client => try w.writeAll(DevServer.client_prefix ++ "/"),
+                    .server => try w.writeAll("bake://server.map/"),
                 }
+                try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
+                try w.writeAll(".js.map\n");
                 break :end end_list.items;
             };
 
@@ -1700,47 +1740,77 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Uses `arena` as a temporary allocator, fills in all fields of `out` except ref_count
         pub fn takeSourceMap(g: *@This(), arena: std.mem.Allocator, gpa: Allocator, out: *SourceMapStore.Entry) bun.OOM!void {
-            if (side == .server) @compileError("not implemented");
-
             const paths = g.bundled_files.keys();
-            const files = g.bundled_files.values();
 
-            // This buffer is temporary, holding the quoted source paths, joined with commas.
-            var source_map_strings = std.ArrayList(u8).init(arena);
-            defer source_map_strings.deinit();
+            switch (side) {
+                .client => {
+                    const files = g.bundled_files.values();
 
-            const dev = g.owner();
-            dev.relative_path_buf_lock.lock();
-            defer dev.relative_path_buf_lock.unlock();
+                    // This buffer is temporary, holding the quoted source paths, joined with commas.
+                    var source_map_strings = std.ArrayList(u8).init(arena);
+                    defer source_map_strings.deinit();
 
-            const buf = bun.path_buffer_pool.get();
-            defer bun.path_buffer_pool.put(buf);
+                    const dev = g.owner();
+                    dev.relative_path_buf_lock.lock();
+                    defer dev.relative_path_buf_lock.unlock();
 
-            var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
-            errdefer file_paths.deinit(gpa);
-            var contained_maps: bun.MultiArrayList(PackedMap.RefOrEmpty) = .empty;
-            try contained_maps.ensureTotalCapacity(gpa, g.current_chunk_parts.items.len);
-            errdefer contained_maps.deinit(gpa);
+                    const buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
 
-            var overlapping_memory_cost: u32 = 0;
+                    var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
+                    errdefer file_paths.deinit(gpa);
+                    var contained_maps: bun.MultiArrayList(PackedMap.RefOrEmpty) = .empty;
+                    try contained_maps.ensureTotalCapacity(gpa, g.current_chunk_parts.items.len);
+                    errdefer contained_maps.deinit(gpa);
 
-            for (g.current_chunk_parts.items) |file_index| {
-                file_paths.appendAssumeCapacity(paths[file_index.get()]);
-                const source_map = files[file_index.get()].sourceMap();
-                contained_maps.appendAssumeCapacity(source_map.dupeRef());
-                if (source_map == .ref) {
-                    overlapping_memory_cost += @intCast(source_map.ref.data.memoryCost());
-                }
+                    var overlapping_memory_cost: u32 = 0;
+
+                    for (g.current_chunk_parts.items) |file_index| {
+                        file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                        const source_map = files[file_index.get()].sourceMap();
+                        contained_maps.appendAssumeCapacity(source_map.dupeRef());
+                        if (source_map == .ref) {
+                            overlapping_memory_cost += @intCast(source_map.ref.data.memoryCost());
+                        }
+                    }
+
+                    overlapping_memory_cost += @intCast(contained_maps.memoryCost() + DevServer.memoryCostSlice(file_paths.items));
+
+                    out.* = .{
+                        .ref_count = out.ref_count,
+                        .paths = file_paths.items,
+                        .files = contained_maps,
+                        .overlapping_memory_cost = overlapping_memory_cost,
+                    };
+                },
+                .server => {
+                    var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
+                    errdefer file_paths.deinit(gpa);
+                    var contained_maps: bun.MultiArrayList(PackedMap.RefOrEmpty) = .empty;
+                    try contained_maps.ensureTotalCapacity(gpa, g.current_chunk_parts.items.len);
+                    errdefer contained_maps.deinit(gpa);
+
+                    var overlapping_memory_cost: u32 = 0;
+
+                    // For server, we use the tracked file indices to get the correct paths
+                    for (g.current_chunk_file_indices.items, g.current_chunk_source_maps.items) |file_index, source_map| {
+                        file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                        contained_maps.appendAssumeCapacity(source_map.dupeRef());
+                        if (source_map == .ref) {
+                            overlapping_memory_cost += @intCast(source_map.ref.data.memoryCost());
+                        }
+                    }
+
+                    overlapping_memory_cost += @intCast(contained_maps.memoryCost() + DevServer.memoryCostSlice(file_paths.items));
+
+                    out.* = .{
+                        .ref_count = out.ref_count,
+                        .paths = file_paths.items,
+                        .files = contained_maps,
+                        .overlapping_memory_cost = overlapping_memory_cost,
+                    };
+                },
             }
-
-            overlapping_memory_cost += @intCast(contained_maps.memoryCost() + DevServer.memoryCostSlice(file_paths.items));
-
-            out.* = .{
-                .ref_count = out.ref_count,
-                .paths = file_paths.items,
-                .files = contained_maps,
-                .overlapping_memory_cost = overlapping_memory_cost,
-            };
         }
 
         fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {

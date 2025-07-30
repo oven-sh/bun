@@ -2237,7 +2237,26 @@ pub fn finalizeBundle(
 
     // Load all new chunks into the server runtime.
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
+        // Generate a script_id for server bundles
+        // Use high bit set to distinguish from client bundles, and include generation
+        // FIXME: Claude, this is highly sus
+        const server_script_id = SourceMapStore.Key.init((1 << 63) | @as(u64, dev.generation));
+
+        // Register the source map for server bundle
+        switch (try dev.source_maps.putOrIncrementRefCount(server_script_id, 1)) {
+            .uninitialized => |entry| {
+                errdefer dev.source_maps.unref(server_script_id);
+                var arena = std.heap.ArenaAllocator.init(dev.allocator);
+                defer arena.deinit();
+                try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, entry);
+            },
+            .shared => {},
+        }
+
+        const server_bundle = try dev.server_graph.takeJSBundle(&.{
+            .kind = .hmr_chunk,
+            .script_id = server_script_id,
+        });
         defer dev.allocator.free(server_bundle);
 
         const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {

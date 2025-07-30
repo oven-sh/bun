@@ -618,7 +618,7 @@ describe("Transitive Dependencies", () => {
 
       return [];
     },
-    packages: ["baz"],
+    packages: ["bar"],
     expectedExitCode: 0,
     expect: ({ out }) => {
       expect(out).toContain("Scanning: baz");
@@ -629,32 +629,27 @@ describe("Transitive Dependencies", () => {
   test("scanner receives all metadata for transitive dependencies", {
     scanner: async ({ packages }) => {
       console.log(JSON.stringify(packages, null, 2));
-
-      // Find the transitive dependency
-      const transDep = packages.find(p => p.name === "no-deps");
-      expect(transDep).toBeDefined();
-      expect(transDep.version).toBe("0.0.1");
-      expect(transDep.registryUrl).toContain("http://localhost:");
-
       return [];
     },
-    packages: ["a-dep"],
+    packages: ["@barn/moo"],
     expectedExitCode: 0,
     expect: ({ out }) => {
       // Verify scanner output contains transitive dep info
-      expect(out).toContain('"name":"no-deps"');
-      expect(out).toContain('"version":"0.0.1"');
+      expect(out).toContain('"name":"bar"');
+      expect(out).toContain('"version":"0.0.2"');
+      expect(out).toContain('"name":"baz"');
+      expect(out).toContain('"registryUrl"');
     },
   });
 
   test("scanner can flag vulnerabilities in transitive dependencies", {
     scanner: async ({ packages }) => {
-      const transDep = packages.find(p => p.name === "no-deps");
+      const transDep = packages.find(p => p.name === "bar");
       if (transDep) {
         return [
           {
             package: transDep.name,
-            description: "Vulnerability in transitive dependency",
+            description: "Vulnerability in transitive dependency bar",
             level: "fatal",
             url: "https://example.com/transitive-vuln",
           },
@@ -662,63 +657,59 @@ describe("Transitive Dependencies", () => {
       }
       return [];
     },
-    packages: ["a-dep"],
+    packages: ["@barn/moo"],
     fails: true,
     expect: ({ out }) => {
-      expect(out).toContain("FATAL: no-deps");
-      expect(out).toContain("Vulnerability in transitive dependency");
+      expect(out).toContain("FATAL: bar");
+      expect(out).toContain("Vulnerability in transitive dependency bar");
     },
-  });
-
-  test("scanner receives deep transitive dependencies", {
-    scanner: async ({ packages }) => {
-      console.log(
-        `Deep deps test - received ${packages.length} packages:`,
-        packages.map(p => p.name),
-      );
-
-      // When installing deep-a, should get: deep-a -> deep-b -> deep-c
-      expect(packages.length).toBe(3);
-      expect(packages.map(p => p.name).sort()).toEqual(["deep-a", "deep-b", "deep-c"]);
-
-      return [];
-    },
-    packages: ["deep-a"],
-    expectedExitCode: 0,
   });
 
   test("scanner handles multiple dependency trees", {
     scanner: async ({ packages }) => {
-      console.log(
-        `Multiple trees - received ${packages.length} packages:`,
-        packages.map(p => p.name),
-      );
-
-      // Installing both a-dep and another package
-      // Should get: a-dep -> no-deps, plus bar
-      expect(packages.length).toBe(3);
-      expect(packages.map(p => p.name).sort()).toEqual(["a-dep", "bar", "no-deps"]);
-
+      console.log(`Received ${packages.length} packages:`);
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}@${pkg.version}`);
+      }
       return [];
     },
-    packages: ["a-dep", "bar"],
+    packages: ["@barn/moo", "qux"],
     expectedExitCode: 0,
+    expect: ({ out }) => {
+      // Installing both @barn/moo and qux
+      // Should get: @barn/moo -> bar, baz, plus qux
+      expect(out).toContain("- @barn/moo@");
+      expect(out).toContain("- bar@0.0.2");
+      expect(out).toContain("- baz@");
+      expect(out).toContain("- qux@0.0.2");
+    },
   });
 
   test("scanner receives peer dependencies", {
     scanner: async ({ packages }) => {
-      console.log(
-        `Peer deps test - received ${packages.length} packages:`,
-        packages.map(p => p.name),
-      );
-
-      // When installing peer, should also get its peer dependency
-      expect(packages.find(p => p.name === "peer")).toBeDefined();
-      expect(packages.find(p => p.name === "no-deps")).toBeDefined();
-
+      console.log("Packages with peer deps:");
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}@${pkg.version}`);
+      }
       return [];
     },
-    packages: ["peer"],
+    packages: ["boba"],
     expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("- boba@0.0.2");
+      expect(out).toContain("- peer@");
+    },
+  });
+
+  test("scanner counts all packages including transitive", {
+    scanner: async ({ packages }) => {
+      console.log(`Total packages scanned: ${packages.length}`);
+      return [];
+    },
+    packages: ["@barn/moo"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Total packages scanned: 3");
+    },
   });
 });

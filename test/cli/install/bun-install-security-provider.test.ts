@@ -416,7 +416,7 @@ describe("Process Behavior", () => {
     `,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider failed with exit code: 42");
+      expect(err).toContain("Security provider exited with code 42 without sending data");
     },
   });
 

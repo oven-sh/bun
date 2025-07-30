@@ -546,6 +546,7 @@ src/http/AsyncHTTP.zig
 src/http/CertificateInfo.zig
 src/http/Decompressor.zig
 src/http/Encoding.zig
+src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
@@ -633,6 +634,7 @@ src/install/resolvers/folder_resolver.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
+src/install/yarn.zig
 src/interchange.zig
 src/interchange/json.zig
 src/interchange/toml.zig

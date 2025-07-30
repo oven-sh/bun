@@ -1751,15 +1751,17 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   );
 }
 
-beforeAll(() => {
-  console.log("Initial RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
-  console.log("Initial committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
-});
+try {
+  beforeAll(() => {
+    console.log("Initial RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
+    console.log("Initial committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
+  });
 
-afterAll(() => {
-  console.log("Final RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
-  console.log("Final committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
-});
+  afterAll(() => {
+    console.log("Final RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
+    console.log("Final committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
+  });
+} catch (e) {}
 
 function getCommitted() {
   let child;

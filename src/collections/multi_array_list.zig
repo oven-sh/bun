@@ -9,6 +9,35 @@
 /// for the array of each field.  From the slice you can call
 /// `.items(.<field_name>)` to obtain a slice of field values.
 /// For unions you can call `.items(.tags)` or `.items(.data)`.
+///
+/// ## Bun's Fork
+///
+/// This is a fork of Zig's standard library MultiArrayList with the following modifications:
+///
+/// ### 1. Memory Safety & Debugging (`CheckedAllocPtr`)
+/// - Added `alloc_ptr` field to track which allocator was used for allocation
+/// - Provides runtime verification that the same allocator is used for deallocation
+/// - Helps catch allocator mismatches that could cause memory corruption
+/// - Enabled in debug builds for better error reporting
+///
+/// ### 2. Zero Initialization (`.zero()` method)
+/// - Added `zero()` method that zero-initializes all allocated memory
+/// - Uses `@memset(self.allocatedBytes(), 0)` to clear the entire backing buffer
+/// - Useful for security (clearing sensitive data) and deterministic behavior
+/// - More efficient than individually zeroing each field
+///
+/// ### 3. Improved Growth Strategy
+/// - Modified capacity growth algorithm for better performance characteristics
+/// - Different initial capacity calculation based on cache line optimization
+/// - Tuned for Bun's specific usage patterns and performance requirements
+///
+/// ### 4. API Enhancements
+/// - Added `memoryCost()` method for memory usage tracking
+/// - Enhanced `appendListAssumeCapacity()` for batch operations
+/// - Improved error handling and debugging support
+///
+/// These changes maintain full API compatibility with upstream while adding
+/// safety and performance improvements specific to Bun's requirements.
 pub fn MultiArrayList(comptime T: type) type {
     return struct {
         bytes: [*]align(@alignOf(T)) u8 = undefined,
@@ -574,6 +603,19 @@ pub fn MultiArrayList(comptime T: type) type {
             return capacityInBytes(self.capacity);
         }
 
+        /// Zero-initialize all allocated memory in the MultiArrayList.
+        /// 
+        /// This method efficiently clears the entire backing buffer by setting all bytes to zero,
+        /// which zero-initializes all fields across all elements in the list. This is more
+        /// efficient than iterating through individual elements or fields.
+        /// 
+        /// Use cases:
+        /// - Security: Clear sensitive data from memory
+        /// - Deterministic behavior: Ensure uninitialized memory doesn't contain garbage
+        /// - Testing: Create predictable initial states
+        /// 
+        /// Note: This operation affects the entire allocated capacity, not just the current length.
+        /// All reserved but unused capacity will also be zeroed.
         pub fn zero(self: Self) void {
             @memset(self.allocatedBytes(), 0);
         }

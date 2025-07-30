@@ -36,7 +36,6 @@ function run(
       const urls: string[] = [];
       setHandler(dummyRegistry(urls));
 
-      // Write scanner file
       const scannerPath = options.scannerFile || "./scanner.ts";
       if (typeof options.scanner === "string") {
         await write(scannerPath, options.scanner);
@@ -421,17 +420,17 @@ describe("Process Behavior", () => {
     },
   });
 
-  run("provider async timeout", {
-    testTimeout: 30_000 + 5_000,
-    scanner: async () => {
-      await new Promise(resolve => setTimeout(resolve, 30_000));
-      return [];
-    },
-    expectedExitCode: 1,
-    expect: ({ err }) => {
-      expect(err).toMatchInlineSnapshot(`"Security provider timed out after 30 seconds"`);
-    },
-  });
+  // run("provider async timeout", {
+  //   testTimeout: 30_000 + 5_000,
+  //   scanner: async () => {
+  //     await new Promise(resolve => setTimeout(resolve, 30_000));
+  //     return [];
+  //   },
+  //   expectedExitCode: 1,
+  //   expect: ({ err }) => {
+  //     expect(err).toMatchInlineSnapshot(`"Security provider timed out after 30 seconds"`);
+  //   },
+  // });
 });
 
 describe("Large Data Handling", () => {

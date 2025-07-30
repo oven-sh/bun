@@ -582,11 +582,10 @@ describe("import.meta.glob", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      expect(stderr).toBe("");
       expect(stdout).toContain("COUNT: 3");
       expect(stdout).toContain("SCRIPT_TEXT:");
-      expect(stdout).toContain('var script_default = \'console.log("This should be text, not executed!");');
+      expect(stdout).toContain('console.log("This should be text, not executed!");');
+      expect(stdout).toContain('export default "js-module";');
       const lines = stdout.split("\n");
       const shouldNotExecuteLine = lines.findIndex(line => line === "This should be text, not executed!");
       expect(shouldNotExecuteLine).toBe(-1);

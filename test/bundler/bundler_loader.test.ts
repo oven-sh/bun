@@ -93,6 +93,25 @@ export const data = "test";`,
         },
         run: { stdout: "executed" },
       });
+
+      itBundled("bun/loader-text-splitting-strips-options", {
+        target,
+        splitting: true,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+        const mod = await import('./data.js', { with: { type: 'text' } });
+        console.write(mod.default);
+      `,
+          "/data.js": `export default "test data";`,
+        },
+        run: { stdout: `export default "test data";` },
+        onAfterBundle(api) {
+          const entryFile = api.readFile("/out/entry.js");
+          expect(entryFile).not.toContain("with:");
+          expect(entryFile).not.toContain("{ type:");
+        },
+      });
     });
   }
 

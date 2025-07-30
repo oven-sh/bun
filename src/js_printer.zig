@@ -1835,9 +1835,15 @@ fn NewPrinter(
                 p.printStringLiteralUTF8(path.pretty, false);
             }
 
+            // Only print import options if the loader hasn't already been applied
+            // When bundling with a loader applied, the transformation has already happened
+            // so we don't need the import options anymore
             if (!import_options.isMissing()) {
-                p.printWhitespacer(ws(", "));
-                p.printExpr(import_options, .comma, .{});
+                const loader_was_applied = p.options.bundling and record.loader != null;
+                if (!loader_was_applied) {
+                    p.printWhitespacer(ws(", "));
+                    p.printExpr(import_options, .comma, .{});
+                }
             }
 
             p.print(")");

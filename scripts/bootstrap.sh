@@ -1181,11 +1181,29 @@ install_rust() {
 }
 
 install_docker() {
+	# Check if docker command is already available
+	if command -v docker >/dev/null 2>&1; then
+		print "Docker is already available ($(docker --version 2>/dev/null || echo "version unknown"))"
+		return 0
+	fi
+
 	case "$pm" in
 	brew)
-		if ! [ -d "/Applications/Docker.app" ]; then
-			package_manager install docker --cask
+		# Check if Docker Desktop is available
+		if [ -d "/Applications/Docker.app" ]; then
+			print "Docker Desktop is already installed, skipping installation"
+			return 0
 		fi
+
+		# Check if OrbStack is available
+		if [ -d "/Applications/OrbStack.app" ]; then
+			print "OrbStack is already installed, skipping Docker installation"
+			return 0
+		fi
+
+		# Install Docker Desktop if neither is available
+		print "Installing Docker Desktop..."
+		package_manager install docker --cask
 		;;
 	*)
 		case "$distro-$release" in
@@ -1204,16 +1222,19 @@ install_docker() {
 		;;
 	esac
 
-	systemctl="$(which systemctl)"
-	if [ -f "$systemctl" ]; then
-		execute_sudo "$systemctl" enable docker
-	fi
+	# Only configure Docker service on Linux systems
+	if [ "$os" = "linux" ]; then
+		systemctl="$(which systemctl)"
+		if [ -f "$systemctl" ]; then
+			execute_sudo "$systemctl" enable docker
+		fi
 
-	getent="$(which getent)"
-	if [ -n "$("$getent" group docker)" ]; then
-		usermod="$(which usermod)"
-		if [ -f "$usermod" ]; then
-			execute_sudo "$usermod" -aG docker "$user"
+		getent="$(which getent)"
+		if [ -f "$getent" ] && [ -n "$("$getent" group docker 2>/dev/null)" ]; then
+			usermod="$(which usermod)"
+			if [ -f "$usermod" ]; then
+				execute_sudo "$usermod" -aG docker "$user"
+			fi
 		fi
 	fi
 }

@@ -610,15 +610,15 @@ describe("Edge Cases", () => {
 });
 
 test("receives transitive dependencies", {
-  packages: ["bar"], // This package depends on `baz`
+  packages: ["depends-on-monkey"], // This package depends on monkey
   expectedExitCode: 0,
   scanner: async ({ packages }) => {
     for (const pkg of packages) console.log("Scanning:", pkg.name);
     return [];
   },
   expect: ({ out }) => {
-    expect(out).toContain("Scanning: baz");
-    expect(out).toContain("Scanning: bar");
+    expect(out).toContain("Scanning: depends-on-monkey");
+    expect(out).toContain("Scanning: monkey");
   },
 });
 

@@ -322,6 +322,17 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
     }
 }
 
+static void runScript(JSGlobalObject* globalObject, NodeVMScript* script, NakedPtr<JSC::Exception>& exception, JSValue& result)
+{
+    VM& vm = JSC::getVM(globalObject);
+    result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    if (auto* nodeVmObj = JSC::jsDynamicCast<NodeVMGlobalObject*>(globalObject)) {
+        if (nodeVmObj->microtaskMode() == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+            vm.drainMicrotasks(globalObject);
+        }
+    }
+}
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -344,9 +355,6 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
 
     std::optional<double> oldLimit, newLimit;
 
@@ -358,9 +366,9 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     if (options.breakOnSigint) {
         auto holder = SigintWatcher::hold(globalObject, script);
-        run();
+        runScript(globalObject, script, exception, result);
     } else {
-        run();
+        runScript(globalObject, script, exception, result);
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -408,9 +416,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
 
     std::optional<double> oldLimit, newLimit;
 
@@ -423,9 +428,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     if (options.breakOnSigint) {
         auto holder = SigintWatcher::hold(globalObject, script);
         vm.ensureTerminationException();
-        run();
+        runScript(globalObject, script, exception, result);
     } else {
-        run();
+        runScript(globalObject, script, exception, result);
     }
 
     if (options.timeout) {

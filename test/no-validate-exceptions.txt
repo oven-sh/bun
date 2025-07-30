@@ -274,3 +274,4 @@ test/js/node/crypto/node-crypto.test.js
 test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
+test/js/bun/glob/import-meta-glob.test.ts

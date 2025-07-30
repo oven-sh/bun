@@ -373,7 +373,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
 it("should support catalog versions in update", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  
+
   // Create a monorepo with catalog
   await writeFile(
     join(package_dir, "package.json"),
@@ -408,11 +408,11 @@ it("should support catalog versions in update", async () => {
 
   const err = await new Response(stderr).text();
   const out = await new Response(stdout).text();
-  
+
   // Should not crash with catalog dependencies
   expect(err).not.toContain("panic");
   expect(err).not.toContain("segfault");
-  
+
   // Verify catalog reference is preserved in package.json
   const pkg = await file(join(package_dir, "packages", "workspace-a", "package.json")).json();
   expect(pkg.dependencies["no-deps"]).toBe("catalog:");
@@ -420,15 +420,19 @@ it("should support catalog versions in update", async () => {
 
 it("should support --recursive flag", async () => {
   // First verify the flag appears in help
-  const { stdout: helpOut, stderr: helpErr, exited: helpExited } = spawn({
+  const {
+    stdout: helpOut,
+    stderr: helpErr,
+    exited: helpExited,
+  } = spawn({
     cmd: [bunExe(), "update", "--help"],
     cwd: package_dir,
     stdout: "pipe",
-    stderr: "pipe", 
+    stderr: "pipe",
     env,
   });
 
-  const help = await new Response(helpOut).text() + await new Response(helpErr).text();
+  const help = (await new Response(helpOut).text()) + (await new Response(helpErr).text());
   expect(await helpExited).toBe(0);
   expect(help).toContain("--recursive");
   expect(help).toContain("-r");
@@ -467,12 +471,11 @@ it("should support --recursive flag", async () => {
 
   const out = await new Response(stdout).text();
   const err = await new Response(stderr).text();
-  
+
   // Should not crash
   expect(err).not.toContain("panic");
   expect(err).not.toContain("segfault");
-  
+
   // Should recognize the flag (either process workspaces or show error about missing lockfile)
   expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
 });
-

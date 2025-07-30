@@ -485,24 +485,24 @@ pub const UpdateInteractiveCommand = struct {
             if (catalog_packages.len > 0) {
                 // Use the first package as the base, but combine workspace names
                 var first = catalog_packages[0];
-                
+
                 // Build combined workspace name
                 var workspace_names = std.ArrayList(u8).init(allocator);
                 defer workspace_names.deinit();
-                
+
                 try workspace_names.appendSlice("catalog (");
                 for (catalog_packages, 0..) |cat_pkg, i| {
                     if (i > 0) try workspace_names.appendSlice(", ");
                     try workspace_names.appendSlice(cat_pkg.workspace_name);
                 }
                 try workspace_names.append(')');
-                
+
                 // Free the old workspace_name and replace with combined
                 allocator.free(first.workspace_name);
                 first.workspace_name = try workspace_names.toOwnedSlice();
-                
+
                 try result.append(first);
-                
+
                 // Free the other catalog packages
                 for (catalog_packages[1..]) |cat_pkg| {
                     allocator.free(cat_pkg.name);

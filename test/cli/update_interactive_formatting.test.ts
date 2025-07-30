@@ -207,7 +207,6 @@ describe("bun update --interactive formatting", () => {
     expect(stderr).not.toContain("overflow");
   });
 
-
   it("should show workspace column with --filter", async () => {
     const dir = tempDirWithFiles("update-interactive-workspace-col-test", {
       "package.json": JSON.stringify({
@@ -240,7 +239,7 @@ describe("bun update --interactive formatting", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Should not crash with workspace column
     expect(stderr).not.toContain("panic");
     expect(stderr).not.toContain("segfault");
@@ -281,7 +280,7 @@ describe("bun update --interactive formatting", () => {
     });
 
     const stderr = await new Response(result.stderr).text();
-    
+
     // Should not crash with catalog dependencies
     expect(stderr).not.toContain("panic");
     expect(stderr).not.toContain("segfault");

@@ -129,7 +129,6 @@ pub const OutdatedCommand = struct {
         pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
     };
 
-
     fn getAllWorkspaces(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -248,9 +247,9 @@ pub const OutdatedCommand = struct {
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
         const dependencies = lockfile.buffers.dependencies.items;
-        
+
         var result = std.ArrayListUnmanaged(GroupedOutdatedInfo){};
-        
+
         const CatalogKey = struct {
             name_hash: u64,
             behavior: Behavior,
@@ -268,7 +267,7 @@ pub const OutdatedCommand = struct {
                 const dep = dependencies[item.dep_id];
                 const name_hash = bun.hash(dep.name.slice(string_buf));
                 const key = CatalogKey{ .name_hash = name_hash, .behavior = dep.behavior };
-                
+
                 const entry = try catalog_map.getOrPut(key);
                 if (!entry.found_existing) {
                     entry.value_ptr.* = std.ArrayList(PackageID).init(allocator);
@@ -284,21 +283,21 @@ pub const OutdatedCommand = struct {
                 });
             }
         }
-        
+
         // Second pass: add grouped catalog dependencies
         for (outdated_items) |item| {
             if (!item.is_catalog) continue;
-            
+
             const dep = dependencies[item.dep_id];
             const name_hash = bun.hash(dep.name.slice(string_buf));
             const key = CatalogKey{ .name_hash = name_hash, .behavior = dep.behavior };
-            
+
             const workspace_list = catalog_map.get(key) orelse continue;
-            
+
             if (workspace_list.items[0] != item.workspace_pkg_id) continue;
             var workspace_names = std.ArrayList(u8).init(allocator);
             defer workspace_names.deinit();
-            
+
             try workspace_names.appendSlice("catalog (");
             for (workspace_list.items, 0..) |workspace_id, i| {
                 if (i > 0) try workspace_names.appendSlice(", ");
@@ -306,7 +305,7 @@ pub const OutdatedCommand = struct {
                 try workspace_names.appendSlice(workspace_name);
             }
             try workspace_names.append(')');
-            
+
             try result.append(allocator, .{
                 .package_id = item.package_id,
                 .dep_id = item.dep_id,
@@ -315,7 +314,7 @@ pub const OutdatedCommand = struct {
                 .grouped_workspace_names = try workspace_names.toOwnedSlice(),
             });
         }
-        
+
         return result;
     }
 
@@ -545,95 +544,95 @@ pub const OutdatedCommand = struct {
                 const package_id = item.package_id;
                 const dep_id = item.dep_id;
 
-                    const dep = dependencies[dep_id];
-                    if (!dep.behavior.includes(group_behavior)) continue;
+                const dep = dependencies[dep_id];
+                if (!dep.behavior.includes(group_behavior)) continue;
 
-                    const package_name = pkg_names[package_id].slice(string_buf);
-                    const resolution = pkg_resolutions[package_id];
+                const package_name = pkg_names[package_id].slice(string_buf);
+                const resolution = pkg_resolutions[package_id];
 
-                    var expired = false;
-                    const manifest = manager.manifests.byNameAllowExpired(
-                        manager,
-                        manager.scopeForPackageName(package_name),
-                        package_name,
-                        &expired,
-                        .load_from_memory_fallback_to_disk,
-                    ) orelse continue;
+                var expired = false;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &expired,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse continue;
 
-                    const latest = manifest.findByDistTag("latest") orelse continue;
-                    const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                    const update = if (resolved_version.tag == .npm)
-                        manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                const latest = manifest.findByDistTag("latest") orelse continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const update = if (resolved_version.tag == .npm)
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                else
+                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+                table.printLineSeparator();
+
+                {
+                    // package name
+                    const behavior_str = if (dep.behavior.dev)
+                        " (dev)"
+                    else if (dep.behavior.peer)
+                        " (peer)"
+                    else if (dep.behavior.optional)
+                        " (optional)"
                     else
-                        manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                        "";
 
-                    table.printLineSeparator();
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    {
-                        // package name
-                        const behavior_str = if (dep.behavior.dev)
-                            " (dev)"
-                        else if (dep.behavior.peer)
-                            " (peer)"
-                        else if (dep.behavior.optional)
-                            " (optional)"
-                        else
-                            "";
+                    Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
+                    for (package_name.len + behavior_str.len..package_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                }
 
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                {
+                    // current version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                        Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
-                        for (package_name.len + behavior_str.len..package_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                    }
+                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{version_buf.items});
+                    for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
 
-                    {
-                        // current version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                {
+                    // update version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                        version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{version_buf.items});
-                        for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
+                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
 
-                    {
-                        // update version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                {
+                    // latest version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                        version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                        for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
+                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
 
-                    {
-                        // latest version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                if (was_filtered) {
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                        version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                        for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
+                    const workspace_name = if (item.grouped_workspace_names) |names|
+                        names
+                    else
+                        pkg_names[item.workspace_pkg_id].slice(string_buf);
+                    Output.pretty("{s}", .{workspace_name});
 
-                    if (was_filtered) {
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                    for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                }
 
-                        const workspace_name = if (item.grouped_workspace_names) |names|
-                            names
-                        else
-                            pkg_names[item.workspace_pkg_id].slice(string_buf);
-                        Output.pretty("{s}", .{workspace_name});
-
-                        for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                    }
-
-                    Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
+                Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
             }
         }
 

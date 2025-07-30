@@ -8487,7 +8487,11 @@ describe("outdated", () => {
 
   test("--recursive flag for outdated", async () => {
     // First verify the flag appears in help
-    const { stdout: helpOut, stderr: helpErr, exited: helpExited } = spawn({
+    const {
+      stdout: helpOut,
+      stderr: helpErr,
+      exited: helpExited,
+    } = spawn({
       cmd: [bunExe(), "outdated", "--help"],
       cwd: packageDir,
       stdout: "pipe",
@@ -8495,11 +8499,11 @@ describe("outdated", () => {
       env,
     });
 
-    const help = await new Response(helpOut).text() + await new Response(helpErr).text();
+    const help = (await new Response(helpOut).text()) + (await new Response(helpErr).text());
     expect(await helpExited).toBe(0);
     expect(help).toContain("--recursive");
     expect(help).toContain("-r");
-    
+
     // Setup workspace
     await setupWorkspace();
     await runBunInstall(env, packageDir);
@@ -8551,11 +8555,10 @@ describe("outdated", () => {
     expect(out).toContain("workspace-a");
     expect(out).toContain("workspace-b");
     expect(out).toContain("no-deps");
-    
+
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
-
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

@@ -6,7 +6,7 @@ pub fn BabyList(comptime Type: type) type {
         ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
-        alloc_ptr: CheckedAllocPtr = .{},
+        alloc_ptr: bun.safety.AllocPtr = .{},
 
         pub const Elem = Type;
         pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
@@ -479,7 +479,6 @@ pub fn OffsetList(comptime Type: type) type {
 }
 
 const std = @import("std");
-const CheckedAllocPtr = @import("./safety.zig").AllocPtr;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

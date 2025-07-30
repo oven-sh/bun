@@ -604,16 +604,16 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         /// Zero-initialize all allocated memory in the MultiArrayList.
-        /// 
+        ///
         /// This method efficiently clears the entire backing buffer by setting all bytes to zero,
         /// which zero-initializes all fields across all elements in the list. This is more
         /// efficient than iterating through individual elements or fields.
-        /// 
+        ///
         /// Use cases:
         /// - Security: Clear sensitive data from memory
         /// - Deterministic behavior: Ensure uninitialized memory doesn't contain garbage
         /// - Testing: Create predictable initial states
-        /// 
+        ///
         /// Note: This operation affects the entire allocated capacity, not just the current length.
         /// All reserved but unused capacity will also be zeroed.
         pub fn zero(self: Self) void {

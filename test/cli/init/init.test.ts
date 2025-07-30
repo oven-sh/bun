@@ -90,6 +90,7 @@ test("bun init in folder", () => {
   expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
+      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -131,6 +132,7 @@ test("bun init utf-8", async () => {
   expect(readdirSync(path.join(temp, "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
+      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -154,6 +156,7 @@ test("bun init twice", async () => {
   expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
+      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -189,6 +192,7 @@ test("bun init twice", async () => {
   expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
+      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -292,4 +296,242 @@ test("bun init --react=shadcn works", () => {
   expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+}, 30_000);
+
+test("bun init creates VS Code extensions.json when VSCODE_PID is set", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that .vscode directory and extensions.json were created
+  expect(fs.existsSync(path.join(temp, ".vscode"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".vscode/extensions.json"))).toBe(true);
+
+  const extensions = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/extensions.json"), "utf8"));
+  expect(extensions).toEqual({
+    recommendations: ["oven.bun-vscode"],
+  });
+}, 30_000);
+
+test("bun init creates VS Code extensions.json when CURSOR_TRACE_ID is set", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, CURSOR_TRACE_ID: "test123" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that .vscode directory and extensions.json were created
+  expect(fs.existsSync(path.join(temp, ".vscode"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".vscode/extensions.json"))).toBe(true);
+
+  const extensions = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/extensions.json"), "utf8"));
+  expect(extensions).toEqual({
+    recommendations: ["oven.bun-vscode"],
+  });
+}, 30_000);
+
+test("bun init does not create VS Code files when no editor is detected", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv, // No VSCODE_PID or CURSOR_TRACE_ID
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that .vscode directory was not created
+  expect(fs.existsSync(path.join(temp, ".vscode"))).toBe(false);
+}, 30_000);
+
+test("bun init respects BUN_VSCODE_EXTENSION_DISABLED opt-out", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345", BUN_VSCODE_EXTENSION_DISABLED: "1" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that .vscode directory was not created due to opt-out
+  expect(fs.existsSync(path.join(temp, ".vscode"))).toBe(false);
+}, 30_000);
+
+test("bun init creates launch.json for basic templates with VS Code", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that launch.json was created
+  expect(fs.existsSync(path.join(temp, ".vscode/launch.json"))).toBe(true);
+
+  const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
+  expect(launch.version).toBe("0.2.0");
+  expect(launch.configurations).toHaveLength(1);
+  expect(launch.configurations[0]).toMatchObject({
+    name: "Debug Bun",
+    type: "bun",
+    request: "launch",
+    program: "${workspaceFolder}/index.ts",
+  });
+}, 30_000);
+
+test("bun init creates launch.json for React templates with browser debugging", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "--react"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that launch.json was created
+  expect(fs.existsSync(path.join(temp, ".vscode/launch.json"))).toBe(true);
+
+  const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
+  expect(launch.version).toBe("0.2.0");
+  expect(launch.configurations).toHaveLength(2);
+  
+  // Check Bun debugger configuration
+  expect(launch.configurations[0]).toMatchObject({
+    name: "Debug Bun",
+    type: "bun",
+    request: "launch",
+    program: "${workspaceFolder}/src/index.tsx",
+  });
+  
+  // Check Chrome browser debugger configuration
+  expect(launch.configurations[1]).toMatchObject({
+    name: "Launch Chrome",
+    type: "chrome",
+    request: "launch",
+    url: "http://localhost:3000",
+    webRoot: "${workspaceFolder}/src",
+  });
+}, 30_000);
+
+test("bun init does not overwrite existing .vscode/extensions.json", async () => {
+  const temp = tmpdirSync();
+  
+  // Create .vscode directory and existing extensions.json
+  fs.mkdirSync(path.join(temp, ".vscode"));
+  const existingExtensions = {
+    recommendations: ["ms-vscode.vscode-typescript-next"],
+  };
+  fs.writeFileSync(
+    path.join(temp, ".vscode/extensions.json"),
+    JSON.stringify(existingExtensions, null, 2)
+  );
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that existing extensions.json was not overwritten
+  const extensions = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/extensions.json"), "utf8"));
+  expect(extensions).toEqual(existingExtensions);
+}, 30_000);
+
+test("bun init does not overwrite existing .vscode/launch.json", async () => {
+  const temp = tmpdirSync();
+  
+  // Create .vscode directory and existing launch.json
+  fs.mkdirSync(path.join(temp, ".vscode"));
+  const existingLaunch = {
+    version: "0.2.0",
+    configurations: [
+      {
+        name: "Custom Configuration",
+        type: "node",
+        request: "launch",
+        program: "${workspaceFolder}/custom.js",
+      },
+    ],
+  };
+  fs.writeFileSync(
+    path.join(temp, ".vscode/launch.json"),
+    JSON.stringify(existingLaunch, null, 2)
+  );
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, VSCODE_PID: "12345" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that existing launch.json was not overwritten
+  const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
+  expect(launch).toEqual(existingLaunch);
+  
+  // But extensions.json should still be created
+  expect(fs.existsSync(path.join(temp, ".vscode/extensions.json"))).toBe(true);
+}, 30_000);
+
+test("bun init creates both extensions.json and launch.json together", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...bunEnv, CURSOR_TRACE_ID: "test123" },
+  });
+
+  expect(out.signal).toBe(undefined);
+  expect(out.exitCode).toBe(0);
+
+  // Check that both files were created
+  expect(fs.existsSync(path.join(temp, ".vscode"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".vscode/extensions.json"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, ".vscode/launch.json"))).toBe(true);
+
+  // Verify contents
+  const extensions = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/extensions.json"), "utf8"));
+  expect(extensions.recommendations).toContain("oven.bun-vscode");
+
+  const launch = JSON.parse(fs.readFileSync(path.join(temp, ".vscode/launch.json"), "utf8"));
+  expect(launch.configurations[0].type).toBe("bun");
 }, 30_000);

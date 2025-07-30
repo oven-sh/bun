@@ -983,7 +983,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn hasTCP(this: *WebSocket) bool {
             return !this.tcp.isClosed() and !this.tcp.isShutdown();
         }
-        
+
         pub fn writeBlob(
             this: *WebSocket,
             blob_value: jsc.JSValue,
@@ -993,9 +993,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
             }
-            
+
             const opcode: Opcode = @enumFromInt(op);
-            
+
             // Cast the JSValue to a Blob
             if (blob_value.as(jsc.WebCore.Blob)) |blob| {
                 // Get the shared view of the blob data
@@ -1006,10 +1006,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
                     return;
                 }
-                
+
                 // Send the blob data similar to writeBinaryData
                 const bytes = Copy{ .bytes = data };
-                
+
                 // Fast path for small blobs
                 const frame_size = WebsocketHeader.frameSizeIncludingMask(data.len);
                 if (!this.hasBackpressure() and frame_size < stack_frame_size) {
@@ -1018,7 +1018,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
                     return;
                 }
-                
+
                 _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
             } else {
                 // Invalid blob, close connection

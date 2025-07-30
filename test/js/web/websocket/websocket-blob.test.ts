@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 
 test("WebSocket should send Blob data", async () => {
   const server = Bun.serve({
@@ -32,33 +31,33 @@ test("WebSocket should send Blob data", async () => {
 
   try {
     const url = `ws://localhost:${server.port}`;
-    
+
     const promise = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
       let messageReceived = false;
 
       ws.onopen = () => {
         console.log("Client: WebSocket opened");
-        
+
         // Set binary type to arraybuffer for consistent testing
         ws.binaryType = "arraybuffer";
-        
+
         // Create a blob with test data
         const testData = new Uint8Array([72, 101, 108, 108, 111]); // "Hello" in bytes
         const blob = new Blob([testData], { type: "application/octet-stream" });
-        
+
         console.log("Sending blob with length:", blob.size);
         ws.send(blob);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
         console.log("Client received message:", event.data);
         messageReceived = true;
-        
+
         if (event.data instanceof ArrayBuffer) {
           const received = new Uint8Array(event.data);
           console.log("Received bytes:", Array.from(received));
-          
+
           // Verify we received the correct data
           expect(received).toEqual(new Uint8Array([72, 101, 108, 108, 111]));
           resolve();
@@ -67,12 +66,12 @@ test("WebSocket should send Blob data", async () => {
         }
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = error => {
         console.error("WebSocket error:", error);
         reject(error);
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = event => {
         console.log("Client: WebSocket closed", event.code, event.reason);
         if (!messageReceived) {
           reject(new Error("Connection closed without receiving message"));
@@ -113,7 +112,7 @@ test("WebSocket should send empty Blob", async () => {
 
   try {
     const url = `ws://localhost:${server.port}`;
-    
+
     const promise = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
       let messageReceived = false;
@@ -121,22 +120,22 @@ test("WebSocket should send empty Blob", async () => {
       ws.onopen = () => {
         // Set binary type to arraybuffer for consistent testing
         ws.binaryType = "arraybuffer";
-        
+
         // Create an empty blob
         const blob = new Blob([], { type: "application/octet-stream" });
-        
+
         console.log("Sending empty blob with length:", blob.size);
         ws.send(blob);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
         console.log("Client received message:", event.data);
         messageReceived = true;
-        
+
         if (event.data instanceof ArrayBuffer) {
           const received = new Uint8Array(event.data);
           console.log("Received bytes length:", received.length);
-          
+
           // Verify we received empty data
           expect(received.length).toBe(0);
           resolve();
@@ -145,12 +144,12 @@ test("WebSocket should send empty Blob", async () => {
         }
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = error => {
         console.error("WebSocket error:", error);
         reject(error);
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = event => {
         console.log("Client: WebSocket closed", event.code, event.reason);
         if (!messageReceived) {
           reject(new Error("Connection closed without receiving message"));
@@ -192,21 +191,21 @@ test("WebSocket should ping with Blob", async () => {
 
   try {
     const url = `ws://localhost:${server.port}`;
-    
+
     const promise = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
       let pongReceived = false;
 
       ws.onopen = () => {
         console.log("Client: WebSocket opened");
-        
+
         // Set binary type to arraybuffer for consistent testing
         ws.binaryType = "arraybuffer";
-        
+
         // Create a blob with ping data
         const pingData = new Uint8Array([80, 73, 78, 71]); // "PING" in bytes
         const blob = new Blob([pingData], { type: "application/octet-stream" });
-        
+
         console.log("Sending ping with blob");
         (ws as any).ping(blob);
       };
@@ -214,11 +213,11 @@ test("WebSocket should ping with Blob", async () => {
       ws.addEventListener("pong", (event: any) => {
         console.log("Client received pong:", event.data);
         pongReceived = true;
-        
+
         if (event.data instanceof ArrayBuffer) {
           const received = new Uint8Array(event.data);
           console.log("Received pong bytes:", Array.from(received));
-          
+
           // Verify we received the correct ping data back
           expect(received).toEqual(new Uint8Array([80, 73, 78, 71]));
           resolve();
@@ -227,12 +226,12 @@ test("WebSocket should ping with Blob", async () => {
         }
       });
 
-      ws.onerror = (error) => {
+      ws.onerror = error => {
         console.error("WebSocket error:", error);
         reject(error);
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = event => {
         console.log("Client: WebSocket closed", event.code, event.reason);
         if (!pongReceived) {
           reject(new Error("Connection closed without receiving pong"));

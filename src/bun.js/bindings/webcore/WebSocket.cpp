@@ -575,14 +575,14 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::send(Blob& binaryData)
         // For now, we'll skip this since the old implementation was incomplete
         return {};
     }
-    
+
     // Use the Zig blob implementation to get the data
     // The blob's impl() returns a void* pointer to the Zig blob structure
     void* blobImpl = binaryData.impl();
     if (!blobImpl) {
         return Exception { InvalidStateError };
     }
-    
+
     // TODO: Get the actual blob data and send it
     // For now, we'll return an error since we need to implement the Zig integration
     return Exception { NotSupportedError };
@@ -595,18 +595,18 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::sendBlob(JSC::JSValue blobValue)
     if (m_state == CLOSING || m_state == CLOSED) {
         return {};
     }
-    
+
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
-    
+
     if (dataPtr && dataSize > 0) {
         this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Binary);
     } else {
         // Send empty frame for empty blobs
         this->sendWebSocketData(nullptr, 0, Opcode::Binary);
     }
-    
+
     return {};
 }
 
@@ -1583,18 +1583,18 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pingBlob(JSC::JSValue blobValue)
     if (m_state == CLOSING || m_state == CLOSED) {
         return {};
     }
-    
+
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
-    
+
     if (dataPtr && dataSize > 0) {
         this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
     } else {
         // Send empty frame for empty blobs
         this->sendWebSocketData(nullptr, 0, Opcode::Ping);
     }
-    
+
     return {};
 }
 
@@ -1616,17 +1616,17 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pongBlob(JSC::JSValue blobValue)
     if (m_state == CLOSING || m_state == CLOSED) {
         return {};
     }
-    
+
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
-    
+
     if (dataPtr && dataSize > 0) {
         this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
     } else {
         // Send empty frame for empty blobs
         this->sendWebSocketData(nullptr, 0, Opcode::Pong);
     }
-    
+
     return {};
 }

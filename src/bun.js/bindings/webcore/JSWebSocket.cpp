@@ -640,14 +640,14 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_send3Body(JSC::JS
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    
+
     // Check if the argument is a JSBlob using jsDynamicCast
     if (jsDynamicCast<JSBlob*>(argument0.value())) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { 
-            return impl.sendBlob(argument0.value()); 
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) {
+            return impl.sendBlob(argument0.value());
         })));
     }
-    
+
     throwArgumentTypeError(*lexicalGlobalObject, throwScope, 0, "data"_s, "WebSocket"_s, "send"_s, "Blob"_s);
     return JSValue::encode(jsUndefined());
 }
@@ -755,14 +755,14 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping4Body(JSC::JS
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    
+
     // Check if the argument is a JSBlob using jsDynamicCast
     if (jsDynamicCast<JSBlob*>(argument0.value())) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { 
-            return impl.pingBlob(argument0.value()); 
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) {
+            return impl.pingBlob(argument0.value());
         })));
     }
-    
+
     throwArgumentTypeError(*lexicalGlobalObject, throwScope, 0, "data"_s, "WebSocket"_s, "ping"_s, "Blob"_s);
     return JSValue::encode(jsUndefined());
 }
@@ -851,14 +851,14 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong4Body(JSC::JS
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    
+
     // Check if the argument is a JSBlob using jsDynamicCast
     if (jsDynamicCast<JSBlob*>(argument0.value())) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { 
-            return impl.pongBlob(argument0.value()); 
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) {
+            return impl.pongBlob(argument0.value());
         })));
     }
-    
+
     throwArgumentTypeError(*lexicalGlobalObject, throwScope, 0, "data"_s, "WebSocket"_s, "pong"_s, "Blob"_s);
     return JSValue::encode(jsUndefined());
 }

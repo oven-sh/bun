@@ -43,6 +43,7 @@ pub const UpdateInteractiveCommand = struct {
         behavior: Behavior,
         use_latest: bool = false,
         manager: *PackageManager,
+        is_catalog: bool = false,
     };
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
@@ -211,10 +212,12 @@ pub const UpdateInteractiveCommand = struct {
                         manager,
                         filters,
                     ) catch bun.outOfMemory();
+                } else if (manager.options.do.recursive) blk: {
+                    break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
                 } else blk: {
-                    // just the current workspace
                     const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
+
                     const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
                     ids[0] = root_pkg_id;
                     break :blk ids;
@@ -346,6 +349,23 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 
+    fn getAllWorkspaces(
+        allocator: std.mem.Allocator,
+        manager: *PackageManager,
+    ) OOM![]const PackageID {
+        const lockfile = manager.lockfile;
+        const packages = lockfile.packages.slice();
+        const pkg_resolutions = packages.items(.resolution);
+
+        var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
+        for (pkg_resolutions, 0..) |resolution, pkg_id| {
+            if (resolution.tag != .workspace and resolution.tag != .root) continue;
+            try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
+        }
+
+        return workspace_pkg_ids.toOwnedSlice(allocator);
+    }
+
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
         original_cwd: string,
@@ -426,6 +446,75 @@ pub const UpdateInteractiveCommand = struct {
         }
 
         return workspace_pkg_ids.items;
+    }
+
+    fn groupCatalogDependencies(
+        allocator: std.mem.Allocator,
+        packages: []OutdatedPackage,
+    ) ![]OutdatedPackage {
+        // Create a map to track catalog dependencies by name
+        var catalog_map = std.StringHashMap(std.ArrayList(OutdatedPackage)).init(allocator);
+        defer catalog_map.deinit();
+        defer {
+            var iter = catalog_map.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+        }
+
+        var result = std.ArrayList(OutdatedPackage).init(allocator);
+        defer result.deinit();
+
+        // Group catalog dependencies
+        for (packages) |pkg| {
+            if (pkg.is_catalog) {
+                const entry = try catalog_map.getOrPut(pkg.name);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = std.ArrayList(OutdatedPackage).init(allocator);
+                }
+                try entry.value_ptr.append(pkg);
+            } else {
+                try result.append(pkg);
+            }
+        }
+
+        // Add grouped catalog dependencies
+        var iter = catalog_map.iterator();
+        while (iter.next()) |entry| {
+            const catalog_packages = entry.value_ptr.items;
+            if (catalog_packages.len > 0) {
+                // Use the first package as the base, but combine workspace names
+                var first = catalog_packages[0];
+                
+                // Build combined workspace name
+                var workspace_names = std.ArrayList(u8).init(allocator);
+                defer workspace_names.deinit();
+                
+                try workspace_names.appendSlice("catalog (");
+                for (catalog_packages, 0..) |cat_pkg, i| {
+                    if (i > 0) try workspace_names.appendSlice(", ");
+                    try workspace_names.appendSlice(cat_pkg.workspace_name);
+                }
+                try workspace_names.append(')');
+                
+                // Free the old workspace_name and replace with combined
+                allocator.free(first.workspace_name);
+                first.workspace_name = try workspace_names.toOwnedSlice();
+                
+                try result.append(first);
+                
+                // Free the other catalog packages
+                for (catalog_packages[1..]) |cat_pkg| {
+                    allocator.free(cat_pkg.name);
+                    allocator.free(cat_pkg.current_version);
+                    allocator.free(cat_pkg.latest_version);
+                    allocator.free(cat_pkg.update_version);
+                    allocator.free(cat_pkg.workspace_name);
+                }
+            }
+        }
+
+        return result.toOwnedSlice();
     }
 
     fn getOutdatedPackages(
@@ -532,14 +621,18 @@ pub const UpdateInteractiveCommand = struct {
                     .workspace_name = try allocator.dupe(u8, workspace_name),
                     .behavior = dep.behavior,
                     .manager = manager,
+                    .is_catalog = dep.version.tag == .catalog,
                 });
             }
         }
 
         const result = try outdated_packages.toOwnedSlice();
 
+        // Group catalog dependencies
+        const grouped_result = try groupCatalogDependencies(allocator, result);
+
         // Sort packages: dependencies first, then devDependencies, etc.
-        std.sort.pdq(OutdatedPackage, result, {}, struct {
+        std.sort.pdq(OutdatedPackage, grouped_result, {}, struct {
             fn lessThan(_: void, a: OutdatedPackage, b: OutdatedPackage) bool {
                 // First sort by dependency type
                 const a_priority = depTypePriority(a.dependency_type);
@@ -559,7 +652,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }.lessThan);
 
-        return result;
+        return grouped_result;
     }
 
     const ColumnWidths = struct {
@@ -567,6 +660,7 @@ pub const UpdateInteractiveCommand = struct {
         current: usize,
         target: usize,
         latest: usize,
+        workspace: usize,
     };
 
     const MultiSelectState = struct {
@@ -578,6 +672,7 @@ pub const UpdateInteractiveCommand = struct {
         max_current_len: usize = 0,
         max_update_len: usize = 0,
         max_latest_len: usize = 0,
+        max_workspace_len: usize = 0,
     };
 
     fn calculateColumnWidths(packages: []OutdatedPackage) ColumnWidths {
@@ -586,6 +681,7 @@ pub const UpdateInteractiveCommand = struct {
         var max_current_len: usize = "Current".len;
         var max_target_len: usize = "Target".len;
         var max_latest_len: usize = "Latest".len;
+        var max_workspace_len: usize = "Workspace".len;
 
         for (packages) |pkg| {
             // Include dev tag length in max calculation
@@ -602,6 +698,7 @@ pub const UpdateInteractiveCommand = struct {
             max_current_len = @max(max_current_len, pkg.current_version.len);
             max_target_len = @max(max_target_len, pkg.update_version.len);
             max_latest_len = @max(max_latest_len, pkg.latest_version.len);
+            max_workspace_len = @max(max_workspace_len, pkg.workspace_name.len);
         }
 
         // Use natural widths without any limits
@@ -610,6 +707,7 @@ pub const UpdateInteractiveCommand = struct {
             .current = max_current_len,
             .target = max_target_len,
             .latest = max_latest_len,
+            .workspace = max_workspace_len,
         };
     }
 
@@ -633,6 +731,7 @@ pub const UpdateInteractiveCommand = struct {
             .max_current_len = columns.current,
             .max_update_len = columns.target,
             .max_latest_len = columns.latest,
+            .max_workspace_len = columns.workspace,
         };
 
         // Set raw mode
@@ -776,6 +875,11 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print(" ", .{});
                     }
                     Output.print("Latest", .{});
+                    j = 0;
+                    while (j < state.max_latest_len - "Latest".len + 2) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+                    Output.print("Workspace", .{});
                     Output.print("\x1B[0K\n", .{});
                     displayed_lines += 1;
                     current_dep_type = pkg.dependency_type;
@@ -1022,6 +1126,15 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print("\x1B[22m", .{}); // Reset dim
                     }
                 }
+
+                // Workspace column
+                const latest_width: usize = pkg.latest_version.len;
+                const latest_padding = if (latest_width >= state.max_latest_len) 0 else state.max_latest_len - latest_width;
+                j = 0;
+                while (j < latest_padding + 2) : (j += 1) {
+                    Output.print(" ", .{});
+                }
+                Output.pretty("<r><d>{s}<r>", .{pkg.workspace_name});
 
                 Output.print("\x1B[0K\n", .{});
                 displayed_lines += 1;

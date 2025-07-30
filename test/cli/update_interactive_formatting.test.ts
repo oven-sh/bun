@@ -207,6 +207,87 @@ describe("bun update --interactive formatting", () => {
     expect(stderr).not.toContain("overflow");
   });
 
+
+  it("should show workspace column with --filter", async () => {
+    const dir = tempDirWithFiles("update-interactive-workspace-col-test", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "dep1": "1.0.0",
+        },
+      }),
+      "packages/pkg2/package.json": JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "dep2": "1.0.0",
+        },
+      }),
+    });
+
+    // Test with --filter should include workspace column
+    const result = await Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive", "--filter=*", "--dry-run"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderr = await new Response(result.stderr).text();
+    
+    // Should not crash with workspace column
+    expect(stderr).not.toContain("panic");
+    expect(stderr).not.toContain("segfault");
+  });
+
+  it("should handle catalog dependencies in interactive update", async () => {
+    const dir = tempDirWithFiles("update-interactive-catalog-test", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        catalog: {
+          "shared-dep": "1.0.0",
+        },
+        workspaces: ["packages/*"],
+      }),
+      "packages/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "shared-dep": "catalog:",
+        },
+      }),
+      "packages/pkg2/package.json": JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "shared-dep": "catalog:",
+        },
+      }),
+    });
+
+    // Test interactive update with catalog dependencies
+    const result = await Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive", "--filter=*", "--dry-run"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderr = await new Response(result.stderr).text();
+    
+    // Should not crash with catalog dependencies
+    expect(stderr).not.toContain("panic");
+    expect(stderr).not.toContain("segfault");
+    expect(stderr).not.toContain("catalog: failed to resolve");
+  });
+
   it("should handle mixed dependency types with various name lengths", async () => {
     const dir = tempDirWithFiles("update-interactive-mixed-test", {
       "package.json": JSON.stringify({

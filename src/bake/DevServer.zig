@@ -844,6 +844,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             arena.allocator(),
             source_id.kind,
             dev.allocator,
+            .client,
         ) catch bun.outOfMemory();
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator, json_bytes), .{
             .server = dev.server,
@@ -2239,19 +2240,37 @@ pub fn finalizeBundle(
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
         // Generate a script_id for server bundles
         // Use high bit set to distinguish from client bundles, and include generation
-        // FIXME: Claude, this is highly sus
         const server_script_id = SourceMapStore.Key.init((1 << 63) | @as(u64, dev.generation));
 
-        // Register the source map for server bundle
-        switch (try dev.source_maps.putOrIncrementRefCount(server_script_id, 1)) {
-            .uninitialized => |entry| {
-                errdefer dev.source_maps.unref(server_script_id);
-                var arena = std.heap.ArenaAllocator.init(dev.allocator);
-                defer arena.deinit();
-                try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, entry);
-            },
-            .shared => {},
-        }
+        // Get the source map if available and render to JSON
+        const source_map_json = if (dev.server_graph.current_chunk_source_maps.items.len > 0) json: {
+            // Create a temporary source map entry to render
+            var source_map_entry = SourceMapStore.Entry{
+                .ref_count = 1,
+                .paths = &.{},
+                .files = .empty,
+                .overlapping_memory_cost = 0,
+            };
+
+            // Fill the source map entry
+            var arena = std.heap.ArenaAllocator.init(dev.allocator);
+            defer arena.deinit();
+            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, &source_map_entry);
+            defer {
+                source_map_entry.ref_count = 0;
+                source_map_entry.deinit(dev);
+            }
+
+            const json_data = try source_map_entry.renderJSON(
+                dev,
+                arena.allocator(),
+                .hmr_chunk,
+                dev.allocator,
+                .server,
+            );
+            break :json json_data;
+        } else null;
+        defer if (source_map_json) |json| dev.allocator.free(json);
 
         const server_bundle = try dev.server_graph.takeJSBundle(&.{
             .kind = .hmr_chunk,
@@ -2259,11 +2278,18 @@ pub fn finalizeBundle(
         });
         defer dev.allocator.free(server_bundle);
 
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
-            // No user code has been evaluated yet, since everything is to
-            // be wrapped in a function clousure. This means that the likely
-            // error is going to be a syntax error, or other mistake in the
-            // bundler.
+        const server_modules = if (source_map_json) |json| blk: {
+            const json_string = bun.String.cloneUTF8(json);
+            defer json_string.deref();
+            break :blk c.BakeLoadServerHmrPatchWithSourceMap(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle), json_string) catch |err| {
+                // No user code has been evaluated yet, since everything is to
+                // be wrapped in a function clousure. This means that the likely
+                // error is going to be a syntax error, or other mistake in the
+                // bundler.
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+            };
+        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
             dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
             @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
         };
@@ -3571,6 +3597,11 @@ const c = struct {
     fn BakeLoadServerHmrPatch(global: *jsc.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
         const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
+    }
+
+    fn BakeLoadServerHmrPatchWithSourceMap(global: *jsc.JSGlobalObject, code: bun.String, source_map_json: bun.String) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatchWithSourceMap" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, source_map_json });
     }
 
     fn BakeLoadInitialServerCode(global: *jsc.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {

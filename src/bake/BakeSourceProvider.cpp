@@ -1,5 +1,6 @@
 // clang-format off
 #include "BakeSourceProvider.h"
+#include "DevServerSourceProvider.h"
 #include "BakeGlobalObject.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Completion.h"
@@ -70,6 +71,33 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Program
   ));
+
+  JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, {});
+
+  RELEASE_ASSERT(result);
+  return JSC::JSValue::encode(result);
+}
+
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, BunString sourceMapJSON) {
+  JSC::VM&vm = global->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  String string = "bake://server.patch.js"_s;
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
+  
+  // Use DevServerSourceProvider with the source map JSON
+  auto provider = DevServerSourceProvider::create(
+    global,
+    source.toWTFString(),
+    sourceMapJSON.toWTFString(),
+    origin,
+    WTFMove(string),
+    WTF::TextPosition(),
+    JSC::SourceProviderSourceType::Program
+  );
+  
+  JSC::SourceCode sourceCode = JSC::SourceCode(provider);
 
   JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
   RETURN_IF_EXCEPTION(scope, {});

@@ -1687,14 +1687,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .server => try w.writeAll("})"),
                     },
                 }
-                // Append source map URL for both client and server bundles
-                try w.writeAll("\n//# sourceMappingURL=");
-                switch (side) {
-                    .client => try w.writeAll(DevServer.client_prefix ++ "/"),
-                    .server => try w.writeAll("bake://server.map/"),
+                if (side == .client) {
+                    try w.writeAll("\n//# sourceMappingURL=" ++ DevServer.client_prefix ++ "/");
+                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
+                    try w.writeAll(".js.map\n");
                 }
-                try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
-                try w.writeAll(".js.map\n");
                 break :end end_list.items;
             };
 

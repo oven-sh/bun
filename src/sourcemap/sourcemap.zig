@@ -887,15 +887,17 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    const SourceProviderKind = enum(u1) { zig, bake };
+    const SourceProviderKind = enum(u2) { zig, bake, dev_server };
     const AnySourceProvider = union(enum) {
         zig: *SourceProviderMap,
         bake: *BakeSourceProvider,
+        dev_server: *DevServerSourceProvider,
 
         pub fn ptr(this: AnySourceProvider) *anyopaque {
             return switch (this) {
                 .zig => @ptrCast(this.zig),
                 .bake => @ptrCast(this.bake),
+                .dev_server => @ptrCast(this.dev_server),
             };
         }
 
@@ -908,6 +910,7 @@ pub const ParsedSourceMap = struct {
             return switch (this) {
                 .zig => this.zig.getSourceMap(source_filename, load_hint, result),
                 .bake => this.bake.getSourceMap(source_filename, load_hint, result),
+                .dev_server => this.dev_server.getSourceMap(source_filename, load_hint, result),
             };
         }
     };
@@ -915,7 +918,7 @@ pub const ParsedSourceMap = struct {
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint,
         kind: SourceProviderKind,
-        data: u61,
+        data: u60,
 
         pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .zig, .data = 0 };
 
@@ -927,10 +930,15 @@ pub const ParsedSourceMap = struct {
             return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .bake };
         }
 
+        fn fromDevServerProvider(p: *DevServerSourceProvider) SourceContentPtr {
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .dev_server };
+        }
+
         pub fn provider(sc: SourceContentPtr) ?AnySourceProvider {
             switch (sc.kind) {
                 .zig => return .{ .zig = @ptrFromInt(sc.data) },
                 .bake => return .{ .bake = @ptrFromInt(sc.data) },
+                .dev_server => return .{ .dev_server = @ptrFromInt(sc.data) },
             }
         }
     };
@@ -1282,6 +1290,27 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
+            if (comptime SourceProviderKind == DevServerSourceProvider) {
+                // For DevServerSourceProvider, get the source map JSON directly
+                const json_string = provider.getSourceMapJSON();
+                defer json_string.deref();
+                
+                // Convert to UTF-8 slice
+                const json_data = json_string.toUTF8(allocator);
+                defer json_data.deinit();
+                
+                // Parse the JSON source map
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        json_data.slice(),
+                        result,
+                    ) catch return null,
+                };
+            }
+            
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
                 const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
@@ -1427,6 +1456,34 @@ pub const BakeSourceProvider = opaque {
     ) ?SourceMap.ParseUrl {
         return getSourceMapImpl(
             BakeSourceProvider,
+            provider,
+            source_filename,
+            load_hint,
+            result,
+        );
+    }
+};
+
+pub const DevServerSourceProvider = opaque {
+    extern fn DevServerSourceProvider__getSourceSlice(*DevServerSourceProvider) bun.String;
+    extern fn DevServerSourceProvider__getSourceMapJSON(*DevServerSourceProvider) bun.String;
+    
+    pub const getSourceSlice = DevServerSourceProvider__getSourceSlice;
+    pub const getSourceMapJSON = DevServerSourceProvider__getSourceMapJSON;
+    
+    pub fn toSourceContentPtr(this: *DevServerSourceProvider) ParsedSourceMap.SourceContentPtr {
+        return ParsedSourceMap.SourceContentPtr.fromDevServerProvider(this);
+    }
+
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *DevServerSourceProvider,
+        source_filename: []const u8,
+        load_hint: SourceMap.SourceMapLoadHint,
+        result: SourceMap.ParseUrlResultHint,
+    ) ?SourceMap.ParseUrl {
+        return getSourceMapImpl(
+            DevServerSourceProvider,
             provider,
             source_filename,
             load_hint,

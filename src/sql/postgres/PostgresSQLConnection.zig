@@ -353,6 +353,7 @@ pub fn onClose(this: *PostgresSQLConnection) void {
         if (this.status == .failed) return;
 
         this.status = .failed;
+        this.cleanUpRequests();
     } else {
         const loop = this.vm.eventLoop();
         loop.enter();
@@ -904,17 +905,7 @@ pub fn deinit(this: *@This()) void {
     bun.default_allocator.destroy(this);
 }
 
-fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
-    // refAndClose is always called when we wanna to disconnect or when we are closed
-
-    if (!this.socket.isClosed()) {
-        // event loop need to be alive to close the socket
-        this.poll_ref.ref(this.vm);
-        // will unref on socket close
-        this.socket.close();
-    }
-
-    // cleanup requests
+fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
     while (this.current()) |request| {
         switch (request.status) {
             // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -949,6 +940,19 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
         request.deref();
         this.requests.discard(1);
     }
+}
+fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
+    // refAndClose is always called when we wanna to disconnect or when we are closed
+
+    if (!this.socket.isClosed()) {
+        // event loop need to be alive to close the socket
+        this.poll_ref.ref(this.vm);
+        // will unref on socket close
+        this.socket.close();
+    }
+
+    // cleanup requests
+    this.cleanUpRequests();
 }
 
 pub fn disconnect(this: *@This()) void {

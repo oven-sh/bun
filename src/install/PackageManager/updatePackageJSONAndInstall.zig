@@ -135,14 +135,9 @@ fn performSecurityScanOnAdds(
 
     const argv = [_][]const u8{ exec_path, "-e", code_z };
 
-    const result = switch (try bun.spawn.sync.spawn(&.{
-        .argv = &argv,
-        .envp = null,
-        .stdin = .ignore,
-        .stdout = .inherit,
-        .stderr = .inherit,
-        .cwd = original_cwd,
-    })) {
+    const options = bun.spawn.SpawnOptions{};
+
+    const result = switch (try bun.spawn.spawnProcess(&options, argv, null)) {
         .err => |err| {
             Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
             Global.exit(1);

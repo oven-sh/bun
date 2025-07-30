@@ -16,50 +16,100 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
-test("basic", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.5": { as: "0.0.5" } }));
+function run(
+  name: string,
+  options: {
+    scanner: Bun.Install.Security.Provider["onInstall"];
+    fails: boolean;
+    expect?: (std: { out: string; err: string }) => void | Promise<void>;
+  },
+) {
+  test(name, async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "0.0.5": { as: "0.0.5" } }));
 
-  await write(
-    "./scanner.ts",
-    `
+    await write(
+      "./scanner.ts",
+      `
       export default {
         version: "1",
-        onInstall: async ({packages}) => {
-          console.log("Security scanner is checking packages:", packages.map(p => p.name).join(", "));
-
-          return [
-            {
-              name: packages[0].name,
-              level: 'fatal',
-            }
-          ];
-        },
+        onInstall: ${options.scanner.toString()},
       } satisfies Bun.Install.Security.Provider;
-    `,
-  );
+      `,
+    );
 
-  const bunfig = await read("./bunfig.toml").text();
-  await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + 'provider = "./scanner.ts"');
+    const bunfig = await read("./bunfig.toml").text();
+    await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + 'provider = "./scanner.ts"');
 
-  await write("package.json", {
-    name: "my-app",
-    version: "1.0.0",
-    dependencies: {},
+    await write("package.json", {
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {},
+    });
+
+    const pkg = "pkg";
+
+    const { out, err } = await runBunInstall(bunEnv, package_dir, {
+      packages: [pkg],
+      allowErrors: true,
+      allowWarnings: false,
+      savesLockfile: false,
+      expectedExitCode: 1,
+    });
+
+    expect(urls).toEqual([]);
+
+    expect(out).toContain(`Security scanner is checking packages: ${pkg}`);
+
+    if (options.fails) {
+      expect(err).toContain("Installation cancelled due to fatal security advisories");
+    }
+
+    await options.expect?.({ out, err });
   });
+}
 
-  const pkg = "pkg";
+run("basic", {
+  fails: true,
+  scanner: async ({ packages }) => [
+    {
+      package: packages[0].name,
+      description: "Advisory 1 description",
+      level: "fatal",
+      url: "https://example.com/advisory-1",
+    },
+  ],
+});
 
-  const { out, err } = await runBunInstall(bunEnv, package_dir, {
-    packages: [pkg],
-    allowErrors: true,
-    allowWarnings: false,
-    savesLockfile: false,
-    expectedExitCode: 1,
-  });
+run("expect output to contain the advisory", {
+  fails: true,
+  scanner: async ({ packages }) => [
+    {
+      package: packages[0].name,
+      description: "Advisory 1 description",
+      level: "fatal",
+      url: "https://example.com/advisory-1",
+    },
+  ],
+  expect: ({ out }) => {
+    expect(out).toContain("Advisory 1 description");
+  },
+});
 
-  expect(urls).toEqual([]);
-
-  expect(out).toContain(`Security scanner is checking packages: ${pkg}`);
-  expect(err).toContain("Installation cancelled due to fatal security advisories");
+run("stdout contains all input package metadata", {
+  fails: true,
+  scanner: async ({ packages }) => [
+    {
+      package: packages[0].name,
+      description: "Advisory 1 description",
+      level: "fatal",
+      url: "https://example.com/advisory-1",
+    },
+  ],
+  expect: ({ out }) => {
+    expect(out).toContain('"version": "1.0.0"');
+    expect(out).toContain('"name": "pkg"');
+    expect(out).toContain('"requestedRange": "latest"');
+    expect(out).toContain('"registryUrl": "https://registry.npmjs.org"');
+  },
 });

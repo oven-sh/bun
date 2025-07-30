@@ -9,6 +9,8 @@ namespace WebCore {
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 extern "C" void Blob__destroy(void* impl);
+extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
+extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
 
 class Blob : public RefCounted<Blob> {
 public:

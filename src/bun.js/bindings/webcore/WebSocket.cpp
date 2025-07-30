@@ -33,7 +33,8 @@
 #include "WebSocket.h"
 #include "WebSocketDeflate.h"
 #include "headers.h"
-// #include "Blob.h"
+#include "blob.h"
+#include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 // #include "ContentSecurityPolicy.h"
 // #include "DOMWindow.h"
@@ -564,22 +565,50 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     return {};
 }
 
-// ExceptionOr<void> WebSocket::send(Blob& binaryData)
-// {
-// LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().data());
-//     if (m_state == CONNECTING)
-//         return Exception { InvalidStateError };
-//     if (m_state == CLOSING || m_state == CLOSED) {
-//         unsigned payloadSize = static_cast<unsigned>(binaryData.size());
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
-//         return {};
-//     }
-//     m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.size());
-//     ASSERT(m_channel);
-//     m_channel->send(binaryData);
-//     return {};
-// }
+WebCore::ExceptionOr<void> WebCore::WebSocket::send(Blob& binaryData)
+{
+    // LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().data());
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        // For the buffered amount calculation, we would need to know the blob size
+        // For now, we'll skip this since the old implementation was incomplete
+        return {};
+    }
+    
+    // Use the Zig blob implementation to get the data
+    // The blob's impl() returns a void* pointer to the Zig blob structure
+    void* blobImpl = binaryData.impl();
+    if (!blobImpl) {
+        return Exception { InvalidStateError };
+    }
+    
+    // TODO: Get the actual blob data and send it
+    // For now, we'll return an error since we need to implement the Zig integration
+    return Exception { NotSupportedError };
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::sendBlob(JSC::JSValue blobValue)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+    
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
+    
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Binary);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Binary);
+    }
+    
+    return {};
+}
 
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const Opcode op)
 {
@@ -957,10 +986,10 @@ String WebSocket::binaryType() const
 
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
-    // if (binaryType == "blob"_s) {
-    //     m_binaryType = BinaryType::Blob;
-    //     return {};
-    // }
+    if (binaryType == "blob"_s) {
+        m_binaryType = BinaryType::Blob;
+        return {};
+    }
     if (binaryType == "arraybuffer"_s) {
         m_binaryType = BinaryType::ArrayBuffer;
         return {};
@@ -1532,4 +1561,72 @@ extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocke
 extern "C" void WebSocket__decrementPendingActivity(WebCore::WebSocket* webSocket)
 {
     webSocket->decPendingActivityCount();
+}
+
+// Blob access functions are already declared in blob.h
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::ping(Blob& binaryData)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+    // TODO: Implement Blob ping
+    return Exception { NotSupportedError };
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::pingBlob(JSC::JSValue blobValue)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+    
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
+    
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Ping);
+    }
+    
+    return {};
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::pong(Blob& binaryData)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+    // TODO: Implement Blob pong
+    return Exception { NotSupportedError };
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::pongBlob(JSC::JSValue blobValue)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+    
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blobValue));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blobValue));
+    
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Pong);
+    }
+    
+    return {};
 }

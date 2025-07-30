@@ -3010,6 +3010,19 @@ export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
     return this.getSizeForBindings();
 }
 
+export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.C) ?*anyopaque {
+    const blob = Blob.fromJS(value) orelse return null;
+    const data = blob.sharedView();
+    if (data.len == 0) return null;
+    return @constCast(data.ptr);
+}
+
+export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
+    const blob = Blob.fromJS(value) orelse return 0;
+    const data = blob.sharedView();
+    return data.len;
+}
+
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const store = this.store orelse return .js_undefined;
     // TODO: make this async for files

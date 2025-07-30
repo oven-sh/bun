@@ -52,7 +52,7 @@ class ArrayBufferView;
 
 namespace WebCore {
 
-// class Blob;
+class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
@@ -95,19 +95,22 @@ public:
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
     ExceptionOr<void> send(JSC::ArrayBufferView&);
-    // ExceptionOr<void> send(Blob&);
+    ExceptionOr<void> send(Blob&);
+    ExceptionOr<void> sendBlob(JSC::JSValue blobValue);
 
     ExceptionOr<void> ping();
     ExceptionOr<void> ping(const String& message);
     ExceptionOr<void> ping(JSC::ArrayBuffer&);
     ExceptionOr<void> ping(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> pingBlob(JSC::JSValue blobValue);
 
     ExceptionOr<void> pong();
     ExceptionOr<void> pong(const String& message);
     ExceptionOr<void> pong(JSC::ArrayBuffer&);
     ExceptionOr<void> pong(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> pong(Blob&);
+    ExceptionOr<void> pongBlob(JSC::JSValue blobValue);
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();

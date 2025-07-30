@@ -924,8 +924,7 @@ pub const String = struct {
 
     pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
         if (this.next == null or !this.isUTF8()) return;
-        var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch bun.outOfMemory();
-
+        var bytes = std.ArrayList(u8).initCapacity(allocator, @max(this.rope_len, this.data.len)) catch bun.outOfMemory();
         bytes.appendSliceAssumeCapacity(this.data);
         var str = this.next;
         while (str) |part| {

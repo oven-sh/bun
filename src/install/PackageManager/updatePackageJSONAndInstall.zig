@@ -94,7 +94,7 @@ fn performSecurityScanOnAdds(
             \\    "version": "{s}",
             \\    "registryUrl": "{s}",
             \\    "requestedRange": "{s}",
-            \\    "integrity": ""
+            // \\    "integrity": ""
             \\  }}
         , .{ name, version_str, manager.options.scope.url.href, version_str });
     }
@@ -120,15 +120,14 @@ fn performSecurityScanOnAdds(
         \\    process.exit(1);
         \\  }}
         \\
-        \\  // Write result to IPC channel (fd 3)
         \\  const fs = require('fs');
-        \\  fs.writeFileSync(3, JSON.stringify(result));
+        \\  const data = JSON.stringify({{advisories: result}});
+        \\  console.log('Writing', data.length, 'bytes to fd 3');
+        \\  fs.writeSync(3, data);
+        \\  fs.closeSync(3);
         \\
-        \\  // Exit with code 1 if there are fatal advisories
-        \\  const hasFatal = result.some(a => a.level === 'fatal');
-        \\  process.exit(hasFatal ? 1 : 0);
+        \\  process.exit(0);
         \\}} catch (error) {{
-        \\  console.error('Security provider failed:');
         \\  console.error(error);
         \\  process.exit(1);
         \\}}
@@ -172,16 +171,21 @@ fn performSecurityScanOnAdds(
 
     var buf: [4096]u8 = undefined;
     while (true) {
-        const read_result = bun.sys.read(ipc_fd, &buf);
-        switch (read_result) {
+        switch (bun.sys.read(ipc_fd, &buf)) {
             .err => |err| {
-                if (err.getErrno() != .AGAIN) {
-                    Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
+                // EAGAIN means no more data available (non-blocking read)
+                if (err.getErrno() == .AGAIN) {
+                    // For blocking reads, we shouldn't get AGAIN
+                    // If we do, it means the pipe is empty
+                    break;
                 }
+                Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
                 break;
             },
             .result => |bytes_read| {
-                if (bytes_read == 0) break;
+                if (bytes_read == 0) {
+                    break;
+                }
                 try ipc_data.appendSlice(buf[0..bytes_read]);
             },
         }
@@ -194,22 +198,83 @@ fn performSecurityScanOnAdds(
         Global.exit(1);
     };
 
+    if (ipc_data.items.len == 0) {
+        Output.prettyln("<yellow>Debug: No data received from security provider via IPC<r>", .{});
+    } else {
+        Output.prettyln("<yellow>Debug: Received {d} bytes from security provider<r>", .{ipc_data.items.len});
+    }
+
     if (ipc_data.items.len > 0) {
-        const advisories = std.json.parseFromSlice([]SecurityAdvisory, manager.allocator, ipc_data.items, .{
-            .ignore_unknown_fields = true,
-        }) catch |err| {
-            Output.errGeneric("Failed to parse security advisories: {s}", .{@errorName(err)});
-            Output.errGeneric("Raw data: {s}", .{ipc_data.items});
+        const json_source = logger.Source{
+            .contents = ipc_data.items,
+            .path = bun.fs.Path.init("security-advisories.json"),
+        };
+
+        var temp_log = logger.Log.init(manager.allocator);
+        defer temp_log.deinit();
+
+        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch {
+            Output.errGeneric("Failed to parse security advisories JSON", .{});
+            if (temp_log.errors > 0) {
+                temp_log.print(Output.errorWriter()) catch {};
+            }
             Global.exit(1);
         };
-        defer advisories.deinit();
 
-        if (advisories.value.len > 0) {
+        var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
+        defer advisories_list.deinit();
+
+        if (json_expr.data == .e_array) {
+            const array = json_expr.data.e_array;
+            for (array.items.slice()) |item| {
+                if (item.data == .e_object) {
+                    const obj = item.data.e_object;
+                    var advisory = SecurityAdvisory{
+                        .level = .warn,
+                        .package = "",
+                        .url = null,
+                        .description = null,
+                    };
+
+                    if (obj.get("level")) |level_expr| {
+                        if (level_expr.asString(manager.allocator)) |level_str| {
+                            if (std.mem.eql(u8, level_str, "fatal")) {
+                                advisory.level = .fatal;
+                            }
+                        }
+                    }
+
+                    if (obj.get("package")) |pkg_expr| {
+                        if (pkg_expr.asString(manager.allocator)) |pkg_str| {
+                            advisory.package = pkg_str;
+                        }
+                    }
+
+                    if (obj.get("url")) |url_expr| {
+                        if (url_expr.asString(manager.allocator)) |url_str| {
+                            advisory.url = url_str;
+                        }
+                    }
+
+                    if (obj.get("description")) |desc_expr| {
+                        if (desc_expr.asString(manager.allocator)) |desc_str| {
+                            advisory.description = desc_str;
+                        }
+                    }
+
+                    if (advisory.package.len > 0) {
+                        try advisories_list.append(advisory);
+                    }
+                }
+            }
+        }
+
+        if (advisories_list.items.len > 0) {
             var has_fatal = false;
             var has_warn = false;
 
             Output.pretty("\n<red>Security advisories found:<r>\n", .{});
-            for (advisories.value) |advisory| {
+            for (advisories_list.items) |advisory| {
                 switch (advisory.level) {
                     .fatal => {
                         has_fatal = true;
@@ -242,8 +307,7 @@ fn performSecurityScanOnAdds(
     if (!status.isOK()) {
         switch (status) {
             .exited => |exited| {
-                // Only error if exit code is non-zero AND we didn't already handle fatal advisories
-                if (exited.code != 0 and ipc_data.items.len == 0) {
+                if (exited.code != 0) {
                     Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
                     Global.exit(1);
                 }

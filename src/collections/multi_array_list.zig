@@ -17,27 +17,20 @@
 /// ### 1. Memory Safety & Debugging (`CheckedAllocPtr`)
 /// - Added `alloc_ptr` field to track which allocator was used for allocation
 /// - Provides runtime verification that the same allocator is used for deallocation
-/// - Helps catch allocator mismatches that could cause memory corruption
-/// - Enabled in debug builds for better error reporting
 ///
 /// ### 2. Zero Initialization (`.zero()` method)
 /// - Added `zero()` method that zero-initializes all allocated memory
 /// - Uses `@memset(self.allocatedBytes(), 0)` to clear the entire backing buffer
-/// - Useful for security (clearing sensitive data) and deterministic behavior
-/// - More efficient than individually zeroing each field
 ///
-/// ### 3. Improved Growth Strategy
-/// - Modified capacity growth algorithm for better performance characteristics
+/// ### 3. Modified Growth Strategy
+/// - Modified capacity growth algorithm 
 /// - Different initial capacity calculation based on cache line optimization
-/// - Tuned for Bun's specific usage patterns and performance requirements
 ///
 /// ### 4. API Enhancements
 /// - Added `memoryCost()` method for memory usage tracking
 /// - Enhanced `appendListAssumeCapacity()` for batch operations
-/// - Improved error handling and debugging support
 ///
-/// These changes maintain full API compatibility with upstream while adding
-/// safety and performance improvements specific to Bun's requirements.
+/// These changes maintain full API compatibility with upstream.
 pub fn MultiArrayList(comptime T: type) type {
     return struct {
         bytes: [*]align(@alignOf(T)) u8 = undefined,

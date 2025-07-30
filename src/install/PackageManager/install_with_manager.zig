@@ -1075,7 +1075,7 @@ fn performSecurityScanAfterResolution(
         \\    throw new Error('Security provider must be version 1');
         \\  }}
         \\
-        \\  const result = await provider.onInstall({{packages:packages}});
+        \\  const result = await provider.scan({{packages:packages}});
         \\
         \\  if (!Array.isArray(result)) {{
         \\    console.error('Security provider must return an array of advisories');
@@ -1127,13 +1127,11 @@ fn performSecurityScanAfterResolution(
     const ipc_fd = spawn_result.extra_pipes.items[0];
     defer ipc_fd.close();
 
-    // Wait for the process to exit first
     const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
 
     var ipc_data = std.ArrayList(u8).init(manager.allocator);
     defer ipc_data.deinit();
 
-    // Now read all available data from the pipe
     var buf: [4096]u8 = undefined;
     while (true) {
         switch (bun.sys.read(ipc_fd, &buf)) {

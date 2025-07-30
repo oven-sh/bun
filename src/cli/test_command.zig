@@ -1443,7 +1443,7 @@ pub const TestCommand = struct {
                     // don't error if multiple are passed; one might fail
                     // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        Output.prettyErrorln("Test filter <b>{}<r> had no matches\n\nbun test --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
                         Global.exit(1);
                     },
                 };

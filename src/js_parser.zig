@@ -23634,7 +23634,7 @@ fn NewParser_(
             }
 
             return p.newExpr(E.Object{
-                .properties = G.Property.List.fromSlice(p.allocator, properties) catch unreachable,
+                .properties = G.Property.List.init(properties),
             }, loc);
         }
 

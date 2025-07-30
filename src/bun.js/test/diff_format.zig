@@ -11,13 +11,13 @@ pub const DiffFormatter = struct {
         // defer scope.deinit(); // TODO: fix leaks
         const allocator = scope.allocator();
 
+        const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors);
+
         if (this.expected_string != null and this.received_string != null) {
             const received = this.received_string.?;
             const expected = this.expected_string.?;
 
-            try printDiffMain(allocator, this.not, received, expected, writer, .{
-                .enable_ansi_colors = Output.enable_ansi_colors,
-            });
+            try printDiffMain(allocator, this.not, received, expected, writer, diff_config);
             return;
         }
 
@@ -78,9 +78,7 @@ pub const DiffFormatter = struct {
         if (std.mem.endsWith(u8, received_slice, "\n")) received_slice = received_slice[0 .. received_slice.len - 1];
         if (std.mem.endsWith(u8, expected_slice, "\n")) expected_slice = expected_slice[0 .. expected_slice.len - 1];
 
-        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, .{
-            .enable_ansi_colors = Output.enable_ansi_colors,
-        });
+        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, diff_config);
     }
 };
 
@@ -88,7 +86,9 @@ const string = []const u8;
 
 const std = @import("std");
 const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
-const printDiffMain = @import("./diff/printDiff.zig").printDiffMain;
+const printDiffFile = @import("./diff/printDiff.zig");
+const printDiffMain = printDiffFile.printDiffMain;
+const DiffConfig = printDiffFile.DiffConfig;
 
 const bun = @import("bun");
 const MutableString = bun.MutableString;

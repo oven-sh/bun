@@ -3,12 +3,30 @@
 const DMP = diff_match_patch.DMP(u8);
 const DMPUsize = diff_match_patch.DMP(usize);
 
+const Mode = enum {
+    bg_always,
+    bg_diff_only,
+    fg,
+    fg_diff,
+};
+const mode: Mode = .bg_diff_only;
+
 pub const DiffConfig = struct {
-    min_bytes_before_chunking: usize = 2 * 1024, // 2kB
-    chunk_context_lines: usize = 5,
+    min_bytes_before_chunking: usize,
+    chunk_context_lines: usize,
     enable_ansi_colors: bool,
-    truncate_threshold: usize = 2 * 1024, // 2kb
-    truncate_context: usize = 100,
+    truncate_threshold: usize,
+    truncate_context: usize,
+
+    pub fn default(is_agent: bool, enable_ansi_colors: bool) DiffConfig {
+        return .{
+            .min_bytes_before_chunking = if (is_agent) 0 else 2 * 1024, // 2kb
+            .chunk_context_lines = if (is_agent) 1 else 5,
+            .enable_ansi_colors = enable_ansi_colors,
+            .truncate_threshold = if (is_agent) 1 * 1024 else 2 * 1024, // 2kb
+            .truncate_context = if (is_agent) 50 else 100,
+        };
+    }
 };
 
 fn removeTrailingNewline(text: []const u8) []const u8 {
@@ -182,27 +200,73 @@ const prefix_styles = struct {
         .color = "",
     };
 };
-const styles = struct {
-    const inserted = Style{
+
+const base_styles = struct {
+    const red_bg_inserted = Style{
         .prefix = prefix_styles.inserted,
         .text_color = colors.red ++ colors.invert,
     };
-    const removed = Style{
+    const green_bg_removed = Style{
         .prefix = prefix_styles.removed,
         .text_color = colors.green ++ colors.invert,
     };
-    const equal = Style{
+    const dim_equal = Style{
         .prefix = prefix_styles.equal,
         .text_color = colors.dim,
     };
-    const inserted_equal = Style{
+    const red_fg_inserted = Style{
         .prefix = prefix_styles.inserted,
         .text_color = colors.red,
     };
-    const removed_equal = Style{
+    const green_fg_removed = Style{
         .prefix = prefix_styles.removed,
         .text_color = colors.green,
     };
+    const dim_inserted = Style{
+        .prefix = prefix_styles.inserted,
+        .text_color = colors.dim,
+    };
+    const dim_removed = Style{
+        .prefix = prefix_styles.removed,
+        .text_color = colors.dim,
+    };
+};
+
+const styles = switch (mode) {
+    .bg_always => struct {
+        const inserted_line = base_styles.red_bg_inserted;
+        const removed_line = base_styles.green_bg_removed;
+        const inserted_diff = base_styles.red_bg_inserted;
+        const removed_diff = base_styles.green_bg_removed;
+        const equal = base_styles.dim_equal;
+        const inserted_equal = base_styles.red_fg_inserted;
+        const removed_equal = base_styles.green_fg_removed;
+    },
+    .bg_diff_only => struct {
+        const inserted_line = base_styles.red_fg_inserted;
+        const removed_line = base_styles.green_fg_removed;
+        const inserted_diff = base_styles.red_bg_inserted;
+        const removed_diff = base_styles.green_bg_removed;
+        const equal = base_styles.dim_equal;
+        const inserted_equal = base_styles.red_fg_inserted;
+        const removed_equal = base_styles.green_fg_removed;
+    },
+    .fg => struct {
+        const inserted_line = base_styles.red_fg_inserted;
+        const removed_line = base_styles.green_fg_removed;
+        const equal = base_styles.dim_equal;
+        const inserted_equal = base_styles.red_fg_inserted;
+        const removed_equal = base_styles.green_fg_removed;
+    },
+    .fg_diff => struct {
+        const inserted_line = base_styles.red_fg_inserted;
+        const removed_line = base_styles.green_fg_removed;
+        const inserted_diff = base_styles.red_fg_inserted;
+        const removed_diff = base_styles.green_fg_removed;
+        const equal = base_styles.dim_equal;
+        const inserted_equal = base_styles.dim_inserted;
+        const removed_equal = base_styles.dim_removed;
+    },
 };
 
 pub const DiffSegment = struct {
@@ -220,16 +284,16 @@ pub const DiffSegment = struct {
 };
 
 fn printDiffFooter(writer: anytype, config: DiffConfig, removed_diff_lines: usize, inserted_diff_lines: usize) !void {
-    if (config.enable_ansi_colors) try writer.writeAll(styles.removed.prefix.color);
-    try writer.writeAll(styles.removed.prefix.msg);
+    if (config.enable_ansi_colors) try writer.writeAll(styles.removed_line.prefix.color);
+    try writer.writeAll(styles.removed_line.prefix.msg);
     try writer.writeAll("Expected");
-    try writer.print("  {s}{d}", .{ styles.removed.prefix.msg, removed_diff_lines });
+    try writer.print("  {s}{d}", .{ styles.removed_line.prefix.msg, removed_diff_lines });
     if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
     try writer.writeAll("\n");
-    if (config.enable_ansi_colors) try writer.writeAll(styles.inserted.prefix.color);
-    try writer.writeAll(styles.inserted.prefix.msg);
+    if (config.enable_ansi_colors) try writer.writeAll(styles.inserted_line.prefix.color);
+    try writer.writeAll(styles.inserted_line.prefix.msg);
     try writer.writeAll("Received");
-    try writer.print("  {s}{d}", .{ styles.inserted.prefix.msg, inserted_diff_lines });
+    try writer.print("  {s}{d}", .{ styles.inserted_line.prefix.msg, inserted_diff_lines });
     if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
     try writer.writeAll("\n");
 }
@@ -305,6 +369,18 @@ fn printModifiedSegment(
     config: DiffConfig,
     modified_style: struct { single_line: bool },
 ) !void {
+    if (mode == .fg) {
+        // the diffdiff can be skipped in this case
+
+        try printLinePrefix(writer, config, prefix_styles.removed);
+        try printSegment(segment.removed, writer, config, styles.removed_line);
+        try writer.writeAll("\n");
+        try printLinePrefix(writer, config, prefix_styles.inserted);
+        try printSegment(segment.inserted, writer, config, styles.inserted_line);
+        try writer.writeAll("\n");
+        return;
+    }
+
     var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
     try DMP.diffCleanupSemantic(arena, &char_diff);
 
@@ -314,7 +390,7 @@ fn printModifiedSegment(
     });
     for (char_diff.items) |item| {
         switch (item.operation) {
-            .delete => try printSegment(item.text, writer, config, styles.removed),
+            .delete => try printSegment(item.text, writer, config, styles.removed_diff),
             .insert => {},
             .equal => try printSegment(item.text, writer, config, styles.removed_equal),
         }
@@ -328,7 +404,7 @@ fn printModifiedSegment(
     for (char_diff.items) |item| {
         switch (item.operation) {
             .delete => {},
-            .insert => try printSegment(item.text, writer, config, styles.inserted),
+            .insert => try printSegment(item.text, writer, config, styles.inserted_diff),
             .equal => try printSegment(item.text, writer, config, styles.inserted_equal),
         }
     }
@@ -390,13 +466,13 @@ pub fn printDiff(
             },
             .removed => {
                 try printLinePrefix(writer, config, prefix_styles.removed);
-                try printSegment(segment.removed, writer, config, styles.removed);
+                try printSegment(segment.removed, writer, config, styles.removed_line);
                 try writer.writeAll("\n");
                 removed_diff_lines += segment.removed_line_count;
             },
             .inserted => {
                 try printLinePrefix(writer, config, prefix_styles.inserted);
-                try printSegment(segment.inserted, writer, config, styles.inserted);
+                try printSegment(segment.inserted, writer, config, styles.inserted_line);
                 try writer.writeAll("\n");
                 inserted_diff_lines += segment.inserted_line_count;
             },

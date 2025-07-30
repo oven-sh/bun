@@ -133,11 +133,14 @@ fn performSecurityScanOnAdds(
     const code_z = manager.allocator.dupeZ(u8, code_buf.items) catch bun.outOfMemory();
     defer manager.allocator.free(code_z);
 
-    const argv = [_][]const u8{ exec_path, "-e", code_z };
+    const exec_path_z = manager.allocator.dupeZ(u8, exec_path) catch bun.outOfMemory();
+    defer manager.allocator.free(exec_path_z);
+
+    const argv = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
 
     const options = bun.spawn.SpawnOptions{};
 
-    const result = switch (try bun.spawn.spawnProcess(&options, argv, null)) {
+    const spawn_result = switch (try bun.spawn.spawnProcess(&options, @constCast(@ptrCast(&argv)), @ptrCast(std.os.environ.ptr))) {
         .err => |err| {
             Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
             Global.exit(1);
@@ -145,16 +148,20 @@ fn performSecurityScanOnAdds(
         .result => |res| res,
     };
 
-    if (!result.status.isOK()) {
-        switch (result.status) {
+    const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
+
+    const status = bun.spawn.Status.from(spawn_result.pid, &wait_result) orelse {
+        Output.errGeneric("Failed to get security provider exit status", .{});
+        Global.exit(1);
+    };
+
+    if (!status.isOK()) {
+        switch (status) {
             .exited => |exited| {
                 Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
             },
             .signaled => |signal| {
                 Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
-            },
-            .err => |err| {
-                Output.errGeneric("Security provider failed with error: {s}", .{@tagName(err.getErrno())});
             },
             else => {
                 Output.errGeneric("Security provider failed", .{});

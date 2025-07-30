@@ -24,10 +24,7 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 pub fn getTarget(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
-    const thisValue = this.thisValue.get();
-    if (thisValue == .zero) {
-        return .zero;
-    }
+    const thisValue = this.thisValue.tryGet() orelse return .zero;
     const target = js.targetGetCached(thisValue) orelse return .zero;
     if (clean_target) {
         js.targetSetCached(thisValue, globalObject, .zero);
@@ -260,7 +257,9 @@ pub fn doDone(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFra
 }
 pub fn setPendingValue(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const result = callframe.argument(0);
-    js.pendingValueSetCached(this.thisValue.get(), globalObject, result);
+    const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
+
+    js.pendingValueSetCached(thisValue, globalObject, result);
     return .js_undefined;
 }
 pub fn setMode(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

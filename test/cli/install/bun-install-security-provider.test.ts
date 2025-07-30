@@ -110,18 +110,10 @@ test("expect output to contain the advisory", {
 });
 
 test("stdout contains all input package metadata", {
-  fails: true,
+  fails: false,
   scanner: async ({ packages }) => {
     console.log(JSON.stringify(packages));
-
-    return [
-      {
-        package: packages[0].name,
-        description: "Advisory 1 description",
-        level: "fatal",
-        url: "https://example.com/advisory-1",
-      },
-    ];
+    return [];
   },
   expect: ({ out }) => {
     expect(out).toContain('\"version\":\"0.0.2\"');
@@ -131,7 +123,6 @@ test("stdout contains all input package metadata", {
   },
 });
 
-// Edge case tests
 describe("Security Provider Edge Cases", () => {
   test("provider module not found", {
     scanner: "dummy", // We need a scanner but will override the path

@@ -998,6 +998,13 @@ pub fn migrateYarnLockfile(
                     }
                     break :os os.combine();
                 } else .all,
+                .libc = if (entry.libc) |libc_list| libc: {
+                    var libc = Npm.Libc.none.negatable();
+                    for (libc_list) |libc_str| {
+                        libc.apply(libc_str);
+                    }
+                    break :libc libc.combine();
+                } else .none,
                 .man_dir = String{},
                 .has_install_script = .false,
                 .integrity = if (entry.integrity) |integrity|

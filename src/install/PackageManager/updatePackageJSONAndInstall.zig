@@ -122,7 +122,6 @@ fn performSecurityScanOnAdds(
         \\
         \\  const fs = require('fs');
         \\  const data = JSON.stringify({{advisories: result}});
-        \\  console.log('Writing', data.length, 'bytes to fd 3');
         \\  fs.writeSync(3, data);
         \\  fs.closeSync(3);
         \\
@@ -166,6 +165,8 @@ fn performSecurityScanOnAdds(
     const ipc_fd = spawn_result.extra_pipes.items[0];
     defer ipc_fd.close();
 
+    const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
+
     var ipc_data = std.ArrayList(u8).init(manager.allocator);
     defer ipc_data.deinit();
 
@@ -173,10 +174,8 @@ fn performSecurityScanOnAdds(
     while (true) {
         switch (bun.sys.read(ipc_fd, &buf)) {
             .err => |err| {
-                // EAGAIN means no more data available (non-blocking read)
+                // EAGAIN means no more data available (WOULDBLOCK is the same as EAGAIN on Darwin)
                 if (err.getErrno() == .AGAIN) {
-                    // For blocking reads, we shouldn't get AGAIN
-                    // If we do, it means the pipe is empty
                     break;
                 }
                 Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
@@ -191,18 +190,10 @@ fn performSecurityScanOnAdds(
         }
     }
 
-    const wait_result = bun.spawn.waitpid(spawn_result.pid, 0);
-
     const status = bun.spawn.Status.from(spawn_result.pid, &wait_result) orelse {
         Output.errGeneric("Failed to get security provider exit status", .{});
         Global.exit(1);
     };
-
-    if (ipc_data.items.len == 0) {
-        Output.prettyln("<yellow>Debug: No data received from security provider via IPC<r>", .{});
-    } else {
-        Output.prettyln("<yellow>Debug: Received {d} bytes from security provider<r>", .{ipc_data.items.len});
-    }
 
     if (ipc_data.items.len > 0) {
         const json_source = logger.Source{
@@ -213,8 +204,12 @@ fn performSecurityScanOnAdds(
         var temp_log = logger.Log.init(manager.allocator);
         defer temp_log.deinit();
 
-        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch {
-            Output.errGeneric("Failed to parse security advisories JSON", .{});
+        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
+            Output.errGeneric("Security provider returned invalid JSON: {s}", .{@errorName(err)});
+            if (ipc_data.items.len < 1000) {
+                // If the response is reasonably small, show it to help debugging
+                Output.errGeneric("Response: {s}", .{ipc_data.items});
+            }
             if (temp_log.errors > 0) {
                 temp_log.print(Output.errorWriter()) catch {};
             }
@@ -224,49 +219,85 @@ fn performSecurityScanOnAdds(
         var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
         defer advisories_list.deinit();
 
-        if (json_expr.data == .e_array) {
-            const array = json_expr.data.e_array;
-            for (array.items.slice()) |item| {
-                if (item.data == .e_object) {
-                    const obj = item.data.e_object;
-                    var advisory = SecurityAdvisory{
-                        .level = .warn,
-                        .package = "",
-                        .url = null,
-                        .description = null,
-                    };
+        if (json_expr.data != .e_object) {
+            Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
+            Global.exit(1);
+        }
 
-                    if (obj.get("level")) |level_expr| {
-                        if (level_expr.asString(manager.allocator)) |level_str| {
-                            if (std.mem.eql(u8, level_str, "fatal")) {
-                                advisory.level = .fatal;
-                            }
-                        }
-                    }
+        const obj = json_expr.data.e_object;
 
-                    if (obj.get("package")) |pkg_expr| {
-                        if (pkg_expr.asString(manager.allocator)) |pkg_str| {
-                            advisory.package = pkg_str;
-                        }
-                    }
+        const advisories_expr = obj.get("advisories") orelse {
+            Output.errGeneric("Security provider response missing required 'advisories' field", .{});
+            Global.exit(1);
+        };
 
-                    if (obj.get("url")) |url_expr| {
-                        if (url_expr.asString(manager.allocator)) |url_str| {
-                            advisory.url = url_str;
-                        }
-                    }
+        if (advisories_expr.data != .e_array) {
+            Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
+            Global.exit(1);
+        }
 
-                    if (obj.get("description")) |desc_expr| {
-                        if (desc_expr.asString(manager.allocator)) |desc_str| {
-                            advisory.description = desc_str;
-                        }
-                    }
+        const array = advisories_expr.data.e_array;
+        for (array.items.slice(), 0..) |item, i| {
+            if (item.data != .e_object) {
+                Output.errGeneric("Security advisory at index {d} must be an object, got: {s}", .{ i, @tagName(item.data) });
+                Global.exit(1);
+            }
 
-                    if (advisory.package.len > 0) {
-                        try advisories_list.append(advisory);
+            const item_obj = item.data.e_object;
+
+            const name_expr = item_obj.get("name") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'name' field", .{i});
+                Global.exit(1);
+            };
+            const name_str = name_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'name' field must be a string", .{i});
+                Global.exit(1);
+            };
+            if (name_str.len == 0) {
+                Output.errGeneric("Security advisory at index {d} 'name' field cannot be empty", .{i});
+                Global.exit(1);
+            }
+
+            const desc_expr = item_obj.get("description") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'description' field", .{i});
+                Global.exit(1);
+            };
+            const desc_str = desc_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'description' field must be a string", .{i});
+                Global.exit(1);
+            };
+
+            const url_expr = item_obj.get("url") orelse {
+                Output.errGeneric("Security advisory at index {d} missing required 'url' field", .{i});
+                Global.exit(1);
+            };
+            const url_str = url_expr.asString(manager.allocator) orelse {
+                Output.errGeneric("Security advisory at index {d} 'url' field must be a string", .{i});
+                Global.exit(1);
+            };
+
+            var level = SecurityAdvisoryLevel.warn;
+            if (item_obj.get("level")) |level_expr| {
+                if (level_expr.asString(manager.allocator)) |level_str| {
+                    if (std.mem.eql(u8, level_str, "fatal")) {
+                        level = .fatal;
+                    } else if (std.mem.eql(u8, level_str, "warn")) {
+                        level = .warn;
+                    } else {
+                        Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
+                        Global.exit(1);
                     }
                 }
             }
+
+            const advisory = SecurityAdvisory{
+                .level = level,
+                .package = name_str,
+                .url = url_str,
+                .description = desc_str,
+            };
+
+            try advisories_list.append(advisory);
         }
 
         if (advisories_list.items.len > 0) {

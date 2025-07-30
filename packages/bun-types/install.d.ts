@@ -27,6 +27,8 @@ declare module "bun" {
 
         /**
          * The range that was requested by the command
+         *
+         * This could be a tag like `beta` or a semver range like `>=4.0.0`
          */
         requestedRange: string;
 

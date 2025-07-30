@@ -10,6 +10,7 @@ src/allocators/NullableAllocator.zig
 src/analytics.zig
 src/analytics/schema.zig
 src/api/schema.zig
+src/asan.zig
 src/ast.zig
 src/ast/Ast.zig
 src/ast/ASTMemoryAllocator.zig
@@ -377,7 +378,6 @@ src/collections/baby_list.zig
 src/collections/bit_set.zig
 src/collections/hive_array.zig
 src/collections/multi_array_list.zig
-src/collections/safety.zig
 src/compile_target.zig
 src/comptime_string_map.zig
 src/copy_file.zig
@@ -705,6 +705,9 @@ src/s3/multipart_options.zig
 src/s3/multipart.zig
 src/s3/simple_request.zig
 src/s3/storage_class.zig
+src/safety.zig
+src/safety/alloc_ptr.zig
+src/safety/CriticalSection.zig
 src/semver.zig
 src/semver/ExternalString.zig
 src/semver/SemverObject.zig

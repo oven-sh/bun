@@ -49,8 +49,8 @@ function test(
 
       const bunfig = await read("./bunfig.toml").text();
       if (options.bunfigProvider !== false) {
-        const providerPath = options.bunfigProvider || "./scanner.ts";
-        await write("./bunfig.toml", bunfig + "\n" + "[install.security]" + "\n" + `provider = "${providerPath}"`);
+        const providerPath = options.bunfigProvider ?? "./scanner.ts";
+        await write("./bunfig.toml", `${bunfig}\n[install.security]\nprovider = "${providerPath}"`);
       }
 
       await write("package.json", {
@@ -607,6 +607,19 @@ describe("Edge Cases", () => {
       expect(err).toContain("Security advisory at index 0 'level' field must be a string");
     },
   });
+});
+
+test("receives transitive dependencies", {
+  packages: ["bar"], // This package depends on `baz`
+  expectedExitCode: 0,
+  scanner: async ({ packages }) => {
+    for (const pkg of packages) console.log("Scanning:", pkg.name);
+    return [];
+  },
+  expect: ({ out }) => {
+    expect(out).toContain("Scanning: baz");
+    expect(out).toContain("Scanning: bar");
+  },
 });
 
 // describe("Transitive Dependencies", () => {

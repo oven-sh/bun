@@ -1,8 +1,8 @@
 const PostgresSQLConnection = @This();
-
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 socket: Socket,
 status: Status = Status.connecting,
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 
 write_buffer: bun.OffsetByteList = .{},
 read_buffer: bun.OffsetByteList = .{},
@@ -65,6 +65,9 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     },
 },
 auto_flusher: AutoFlusher = .{},
+
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub fn onAutoFlush(this: *@This()) bool {
     if (this.flags.has_backpressure) {
@@ -805,11 +808,6 @@ fn SocketHandler(comptime ssl: bool) type {
     };
 }
 
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count += 1;
-}
-
 pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.ref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
@@ -824,16 +822,6 @@ pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
 pub fn doFlush(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     this.registerAutoFlusher();
     return .js_undefined;
-}
-
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count;
-    this.ref_count -= 1;
-
-    if (ref_count == 1) {
-        this.disconnect();
-        this.deinit();
-    }
 }
 
 pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -855,6 +843,7 @@ pub fn stopTimers(this: *PostgresSQLConnection) void {
 }
 
 pub fn deinit(this: *@This()) void {
+    this.disconnect();
     this.stopTimers();
     var iter = this.statements.valueIterator();
     while (iter.next()) |stmt_ptr| {

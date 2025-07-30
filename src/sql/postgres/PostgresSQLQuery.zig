@@ -307,7 +307,6 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
         // Query is simple and it's the only owner of the statement
         stmt.* = .{
             .signature = Signature.empty(),
-            .ref_count = 1,
             .status = .parsing,
         };
         this.statement = stmt;
@@ -467,12 +466,19 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
             // we only have connection_entry_value if we are using named prepared statements
             if (connection_entry_value) |entry_value| {
                 connection.prepared_statement_id += 1;
-                stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
+                stmt.* = .{
+                    .signature = signature,
+                    .ref_count = .initExactRefs(2),
+                    .status = if (can_execute) .parsing else .pending,
+                };
                 this.statement = stmt;
 
                 entry_value.* = stmt;
             } else {
-                stmt.* = .{ .signature = signature, .ref_count = 1, .status = if (can_execute) .parsing else .pending };
+                stmt.* = .{
+                    .signature = signature,
+                    .status = if (can_execute) .parsing else .pending,
+                };
                 this.statement = stmt;
             }
         }

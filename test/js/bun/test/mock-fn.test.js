@@ -164,7 +164,14 @@ describe("mock()", () => {
     try {
       expect(func2).toHaveReturned();
     } catch (e) {
-      expect(e.message).toContain("Function threw an exception");
+      expect(e.message.replaceAll(/\x1B\[[0-9;]*m/g, "")).toMatchInlineSnapshot(`
+        "expect(received).toHaveReturned(expected)
+
+        Expected number of succesful returns: >= 1
+        Received number of succesful returns:    0
+        Received number of calls:                1
+        "
+      `);
     }
   });
 

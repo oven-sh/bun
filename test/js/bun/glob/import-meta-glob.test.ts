@@ -37,15 +37,31 @@ describe("import.meta.glob", () => {
     test("import option extracts specific named export", async () => {
       const dir = tempDirWithFiles("import-glob-named", {
         "index.js": `
-          const modules = import.meta.glob('./routes/*.js', { import: 'default' });
+          const defaultModules = import.meta.glob('./routes/*.js', { import: 'default' });
+          const namedModules = import.meta.glob('./routes/*.js', { import: 'handler' });
           
-          for (const [path, loader] of Object.entries(modules)) {
+          console.log('DEFAULT_MODULES:');
+          for (const [path, loader] of Object.entries(defaultModules)) {
+            const result = await loader();
+            console.log(path + ':', result);
+          }
+          
+          console.log('NAMED_MODULES:');
+          for (const [path, loader] of Object.entries(namedModules)) {
             const result = await loader();
             console.log(path + ':', result);
           }
         `,
-        "routes/home.js": `export default "home-route";`,
-        "routes/about.js": `export default "about-route";`,
+        "routes/home.js": `
+          export default "home-route";
+          export const handler = "home-handler";
+          export const unused = "should-not-see-this";
+        `,
+        "routes/about.js": `
+          export default "about-route";
+          export const handler = "about-handler";
+          export const unused = "should-not-see-this";
+        `,
       });
 
       await using proc = Bun.spawn({
@@ -65,6 +81,9 @@ describe("import.meta.glob", () => {
       const lines = stdout.trim().split("\n");
       expect(lines).toContain("./routes/about.js: about-route");
       expect(lines).toContain("./routes/home.js: home-route");
+      expect(lines).toContain("./routes/about.js: about-handler");
+      expect(lines).toContain("./routes/home.js: home-handler");
+      expect(stdout).not.toContain("should-not-see-this");
     });
 
     test("options are passed through (query and with)", async () => {
@@ -121,7 +140,7 @@ describe("import.meta.glob", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("function"); // Still returns function, not module
+      expect(stdout.trim()).toBe("function");
     });
 
     test("supports recursive ** and multiple patterns", async () => {
@@ -129,8 +148,13 @@ describe("import.meta.glob", () => {
         "index.js": `
           const recursive = import.meta.glob('./src/**/*.js');
           const multiple = import.meta.glob(['./lib/*.js', './config/*.js']);
+          const negativeTest = import.meta.glob('./src/**/*.ts');
+          const complexPattern = import.meta.glob('./src/**/[a-m]*.js');
+          
           console.log('RECURSIVE:', JSON.stringify(Object.keys(recursive).sort()));
           console.log('MULTIPLE:', JSON.stringify(Object.keys(multiple).sort()));
+          console.log('NEGATIVE_TEST:', JSON.stringify(Object.keys(negativeTest)));
+          console.log('COMPLEX_PATTERN:', JSON.stringify(Object.keys(complexPattern).sort()));
         `,
         "src/main.js": `export default "main";`,
         "src/lib/util.js": `export default "util";`,
@@ -160,12 +184,18 @@ describe("import.meta.glob", () => {
         "./src/main.js",
       ]);
       expect(JSON.parse(lines[1].split(": ")[1])).toEqual(["./config/app.js", "./lib/helper.js"]);
+      expect(JSON.parse(lines[2].split(": ")[1])).toEqual([]);
+      expect(JSON.parse(lines[3].split(": ")[1])).toEqual([
+        "./src/components/button.js",
+        "./src/main.js",
+      ]);
     });
 
     test("handles empty results gracefully", () => {
       const modules = import.meta.glob("./non-existent/*.js");
       expect(typeof modules).toBe("object");
       expect(Object.keys(modules)).toHaveLength(0);
+      expect(JSON.stringify(modules)).toBe("{}");
     });
 
     test("dynamic imports work when functions are called", async () => {
@@ -224,6 +254,53 @@ describe("import.meta.glob", () => {
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("COUNT: 1");
+    });
+
+    test("error handling and edge cases", async () => {
+      const dir = tempDirWithFiles("import-glob-errors", {
+        "index.js": `
+          const withQuery = import.meta.glob('./data/**/*.json', { query: '?raw' });
+          console.log('WITH_QUERY_PATHS:', Object.keys(withQuery).sort());
+          
+          const complex = import.meta.glob('./{data,config}/**/*.{js,json}');
+          console.log('COMPLEX_COUNT:', Object.keys(complex).length);
+          
+          const keys = Object.keys(withQuery);
+          const key = keys.find(k => k.includes('config.json'));
+          console.log('ACTUAL_KEY:', key);
+          if (key && withQuery[key]) {
+            const first = await withQuery[key]();
+            const second = await withQuery[key]();
+            console.log('SAME_INSTANCE:', first === second);
+          }
+        `,
+        "data/config.json": `{"version": "1.0"}`,
+        "data/nested/deep.json": `{"level": "deep"}`,
+        "config/app.js": `export default { name: "app" };`,
+        "config/settings.json": `{"theme": "dark"}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      
+      expect(lines[0]).toContain("./data/config.json");
+      expect(lines[0]).toContain("./data/nested/deep.json");
+      expect(lines[1]).toBe("COMPLEX_COUNT: 4");
+      expect(lines[2]).toContain("ACTUAL_KEY:");
+      expect(lines[3]).toBe("SAME_INSTANCE: true");
     });
   });
 
@@ -303,7 +380,7 @@ describe("import.meta.glob", () => {
       expect(stderr).toBe("");
       const lines = stdout.trim().split("\n");
       expect(lines[0]).toBe("REGULAR: function");
-      expect(lines[1]).toBe("EAGER: function"); // Eager still lazy in bundler
+      expect(lines[1]).toBe("EAGER: function");
       expect(lines[2]).toBe("IMPORT: function");
     });
 
@@ -462,10 +539,12 @@ describe("import.meta.glob", () => {
       expect(stdout.trim()).toContain('NAMES: ["bar","foo"]');
     });
 
-    test.todo("--splitting works with 'with' option", async () => {
+    test.todo("--splitting works with 'with' option for JS files as text", async () => {
+      // This test is TODO because Bun's bundler doesn't support { type: 'text' } for JS files yet.
+      // Our import.meta.glob implementation correctly passes the 'with' option to imports.
       const dir = tempDirWithFiles("import-glob-splitting-with", {
         "entry.js": `
-          const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } });
+          const modules = import.meta.glob('./assets/*', { with: { type: 'text' } });
           export async function loadTexts() {
             const texts = {};
             for (const [path, loader] of Object.entries(modules)) {
@@ -476,12 +555,12 @@ describe("import.meta.glob", () => {
         `,
         "assets/hello.txt": `Hello World`,
         "assets/goodbye.txt": `Goodbye World`,
+        "assets/script.js": `console.log("This should be text, not executed!"); export default "js-module";`,
         "test.js": `
           import { loadTexts } from './dist/entry.js';
           loadTexts().then(texts => {
             console.log('COUNT:', Object.keys(texts).length);
-            console.log('HAS_HELLO:', texts['./assets/hello.txt'].includes('Hello'));
-            console.log('HAS_GOODBYE:', texts['./assets/goodbye.txt'].includes('Goodbye'));
+            console.log('SCRIPT_TEXT:', texts['./assets/script.js']);
           });
         `,
       });
@@ -507,10 +586,8 @@ describe("import.meta.glob", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
-      const lines = stdout.trim().split("\n");
-      expect(lines).toContain("COUNT: 2");
-      expect(lines).toContain("HAS_HELLO: true");
-      expect(lines).toContain("HAS_GOODBYE: true");
+      expect(stdout).toContain("COUNT: 3");
+      expect(stdout).toContain(`SCRIPT_TEXT: console.log("This should be text, not executed!"); export default "js-module";`);
     });
   });
 });

@@ -25,7 +25,6 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
-    WTF_MAKE_FAST_ALLOCATED;
     using Base = JSC::SourceProvider;
     using BytecodeCacheGenerator = JSC::BytecodeCacheGenerator;
     using UnlinkedFunctionExecutable = JSC::UnlinkedFunctionExecutable;

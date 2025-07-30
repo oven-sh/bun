@@ -40,9 +40,7 @@ using ScriptExecutionContextIdentifier = uint32_t;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #endif
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
-#if ENABLE(MALLOC_BREAKDOWN)
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
-#else
+#if !ENABLE(MALLOC_BREAKDOWN)
     WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
 #endif
 

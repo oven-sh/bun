@@ -127,13 +127,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
             moduleObject->filename(),
-            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+            JSC::makeSource(WTF::String(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, );
         requireFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+            ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+            JSC::makeSource(WTF::String(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
@@ -1553,14 +1555,16 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        JSC::makeSource(WTF::String(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->filename(),
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        JSC::makeSource(WTF::String(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);

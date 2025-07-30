@@ -32,8 +32,6 @@ public:
     {
         return new JSPropertyIterator(vm, data);
     }
-
-    WTF_MAKE_FAST_ALLOCATED;
 };
 
 extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)

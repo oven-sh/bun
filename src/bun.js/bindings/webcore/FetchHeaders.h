@@ -38,10 +38,7 @@ namespace WebCore {
 
 class ScriptExecutionContext;
 
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
-
 class FetchHeaders : public RefCounted<FetchHeaders> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
 public:
     enum class Guard {

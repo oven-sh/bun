@@ -110,13 +110,13 @@ public:
         if (!hasConnected) {
             hasConnected = true;
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
+                WTF::makeUniqueWithoutFastMallocCheck<Inspector::InspectorLifecycleAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+                WTF::makeUniqueWithoutFastMallocCheck<Inspector::InspectorTestReporterAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+                WTF::makeUniqueWithoutFastMallocCheck<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
+                WTF::makeUniqueWithoutFastMallocCheck<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
         this->hasEverConnected = true;

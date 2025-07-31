@@ -3730,6 +3730,12 @@ pub const StackCheck = struct {
 // Workaround for lack of branch hints.
 pub noinline fn throwStackOverflow() StackOverflow!void {
     @branchHint(.cold);
+    if (comptime bun.Environment.is_canary) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW)) {
+            @panic("Stack overflow");
+        }
+    }
+
     return error.StackOverflow;
 }
 const StackOverflow = error{StackOverflow};

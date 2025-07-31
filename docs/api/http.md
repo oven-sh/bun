@@ -196,8 +196,8 @@ Bun.serve({
 - **Last-Modified support** - Uses file modification time for `If-Modified-Since` headers
 - **If-Modified-Since** - Returns `304 Not Modified` when file hasn't changed since client's cached version
 - **Range request support** - Automatically handles partial content requests with `Content-Range` headers
-- **Zero-copy transfers** - Uses `sendfile()` system call when possible for optimal performance
-- **Memory efficient** - Only buffers necessary portions during transfer
+- **Streaming transfers** - Uses buffered reader with backpressure handling for efficient memory usage
+- **Memory efficient** - Only buffers small chunks during transfer, not entire file
 - **Best for**: Large files, dynamic content, user uploads, files that change frequently
 
 ### HTTP Caching Behavior

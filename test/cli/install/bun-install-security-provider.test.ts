@@ -615,6 +615,847 @@ test("receives transitive dependencies", {
   },
 });
 
+describe("Workspaces", () => {
+  test("scanner receives all workspace packages", {
+    scanner: async ({ packages }) => {
+      console.log("Workspace packages:");
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}@${pkg.version} (${pkg.requestedRange || "direct"})`);
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "root-workspace",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      });
+
+      await write("packages/app/package.json", {
+        name: "@workspace/app",
+        version: "1.0.0",
+        dependencies: {
+          "@workspace/lib": "workspace:*",
+          "bar": "^0.0.2",
+        },
+      });
+
+      await write("packages/lib/package.json", {
+        name: "@workspace/lib",
+        version: "1.0.0",
+        dependencies: {
+          "qux": "^0.0.2",
+        },
+      });
+
+      // The test will run install and the scanner should see all packages
+      expect(out).toContain("Workspace packages:");
+      expect(out).toContain("bar@0.0.2");
+      expect(out).toContain("qux@0.0.2");
+    },
+  });
+
+  test("install workspace package using add command", {
+    scanner: async ({ packages }) => {
+      console.log("Adding workspace package:");
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}@${pkg.version} (${pkg.requestedRange || "direct"})`);
+        // Check if this package is from a workspace
+        if (!pkg.registryUrl || pkg.registryUrl === "") {
+          console.log("  ^ This appears to be a workspace package");
+        }
+      }
+      return [];
+    },
+    packages: ["@workspace/utils"], // Simulating: bun add @workspace/utils
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      // Set up workspace structure
+      await write("../package.json", {
+        name: "my-monorepo",
+        workspaces: ["packages/*"],
+      });
+
+      await write("../packages/utils/package.json", {
+        name: "@workspace/utils",
+        version: "2.0.0",
+        dependencies: {
+          "qux": "^0.0.2",
+        },
+      });
+
+      await write("../packages/app/package.json", {
+        name: "@workspace/app",
+        version: "1.0.0",
+        dependencies: {
+          "bar": "^0.0.2",
+        },
+      });
+
+      // Test harness will create package.json in package_dir
+      // But we need to indicate we're in a workspace
+      await write("../../package.json", {
+        name: "my-monorepo",
+        workspaces: ["packages/*"],
+      });
+
+      expect(out).toContain("Adding workspace package:");
+      expect(out).toContain("@workspace/utils");
+    },
+  });
+
+  test("scanner can flag workspace package vulnerabilities", {
+    scanner: async ({ packages }) => {
+      const workspacePkg = packages.find(p => p.name === "@workspace/lib");
+      if (workspacePkg) {
+        return [
+          {
+            package: workspacePkg.name,
+            description: "Security issue in workspace package",
+            level: "fatal",
+            url: "https://example.com/workspace-vuln",
+          },
+        ];
+      }
+      return [];
+    },
+    fails: true,
+    expectedExitCode: 1,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "root",
+        workspaces: ["packages/*"],
+      });
+
+      await write("packages/lib/package.json", {
+        name: "@workspace/lib",
+        version: "1.0.0",
+      });
+
+      await write("packages/app/package.json", {
+        name: "@workspace/app",
+        dependencies: {
+          "@workspace/lib": "workspace:*",
+        },
+      });
+
+      expect(out).toContain("FATAL: @workspace/lib");
+      expect(out).toContain("Security issue in workspace package");
+    },
+  });
+
+  test("install workspace B from within workspace A", {
+    scanner: async ({ packages }) => {
+      console.log("Installing sibling workspace:");
+      for (const pkg of packages) {
+        console.log(`Package: ${pkg.name}@${pkg.version}`);
+        console.log(`  - registryUrl: ${pkg.registryUrl || "none"}`);
+        console.log(`  - requestedRange: ${pkg.requestedRange}`);
+
+        // Workspace packages may have empty registryUrl or a special workspace: protocol
+        if (pkg.name.includes("workspace-b")) {
+          console.log(`  --> Found workspace B!`);
+        }
+      }
+      return [];
+    },
+    packages: ["workspace-b"], // Simulating: cd workspace-a && bun add workspace-b
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      // Create a monorepo with two workspaces
+      await write("../../package.json", {
+        name: "monorepo",
+        private: true,
+        workspaces: ["*"],
+      });
+
+      // Create workspace-a (we're "inside" this one)
+      await write("../workspace-a/package.json", {
+        name: "workspace-a",
+        version: "1.0.0",
+      });
+
+      // Create workspace-b (we're installing this)
+      await write("../workspace-b/package.json", {
+        name: "workspace-b",
+        version: "2.0.0",
+        dependencies: {
+          "bar": "^0.0.2",
+        },
+      });
+
+      // Test simulates: cd workspace-a && bun add workspace-b
+      // The security scanner should see workspace-b being installed
+
+      expect(out).toContain("Installing sibling workspace:");
+      expect(out).toContain("workspace-b@2.0.0");
+      expect(out).toContain("Found workspace B!");
+    },
+  });
+});
+
+describe("Local Packages", () => {
+  test("scanner receives local file dependencies", {
+    scanner: async ({ packages }) => {
+      console.log("Packages from local sources:");
+      for (const pkg of packages) {
+        if (pkg.registryUrl?.startsWith("file:")) {
+          console.log(`- Local: ${pkg.name} from ${pkg.registryUrl}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("local-pkg/package.json", {
+        name: "local-package",
+        version: "1.0.0",
+        dependencies: {
+          "bar": "^0.0.2",
+        },
+      });
+
+      await write("package.json", {
+        name: "test-app",
+        dependencies: {
+          "local-package": "file:./local-pkg",
+        },
+      });
+
+      expect(out).toContain("Local: local-package");
+    },
+  });
+
+  test("scanner flags vulnerabilities in local packages", {
+    scanner: async ({ packages }) => {
+      const localPkg = packages.find(p => p.name === "vulnerable-local");
+      if (localPkg) {
+        return [
+          {
+            package: localPkg.name,
+            description: "Local package contains malicious code",
+            level: "fatal",
+            url: "https://example.com/local-malware",
+          },
+        ];
+      }
+      return [];
+    },
+    fails: true,
+    expect: async ({ out }) => {
+      await write("malicious/package.json", {
+        name: "vulnerable-local",
+        version: "1.0.0",
+      });
+
+      await write("package.json", {
+        name: "app",
+        dependencies: {
+          "vulnerable-local": "file:./malicious",
+        },
+      });
+
+      expect(out).toContain("FATAL: vulnerable-local");
+      expect(out).toContain("Local package contains malicious code");
+    },
+  });
+
+  test("scanner with relative path dependencies", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.name === "sibling-package") {
+          console.log(`Found relative dependency: ${pkg.name}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("../sibling/package.json", {
+        name: "sibling-package",
+        version: "1.0.0",
+      });
+
+      await write("package.json", {
+        name: "app",
+        dependencies: {
+          "sibling-package": "file:../sibling",
+        },
+      });
+
+      expect(out).toContain("Found relative dependency: sibling-package");
+    },
+  });
+});
+
+describe("GitHub Dependencies", () => {
+  test("scanner receives GitHub dependencies with commit hash", {
+    scanner: async ({ packages }) => {
+      console.log("GitHub packages:");
+      for (const pkg of packages) {
+        if (pkg.registryUrl?.includes("github.com") || pkg.requestedRange?.includes("github:")) {
+          console.log(`- GitHub: ${pkg.name} (${pkg.requestedRange})`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-github",
+        dependencies: {
+          "express": "github:expressjs/express#4.18.2",
+          "lodash": "github:lodash/lodash",
+        },
+      });
+
+      expect(out).toContain("GitHub:");
+    },
+  });
+
+  test("scanner with GitHub shorthand syntax", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange?.includes("/")) {
+          console.log(`Shorthand GitHub: ${pkg.name} from ${pkg.requestedRange}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-gh-shorthand",
+        dependencies: {
+          "my-pkg": "user/repo",
+          "another": "org/package#branch",
+        },
+      });
+
+      expect(out).toContain("Shorthand GitHub:");
+    },
+  });
+
+  test("scanner flags suspicious GitHub repos", {
+    scanner: async ({ packages }) => {
+      const suspiciousPkg = packages.find(p => p.requestedRange?.includes("malicious-user/evil-package"));
+      if (suspiciousPkg) {
+        return [
+          {
+            package: suspiciousPkg.name,
+            description: "Package from untrusted GitHub repository",
+            level: "fatal",
+            url: "https://example.com/github-malware",
+          },
+        ];
+      }
+      return [];
+    },
+    fails: true,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-suspicious",
+        dependencies: {
+          "evil": "malicious-user/evil-package",
+        },
+      });
+
+      expect(out).toContain("FATAL:");
+      expect(out).toContain("untrusted GitHub repository");
+    },
+  });
+});
+
+describe("Git Dependencies", () => {
+  test("scanner receives git protocol dependencies", {
+    scanner: async ({ packages }) => {
+      console.log("Git packages:");
+      for (const pkg of packages) {
+        if (
+          pkg.registryUrl?.startsWith("git+") ||
+          pkg.registryUrl?.endsWith(".git") ||
+          pkg.requestedRange?.startsWith("git+")
+        ) {
+          console.log(`- Git: ${pkg.name} from ${pkg.requestedRange}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-git",
+        dependencies: {
+          "my-git-pkg": "git+https://github.com/example/repo.git",
+          "another-git": "git+ssh://git@github.com:company/private.git",
+        },
+      });
+
+      expect(out).toContain("Git:");
+    },
+  });
+
+  test("scanner with git SSH URLs", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange?.includes("git@")) {
+          console.log(`SSH Git package: ${pkg.name} from ${pkg.requestedRange}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-git-ssh",
+        dependencies: {
+          "private-pkg": "git@github.com:company/private-repo.git",
+          "internal": "git@gitlab.company.com:internal/tool.git",
+        },
+      });
+
+      expect(out).toContain("SSH Git package:");
+    },
+  });
+
+  test("scanner with git tags and branches", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange?.includes(".git#")) {
+          const [, ref] = pkg.requestedRange.split("#");
+          console.log(`Git ref: ${pkg.name} at ${ref}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-git-refs",
+        dependencies: {
+          "tagged": "git+https://github.com/example/repo.git#v1.2.3",
+          "branched": "git+https://github.com/example/repo.git#feature/new",
+        },
+      });
+
+      expect(out).toContain("Git ref:");
+    },
+  });
+});
+
+describe("Tarball Dependencies", () => {
+  test("scanner receives tarball URL dependencies", {
+    scanner: async ({ packages }) => {
+      console.log("Tarball packages:");
+      for (const pkg of packages) {
+        if (
+          pkg.requestedRange?.endsWith(".tgz") ||
+          pkg.requestedRange?.endsWith(".tar.gz") ||
+          pkg.registryUrl?.match(/\.(tgz|tar\.gz)$/)
+        ) {
+          console.log(`- Tarball: ${pkg.name} from ${pkg.requestedRange}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-tarball",
+        dependencies: {
+          "my-tarball": "https://example.com/package-1.0.0.tgz",
+          "another": "https://registry.npmjs.org/some-package/-/some-package-2.0.0.tgz",
+        },
+      });
+
+      expect(out).toContain("Tarball:");
+    },
+  });
+
+  test("scanner flags malicious tarballs", {
+    scanner: async ({ packages }) => {
+      const tarballPkg = packages.find(
+        p => p.requestedRange?.includes("suspicious-domain.com") && p.requestedRange?.match(/\.(tgz|tar\.gz)$/),
+      );
+      if (tarballPkg) {
+        return [
+          {
+            package: tarballPkg.name,
+            description: "Tarball from untrusted source",
+            level: "fatal",
+            url: "https://example.com/untrusted-tarball",
+          },
+        ];
+      }
+      return [];
+    },
+    fails: true,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-bad-tarball",
+        dependencies: {
+          "evil-pkg": "https://suspicious-domain.com/evil.tgz",
+        },
+      });
+
+      expect(out).toContain("FATAL:");
+      expect(out).toContain("Tarball from untrusted source");
+    },
+  });
+
+  test("scanner with local tarball files", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange?.startsWith("file:") && pkg.requestedRange?.match(/\.(tgz|tar\.gz)$/)) {
+          console.log(`Local tarball: ${pkg.name}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-local-tarball",
+        dependencies: {
+          "prebuilt": "file:./prebuilt-1.0.0.tgz",
+        },
+      });
+
+      expect(out).toContain("Local tarball:");
+    },
+  });
+});
+
+describe("Scoped Packages", () => {
+  test("scanner handles scoped packages correctly", {
+    scanner: async ({ packages }) => {
+      console.log("Scoped packages:");
+      for (const pkg of packages) {
+        if (pkg.name.startsWith("@")) {
+          console.log(`- Scoped: ${pkg.name} (${pkg.version})`);
+        }
+      }
+      return [];
+    },
+    packages: ["@barn/moo", "@scope/package"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Scoped: @barn/moo");
+      expect(out).toContain("Scoped: @scope/package");
+    },
+  });
+
+  test("scanner with private scoped packages", {
+    scanner: async ({ packages }) => {
+      const privatePkgs = packages.filter(p => p.name.startsWith("@private/") || p.name.startsWith("@company/"));
+
+      if (privatePkgs.length > 0) {
+        console.log(`Found ${privatePkgs.length} private packages`);
+        for (const pkg of privatePkgs) {
+          console.log(`- ${pkg.name} from ${pkg.registryUrl}`);
+        }
+      }
+
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write(
+        ".npmrc",
+        `
+@company:registry=https://npm.company.com
+@private:registry=https://private-registry.com
+`,
+      );
+
+      await write("package.json", {
+        name: "test-private",
+        dependencies: {
+          "@company/internal-tool": "^1.0.0",
+          "@private/secret-lib": "^2.0.0",
+          "bar": "^0.0.2",
+        },
+      });
+
+      expect(out).toContain("private packages");
+    },
+  });
+});
+
+describe("Package Resolution", () => {
+  test("scanner receives aliased packages", {
+    scanner: async ({ packages }) => {
+      console.log("Package aliases:");
+      for (const pkg of packages) {
+        if (pkg.requestedRange?.startsWith("npm:")) {
+          console.log(`- ${pkg.name}: aliased from ${pkg.requestedRange}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-aliases",
+        dependencies: {
+          "my-bar": "npm:bar@^0.0.2",
+          "legacy-qux": "npm:qux@0.0.1",
+        },
+      });
+
+      expect(out).toContain("Package aliases:");
+      expect(out).toContain("aliased from npm:");
+    },
+  });
+
+  test("scanner with version ranges", {
+    scanner: async ({ packages }) => {
+      console.log("Version ranges:");
+      for (const pkg of packages) {
+        console.log(`- ${pkg.name}: ${pkg.requestedRange} resolved to ${pkg.version}`);
+      }
+      return [];
+    },
+    packages: ["bar@~0.0.1", "qux@>=0.0.1 <1.0.0"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("bar: ~0.0.1 resolved to");
+      expect(out).toContain("qux: >=0.0.1 <1.0.0 resolved to");
+    },
+  });
+
+  test("scanner with latest tags", {
+    scanner: async ({ packages }) => {
+      for (const pkg of packages) {
+        if (pkg.requestedRange === "latest" || pkg.requestedRange === "*") {
+          console.log(`Latest tag: ${pkg.name}@${pkg.requestedRange} -> ${pkg.version}`);
+        }
+      }
+      return [];
+    },
+    packages: ["bar@latest", "qux@*"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("Latest tag:");
+    },
+  });
+});
+
+describe("Private Registries", () => {
+  test("scanner detects packages from private registries", {
+    scanner: async ({ packages }) => {
+      console.log("Registry URLs:");
+      for (const pkg of packages) {
+        if (pkg.registryUrl && !pkg.registryUrl.includes("registry.npmjs.org")) {
+          console.log(`- ${pkg.name} from private: ${pkg.registryUrl}`);
+        }
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write(
+        ".npmrc",
+        `
+@mycompany:registry=https://npm.mycompany.com
+//npm.mycompany.com/:_authToken=secret-token
+`,
+      );
+
+      await write("package.json", {
+        name: "test-private-registry",
+        dependencies: {
+          "@mycompany/internal": "^1.0.0",
+          "bar": "^0.0.2",
+        },
+      });
+
+      expect(out).toContain("from private:");
+    },
+  });
+
+  test("scanner with multiple registries", {
+    scanner: async ({ packages }) => {
+      const registries = new Set(packages.map(p => p.registryUrl).filter(Boolean));
+      console.log(`Packages from ${registries.size} different registries`);
+      for (const reg of registries) {
+        console.log(`- ${reg}`);
+      }
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write(
+        ".npmrc",
+        `
+@corp:registry=https://registry.corp.com
+@vendor:registry=https://vendor.npmjs.com
+`,
+      );
+
+      await write("package.json", {
+        name: "multi-registry",
+        dependencies: {
+          "@corp/lib": "^1.0.0",
+          "@vendor/tool": "^2.0.0",
+          "bar": "^0.0.2",
+        },
+      });
+
+      expect(out).toContain("different registries");
+    },
+  });
+});
+
+describe("Complex Scenarios", () => {
+  test("scanner with mixed dependency types", {
+    scanner: async ({ packages }) => {
+      const stats = {
+        registry: 0,
+        git: 0,
+        local: 0,
+        workspace: 0,
+        tarball: 0,
+        github: 0,
+      };
+
+      for (const pkg of packages) {
+        const range = pkg.requestedRange || "";
+        if (range.startsWith("file:")) stats.local++;
+        else if (range.includes("git+") || range.includes("git@")) stats.git++;
+        else if (range.includes(".tgz") || range.includes(".tar.gz")) stats.tarball++;
+        else if (range.includes("github:") || range.includes("/")) stats.github++;
+        else if (range.startsWith("workspace:")) stats.workspace++;
+        else stats.registry++;
+      }
+
+      console.log("Dependency sources:", JSON.stringify(stats));
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "complex-app",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "bar": "^0.0.2",
+          "git-pkg": "git+https://github.com/example/repo.git",
+          "local-pkg": "file:./local",
+          "tarball-pkg": "https://example.com/pkg.tgz",
+          "gh-pkg": "user/repo",
+        },
+      });
+
+      await write("packages/workspace-pkg/package.json", {
+        name: "@app/workspace-pkg",
+        version: "1.0.0",
+      });
+
+      await write("local/package.json", {
+        name: "local-pkg",
+        version: "1.0.0",
+      });
+
+      expect(out).toContain("Dependency sources:");
+    },
+  });
+
+  test("scanner handles monorepo with cross-dependencies", {
+    scanner: async ({ packages }) => {
+      const workspacePkgs = packages.filter(p => p.name.startsWith("@monorepo/"));
+      console.log(`Found ${workspacePkgs.length} workspace packages`);
+
+      const deps = new Map<string, string[]>();
+      for (const pkg of workspacePkgs) {
+        // In real scenario, would parse package.json to find deps
+        console.log(`- ${pkg.name}`);
+      }
+
+      return [];
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "monorepo-root",
+        workspaces: ["apps/*", "libs/*"],
+      });
+
+      await write("libs/core/package.json", {
+        name: "@monorepo/core",
+        version: "1.0.0",
+      });
+
+      await write("libs/utils/package.json", {
+        name: "@monorepo/utils",
+        version: "1.0.0",
+        dependencies: {
+          "@monorepo/core": "workspace:*",
+        },
+      });
+
+      await write("apps/web/package.json", {
+        name: "@monorepo/web",
+        version: "1.0.0",
+        dependencies: {
+          "@monorepo/core": "workspace:*",
+          "@monorepo/utils": "workspace:*",
+          "bar": "^0.0.2",
+        },
+      });
+
+      expect(out).toContain("workspace packages");
+      expect(out).toContain("@monorepo/");
+    },
+  });
+
+  test("scanner with conditional vulnerability detection", {
+    scanner: async ({ packages }) => {
+      const advisories = [];
+
+      // Flag old versions
+      const oldPackages = packages.filter(p => p.version && p.version.startsWith("0."));
+
+      for (const pkg of oldPackages) {
+        advisories.push({
+          package: pkg.name,
+          description: `Package ${pkg.name} is using pre-1.0 version which may be unstable`,
+          level: "warn",
+          url: "https://example.com/stability",
+        });
+      }
+
+      // Flag git dependencies
+      const gitDeps = packages.filter(p => p.requestedRange?.includes("git"));
+
+      for (const pkg of gitDeps) {
+        advisories.push({
+          package: pkg.name,
+          description: "Git dependencies bypass registry security checks",
+          level: "warn",
+          url: "https://example.com/git-deps",
+        });
+      }
+
+      return advisories;
+    },
+    expectedExitCode: 0,
+    expect: async ({ out }) => {
+      await write("package.json", {
+        name: "test-conditional",
+        dependencies: {
+          "bar": "^0.0.2",
+          "git-dep": "git+https://github.com/example/repo.git",
+        },
+      });
+
+      expect(out).toContain("WARN:");
+      expect(out).toContain("pre-1.0 version");
+      expect(out).toContain("Git dependencies");
+    },
+  });
+});
+
 // describe("Transitive Dependencies", () => {
 //   test("scanner receives direct and transitive dependencies", {
 //     scanner: async ({ packages }) => {

@@ -4,7 +4,7 @@ import { expectType } from "./utilities";
 
 const mySecurityScanner: Bun.Install.Security.Provider = {
   version: "1",
-  scan: async ({ packages }: Bun.Install.Security.OnInstallInfo) => {
+  scan: async ({ packages }) => {
     const response = await fetch("https://threat-feed.example.com");
 
     if (!response.ok) {

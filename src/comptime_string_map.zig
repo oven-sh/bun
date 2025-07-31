@@ -190,7 +190,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        /// Caller must ensure that the input is a string.
+        /// Throws if toString() throws.
         pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);
@@ -198,7 +198,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return getWithEql(str, bun.String.eqlComptime);
         }
 
-        /// Caller must ensure that the input is a string.
+        /// Throws if toString() throws.
         pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);

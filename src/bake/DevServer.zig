@@ -1184,7 +1184,7 @@ fn onFrameworkRequestWithBundle(
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
 
-    const bundle = &route_bundle.data.framework;
+    const framework_bundle = &route_bundle.data.framework;
 
     // Extract route params by re-matching the URL
     var params: FrameworkRouter.MatchedParams = undefined;
@@ -1241,9 +1241,9 @@ fn onFrameworkRequestWithBundle(
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
 
-    const router_type = dev.router.typePtr(dev.router.routePtr(bundle.route_index).type);
+    const router_type = dev.router.typePtr(dev.router.routePtr(framework_bundle.route_index).type);
 
-    dev.server.?.onRequestFromSaved(
+    dev.server.?.onSavedRequest(
         req,
         resp,
         server_request_callback,
@@ -1258,17 +1258,17 @@ fn onFrameworkRequestWithBundle(
                 break :str str;
             },
             // routeModules
-            bundle.cached_module_list.get() orelse arr: {
+            framework_bundle.cached_module_list.get() orelse arr: {
                 const global = dev.vm.global;
                 const keys = dev.server_graph.bundled_files.keys();
                 var n: usize = 1;
-                var route = dev.router.routePtr(bundle.route_index);
+                var route = dev.router.routePtr(framework_bundle.route_index);
                 while (true) {
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
-                route = dev.router.routePtr(bundle.route_index);
+                route = dev.router.routePtr(framework_bundle.route_index);
                 var route_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
@@ -1282,11 +1282,11 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = .create(arr, global);
+                framework_bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
-            bundle.cached_client_bundle_url.get() orelse str: {
+            framework_bundle.cached_client_bundle_url.get() orelse str: {
                 const bundle_index: u32 = route_bundle_index.get();
                 const generation: u32 = route_bundle.client_script_generation;
                 const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
@@ -1295,13 +1295,13 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
+                framework_bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
-            bundle.cached_css_file_array.get() orelse arr: {
+            framework_bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = .create(js, dev.vm.global);
+                framework_bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
             // params
@@ -1471,7 +1471,7 @@ fn generateJavaScriptCodeForHTMLFile(
 
 pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
-    const blob = route_bundle.client_bundle orelse generate: {
+    const client_bundle = route_bundle.client_bundle orelse generate: {
         const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
@@ -1484,7 +1484,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         break :generate route_bundle.client_bundle.?;
     };
     dev.source_maps.addWeakRef(route_bundle.sourceMapId());
-    blob.onWithMethod(method, resp);
+    client_bundle.onWithMethod(method, resp);
 }
 
 pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {

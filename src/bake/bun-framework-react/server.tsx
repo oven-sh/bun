@@ -106,7 +106,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   }
 
   // The RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.modules, signal), {
+  return new Response(renderToHtml(rscPayload, meta.modules, signal), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },

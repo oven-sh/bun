@@ -2250,11 +2250,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
-const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 const uv = bun.windows.libuv;
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 
 const jsc = bun.jsc;
 const Subprocess = jsc.Subprocess;

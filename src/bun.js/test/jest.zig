@@ -1646,7 +1646,6 @@ pub const TestRunnerTask = struct {
                 test_.line_number,
             ),
             .fail_because_failing_test_passed => |count| {
-                Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
                 Jest.runner.?.reportFailure(
                     test_id,
                     this.source_file_path,
@@ -1656,6 +1655,7 @@ pub const TestRunnerTask = struct {
                     describe,
                     test_.line_number,
                 );
+                Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
             },
             .fail_because_expected_has_assertions => {
                 Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});

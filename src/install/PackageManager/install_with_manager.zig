@@ -1222,7 +1222,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
         defer advisories_list.deinit();
 
-        // The JSON must be an object
         if (json_expr.data != .e_object) {
             Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
             Global.exit(1);
@@ -1338,11 +1337,9 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                 Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
                 Global.exit(1);
             } else if (has_warn) {
-                // Check if TTY is available for prompting
                 const is_tty = Output.enable_ansi_colors_stdout;
 
                 if (is_tty) {
-                    // Prompt user to continue
                     Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
                     Output.flush();
 
@@ -1379,7 +1376,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                             break :blk false;
                         },
                         else => blk: {
-                            // Consume the rest of the line
                             while (reader.readByte()) |b| {
                                 if (b == '\n' or b == '\r') break;
                             } else |_| {}
@@ -1394,7 +1390,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
                     Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
                 } else {
-                    // No TTY available, exit with error
                     Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
                     Output.pretty("<red>Installation cancelled.<r>\n\n", .{});
                     Global.exit(1);

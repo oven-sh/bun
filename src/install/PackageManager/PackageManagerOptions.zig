@@ -679,7 +679,6 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const Path = bun.path;
 const URL = bun.URL;
 const logger = bun.logger;
 const strings = bun.strings;

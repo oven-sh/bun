@@ -207,12 +207,12 @@ function generate(ssl) {
         fn: "getServername",
         length: 0,
       },
-      "writeBuffered": {
+      writeBuffered: {
         fn: "writeBuffered",
         length: 2,
         privateSymbol: "write",
       },
-      "endBuffered": {
+      endBuffered: {
         fn: "endBuffered",
         length: 2,
         privateSymbol: "end",

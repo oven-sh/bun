@@ -189,7 +189,7 @@ type Defines = Record<string, string>;
 cc({
   source: "hello.c",
   define: {
-    "NDEBUG": "1",
+    NDEBUG: "1",
   },
 });
 ```

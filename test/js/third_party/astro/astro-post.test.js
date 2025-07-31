@@ -74,11 +74,11 @@ describe("astro", async () => {
     formData.append("name", "John Doe");
     formData.append("email", "john.doe@example.com");
     const r = await fetch(`${origin}/form-data`, {
-      "body": formData,
-      "headers": {
-        "origin": origin,
+      body: formData,
+      headers: {
+        origin: origin,
       },
-      "method": "POST",
+      method: "POST",
     });
 
     expect(r.status).toBe(200);

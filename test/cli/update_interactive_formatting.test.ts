@@ -9,10 +9,10 @@ describe("bun update --interactive formatting", () => {
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "a": "1.0.0",
+          a: "1.0.0",
           "really-long-package-name-that-causes-formatting-issues": "1.0.0",
           "@org/extremely-long-scoped-package-name-that-will-test-formatting": "1.0.0",
-          "short": "1.0.0",
+          short: "1.0.0",
           "another-package-with-a-very-long-name-to-test-column-alignment": "1.0.0",
         },
         devDependencies: {
@@ -29,51 +29,51 @@ describe("bun update --interactive formatting", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
-          "a": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          a: {
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "really-long-package-name-that-causes-formatting-issues": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "@org/extremely-long-scoped-package-name-that-will-test-formatting": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
-          "short": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+          short: {
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "another-package-with-a-very-long-name-to-test-column-alignment": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "dev-package": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "super-long-dev-package-name-that-should-not-break-formatting": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "peer-package": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "extremely-long-peer-dependency-name-for-testing-column-alignment": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "optional-package": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "very-long-optional-dependency-name-that-tests-formatting": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
         },
       }),
@@ -126,19 +126,19 @@ describe("bun update --interactive formatting", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
+        lockfileVersion: 3,
+        packages: {
           "package-with-long-version": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0-alpha.1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20",
+            integrity: "sha512-fake",
+            version: "1.0.0-alpha.1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20",
           },
           "package-with-short-version": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
           "package-with-prerelease": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0-beta.1+build.1234567890.abcdef",
+            integrity: "sha512-fake",
+            version: "1.0.0-beta.1+build.1234567890.abcdef",
           },
         },
       }),
@@ -176,11 +176,11 @@ describe("bun update --interactive formatting", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
+        lockfileVersion: 3,
+        packages: {
           [extremelyLongPackageName]: {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
         },
       }),
@@ -213,33 +213,33 @@ describe("bun update --interactive formatting", () => {
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "a": "1.0.0",
+          a: "1.0.0",
           "really-long-dependency-name": "1.0.0",
         },
         devDependencies: {
-          "b": "1.0.0",
+          b: "1.0.0",
           "super-long-dev-dependency-name": "1.0.0",
         },
         peerDependencies: {
-          "c": "1.0.0",
+          c: "1.0.0",
           "extremely-long-peer-dependency-name": "1.0.0",
         },
         optionalDependencies: {
-          "d": "1.0.0",
+          d: "1.0.0",
           "very-long-optional-dependency-name": "1.0.0",
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
-          "a": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "really-long-dependency-name": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "b": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "super-long-dev-dependency-name": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "c": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "extremely-long-peer-dependency-name": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "d": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "very-long-optional-dependency-name": { "integrity": "sha512-fake", "version": "1.0.0" },
+        lockfileVersion: 3,
+        packages: {
+          a: { integrity: "sha512-fake", version: "1.0.0" },
+          "really-long-dependency-name": { integrity: "sha512-fake", version: "1.0.0" },
+          b: { integrity: "sha512-fake", version: "1.0.0" },
+          "super-long-dev-dependency-name": { integrity: "sha512-fake", version: "1.0.0" },
+          c: { integrity: "sha512-fake", version: "1.0.0" },
+          "extremely-long-peer-dependency-name": { integrity: "sha512-fake", version: "1.0.0" },
+          d: { integrity: "sha512-fake", version: "1.0.0" },
+          "very-long-optional-dependency-name": { integrity: "sha512-fake", version: "1.0.0" },
         },
       }),
     });

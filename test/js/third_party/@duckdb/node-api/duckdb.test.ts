@@ -684,23 +684,23 @@ describe("api", () => {
         null,
       ]);
       assertValues(chunk, 41, DuckDBStructVector, [
-        structValue({ "a": null, "b": null }),
-        structValue({ "a": 42, "b": "🦆🦆🦆🦆🦆🦆" }),
+        structValue({ a: null, b: null }),
+        structValue({ a: 42, b: "🦆🦆🦆🦆🦆🦆" }),
         null,
       ]);
       // struct_of_arrays
       assertValues(chunk, 42, DuckDBStructVector, [
-        structValue({ "a": null, "b": null }),
+        structValue({ a: null, b: null }),
         structValue({
-          "a": listValue([42, 999, null, null, -42]),
-          "b": listValue(["🦆🦆🦆🦆🦆🦆", "goose", null, ""]),
+          a: listValue([42, 999, null, null, -42]),
+          b: listValue(["🦆🦆🦆🦆🦆🦆", "goose", null, ""]),
         }),
         null,
       ]);
       // array_of_structs
       assertValues(chunk, 43, DuckDBListVector, [
         listValue([]),
-        listValue([structValue({ "a": null, "b": null }), structValue({ "a": 42, "b": "🦆🦆🦆🦆🦆🦆" }), null]),
+        listValue([structValue({ a: null, b: null }), structValue({ a: 42, b: "🦆🦆🦆🦆🦆🦆" }), null]),
         null,
       ]);
       assertValues(chunk, 44, DuckDBMapVector, [
@@ -735,26 +735,26 @@ describe("api", () => {
       // fixed_struct_array
       assertValues(chunk, 50, DuckDBArrayVector, [
         arrayValue([
-          structValue({ "a": null, "b": null }),
-          structValue({ "a": 42, "b": "🦆🦆🦆🦆🦆🦆" }),
-          structValue({ "a": null, "b": null }),
+          structValue({ a: null, b: null }),
+          structValue({ a: 42, b: "🦆🦆🦆🦆🦆🦆" }),
+          structValue({ a: null, b: null }),
         ]),
         arrayValue([
-          structValue({ "a": 42, "b": "🦆🦆🦆🦆🦆🦆" }),
-          structValue({ "a": null, "b": null }),
-          structValue({ "a": 42, "b": "🦆🦆🦆🦆🦆🦆" }),
+          structValue({ a: 42, b: "🦆🦆🦆🦆🦆🦆" }),
+          structValue({ a: null, b: null }),
+          structValue({ a: 42, b: "🦆🦆🦆🦆🦆🦆" }),
         ]),
         null,
       ]);
       // struct_of_fixed_array
       assertValues(chunk, 51, DuckDBStructVector, [
         structValue({
-          "a": arrayValue([null, 2, 3]),
-          "b": arrayValue(["a", null, "c"]),
+          a: arrayValue([null, 2, 3]),
+          b: arrayValue(["a", null, "c"]),
         }),
         structValue({
-          "a": arrayValue([4, 5, 6]),
-          "b": arrayValue(["d", "e", "f"]),
+          a: arrayValue([4, 5, 6]),
+          b: arrayValue(["d", "e", "f"]),
         }),
         null,
       ]);
@@ -1026,7 +1026,7 @@ describe("api", () => {
     assertValues<string, DuckDBVarCharVector>(chunk, 0, DuckDBVarCharVector, ["node-neo-api"]);
   });
   test("overriding duckdb_api", async () => {
-    const instance = await DuckDBInstance.create(undefined, { "duckdb_api": "custom-duckdb-api" });
+    const instance = await DuckDBInstance.create(undefined, { duckdb_api: "custom-duckdb-api" });
     const connection = await instance.connect();
     const result = await connection.run(`select current_setting('duckdb_api') as duckdb_api`);
     assertColumns(result, [{ name: "duckdb_api", type: DuckDBVarCharType.instance }]);

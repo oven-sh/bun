@@ -21,7 +21,7 @@ const regexSeparators = /[\x2E\u3002\uFF0E\uFF61]/g; // RFC 3490 separators
 
 /** Error messages */
 const errors = {
-  "overflow": "Overflow: input needs wider integers to process",
+  overflow: "Overflow: input needs wider integers to process",
   "not-basic": "Illegal input >= 0x80 (not a basic code point)",
   "invalid-input": "Invalid input",
 };
@@ -395,7 +395,7 @@ export default {
    * @memberOf punycode
    * @type String
    */
-  "version": "2.1.0",
+  version: "2.1.0",
   /**
    * An object of methods to convert from JavaScript's internal character
    * representation (UCS-2) to Unicode code points, and back.
@@ -403,12 +403,12 @@ export default {
    * @memberOf punycode
    * @type Object
    */
-  "ucs2": {
-    "decode": ucs2decode,
-    "encode": ucs2encode,
+  ucs2: {
+    decode: ucs2decode,
+    encode: ucs2encode,
   },
-  "decode": decode,
-  "encode": encode,
-  "toASCII": toASCII,
-  "toUnicode": toUnicode,
+  decode: decode,
+  encode: encode,
+  toASCII: toASCII,
+  toUnicode: toUnicode,
 };

@@ -2200,8 +2200,8 @@ export async function getCloudMetadata(name, cloud) {
  */
 export function getCloudMetadataTag(tag, cloud) {
   const metadata = {
-    "aws": `tags/instance/${tag}`,
-    "google": `labels/${tag.replace(":", "-")}`,
+    aws: `tags/instance/${tag}`,
+    google: `labels/${tag.replace(":", "-")}`,
   };
 
   return getCloudMetadata(metadata, cloud);

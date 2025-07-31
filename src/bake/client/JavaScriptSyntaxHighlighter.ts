@@ -536,7 +536,7 @@ export class DraculaSyntaxHighlighter {
 
     const startNewLine = () => {
       if (lineContent) {
-        result += this.buildHtmlElement("div", { "class": "line" }, lineContent);
+        result += this.buildHtmlElement("div", { class: "line" }, lineContent);
         lineContent = "";
       }
     };
@@ -559,7 +559,7 @@ export class DraculaSyntaxHighlighter {
     startNewLine();
 
     // Wrap everything in pre tag
-    return this.buildHtmlElement("pre", { "class": classAttr }, result);
+    return this.buildHtmlElement("pre", { class: classAttr }, result);
   }
 
   public highlightLine() {

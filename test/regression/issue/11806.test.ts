@@ -4,18 +4,18 @@ import { bunExe, tempDirWithFiles } from "harness";
 test("11806", () => {
   const dir = tempDirWithFiles("11806", {
     "package.json": JSON.stringify({
-      "name": "project",
-      "workspaces": ["apps/*"],
+      name: "project",
+      workspaces: ["apps/*"],
     }),
-    "apps": {
-      "api": {
+    apps: {
+      api: {
         "package.json": JSON.stringify({
-          "name": "api",
-          "jest": {
-            "testRegex": ".*\\.spec\\.ts$",
+          name: "api",
+          jest: {
+            testRegex: ".*\\.spec\\.ts$",
           },
-          "devDependencies": {
-            "typescript": "^5.7.3",
+          devDependencies: {
+            typescript: "^5.7.3",
           },
         }),
       },

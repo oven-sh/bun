@@ -46,33 +46,33 @@ describe("Zstandard compression", async () => {
         original: Buffer.from(
           JSON.stringify(
             {
-              "private": true,
-              "name": "bun",
-              "version": "1.2.14",
-              "workspaces": ["./packages/bun-types", "./packages/@types/bun"],
-              "devDependencies": {
+              private: true,
+              name: "bun",
+              version: "1.2.14",
+              workspaces: ["./packages/bun-types", "./packages/@types/bun"],
+              devDependencies: {
                 "@types/react": "^18.3.3",
-                "esbuild": "^0.21.4",
-                "mitata": "^0.1.11",
-                "peechy": "0.4.34",
-                "prettier": "^3.5.3",
+                esbuild: "^0.21.4",
+                mitata: "^0.1.11",
+                peechy: "0.4.34",
+                prettier: "^3.5.3",
                 "prettier-plugin-organize-imports": "^4.0.0",
-                "react": "^18.3.1",
+                react: "^18.3.1",
                 "react-dom": "^18.3.1",
                 "source-map-js": "^1.2.0",
-                "typescript": "^5.7.2",
+                typescript: "^5.7.2",
               },
-              "resolutions": {
+              resolutions: {
                 "bun-types": "workspace:packages/bun-types",
                 "@types/bun": "workspace:packages/@types/bun",
               },
-              "scripts": {
-                "build": "bun run build:debug",
-                "watch":
+              scripts: {
+                build: "bun run build:debug",
+                watch:
                   "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
                 "watch-windows":
                   "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
-                "agent":
+                agent:
                   "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
                 "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
                 "build:debug:asan":
@@ -103,18 +103,18 @@ describe("Zstandard compression", async () => {
                   'docker run --rm  -v "$PWD:/root/bun/" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image',
                 "css-properties": "bun run src/css/properties/generate_properties.ts",
                 "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
-                "bump": "bun ./scripts/bump.ts",
-                "typecheck": "tsc --noEmit && cd test && bun run typecheck",
-                "fmt": "bun run prettier",
+                bump: "bun ./scripts/bump.ts",
+                typecheck: "tsc --noEmit && cd test && bun run typecheck",
+                fmt: "bun run prettier",
                 "fmt:cpp": "bun run clang-format",
                 "fmt:zig": "bun run zig-format",
-                "lint": "bunx oxlint --config=oxlint.json --format=github src/js",
+                lint: "bunx oxlint --config=oxlint.json --format=github src/js",
                 "lint:fix": "oxlint --config oxlint.json --fix",
-                "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
+                test: "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
                 "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
-                "banned": "bun test test/internal/ban-words.test.ts",
+                banned: "bun test test/internal/ban-words.test.ts",
                 "glob-sources": "bun scripts/glob-sources.mjs",
-                "zig": "vendor/zig/zig.exe",
+                zig: "vendor/zig/zig.exe",
                 "zig:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",
                 "zig:test:release":
                   "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUNTEST=ON -B build/release",
@@ -124,7 +124,7 @@ describe("Zstandard compression", async () => {
                 "zig:check": "bun run zig build check --summary new",
                 "zig:check-all": "bun run zig build check-all --summary new",
                 "zig:check-windows": "bun run zig build check-windows --summary new",
-                "analysis":
+                analysis:
                   "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DENABLE_CCACHE=OFF -B build/analysis",
                 "analysis:no-llvm": "bun run analysis -DENABLE_LLVM=OFF",
                 "clang-format": "bun run analysis --target clang-format",
@@ -135,7 +135,7 @@ describe("Zstandard compression", async () => {
                 "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
                 "zig-format": "bun run analysis:no-llvm --target zig-format",
                 "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
-                "prettier":
+                prettier:
                   "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
                 "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
                 "clean:zig":

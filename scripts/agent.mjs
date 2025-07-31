@@ -146,14 +146,14 @@ async function doBuildkiteAgent(action) {
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
     const options = {
-      "name": getHostname(),
-      "token": token || "xxx",
-      "shell": shell,
+      name: getHostname(),
+      token: token || "xxx",
+      shell: shell,
       "job-log-path": logsPath,
       "build-path": join(homePath, "builds"),
       "hooks-path": join(homePath, "hooks"),
       "plugins-path": join(homePath, "plugins"),
-      "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
+      experiment: "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
     };
 
     let ephemeral;
@@ -174,14 +174,14 @@ async function doBuildkiteAgent(action) {
     }
 
     const tags = {
-      "os": getOs(),
-      "arch": getArch(),
-      "kernel": getKernel(),
-      "abi": getAbi(),
+      os: getOs(),
+      arch: getArch(),
+      kernel: getKernel(),
+      abi: getAbi(),
       "abi-version": getAbiVersion(),
-      "distro": getDistro(),
+      distro: getDistro(),
       "distro-version": getDistroVersion(),
-      "cloud": cloud,
+      cloud: cloud,
     };
 
     if (cloud) {

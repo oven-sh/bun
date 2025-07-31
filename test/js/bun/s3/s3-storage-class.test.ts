@@ -229,7 +229,7 @@ describe("s3 - Storage class", () => {
             );
           }
 
-          return new Response(undefined, { status: 200, headers: { "Etag": `"f9a5ddddf9e0fcbd05c15bb44b389171-20"` } });
+          return new Response(undefined, { status: 200, headers: { Etag: `"f9a5ddddf9e0fcbd05c15bb44b389171-20"` } });
         },
       });
 

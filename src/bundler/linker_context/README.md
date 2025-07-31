@@ -242,7 +242,7 @@ var styles_module_default = {
 };
 
 // data.json → generates:
-var data_default = { "name": "example", "version": "1.0" };
+var data_default = { name: "example", version: "1.0" };
 ```
 
 **Step 4: Match Imports with Exports**

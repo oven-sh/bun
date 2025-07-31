@@ -55,7 +55,7 @@ export default [
         length: 1,
         DOMJIT: {
           returns: "JSString",
-          "pure": false,
+          pure: false,
           args: [],
         },
       },
@@ -63,7 +63,7 @@ export default [
         fn: "timingSafeEqual",
         DOMJIT: {
           returns: "JSValue",
-          "pure": false,
+          pure: false,
           args: ["JSUint8Array", "JSUint8Array"],
         },
         length: 2,

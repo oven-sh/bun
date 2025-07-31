@@ -17,10 +17,10 @@ test("workspace devDependencies should take priority over peerDependencies for r
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "jquery": "workspace:*", // Use workspace protocol for dev
+        jquery: "workspace:*", // Use workspace protocol for dev
       },
       peerDependencies: {
-        "jquery": "3.7.0", // Range wants 3.7.0
+        jquery: "3.7.0", // Range wants 3.7.0
       },
     }),
     "packages/lib/test.js": `const dep = require("jquery"); console.log(dep.version);`,
@@ -125,10 +125,10 @@ test("devDependencies and peerDependencies with different versions should coexis
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "utils": "1.0.0",
+        utils: "1.0.0",
       },
       peerDependencies: {
-        "utils": "^1.0.0",
+        utils: "^1.0.0",
       },
     }),
     "packages/lib/index.js": `console.log("lib");`,
@@ -178,10 +178,10 @@ test("dependency behavior comparison prioritizes devDependencies", async () => {
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "typescript": "^5.0.0",
+        typescript: "^5.0.0",
       },
       peerDependencies: {
-        "typescript": "^4.0.0 || ^5.0.0",
+        typescript: "^4.0.0 || ^5.0.0",
       },
     }),
     "index.js": `console.log("app");`,
@@ -233,10 +233,10 @@ test("Next.js monorepo scenario should not make unnecessary network requests", a
       version: "1.0.0",
       dependencies: {},
       devDependencies: {
-        "next": "15.0.0-canary.119", // Specific canary version for dev
+        next: "15.0.0-canary.119", // Specific canary version for dev
       },
       peerDependencies: {
-        "next": "^14.0.0 || ^15.0.0", // Range that would accept 14.x or 15.x stable
+        next: "^14.0.0 || ^15.0.0", // Range that would accept 14.x or 15.x stable
       },
     }),
     "packages/web/test.js": `const next = require("next/package.json"); console.log(next.version);`,

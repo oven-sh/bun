@@ -592,31 +592,31 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     const output = await Bun.$`cat ${path.join(folder, "dist", "output.json")}`.json();
     expect(output).toStrictEqual({
       "index.ts": {
-        "imports": [
-          { "imported": ["greet"], "dep": "./utils/greetings" },
-          { "imported": ["formatDate"], "dep": "./utils/dates" },
-          { "imported": ["calculateTotal"], "dep": "./math/calculations" },
-          { "imported": ["logger"], "dep": "./services/logger" },
-          { "imported": ["moduleData"], "dep": "../module_data.json" },
-          { "imported": ["path"], "dep": "path" },
+        imports: [
+          { imported: ["greet"], dep: "./utils/greetings" },
+          { imported: ["formatDate"], dep: "./utils/dates" },
+          { imported: ["calculateTotal"], dep: "./math/calculations" },
+          { imported: ["logger"], dep: "./services/logger" },
+          { imported: ["moduleData"], dep: "../module_data.json" },
+          { imported: ["path"], dep: "path" },
         ],
-        "exports": [],
+        exports: [],
       },
       "greetings.ts": {
-        "imports": [],
-        "exports": [{ "ident": "greet" }],
+        imports: [],
+        exports: [{ ident: "greet" }],
       },
       "dates.ts": {
-        "imports": [],
-        "exports": [{ "ident": "formatDate" }],
+        imports: [],
+        exports: [{ ident: "formatDate" }],
       },
       "calculations.ts": {
-        "imports": [],
-        "exports": [{ "ident": "calculateTotal" }, { "ident": "multiply" }],
+        imports: [],
+        exports: [{ ident: "calculateTotal" }, { ident: "multiply" }],
       },
       "logger.ts": {
-        "imports": [],
-        "exports": [{ "ident": "logger" }],
+        imports: [],
+        exports: [{ ident: "logger" }],
       },
     });
   });

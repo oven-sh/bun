@@ -2445,7 +2445,7 @@ async function uploadJUnitToBuildKite(junitFile) {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Token token="${getBuildkiteAnalyticsToken()}"`,
+        Authorization: `Token token="${getBuildkiteAnalyticsToken()}"`,
       },
       body: formData,
     });

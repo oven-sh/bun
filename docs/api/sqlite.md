@@ -98,7 +98,7 @@ notStrict
 You can also use an import attribute to load a database.
 
 ```ts
-import db from "./mydb.sqlite" with { "type": "sqlite" };
+import db from "./mydb.sqlite" with { type: "sqlite" };
 
 console.log(db.query("select * from users LIMIT 1").get());
 ```

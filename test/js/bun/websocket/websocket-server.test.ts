@@ -813,7 +813,7 @@ async function connect(server: Server): Promise<void> {
   const client = spawn({
     cmd: [bunExe(), pathname, url.href],
     cwd: import.meta.dir,
-    env: { ...bunEnv, "LOG_MESSAGES": "0" },
+    env: { ...bunEnv, LOG_MESSAGES: "0" },
     stdio: ["inherit", "inherit", "inherit"],
     ipc(message) {
       if (message === "connected") {

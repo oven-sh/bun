@@ -176,7 +176,7 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
       JSON.stringify({
         name: "pkg1",
         dependencies: {
-          "langchain": "^0.0.194",
+          langchain: "^0.0.194",
         },
       }),
     ),
@@ -601,7 +601,7 @@ it("should include unused resolutions in the lockfile", async () => {
       "no-deps": "2.0.0",
 
       // unused resolution
-      "jquery": "4.0.0",
+      jquery: "4.0.0",
     },
   };
 

@@ -342,7 +342,7 @@ const aws = {
 
     await aws.waitImage("image-available", imageId);
     const [availableImage] = await aws.describeImages({
-      "state": "available",
+      state: "available",
       "image-id": imageId,
     });
 
@@ -396,9 +396,9 @@ const aws = {
     }
 
     const baseImages = await aws.describeImages({
-      "state": "available",
+      state: "available",
       "owner-alias": owner,
-      "name": name,
+      name: name,
     });
 
     if (!baseImages.length) {
@@ -485,10 +485,10 @@ const aws = {
       ["user-data"]: userData,
       ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
       ["metadata-options"]: JSON.stringify({
-        "HttpTokens": "optional",
-        "HttpEndpoint": "enabled",
-        "HttpProtocolIpv6": "enabled",
-        "InstanceMetadataTags": "enabled",
+        HttpTokens: "optional",
+        HttpEndpoint: "enabled",
+        HttpProtocolIpv6: "enabled",
+        InstanceMetadataTags: "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
       ["key-name"]: keyName,
@@ -1128,33 +1128,33 @@ async function main() {
   const { values: args } = parseArgs({
     allowPositionals: true,
     options: {
-      "cloud": { type: "string", default: "aws" },
-      "os": { type: "string", default: "linux" },
-      "arch": { type: "string", default: "x64" },
-      "distro": { type: "string" },
-      "release": { type: "string" },
-      "name": { type: "string" },
+      cloud: { type: "string", default: "aws" },
+      os: { type: "string", default: "linux" },
+      arch: { type: "string", default: "x64" },
+      distro: { type: "string" },
+      release: { type: "string" },
+      name: { type: "string" },
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
       "image-name": { type: "string" },
       "cpu-count": { type: "string" },
       "memory-gb": { type: "string" },
       "disk-size-gb": { type: "string" },
-      "preemptible": { type: "boolean" },
-      "spot": { type: "boolean" },
-      "detached": { type: "boolean" },
-      "tag": { type: "string", multiple: true },
-      "ci": { type: "boolean" },
-      "rdp": { type: "boolean" },
-      "vnc": { type: "boolean" },
-      "feature": { type: "string", multiple: true },
+      preemptible: { type: "boolean" },
+      spot: { type: "boolean" },
+      detached: { type: "boolean" },
+      tag: { type: "string", multiple: true },
+      ci: { type: "boolean" },
+      rdp: { type: "boolean" },
+      vnc: { type: "boolean" },
+      feature: { type: "string", multiple: true },
       "user-data": { type: "string" },
       "authorized-user": { type: "string", multiple: true },
       "authorized-org": { type: "string", multiple: true },
       "no-bootstrap": { type: "boolean" },
       "buildkite-token": { type: "string" },
       "tailscale-authkey": { type: "string" },
-      "docker": { type: "boolean" },
+      docker: { type: "boolean" },
     },
   });
 
@@ -1169,8 +1169,8 @@ async function main() {
   }
 
   const tags = {
-    "robobun": "true",
-    "robobun2": "true",
+    robobun: "true",
+    robobun2: "true",
     "buildkite:token": args["buildkite-token"],
     "tailscale:authkey": args["tailscale-authkey"],
     ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
@@ -1257,20 +1257,20 @@ async function main() {
     console.log("Creating machine:");
     console.table({
       "Operating System": os,
-      "Architecture": arch,
-      "Distribution": distro ? `${distro} ${release}` : release,
-      "CI": ci ? "Yes" : "No",
+      Architecture: arch,
+      Distribution: distro ? `${distro} ${release}` : release,
+      CI: ci ? "Yes" : "No",
     });
 
     const result = await cloud.createMachine(options);
     const { id, name, imageId, instanceType, region, publicIp } = result;
     console.log("Created machine:");
     console.table({
-      "ID": id,
-      "Name": name || "N/A",
+      ID: id,
+      Name: name || "N/A",
       "Image ID": imageId,
       "Instance Type": instanceType,
-      "Region": region,
+      Region: region,
       "IP Address": publicIp || "TBD",
     });
 

@@ -8,8 +8,8 @@ describe("bun update --interactive snapshots", () => {
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "short": "1.0.0",
-          "react": "17.0.2",
+          short: "1.0.0",
+          react: "17.0.2",
           "really-long-package-name-for-testing": "1.0.0",
           "@scoped/package": "1.0.0",
           "@organization/extremely-long-scoped-package-name": "1.0.0",
@@ -17,7 +17,7 @@ describe("bun update --interactive snapshots", () => {
         devDependencies: {
           "dev-pkg": "1.0.0",
           "super-long-dev-package-name-for-testing": "1.0.0",
-          "typescript": "4.8.0",
+          typescript: "4.8.0",
         },
         peerDependencies: {
           "peer-pkg": "1.0.0",

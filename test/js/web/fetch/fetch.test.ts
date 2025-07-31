@@ -1210,7 +1210,7 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(false);
       const promise = response.json();
       expect(response.bodyUsed).toBe(true);
-      expect(await promise).toEqual({ "hello": "world" });
+      expect(await promise).toEqual({ hello: "world" });
       expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.json();
@@ -1644,7 +1644,7 @@ describe("should strip headers", () => {
           return new Response("hello", {
             headers: {
               ...request.headers,
-              "Location": "/redirected",
+              Location: "/redirected",
             },
             status: 303,
           });
@@ -1678,7 +1678,7 @@ describe("should strip headers", () => {
           return new Response("hello", {
             headers: {
               ...request.headers,
-              "Location": `http://${server2.hostname}:${server2.port}/redirected`,
+              Location: `http://${server2.hostname}:${server2.port}/redirected`,
             },
             status: 302,
           });
@@ -1697,7 +1697,7 @@ describe("should strip headers", () => {
           return new Response("hello", {
             headers: {
               ...request.headers,
-              "Location": `http://${server.hostname}:${server.port}/redirected`,
+              Location: `http://${server.hostname}:${server.port}/redirected`,
             },
             status: 302,
           });
@@ -1711,9 +1711,9 @@ describe("should strip headers", () => {
     const { headers, url, redirected } = await fetch(`http://${server1.hostname}:${server1.port}/redirect`, {
       method: "GET",
       headers: {
-        "Authorization": "yes",
+        Authorization: "yes",
         "Proxy-Authorization": "yes",
-        "Cookie": "yes",
+        Cookie: "yes",
       },
     });
 
@@ -1733,7 +1733,7 @@ it("same-origin status code 302 should not strip headers", async () => {
         return new Response("hello", {
           headers: {
             ...request.headers,
-            "Location": `http://${server.hostname}:${server.port}/redirected`,
+            Location: `http://${server.hostname}:${server.port}/redirected`,
           },
           status: 302,
         });
@@ -1748,9 +1748,9 @@ it("same-origin status code 302 should not strip headers", async () => {
   const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
     method: "GET",
     headers: {
-      "Authorization": "yes",
+      Authorization: "yes",
       "Proxy-Authorization": "yes",
-      "Cookie": "yes",
+      Cookie: "yes",
     },
   });
 
@@ -1800,7 +1800,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
         if (url.pathname == pathname) {
           return new Response("redirecting", {
             headers: {
-              "Location": location,
+              Location: location,
             },
             status: 302,
           });
@@ -1998,7 +1998,7 @@ describe("http/1.1 response body length", () => {
     it("should read json until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/json`);
       expect(response.status).toBe(200);
-      expect(response.json<unknown>()).resolves.toEqual({ "hello": "World" });
+      expect(response.json<unknown>()).resolves.toEqual({ hello: "World" });
     });
 
     it("should disable keep-alive", async () => {

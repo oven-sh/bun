@@ -946,10 +946,10 @@ test("write snapshot from filter", async () => {
     })
   `;
   const dir = tempDirWithFiles("writesnapshotfromfilter", {
-    "mytests": {
+    mytests: {
       "snap.test.ts": sver("a", false),
       "snap2.test.ts": sver("b", false),
-      "more": {
+      more: {
         "testing.test.ts": sver("TEST", false),
       },
     },

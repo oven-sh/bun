@@ -218,7 +218,7 @@ describe("otp", async () => {
   const fakeCIEnvs = [
     { ci: "expo-application-services", envs: { EAS_BUILD: "hi" } },
     { ci: "codemagic", envs: { CM_BUILD_ID: "hi" } },
-    { ci: "vercel", envs: { "NOW_BUILDER": "hi" } },
+    { ci: "vercel", envs: { NOW_BUILDER: "hi" } },
   ];
   for (const envInfo of fakeCIEnvs) {
     test(`CI user agent name: ${envInfo.ci}`, async () => {
@@ -508,7 +508,7 @@ test("can publish workspace package", async () => {
 
   await publish(env, join(packageDir, "packages", "publish-pkg-3"));
 
-  await write(packageJson, JSON.stringify({ name: "root", "dependencies": { "publish-pkg-3": "3.3.3" } }));
+  await write(packageJson, JSON.stringify({ name: "root", dependencies: { "publish-pkg-3": "3.3.3" } }));
 
   await runBunInstall(env, packageDir);
 
@@ -580,12 +580,12 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     version: "4.4.4",
     scripts: {
       // should happen in this order
-      "prepublishOnly": `${bunExe()} script.js prepublishOnly`,
-      "prepack": `${bunExe()} script.js prepack`,
-      "prepare": `${bunExe()} script.js prepare`,
-      "postpack": `${bunExe()} script.js postpack`,
-      "publish": `${bunExe()} script.js publish`,
-      "postpublish": `${bunExe()} script.js postpublish`,
+      prepublishOnly: `${bunExe()} script.js prepublishOnly`,
+      prepack: `${bunExe()} script.js prepack`,
+      prepare: `${bunExe()} script.js prepare`,
+      postpack: `${bunExe()} script.js postpack`,
+      publish: `${bunExe()} script.js publish`,
+      postpublish: `${bunExe()} script.js postpublish`,
     },
     dependencies: {
       "publish-pkg-4": "4.4.4",

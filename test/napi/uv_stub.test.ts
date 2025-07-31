@@ -18,19 +18,19 @@ describe.if(!isWindows)("uv stubs", () => {
       "plugin.c": await Bun.file(source).text(),
       "good_plugin.c": await Bun.file(goodSource).text(),
       "package.json": JSON.stringify({
-        "name": "fake-plugin",
-        "module": "index.ts",
-        "type": "module",
-        "devDependencies": {
+        name: "fake-plugin",
+        module: "index.ts",
+        type: "module",
+        devDependencies: {
           "@types/bun": "latest",
         },
-        "peerDependencies": {
-          "typescript": "^5.0.0",
+        peerDependencies: {
+          typescript: "^5.0.0",
         },
-        "scripts": {
+        scripts: {
           "build:napi": "node-gyp configure && node-gyp build",
         },
-        "dependencies": {
+        dependencies: {
           "node-gyp": "10.2.0",
         },
       }),

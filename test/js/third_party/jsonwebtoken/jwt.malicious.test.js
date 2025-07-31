@@ -32,7 +32,7 @@ describe("when verifying a malicious token", function () {
   });
 
   it("should not allow arbitrary execution from malicious Buffers containing objects with overridden toString functions", function () {
-    const token = jwt.sign({ "foo": "bar" }, "secret");
+    const token = jwt.sign({ foo: "bar" }, "secret");
     const maliciousBuffer = {
       toString: () => {
         throw new Error("Arbitrary Code Execution");

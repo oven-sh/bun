@@ -21,7 +21,7 @@ test("maxHeaderSize", async () => {
     {
       const response = await fetch(`${server.url}/`, {
         headers: {
-          "Huge": Buffer.alloc(8 * 1024, "abc").toString(),
+          Huge: Buffer.alloc(8 * 1024, "abc").toString(),
         },
       });
       expect(response.status).toBe(431);
@@ -30,7 +30,7 @@ test("maxHeaderSize", async () => {
     {
       const response = await fetch(`${server.url}/`, {
         headers: {
-          "Huge": Buffer.alloc(15 * 1024, "abc").toString(),
+          Huge: Buffer.alloc(15 * 1024, "abc").toString(),
         },
       });
       expect(response.status).toBe(431);
@@ -49,7 +49,7 @@ test("maxHeaderSize", async () => {
     {
       const response = await fetch(`${server.url}/`, {
         headers: {
-          "Huge": Buffer.alloc(15 * 1024, "abc").toString(),
+          Huge: Buffer.alloc(15 * 1024, "abc").toString(),
         },
       });
       expect(response.status).toBe(200);
@@ -58,7 +58,7 @@ test("maxHeaderSize", async () => {
     {
       const response = await fetch(`${server.url}/`, {
         headers: {
-          "Huge": Buffer.alloc(17 * 1024, "abc").toString(),
+          Huge: Buffer.alloc(17 * 1024, "abc").toString(),
         },
       });
       expect(response.status).toBe(431);

@@ -13,13 +13,13 @@ describe("If-None-Match Support", () => {
     "/with-etag": new Response("Custom content", {
       headers: {
         "Content-Type": "text/plain",
-        "ETag": '"custom-etag"',
+        ETag: '"custom-etag"',
       },
     }),
     "/weak-etag": new Response("Weak content", {
       headers: {
         "Content-Type": "text/plain",
-        "ETag": 'W/"weak-etag"',
+        ETag: 'W/"weak-etag"',
       },
     }),
   };

@@ -193,7 +193,7 @@ describe("Bun.serve() cookies", () => {
         ["add_cookie", "d"],
       ]),
       headers: {
-        "Cookie": "dont_modify=a;do_modify=b",
+        Cookie: "dont_modify=a;do_modify=b",
       },
     });
     expect(res.status).toBe(200);
@@ -217,7 +217,7 @@ describe("Bun.serve() cookies", () => {
       method: "POST",
       body: JSON.stringify([]),
       headers: {
-        "Cookie": "dont_modify=a;another_cookie=b",
+        Cookie: "dont_modify=a;another_cookie=b",
       },
     });
     expect(res.status).toBe(200);
@@ -290,7 +290,7 @@ describe("Bun.serve() cookies 2", () => {
   test("server sets cookie", async () => {
     const response = await fetch(server.url, {
       headers: {
-        "Cookie": "abc=def; ghi=jkl",
+        Cookie: "abc=def; ghi=jkl",
       },
     });
     expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
@@ -302,7 +302,7 @@ describe("Bun.serve() cookies 2", () => {
   test("server sets cookie on redirect", async () => {
     const response = await fetch(server.url + "/redirect", {
       headers: {
-        "Cookie": "abc=def; ghi=jkl",
+        Cookie: "abc=def; ghi=jkl",
       },
       redirect: "manual",
     });
@@ -406,7 +406,7 @@ describe("Bun.CookieMap constructor", () => {
   });
   test("doesn't parse percent encoded value in object or array", () => {
     const map = new Bun.CookieMap({
-      "cookiekey": "%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87",
+      cookiekey: "%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87",
     });
     const map2 = new Bun.CookieMap([["cookiekey", "%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87"]]);
     expect(map.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");

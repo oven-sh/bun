@@ -60,7 +60,7 @@ export const LoaderKeys: {
   14: "sqlite";
   sqlite: "sqlite";
   15: "html";
-  "html": "html";
+  html: "html";
 };
 export const enum FrameworkEntryPointType {
   client = 1,

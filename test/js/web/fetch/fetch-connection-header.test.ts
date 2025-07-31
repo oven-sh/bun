@@ -77,10 +77,10 @@ describe("fetch Connection header", () => {
   it("should handle multiple headers including Connection", async () => {
     const headers = await captureHeadersFromRequest({
       headers: {
-        "accept": "application/json",
+        accept: "application/json",
         "accept-encoding": "gzip, deflate",
         "accept-language": "en-US",
-        "connection": "close",
+        connection: "close",
         "user-agent": "test-agent",
         "x-test-header": "test-value",
       },

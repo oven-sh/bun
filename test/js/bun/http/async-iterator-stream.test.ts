@@ -196,7 +196,7 @@ describe("Streaming body via", () => {
       for (let bodyInit of [fn, { [Symbol.asyncIterator]: fn }] as const) {
         for (let [label, constructFn] of [
           ["Response", () => new Response(bodyInit)],
-          ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
+          ["Request", () => new Request({ url: "https://example.com", body: bodyInit })],
         ]) {
           for (let method of ["arrayBuffer", "bytes", "text"]) {
             test(`${label}(${method})`, async () => {

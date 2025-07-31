@@ -105,7 +105,7 @@ describe("`bun audit`", () => {
         name: "test",
         version: "1.0.0",
         dependencies: {
-          "express": "3",
+          express: "3",
         },
       }),
     },
@@ -123,13 +123,13 @@ describe("`bun audit`", () => {
         version: "1.0.0",
       }),
       "bun.lock": JSON.stringify({
-        "lockfileVersion": 1,
-        "workspaces": {
+        lockfileVersion: 1,
+        workspaces: {
           "": {
-            "name": "empty-package",
+            name: "empty-package",
           },
         },
-        "packages": {},
+        packages: {},
       }),
     },
     fn: async ({ stdout }) => {
@@ -222,13 +222,13 @@ describe("`bun audit`", () => {
           },
         }),
         "bun.lock": JSON.stringify({
-          "lockfileVersion": 1,
-          "workspaces": {
+          lockfileVersion: 1,
+          workspaces: {
             "": {
-              "name": "test",
+              name: "test",
             },
           },
-          "packages": {
+          packages: {
             "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity],
             "@foo/baz": ["@foo/baz@1.0.0", "", {}, fakeIntegrity],
           },
@@ -258,28 +258,28 @@ describe("`bun audit`", () => {
       }),
 
       "a/package.json": JSON.stringify({
-        "name": "a",
-        "dependencies": {
-          "ms": "0.7.0",
+        name: "a",
+        dependencies: {
+          ms: "0.7.0",
         },
       }),
 
       "bun.lock": JSON.stringify({
-        "lockfileVersion": 1,
-        "workspaces": {
+        lockfileVersion: 1,
+        workspaces: {
           "": {
-            "name": "bun-audit-playground",
+            name: "bun-audit-playground",
           },
-          "a": {
-            "name": "a",
-            "dependencies": {
-              "ms": "0.7.0",
+          a: {
+            name: "a",
+            dependencies: {
+              ms: "0.7.0",
             },
           },
         },
-        "packages": {
-          "a": ["a@workspace:a"],
-          "ms": ["ms@0.7.0", "", {}, fakeIntegrity],
+        packages: {
+          a: ["a@workspace:a"],
+          ms: ["ms@0.7.0", "", {}, fakeIntegrity],
         },
       }),
     },

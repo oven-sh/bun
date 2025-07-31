@@ -8,9 +8,9 @@ beforeAll(() => {
   cwd = tempDirWithFiles("--if-present", {
     "present.js": "console.log('Here!');",
     "package.json": JSON.stringify({
-      "name": "present",
-      "scripts": {
-        "present": "echo 'Here!'",
+      name: "present",
+      scripts: {
+        present: "echo 'Here!'",
       },
     }),
   });

@@ -445,10 +445,10 @@ registry = "https://badssl.com:bad"
 it("should work when moving workspace packages", async () => {
   const package_dir = tempDirWithFiles("lol", {
     "package.json": JSON.stringify({
-      "name": "my-workspace",
+      name: "my-workspace",
       private: "true",
       version: "0.0.1",
-      "devDependencies": {
+      devDependencies: {
         "@repo/ui": "*",
         "@repo/eslint-config": "*",
         "@repo/typescript-config": "*",
@@ -459,18 +459,18 @@ it("should work when moving workspace packages", async () => {
       "eslint-config": {
         "package.json": JSON.stringify({
           name: "@repo/eslint-config",
-          "version": "0.0.0",
+          version: "0.0.0",
           private: "true",
         }),
       },
       "typescript-config": {
         "package.json": JSON.stringify({
-          "name": "@repo/typescript-config",
-          "version": "0.0.0",
+          name: "@repo/typescript-config",
+          version: "0.0.0",
           private: "true",
         }),
       },
-      "ui": {
+      ui: {
         "package.json": JSON.stringify({
           name: "@repo/ui",
           version: "0.0.0",
@@ -491,10 +491,10 @@ it("should work when moving workspace packages", async () => {
 
   # change workspaces from "packages/*" to "config/*"
   echo ${JSON.stringify({
-    "name": "my-workspace",
+    name: "my-workspace",
     version: "0.0.1",
     workspaces: ["config/*"],
-    "devDependencies": {
+    devDependencies: {
       "@repo/ui": "*",
       "@repo/eslint-config": "*",
       "@repo/typescript-config": "*",
@@ -517,10 +517,10 @@ it("should work when moving workspace packages", async () => {
 it("should work when renaming a single workspace package", async () => {
   const package_dir = tempDirWithFiles("lol", {
     "package.json": JSON.stringify({
-      "name": "my-workspace",
+      name: "my-workspace",
       private: "true",
       version: "0.0.1",
-      "devDependencies": {
+      devDependencies: {
         "@repo/ui": "*",
         "@repo/eslint-config": "*",
         "@repo/typescript-config": "*",
@@ -531,18 +531,18 @@ it("should work when renaming a single workspace package", async () => {
       "eslint-config": {
         "package.json": JSON.stringify({
           name: "@repo/eslint-config",
-          "version": "0.0.0",
+          version: "0.0.0",
           private: "true",
         }),
       },
       "typescript-config": {
         "package.json": JSON.stringify({
-          "name": "@repo/typescript-config",
-          "version": "0.0.0",
+          name: "@repo/typescript-config",
+          version: "0.0.0",
           private: "true",
         }),
       },
-      "ui": {
+      ui: {
         "package.json": JSON.stringify({
           name: "@repo/ui",
           version: "0.0.0",
@@ -560,10 +560,10 @@ it("should work when renaming a single workspace package", async () => {
 
   await Bun.$ /* sh */ `
   echo ${JSON.stringify({
-    "name": "my-workspace",
+    name: "my-workspace",
     version: "0.0.1",
     workspaces: ["packages/*"],
-    "devDependencies": {
+    devDependencies: {
       "@repo/ui": "*",
       "@repo/eslint-config-lol": "*",
       "@repo/typescript-config": "*",
@@ -572,7 +572,7 @@ it("should work when renaming a single workspace package", async () => {
 
   echo ${JSON.stringify({
     name: "@repo/eslint-config-lol",
-    "version": "0.0.0",
+    version: "0.0.0",
     private: "true",
   })} > packages/eslint-config/package.json
 
@@ -2944,7 +2944,7 @@ it("should get npm alias with matching version", async () => {
       version: "0.0.1",
       workspaces: ["moo"],
       dependencies: {
-        "boba": "npm:baz@0.0.5",
+        boba: "npm:baz@0.0.5",
       },
     }),
   );
@@ -3007,7 +3007,7 @@ it("should not apply overrides to package name of aliased package", async () => 
         bar: "npm:baz@0.0.3",
       },
       overrides: {
-        "baz": "0.0.5",
+        baz: "0.0.5",
       },
     }),
   );
@@ -3179,7 +3179,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
       name: "foo",
       version: "0.0.1",
       dependencies: {
-        "moz": "npm:@barn/moo@0.1.0",
+        moz: "npm:@barn/moo@0.1.0",
       },
     }),
   );
@@ -4827,7 +4827,7 @@ it("should fail on ssh Git URL if invalid credentials", async () => {
     stdout: "pipe",
     stdin: "ignore",
     stderr: "pipe",
-    env: { ...env, "GIT_ASKPASS": "echo" },
+    env: { ...env, GIT_ASKPASS: "echo" },
   });
   const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');
@@ -6316,9 +6316,9 @@ it("should perform bin-linking across multiple dependencies", async () => {
     name: "foo",
     devDependencies: {
       "conditional-type-checks": "1.0.6",
-      "prettier": "2.8.8",
-      "tsd": "0.22.0",
-      "typescript": "5.0.4",
+      prettier: "2.8.8",
+      tsd: "0.22.0",
+      typescript: "5.0.4",
     },
   });
   await writeFile(join(package_dir, "package.json"), foo_package);
@@ -6929,36 +6929,36 @@ it("should handle installing workspaces with more complicated globs", async () =
       version: "0.0.1",
       workspaces: ["packages/**/*"],
     }),
-    "packages": {
-      "frontend": {
+    packages: {
+      frontend: {
         "package.json": JSON.stringify({
           name: "frontend",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
-            "components": "workspace:*",
+            types: "workspace:*",
+            components: "workspace:*",
           },
         }),
-        "components": {
+        components: {
           "package.json": JSON.stringify({
             name: "components",
             version: "0.0.1",
             dependencies: {
-              "types": "workspace:*",
+              types: "workspace:*",
             },
           }),
         },
       },
-      "backend": {
+      backend: {
         "package.json": JSON.stringify({
           name: "backend",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
+            types: "workspace:*",
           },
         }),
       },
-      "types": {
+      types: {
         "package.json": JSON.stringify({
           name: "types",
           version: "0.0.1",
@@ -6986,40 +6986,40 @@ it("should handle installing workspaces with multiple glob patterns", async () =
       version: "0.0.1",
       workspaces: ["backend/**/*", "client/**/*", "types/**/*"],
     }),
-    "backend": {
-      "server": {
+    backend: {
+      server: {
         "package.json": JSON.stringify({
           name: "server",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
-            "db": "workspace:*",
+            types: "workspace:*",
+            db: "workspace:*",
           },
         }),
       },
-      "db": {
+      db: {
         "package.json": JSON.stringify({
           name: "db",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
+            types: "workspace:*",
           },
         }),
       },
     },
-    "client": {
-      "clientlib": {
+    client: {
+      clientlib: {
         "package.json": JSON.stringify({
           name: "clientlib",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
+            types: "workspace:*",
           },
         }),
       },
     },
-    "types": {
-      "types": {
+    types: {
+      types: {
         "package.json": JSON.stringify({
           name: "types",
           version: "0.0.1",
@@ -7050,36 +7050,36 @@ it.todo("should handle installing workspaces with absolute glob patterns", async
         version: "0.0.1",
         workspaces: [join(base, "packages/**/*")],
       }),
-    "packages": {
-      "frontend": {
+    packages: {
+      frontend: {
         "package.json": JSON.stringify({
           name: "frontend",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
-            "components": "workspace:*",
+            types: "workspace:*",
+            components: "workspace:*",
           },
         }),
-        "components": {
+        components: {
           "package.json": JSON.stringify({
             name: "components",
             version: "0.0.1",
             dependencies: {
-              "types": "workspace:*",
+              types: "workspace:*",
             },
           }),
         },
       },
-      "backend": {
+      backend: {
         "package.json": JSON.stringify({
           name: "backend",
           version: "0.0.1",
           dependencies: {
-            "types": "workspace:*",
+            types: "workspace:*",
           },
         }),
       },
-      "types": {
+      types: {
         "package.json": JSON.stringify({
           name: "types",
           version: "0.0.1",
@@ -8369,23 +8369,23 @@ it("should handle modified git resolutions in bun.lock", async () => {
         name: "foo",
         version: "0.0.1",
         dependencies: {
-          "jquery": "3.7.1",
+          jquery: "3.7.1",
         },
       }),
     ),
     write(
       join(package_dir, "bun.lock"),
       JSON.stringify({
-        "lockfileVersion": 0,
-        "workspaces": {
+        lockfileVersion: 0,
+        workspaces: {
           "": {
-            "dependencies": {
-              "jquery": "3.7.1",
+            dependencies: {
+              jquery: "3.7.1",
             },
           },
         },
-        "packages": {
-          "jquery": [
+        packages: {
+          jquery: [
             "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
             {},
             "3a1288830817d13da39e9231302261896f8721ea",
@@ -8472,22 +8472,22 @@ test("providing invalid url in lockfile does not crash", async () => {
       join(package_dir, "package.json"),
       JSON.stringify({
         dependencies: {
-          "jquery": "3.7.1",
+          jquery: "3.7.1",
         },
       }),
     ),
     write(
       join(package_dir, "bun.lock"),
       textLockfile(0, {
-        "workspaces": {
+        workspaces: {
           "": {
-            "dependencies": {
-              "jquery": "3.7.1",
+            dependencies: {
+              jquery: "3.7.1",
             },
           },
         },
-        "packages": {
-          "jquery": [
+        packages: {
+          jquery: [
             "jquery@3.7.1",
             "invalid-url",
             {},
@@ -8525,14 +8525,14 @@ test("optional dependencies do not need to be resolvable in text lockfile", asyn
     write(
       join(package_dir, "bun.lock"),
       textLockfile(0, {
-        "workspaces": {
+        workspaces: {
           "": {
-            "optionalDependencies": {
-              "jquery": "3.7.1",
+            optionalDependencies: {
+              jquery: "3.7.1",
             },
           },
         },
-        "packages": {},
+        packages: {},
       }),
     ),
   ]);
@@ -8569,7 +8569,7 @@ test("non-optional dependencies need to be resolvable in text lockfile", async (
         workspaces: {
           "": {
             dependencies: {
-              "jquery": "3.7.1",
+              jquery: "3.7.1",
             },
           },
         },

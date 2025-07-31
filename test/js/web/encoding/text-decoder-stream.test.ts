@@ -94,7 +94,7 @@ import { readableStreamFromArray } from "harness";
   const labelToName = {
     "unicode-1-1-utf-8": "utf-8",
     // "iso-8859-2": "iso-8859-2",
-    "ascii": "windows-1252",
+    ascii: "windows-1252",
     "utf-16": "utf-16le",
   };
 

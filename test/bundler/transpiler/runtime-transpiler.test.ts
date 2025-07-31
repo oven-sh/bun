@@ -62,11 +62,11 @@ describe("json imports", () => {
       ...other
     } = require("./runtime-transpiler-json-fixture.json");
     const obj = {
-      "name": "Spiral 4v4 NS",
-      "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
-      "version": "1.0",
-      "creator": "Grand Homie",
-      "players": [8, 8],
+      name: "Spiral 4v4 NS",
+      description: "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
+      version: "1.0",
+      creator: "Grand Homie",
+      players: [8, 8],
       default: { a: 1 },
     };
     expect({
@@ -91,11 +91,11 @@ describe("json imports", () => {
         // @ts-ignore
       } = await import("./runtime-transpiler-json-fixture.json");
       const obj = {
-        "name": "Spiral 4v4 NS",
-        "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
-        "version": "1.0",
-        "creator": "Grand Homie",
-        "players": [8, 8],
+        name: "Spiral 4v4 NS",
+        description: "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
+        version: "1.0",
+        creator: "Grand Homie",
+        players: [8, 8],
         default: { a: 1 },
       };
       expect({
@@ -126,11 +126,11 @@ describe("json imports", () => {
     } = await import("./runtime-transpiler-json-fixture.json");
     delete require.cache[require.resolve("./runtime-transpiler-json-fixture.json")];
     const obj = {
-      "name": "Spiral 4v4 NS",
-      "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
-      "version": "1.0",
-      "creator": "Grand Homie",
-      "players": [8, 8],
+      name: "Spiral 4v4 NS",
+      description: "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
+      version: "1.0",
+      creator: "Grand Homie",
+      players: [8, 8],
       default: { a: 1 },
     };
     expect({
@@ -151,10 +151,10 @@ describe("json imports", () => {
     const { buildOptions, default: defaultExport } = await import("./tsconfig.with-commas.json");
     delete require.cache[require.resolve("./tsconfig.with-commas.json")];
     const obj = {
-      "buildOptions": {
-        "outDir": "dist",
-        "baseUrl": ".",
-        "paths": {
+      buildOptions: {
+        outDir: "dist",
+        baseUrl: ".",
+        paths: {
           "src/*": ["src/*"],
         },
       },

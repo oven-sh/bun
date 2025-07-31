@@ -160,7 +160,7 @@ it("process.nextTick runs after queueMicrotask", async () => {
     order,
     runs,
   }).toEqual({
-    "order": [
+    order: [
       "process.nextTick 0",
       "process.nextTick 1",
       "process.nextTick 2",
@@ -562,7 +562,7 @@ it("process.nextTick runs after queueMicrotask", async () => {
       "queueMicrotask 198",
       "queueMicrotask 199",
     ],
-    "runs": [
+    runs: [
       "nextTick",
       "nextTick",
       "nextTick",

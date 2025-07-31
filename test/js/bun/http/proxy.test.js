@@ -80,7 +80,7 @@ const test = process.env.PROXY_URL ? it : it.skip;
 
 test("should be able to post on TLS", async () => {
   const data = JSON.stringify({
-    "name": "bun",
+    name: "bun",
   });
 
   const result = await fetch("https://httpbin.org/post", {

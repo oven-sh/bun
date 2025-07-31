@@ -121,8 +121,8 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
     name: "JavaScript Debug Terminal",
     env: {
       ...env,
-      "BUN_INSPECT": `${adapter.url}?${query}`,
-      "BUN_INSPECT_NOTIFY": signal.url,
+      BUN_INSPECT: `${adapter.url}?${query}`,
+      BUN_INSPECT_NOTIFY: signal.url,
       BUN_INSPECT_CONNECT_TO: "",
     },
   });
@@ -164,8 +164,8 @@ async function injectDebugTerminal2() {
         ...options,
         env: {
           ...options.env,
-          "BUN_INSPECT": `${adapter.url}?${query}`,
-          "BUN_INSPECT_NOTIFY": signal.url,
+          BUN_INSPECT: `${adapter.url}?${query}`,
+          BUN_INSPECT_NOTIFY: signal.url,
           BUN_INSPECT_CONNECT_TO: " ",
         },
       };
@@ -471,8 +471,8 @@ class TerminalDebugSession extends FileDebugSession {
     return new vscode.TerminalProfile({
       name: "Bun Terminal",
       env: {
-        "BUN_INSPECT": `${this.adapter.url}?wait=1`,
-        "BUN_INSPECT_NOTIFY": this.signal.url,
+        BUN_INSPECT: `${this.adapter.url}?wait=1`,
+        BUN_INSPECT_NOTIFY: this.signal.url,
         BUN_INSPECT_CONNECT_TO: "",
       },
       isTransient: true,

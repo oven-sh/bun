@@ -309,7 +309,7 @@ for (const [name, copy] of impls) {
 
     test.if(process.platform === "win32")("should not throw EBUSY when copying the same file on windows", async () => {
       const basename = tempDirWithFiles("cp", {
-        "hey": "hi",
+        hey: "hi",
       });
 
       await copy(basename + "/hey", basename + "/hey");

@@ -105,17 +105,14 @@ test("no assertion failures", () => {
   assert.strictEqual(util.inspect({ a: async () => {} }), "{ a: [AsyncFunction: a] }");
   assert.strictEqual(util.inspect({ a: function* () {} }), "{ a: [GeneratorFunction: a] }");
   assert.strictEqual(util.inspect({ a: 1, b: 2 }), "{ a: 1, b: 2 }");
-  assert.strictEqual(util.inspect({ "a": {} }), "{ a: {} }");
-  assert.strictEqual(util.inspect({ "a": { "b": 2 } }), "{ a: { b: 2 } }");
-  assert.strictEqual(util.inspect({ "a": { "b": { "c": { "d": 2 } } } }), "{ a: { b: { c: [Object] } } }");
-  assert.strictEqual(
-    util.inspect({ "a": { "b": { "c": { "d": 2 } } } }, false, null),
-    "{\n  a: { b: { c: { d: 2 } } }\n}",
-  );
+  assert.strictEqual(util.inspect({ a: {} }), "{ a: {} }");
+  assert.strictEqual(util.inspect({ a: { b: 2 } }), "{ a: { b: 2 } }");
+  assert.strictEqual(util.inspect({ a: { b: { c: { d: 2 } } } }), "{ a: { b: { c: [Object] } } }");
+  assert.strictEqual(util.inspect({ a: { b: { c: { d: 2 } } } }, false, null), "{\n  a: { b: { c: { d: 2 } } }\n}");
   assert.strictEqual(util.inspect([1, 2, 3], true), "[ 1, 2, 3, [length]: 3 ]");
-  assert.strictEqual(util.inspect({ "a": { "b": { "c": 2 } } }, false, 0), "{ a: [Object] }");
-  assert.strictEqual(util.inspect({ "a": { "b": { "c": 2 } } }, false, 1), "{ a: { b: [Object] } }");
-  assert.strictEqual(util.inspect({ "a": { "b": ["c"] } }, false, 1), "{ a: { b: [Array] } }");
+  assert.strictEqual(util.inspect({ a: { b: { c: 2 } } }, false, 0), "{ a: [Object] }");
+  assert.strictEqual(util.inspect({ a: { b: { c: 2 } } }, false, 1), "{ a: { b: [Object] } }");
+  assert.strictEqual(util.inspect({ a: { b: ["c"] } }, false, 1), "{ a: { b: [Array] } }");
   assert.strictEqual(util.inspect(new Uint8Array(0)), "Uint8Array(0) []");
   assert(inspect(new Uint8Array(0), { showHidden: true }).includes("[buffer]"));
   assert.strictEqual(

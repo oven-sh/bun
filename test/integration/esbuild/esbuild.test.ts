@@ -118,9 +118,9 @@ describe("esbuild integration test", () => {
         name: "bun-esbuild-estrella-test",
         version: "1.0.0",
         dependencies: {
-          "estrella": "1.4.1",
+          estrella: "1.4.1",
           // different version of esbuild
-          "esbuild": "0.19.8",
+          esbuild: "0.19.8",
         },
       }),
     );

@@ -9,7 +9,7 @@ describe("Server", () => {
       fetch(request) {
         return new Response(request.url, {
           headers: {
-            "Connection": "close",
+            Connection: "close",
           },
         });
       },
@@ -549,7 +549,7 @@ test("should be able to await server.stop()", async () => {
       return new Response("Hello World", {
         headers: {
           // Prevent Keep-Alive from keeping the connection open
-          "Connection": "close",
+          Connection: "close",
         },
       });
     },
@@ -965,7 +965,7 @@ describe("HEAD requests #15355", () => {
 
   test("HEAD requests should not have body", async () => {
     const dir = tempDirWithFiles("fsr", {
-      "hello": "Hello World",
+      hello: "Hello World",
     });
 
     const filename = path.join(dir, "hello");

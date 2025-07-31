@@ -265,7 +265,7 @@ for (let credentials of allCredentials) {
 
             it("should download range", async () => {
               const result = await fetch(tmp_filename, {
-                headers: { "range": "bytes=6-10" },
+                headers: { range: "bytes=6-10" },
                 s3: options,
               });
               expect(result.status).toBe(206);
@@ -1362,9 +1362,9 @@ describe.skipIf(!minioCredentials)("minio", () => {
         const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
           // @ts-ignore
           [endpoint]: minioCredentials!.endpoint as string,
-          "S3_BUCKET": minioCredentials!.bucket as string,
-          "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-          "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+          S3_BUCKET: minioCredentials!.bucket as string,
+          S3_ACCESS_KEY_ID: minioCredentials!.accessKeyId as string,
+          S3_SECRET_ACCESS_KEY: minioCredentials!.secretAccessKey as string,
         });
         expect(stderr).toBe("");
         expect(stdout).toBe("Hello Bun!");

@@ -18,15 +18,15 @@ test("bun init works", () => {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
   expect(pkg).toEqual({
-    "name": path.basename(temp).toLowerCase(),
-    "module": "index.ts",
-    "type": "module",
-    "private": true,
-    "devDependencies": {
+    name: path.basename(temp).toLowerCase(),
+    module: "index.ts",
+    type: "module",
+    private: true,
+    devDependencies: {
       "@types/bun": "latest",
     },
-    "peerDependencies": {
-      "typescript": "^5",
+    peerDependencies: {
+      typescript: "^5",
     },
   });
   const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
@@ -55,15 +55,15 @@ test("bun init with piped cli", () => {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
   expect(pkg).toEqual({
-    "name": path.basename(temp).toLowerCase(),
-    "module": "index.ts",
-    "private": true,
-    "type": "module",
-    "devDependencies": {
+    name: path.basename(temp).toLowerCase(),
+    module: "index.ts",
+    private: true,
+    type: "module",
+    devDependencies: {
       "@types/bun": "latest",
     },
-    "peerDependencies": {
-      "typescript": "^5",
+    peerDependencies: {
+      typescript: "^5",
     },
   });
   const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
@@ -102,7 +102,7 @@ test("bun init in folder", () => {
 
 test("bun init error rather than overwriting file", async () => {
   const temp = tempDirWithFiles("mytmp", {
-    "mydir": "don't delete me!!!",
+    mydir: "don't delete me!!!",
   });
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init", "-y", "mydir"],

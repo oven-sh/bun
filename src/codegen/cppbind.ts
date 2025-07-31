@@ -2,7 +2,7 @@ const start = Date.now();
 let isInstalled = false;
 try {
   const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
-  isInstalled = grammarfile.includes("_Nonnull");
+  isInstalled = true;
 } catch (e) {}
 if (!isInstalled) {
   if (process.argv.includes("--already-installed")) {
@@ -22,7 +22,7 @@ if (!isInstalled) {
   process.exit(r2.exitCode ?? 1);
 }
 
-const { SyntaxNode } = await import("@lezer/common");
+type SyntaxNode = import("@lezer/common").SyntaxNode;
 const { parser: cppParser } = await import("@lezer/cpp");
 const { mkdir } = await import("fs/promises");
 const { join, relative } = await import("path");
@@ -259,7 +259,8 @@ function processDeclarator(
   if (declarator?.name === "PointerDeclarator") {
     if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
     const isConst = !!declarator.parent?.getChild("const") || rootmostType.type === "fn";
-    const isNonNull = !!declarator.getChild("_Nonnull");
+    const parentAttributes = declarator.parent?.getChildren("Attribute") ?? [];
+    const isNonNull = parentAttributes.some(attr => text(attr.getChild("AttributeName")!, ctx) === "ZIG_NONNULL");
 
     return processDeclarator(ctx, declarator, {
       type: "pointer",

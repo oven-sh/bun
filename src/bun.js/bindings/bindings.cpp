@@ -5631,7 +5631,7 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
 }
 
 template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* _Nonnull arg0, void* ctx, ZigString* _Nonnull arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5870,7 +5870,7 @@ restart:
     }
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* _Nonnull arg0, void* ctx, ZigString* _Nonnull arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
 }
@@ -5880,7 +5880,7 @@ extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSVa
     JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* _Nonnull arg0, void* ctx, ZigString* _Nonnull arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();

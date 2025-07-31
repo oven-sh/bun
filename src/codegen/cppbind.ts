@@ -1,5 +1,9 @@
 /*
 
+cppbind runs automatically when c++ files change. To run it manually, run:
+
+    bun src/codegen/cppbind src build/debug/codegen
+
 USAGE:
 
 example.cpp:

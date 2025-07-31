@@ -1,43 +1,55 @@
 /*
 
-cppbind runs automatically when c++ files change. To run it manually, run:
+cppbind - C++ to Zig binding generator for Bun
 
+This tool automatically generates Zig bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
+It runs automatically when C++ files change during the build process.
+
+To run manually:
     bun src/codegen/cppbind src build/debug/codegen
 
-USAGE:
+## USAGE
 
-example.cpp:
+### Basic Export Tags
 
-    [[ZIG_EXPORT(nothrow)]] void hello_world() {
-      printf("hello world\n");
-    }
+1. **nothrow** - Function that never throws exceptions:
+   ```cpp
+   [[ZIG_EXPORT(nothrow)]] void hello_world() {
+       printf("hello world\n");
+   }
+   ```
+   Zig usage: `bun.cpp.hello_world();`
 
-    [[ZIG_EXPORT(zero_is_throw)]] JSValue hello_world_jsvalue() {
-      auto scope = DECLARE_THROW_SCOPE();
-      ...
-      RETURN_IF_EXCEPTION(scope, {});
-      ...
-    }
+2. **zero_is_throw** - Function returns JSValue, where .zero indicates an exception:
+   ```cpp
+   [[ZIG_EXPORT(zero_is_throw)]] JSValue create_object(JSGlobalObject* globalThis) {
+       auto scope = DECLARE_THROW_SCOPE();
+       // ...
+       RETURN_IF_EXCEPTION(scope, {});
+       return result;
+   }
+   ```
+   Zig usage: `try bun.cpp.create_object(globalThis);`
 
-    [[ZIG_EXPORT(check_slow)]] void hello_world_check_slow() {
-      auto scope = DECLARE_THROW_SCOPE();
-      ...
-      RETURN_IF_EXCEPTION(scope, );
-      ...
-    }
+3. **check_slow** - Function that may throw, performs runtime exception checking:
+   ```cpp
+   [[ZIG_EXPORT(check_slow)]] void process_data(JSGlobalObject* globalThis) {
+       auto scope = DECLARE_THROW_SCOPE();
+       // ...
+       RETURN_IF_EXCEPTION(scope, );
+   }
+   ```
+   Zig usage: `try bun.cpp.process_data(globalThis);`
 
+### Parameters
 
-example.zig:
-
-    bun.cpp.hello_world();
-    try bun.cpp.hello_world_jsvalue();
-    try bun.cpp.hello_world_check_slow();
-
-FEATURES:
-
-To mark a pointer as not nullable, add `[[ZIG_NONNULL]]` to the declaration:
-
-    [[ZIG_EXPORT(nothrow)]] void hello_world_pointer([[ZIG_NONNULL]] JSGlobalObject* nonNullPointer) { ... }
+- **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
+  ```cpp
+  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis, 
+                                        [[ZIG_NONNULL]] JSValue* values, 
+                                        size_t count) { ... }
+  ```
+  Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
 
 */
 
@@ -720,6 +732,15 @@ async function main() {
   const rootDir = args[0];
   const dstDir = args[1];
   if (!rootDir || !dstDir) {
+    console.error(String.raw`                   _     _           _ 
+                  | |   (_)         | |
+   ___ _ __  _ __ | |__  _ _ __   __| |
+  / __| '_ \| '_ \| '_ \| | '_ \ / _' |
+ | (__| |_) | |_) | |_) | | | | | (_| |
+  \___| .__/| .__/|_.__/|_|_| |_|\__,_|
+      | |   | |                        
+      |_|   |_|                        
+`);
     console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
     process.exit(1);
   }

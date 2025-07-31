@@ -1006,8 +1006,27 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
     defer pkg_dedupe.deinit();
 
-    var ids_queue: std.fifo.LinearFifo(struct { PackageID, DependencyID }, .Dynamic) = .init(bun.default_allocator);
+    const QueueItem = struct {
+        pkg_id: PackageID,
+        dep_id: DependencyID,
+        pkg_path: std.ArrayList(PackageID),
+        dep_path: std.ArrayList(DependencyID),
+    };
+    var ids_queue: std.fifo.LinearFifo(QueueItem, .Dynamic) = .init(bun.default_allocator);
     defer ids_queue.deinit();
+
+    var package_paths = std.AutoArrayHashMap(PackageID, struct {
+        pkg_path: []PackageID,
+        dep_path: []DependencyID,
+    }).init(manager.allocator);
+    defer {
+        var iter = package_paths.iterator();
+        while (iter.next()) |entry| {
+            manager.allocator.free(entry.value_ptr.pkg_path);
+            manager.allocator.free(entry.value_ptr.dep_path);
+        }
+        package_paths.deinit();
+    }
 
     const pkgs = manager.lockfile.packages.slice();
     const pkg_names = pkgs.items(.name);
@@ -1027,6 +1046,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
             }
 
             var update_dep_id: DependencyID = invalid_dependency_id;
+            var parent_pkg_id: PackageID = invalid_package_id;
 
             for (0..pkgs.len) |_pkg_id| update_dep_id: {
                 const pkg_id: PackageID = @intCast(_pkg_id);
@@ -1052,6 +1072,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                     }
 
                     update_dep_id = dep_id;
+                    parent_pkg_id = pkg_id;
                     break :update_dep_id;
                 }
             }
@@ -1064,7 +1085,21 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                 continue;
             }
 
-            try ids_queue.writeItem(.{ update_pkg_id, update_dep_id });
+            var initial_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
+            // If this is a direct dependency from root, start with root package
+            if (parent_pkg_id != invalid_package_id) {
+                try initial_pkg_path.append(parent_pkg_id);
+            }
+            try initial_pkg_path.append(update_pkg_id);
+            var initial_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
+            try initial_dep_path.append(update_dep_id);
+
+            try ids_queue.writeItem(.{
+                .pkg_id = update_pkg_id,
+                .dep_id = update_dep_id,
+                .pkg_path = initial_pkg_path,
+                .dep_path = initial_dep_path,
+            });
         }
     }
 
@@ -1081,8 +1116,23 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     var first = true;
 
-    while (ids_queue.readItem()) |ids| {
-        const pkg_id, const dep_id = ids;
+    while (ids_queue.readItem()) |item| {
+        defer item.pkg_path.deinit();
+        defer item.dep_path.deinit();
+
+        const pkg_id = item.pkg_id;
+        const dep_id = item.dep_id;
+
+        const pkg_path_copy = try manager.allocator.alloc(PackageID, item.pkg_path.items.len);
+        @memcpy(pkg_path_copy, item.pkg_path.items);
+
+        const dep_path_copy = try manager.allocator.alloc(DependencyID, item.dep_path.items.len);
+        @memcpy(dep_path_copy, item.dep_path.items);
+
+        try package_paths.put(pkg_id, .{
+            .pkg_path = pkg_path_copy,
+            .dep_path = dep_path_copy,
+        });
 
         const pkg_name = pkg_names[pkg_id];
         const pkg_res = pkg_resolutions[pkg_id];
@@ -1122,7 +1172,20 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                 continue;
             }
 
-            try ids_queue.writeItem(.{ next_pkg_id, next_dep_id });
+            var extended_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
+            try extended_pkg_path.appendSlice(item.pkg_path.items);
+            try extended_pkg_path.append(next_pkg_id);
+
+            var extended_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
+            try extended_dep_path.appendSlice(item.dep_path.items);
+            try extended_dep_path.append(next_dep_id);
+
+            try ids_queue.writeItem(.{
+                .pkg_id = next_pkg_id,
+                .dep_id = next_dep_id,
+                .pkg_path = extended_pkg_path,
+                .dep_path = extended_dep_path,
+            });
         }
     }
 
@@ -1189,7 +1252,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
-    try scanner.handleResults();
+    try scanner.handleResults(&package_paths);
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -1325,7 +1388,10 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, struct {
+        pkg_path: []PackageID,
+        dep_path: []DependencyID,
+    })) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -1352,7 +1418,7 @@ pub const SecurityScanSubprocess = struct {
             Global.exit(1);
         }
 
-        try handleSecurityAdvisories(this.manager, this.ipc_data.items);
+        try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);
 
         if (!status.isOK()) {
             switch (status) {
@@ -1375,7 +1441,10 @@ pub const SecurityScanSubprocess = struct {
     }
 };
 
-fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8) !void {
+fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, struct {
+    pkg_path: []PackageID,
+    dep_path: []DependencyID,
+})) !void {
     if (ipc_data.len == 0) return;
 
     const json_source = logger.Source{
@@ -1502,6 +1571,34 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8) !voi
                     has_warn = true;
                     Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
                 },
+            }
+
+            const pkgs = manager.lockfile.packages.slice();
+            const pkg_names = pkgs.items(.name);
+            const string_buf = manager.lockfile.buffers.string_bytes.items;
+
+            var found_pkg_id: ?PackageID = null;
+            for (pkg_names, 0..) |pkg_name, i| {
+                if (std.mem.eql(u8, pkg_name.slice(string_buf), advisory.package)) {
+                    found_pkg_id = @intCast(i);
+                    break;
+                }
+            }
+
+            if (found_pkg_id) |pkg_id| {
+                if (package_paths.get(pkg_id)) |paths| {
+                    if (paths.pkg_path.len > 1) {
+                        Output.pretty("    <d>via ", .{});
+                        for (paths.pkg_path[0 .. paths.pkg_path.len - 1], 0..) |ancestor_id, idx| {
+                            if (idx > 0) Output.pretty(" › ", .{});
+                            const ancestor_name = pkg_names[ancestor_id].slice(string_buf);
+                            Output.pretty("{s}", .{ancestor_name});
+                        }
+                        Output.pretty(" › <red>{s}<r>\n", .{advisory.package});
+                    } else {
+                        Output.pretty("    <d>(direct dependency)<r>\n", .{});
+                    }
+                }
             }
 
             if (advisory.description) |desc| {

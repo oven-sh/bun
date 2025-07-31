@@ -362,6 +362,21 @@ fn printSegment(
     }
 }
 
+fn printModifiedSegmentWithoutDiffdiff(
+    writer: anytype,
+    config: DiffConfig,
+    segment: DiffSegment,
+    removed_prefix: PrefixStyle,
+    inserted_prefix: PrefixStyle,
+) !void {
+    try printLinePrefix(writer, config, removed_prefix);
+    try printSegment(segment.removed, writer, config, styles.removed_line);
+    try writer.writeAll("\n");
+    try printLinePrefix(writer, config, inserted_prefix);
+    try printSegment(segment.inserted, writer, config, styles.inserted_line);
+    try writer.writeAll("\n");
+}
+
 fn printModifiedSegment(
     segment: DiffSegment,
     arena: std.mem.Allocator,
@@ -369,25 +384,34 @@ fn printModifiedSegment(
     config: DiffConfig,
     modified_style: struct { single_line: bool },
 ) !void {
-    if (mode == .fg) {
-        // the diffdiff can be skipped in this case
+    const removed_prefix = switch (modified_style.single_line) {
+        true => prefix_styles.single_line_removed,
+        false => prefix_styles.removed,
+    };
+    const inserted_prefix = switch (modified_style.single_line) {
+        true => prefix_styles.single_line_inserted,
+        false => prefix_styles.inserted,
+    };
 
-        try printLinePrefix(writer, config, prefix_styles.removed);
-        try printSegment(segment.removed, writer, config, styles.removed_line);
-        try writer.writeAll("\n");
-        try printLinePrefix(writer, config, prefix_styles.inserted);
-        try printSegment(segment.inserted, writer, config, styles.inserted_line);
-        try writer.writeAll("\n");
-        return;
+    if (mode == .fg) {
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
     }
 
     var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
     try DMP.diffCleanupSemantic(arena, &char_diff);
 
-    try printLinePrefix(writer, config, switch (modified_style.single_line) {
-        true => prefix_styles.single_line_removed,
-        false => prefix_styles.removed,
-    });
+    const is_valid_utf_8 = for (char_diff.items) |item| {
+        if (!bun.strings.isValidUTF8(item.text)) {
+            break false;
+        }
+    } else true;
+
+    if (!is_valid_utf_8) {
+        // utf-8 was cut up, so skip printing the second layer of diffs. ideally we would update the diff cleanup to handle this case instead.
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
+    }
+
+    try printLinePrefix(writer, config, removed_prefix);
     for (char_diff.items) |item| {
         switch (item.operation) {
             .delete => try printSegment(item.text, writer, config, styles.removed_diff),
@@ -397,10 +421,7 @@ fn printModifiedSegment(
     }
     try writer.writeAll("\n");
 
-    try printLinePrefix(writer, config, switch (modified_style.single_line) {
-        true => prefix_styles.single_line_inserted,
-        false => prefix_styles.inserted,
-    });
+    try printLinePrefix(writer, config, inserted_prefix);
     for (char_diff.items) |item| {
         switch (item.operation) {
             .delete => {},
@@ -491,3 +512,4 @@ pub fn printDiff(
 
 const diff_match_patch = @import("./diff_match_patch.zig");
 const std = @import("std");
+const bun = @import("bun");

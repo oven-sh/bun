@@ -1,4 +1,16 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  jest,
+  type Mock,
+  spyOn,
+  test,
+  expectTypeOf,
+} from "bun:test";
 import { expectType } from "./utilities";
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];

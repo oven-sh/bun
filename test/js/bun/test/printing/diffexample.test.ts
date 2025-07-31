@@ -145,129 +145,12 @@ test("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) example 3 - very long string with few changes
     (todo) example 4 - ansi colors don't get printed to console
-    34 | test.todo("example 4 - ansi colors don't get printed to console", () => {
-    35 |   expect("\\x1b[31mhello\\x1b[0m").toEqual("\\x1b[32mhello\\x1b[0m");
-    36 | });
-    37 | 
-    38 | test("example 5 - Unicode characters", () => {
-    39 |   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
-                                   ^
-    error: expect(received).toEqual(expected)
-
-    Expected: "Hello 👋 世界 🌎"
-    Received: "Hello 👋 世界 🌍"
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 5 - Unicode characters
-    38 | test("example 5 - Unicode characters", () => {
-    39 |   expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
-    40 | });
-    41 | 
-    42 | test("example 6 - Unicode with line breaks", () => {
-    43 |   expect("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Здравствуйте").toEqual("Line 1: 你好\\nLine 2: مرحبا\\nLine 3: Привет");
-                                                                    ^
-    error: expect(received).toEqual(expected)
-
-      "Line 1: 你好
-      Line 2: مرحبا
-    - Line 3: Привет"
-    + Line 3: Здравствуйте"
-
-    - Expected  - 1
-    + Received  + 1
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 6 - Unicode with line breaks
-    47 |   expect({
-    48 |     emoji: "🔥💧🌊",
-    49 |     chinese: "测试字符串",
-    50 |     arabic: "اختبار",
-    51 |     mixed: "Hello 世界 🌍",
-    52 |   }).toEqual({
-              ^
-    error: expect(received).toEqual(expected)
-
-      {
-        "arabic": "اختبار",
-    -   "chinese": "测试文本",
-    +   "chinese": "测试字符串",
-        "emoji": "🔥💧🌊",
-    -   "mixed": "Hello 世界 🌎",
-    +   "mixed": "Hello 世界 🌍",
-      }
-
-    - Expected  - 2
-    + Received  + 2
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 7 - Mixed Unicode in objects
-    56 |     mixed: "Hello 世界 🌎",
-    57 |   });
-    58 | });
-    59 | 
-    60 | test("example 8 - Latin-1 characters", () => {
-    61 |   expect("café résumé naïve").toEqual("café resumé naive");
-                                      ^
-    error: expect(received).toEqual(expected)
-
-    Expected: "café resumé naive"
-    Received: "café résumé naïve"
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 8 - Latin-1 characters
-    (pass) example 9 - Latin-1 extended characters
-    64 | test("example 9 - Latin-1 extended characters", () => {
-    65 |   expect("© ® ™ £ € ¥ § ¶").toEqual("© ® ™ £ € ¥ § ¶");
-    66 | });
-    67 | 
-    68 | test("example 10 - Latin-1 with line breaks", () => {
-    69 |   expect("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\\nLínea 2: àèìòù\\nLínea 3: aeiou");
-                                                                  ^
-    error: expect(received).toEqual(expected)
-
-      "Línea 1: ñoño
-      Línea 2: àèìòù
-    - Línea 3: aeiou"
-    + Línea 3: äëïöü"
-
-    - Expected  - 1
-    + Received  + 1
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 10 - Latin-1 with line breaks
-    72 | test("example 11 - Latin-1 in objects", () => {
-    73 |   expect({
-    74 |     french: "crème brûlée",
-    75 |     spanish: "niño español",
-    76 |     special: "½ ¼ ¾ ± × ÷",
-    77 |   }).toEqual({
-              ^
-    error: expect(received).toEqual(expected)
-
-      {
-    -   "french": "crème brulée",
-    +   "french": "crème brûlée",
-        "spanish": "niño español",
-        "special": "½ ¼ ¾ ± × ÷",
-      }
-
-    - Expected  - 1
-    + Received  + 1
-
-
-          at <anonymous> (FILE:LINE)
-    (fail) example 11 - Latin-1 in objects
-    157 | line 35
-    158 | line 36
-    159 | line 37
-    160 | line 38
-    161 | line 39\`;
-    162 |   expect(received).toEqual(expected);
+    111 | line 35
+    112 | line 36
+    113 | line 37
+    114 | line 38
+    115 | line 39\`;
+    116 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -320,12 +203,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 12 - large multiline diff
-    240 | line six
-    241 | line seven
-    242 | 
-    243 | === has newline at end vs doesn't ===
-    244 | \`;
-    245 |   expect(received).toEqual(expected);
+    194 | line six
+    195 | line seven
+    196 | 
+    197 | === has newline at end vs doesn't ===
+    198 | \`;
+    199 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -387,12 +270,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 13 - simple multiline diff with sections
-    246 | });
-    247 | 
-    248 | test("example 14 - single line diff", () => {
-    249 |   const received = \`"¡hello, world"\`;
-    250 |   const expected = \`"hello, world!"\`;
-    251 |   expect(received).toEqual(expected);
+    200 | });
+    201 | 
+    202 | test("example 14 - single line diff", () => {
+    203 |   const received = \`"¡hello, world"\`;
+    204 |   const expected = \`"hello, world!"\`;
+    205 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -402,12 +285,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 14 - single line diff
-    252 | });
-    253 | 
-    254 | test("example 15 - unicode char diff", () => {
-    255 |   const received = \`Hello 👋 世界 🌎!\`;
-    256 |   const expected = \`Hello 👋 世界 🌍!\`;
-    257 |   expect(received).toEqual(expected);
+    206 | });
+    207 | 
+    208 | test("example 15 - unicode char diff", () => {
+    209 |   const received = \`Hello 👋 世界 🌎!\`;
+    210 |   const expected = \`Hello 👋 世界 🌍!\`;
+    211 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -417,12 +300,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 15 - unicode char diff
-    266 | }\`;
-    267 |   const expected = \`function main() {
-    268 |     print("Hello, world!");
-    269 |     print("Goodbye, world!");
-    270 | }\`;
-    271 |   expect(received).toEqual(expected);
+    220 | }\`;
+    221 |   const expected = \`function main() {
+    222 |     print("Hello, world!");
+    223 |     print("Goodbye, world!");
+    224 | }\`;
+    225 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -441,12 +324,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 16 - indentation change diff
-    302 |   }
-    303 | 
-    304 |   // The Zig code adds a trailing newline to each string.
-    305 |   const receivedString = receivedLines.join("\\n") + "\\n";
-    306 |   const expectedString = expectedLines.join("\\n") + "\\n";
-    307 |   expect(receivedString).toEqual(expectedString);
+    256 |   }
+    257 | 
+    258 |   // The Zig code adds a trailing newline to each string.
+    259 |   const receivedString = receivedLines.join("\\n") + "\\n";
+    260 |   const expectedString = expectedLines.join("\\n") + "\\n";
+    261 |   expect(receivedString).toEqual(expectedString);
                                    ^
     error: expect(received).toEqual(expected)
 
@@ -508,12 +391,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 17 - very long string
-    308 | });
-    309 | 
-    310 | test("example 18 - very long single line string", () => {
-    311 |   const expected = "a".repeat(1000000);
-    312 |   const received = "a".repeat(1000001);
-    313 |   expect(received).toEqual(expected);
+    262 | });
+    263 | 
+    264 | test("example 18 - very long single line string", () => {
+    265 |   const expected = "a".repeat(1000000);
+    266 |   const received = "a".repeat(1000001);
+    267 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -523,12 +406,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 18 - very long single line string
-    312 |   const received = "a".repeat(1000001);
-    313 |   expect(received).toEqual(expected);
-    314 | });
-    315 | 
-    316 | test("not", () => {
-    317 |   expect("Hello, World!").not.toEqual("Hello, World!");
+    266 |   const received = "a".repeat(1000001);
+    267 |   expect(received).toEqual(expected);
+    268 | });
+    269 | 
+    270 | test("not", () => {
+    271 |   expect("Hello, World!").not.toEqual("Hello, World!");
                                         ^
     error: expect(received).not.toEqual(expected)
 
@@ -536,12 +419,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) not
-    316 | test("not", () => {
-    317 |   expect("Hello, World!").not.toEqual("Hello, World!");
-    318 | });
-    319 | 
-    320 | test("has end newline vs doesn't", () => {
-    321 |   expect("Hello, World!\\n").toEqual("Hello, World!");
+    270 | test("not", () => {
+    271 |   expect("Hello, World!").not.toEqual("Hello, World!");
+    272 | });
+    273 | 
+    274 | test("has end newline vs doesn't", () => {
+    275 |   expect("Hello, World!\\n").toEqual("Hello, World!");
                                       ^
     error: expect(received).toEqual(expected)
 
@@ -555,12 +438,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) has end newline vs doesn't
-    327 |   const received = new Float64Array(length);
-    328 |   for (let i = 0; i < length; i++) {
-    329 |     expected[i] = i;
-    330 |     received[i] = i + 1;
-    331 |   }
-    332 |   expect(received).toEqual(expected);
+    281 |   const received = new Float64Array(length);
+    282 |   for (let i = 0; i < length; i++) {
+    283 |     expected[i] = i;
+    284 |     received[i] = i + 1;
+    285 |   }
+    286 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -587,12 +470,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) extremely float64array
-    338 |   const received = new Int32Array(length);
-    339 |   for (let i = 0; i < length; i++) {
-    340 |     expected[i] = i;
-    341 |     received[i] = length - i - 1;
-    342 |   }
-    343 |   expect(received).toEqual(expected);
+    292 |   const received = new Int32Array(length);
+    293 |   for (let i = 0; i < length; i++) {
+    294 |     expected[i] = i;
+    295 |     received[i] = length - i - 1;
+    296 |   }
+    297 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -805,11 +688,11 @@ test("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) completely different long value does not truncate
 
-     1 pass
+     0 pass
      1 todo
-     20 fail
-     21 expect() calls
-    Ran 22 tests across 1 file.
+     14 fail
+     14 expect() calls
+    Ran 15 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
@@ -909,6 +792,68 @@ test("color", async () => {
       \x1B[0m\x1B[2m  99999,\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  100000,\x1B[0m
       \x1B[0m\x1B[2m]\x1B[0m
+
+    \x1B[32m- Expected  - 1\x1B[0m
+    \x1B[31m+ Received  + 1\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    Expected: \x1B[0m\x1B[32m"Hello 👋 世界 🌎"\x1B[0m
+    Received: \x1B[0m\x1B[31m"Hello 👋 世界 🌍"\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2m"Line 1: 你好\x1B[0m
+      \x1B[0m\x1B[2mLine 2: مرحبا\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32mLine 3: Привет"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31mLine 3: Здравствуйте"\x1B[0m
+
+    \x1B[32m- Expected  - 1\x1B[0m
+    \x1B[31m+ Received  + 1\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2m{\x1B[0m
+      \x1B[0m\x1B[2m  "arabic": "اختبار",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "chinese": "测试\x1B[0m\x1B[32m\x1B[7m文本\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "chinese": "测试\x1B[0m\x1B[31m\x1B[7m字符串\x1B[0m\x1B[31m",\x1B[0m
+      \x1B[0m\x1B[2m  "emoji": "🔥💧🌊",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "mixed": "Hello 世界 🌎",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "mixed": "Hello 世界 🌍",\x1B[0m
+      \x1B[0m\x1B[2m}\x1B[0m
+
+    \x1B[32m- Expected  - 2\x1B[0m
+    \x1B[31m+ Received  + 2\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    Expected: \x1B[0m\x1B[32m"café r\x1B[0m\x1B[32m\x1B[7me\x1B[0m\x1B[32msumé na\x1B[0m\x1B[32m\x1B[7mi\x1B[0m\x1B[32mve"\x1B[0m
+    Received: \x1B[0m\x1B[31m"café r\x1B[0m\x1B[31m\x1B[7mé\x1B[0m\x1B[31msumé na\x1B[0m\x1B[31m\x1B[7mï\x1B[0m\x1B[31mve"\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2m"Línea 1: ñoño\x1B[0m
+      \x1B[0m\x1B[2mLínea 2: àèìòù\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32mLínea 3: \x1B[0m\x1B[32m\x1B[7maeiou\x1B[0m\x1B[32m"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31mLínea 3: \x1B[0m\x1B[31m\x1B[7mäëïöü\x1B[0m\x1B[31m"\x1B[0m
+
+    \x1B[32m- Expected  - 1\x1B[0m
+    \x1B[31m+ Received  + 1\x1B[0m
+
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[0m\x1B[2m{\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "french": "crème br\x1B[0m\x1B[32m\x1B[7mu\x1B[0m\x1B[32mlée",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "french": "crème br\x1B[0m\x1B[31m\x1B[7mû\x1B[0m\x1B[31mlée",\x1B[0m
+      \x1B[0m\x1B[2m  "spanish": "niño español",\x1B[0m
+      \x1B[0m\x1B[2m  "special": "½ ¼ ¾ ± × ÷",\x1B[0m
+      \x1B[0m\x1B[2m}\x1B[0m
 
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m

@@ -47,3 +47,63 @@ try {
 } catch (e) {
   console.log(e.message);
 }
+
+try {
+  expect("Hello 👋 世界 🌍").toEqual("Hello 👋 世界 🌎");
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect("Line 1: 你好\nLine 2: مرحبا\nLine 3: Здравствуйте").toEqual("Line 1: 你好\nLine 2: مرحبا\nLine 3: Привет");
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect({
+    emoji: "🔥💧🌊",
+    chinese: "测试字符串",
+    arabic: "اختبار",
+    mixed: "Hello 世界 🌍",
+  }).toEqual({
+    emoji: "🔥💧🌊",
+    chinese: "测试文本",
+    arabic: "اختبار",
+    mixed: "Hello 世界 🌎",
+  });
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect("café résumé naïve").toEqual("café resumé naive");
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect("© ® ™ £ € ¥ § ¶").toEqual("© ® ™ £ € ¥ § ¶");
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect("Línea 1: ñoño\nLínea 2: àèìòù\nLínea 3: äëïöü").toEqual("Línea 1: ñoño\nLínea 2: àèìòù\nLínea 3: aeiou");
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect({
+    french: "crème brûlée",
+    spanish: "niño español",
+    special: "½ ¼ ¾ ± × ÷",
+  }).toEqual({
+    french: "crème brulée",
+    spanish: "niño español",
+    special: "½ ¼ ¾ ± × ÷",
+  });
+} catch (e) {
+  console.log(e.message);
+}

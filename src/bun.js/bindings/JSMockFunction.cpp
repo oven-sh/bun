@@ -148,6 +148,7 @@ public:
         Call,
         ReturnValue,
         ReturnThis,
+        RejectedValue,
     };
 
     static JSMockImplementation* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, Kind kind, JSC::JSValue heldValue, bool isOnce)
@@ -962,6 +963,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
             setReturnValue(createMockResult(vm, globalObject, "return"_s, thisValue));
             return JSValue::encode(thisValue);
         }
+        case JSMockImplementation::Kind::RejectedValue: {
+            JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
+            setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
+            return JSValue::encode(rejectedPromise);
+        }
         default: {
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -1235,7 +1241,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::RejectedValue, callframe->argument(0));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1248,7 +1254,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::RejectedValue, callframe->argument(0));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }

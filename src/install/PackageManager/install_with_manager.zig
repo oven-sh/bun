@@ -539,7 +539,7 @@ pub fn installWithManager(
 
     // Security scan must run after all dependencies are resolved but before cleaning the lockfile
     if (manager.subcommand == .add and manager.options.security_provider != null) {
-        try performSecurityScanAfterResolution(manager, original_cwd);
+        try performSecurityScanAfterResolution(manager);
     }
 
     const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
@@ -994,10 +994,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 
 const string = []const u8;
 
-fn performSecurityScanAfterResolution(
-    manager: *PackageManager,
-    _: string,
-) !void {
+fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     const security_provider = manager.options.security_provider orelse return;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
@@ -1110,6 +1107,19 @@ fn performSecurityScanAfterResolution(
         \\}}
     , .{ security_provider, json_buf.items });
 
+    const pipe_result = bun.sys.pipe();
+    const pipe_fds = switch (pipe_result) {
+        .err => |err| {
+            Output.errGeneric("Failed to create IPC pipe: {s}", .{@tagName(err.getErrno())});
+            Global.exit(1);
+        },
+        .result => |fds| fds,
+    };
+    defer {
+        pipe_fds[0].close();
+        pipe_fds[1].close();
+    }
+
     const exec_path = bun.selfExePath() catch unreachable;
     const code_z = manager.allocator.dupeZ(u8, code_buf.items) catch bun.outOfMemory();
     defer manager.allocator.free(code_z);
@@ -1117,18 +1127,23 @@ fn performSecurityScanAfterResolution(
     const exec_path_z = manager.allocator.dupeZ(u8, exec_path) catch bun.outOfMemory();
     defer manager.allocator.free(exec_path_z);
 
-    const argv = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
+    const argv = [_][]const u8{ exec_path, "-e", code_buf.items };
+    const argv_z = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
 
-    const options = bun.spawn.SpawnOptions{
+    const options = bun.spawn.sync.Options{
         .stdout = .inherit,
         .stderr = .inherit,
         .stdin = .ignore,
-        .extra_fds = &[_]bun.spawn.SpawnOptions.Stdio{
-            .buffer,
-        },
+        .ipc = pipe_fds[1],
+        .argv = &argv,
+        .envp = null,
     };
 
-    const spawn_result = switch (try bun.spawn.spawnProcess(&options, @constCast(@ptrCast(&argv)), @ptrCast(std.os.environ.ptr))) {
+    const sync_result = switch (try bun.spawn.sync.spawnWithArgv(
+        &options,
+        @constCast(@ptrCast(&argv_z)),
+        @ptrCast(std.os.environ.ptr),
+    )) {
         .err => |err| {
             Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
             Global.exit(1);
@@ -1136,123 +1151,41 @@ fn performSecurityScanAfterResolution(
         .result => |res| res,
     };
 
-    if (spawn_result.extra_pipes.items.len == 0) {
-        Output.errGeneric("Failed to create IPC pipe", .{});
-        Global.exit(1);
-    }
-    const ipc_fd = spawn_result.extra_pipes.items[0];
-    defer ipc_fd.close();
-
-    _ = bun.sys.setNonblocking(ipc_fd);
-
     var ipc_data = std.ArrayList(u8).init(manager.allocator);
     defer ipc_data.deinit();
 
     var buf: [4096]u8 = undefined;
-    var process_exited = false;
-    var wait_result: bun.spawn.WaitPidResult = undefined;
-
-    var poll_fds = [_]std.c.pollfd{
-        .{
-            .fd = @intCast(ipc_fd.cast()),
-            .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
-            .revents = 0,
-        },
-    };
-
     while (true) {
-        if (!process_exited) {
-            switch (bun.spawn.waitpid(spawn_result.pid, std.posix.W.NOHANG)) {
-                .result => |res| {
-                    if (res.pid > 0) {
-                        process_exited = true;
-                        wait_result = res;
-                    }
-                },
-                .err => {},
-            }
-        }
-
-        const poll_timeout: c_int = if (process_exited) 10 else 50; // 10ms if exited, 50ms otherwise
-        const rc = std.c.poll(&poll_fds, 1, poll_timeout);
-
-        switch (bun.sys.getErrno(rc)) {
-            .SUCCESS => {},
-            .AGAIN, .INTR => continue,
-            else => |err| {
-                Output.errGeneric("Failed to poll IPC pipe: {s}", .{@tagName(err)});
-                Global.exit(1);
+        switch (bun.sys.read(pipe_fds[0], &buf)) {
+            .err => |err| {
+                if (err.getErrno() == .AGAIN) {
+                    continue;
+                }
+                break;
             },
-        }
-
-        if (rc == 0) {
-            if (process_exited) {
-                // Give it one more chance to read any buffered data
-                switch (bun.sys.read(ipc_fd, &buf)) {
-                    .err => break,
-                    .result => |bytes_read| {
-                        if (bytes_read > 0) {
-                            try ipc_data.appendSlice(buf[0..bytes_read]);
-                        }
-                        break;
-                    },
+            .result => |bytes_read| {
+                if (bytes_read == 0) {
+                    break; // EOF
                 }
-            }
-            continue;
-        }
-
-        if (poll_fds[0].revents & (std.posix.POLL.IN) != 0) {
-            while (true) {
-                switch (bun.sys.read(ipc_fd, &buf)) {
-                    .err => |err| {
-                        if (err.getErrno() == .AGAIN) {
-                            break; // No more data available right now
-                        }
-                        Output.errGeneric("Failed to read from IPC: {s}", .{@tagName(err.getErrno())});
-                        break;
-                    },
-                    .result => |bytes_read| {
-                        if (bytes_read == 0) {
-                            // EOF - pipe closed
-                            if (!process_exited) {
-                                // Wait for process to exit
-                                switch (bun.spawn.waitpid(spawn_result.pid, 0)) {
-                                    .result => |res| {
-                                        wait_result = res;
-                                        process_exited = true;
-                                    },
-                                    .err => |err| {
-                                        Output.errGeneric("Failed to wait for security provider: {s}", .{@tagName(err.getErrno())});
-                                        Global.exit(1);
-                                    },
-                                }
-                            }
-                            break;
-                        }
-                        try ipc_data.appendSlice(buf[0..bytes_read]);
-                    },
-                }
-            }
-        }
-
-        if (poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP) != 0) {
-            break;
+                try ipc_data.appendSlice(buf[0..bytes_read]);
+            },
         }
     }
 
-    const maybe_wait_result = bun.sys.Maybe(bun.spawn.WaitPidResult){ .result = wait_result };
-    const status = bun.spawn.Status.from(spawn_result.pid, &maybe_wait_result) orelse {
-        Output.errGeneric("Failed to get security provider exit status", .{});
-        Global.exit(1);
-    };
+    const status = sync_result.status;
 
     if (ipc_data.items.len == 0) {
         switch (status) {
             .exited => |exit| {
                 if (exit.code != 0) {
+                    const stderr_output = sync_result.stderr.items;
+
                     Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
+                    if (stderr_output.len > 0) {
+                        Output.errGeneric("Error output: {s}", .{stderr_output});
+                    }
                 } else {
-                    Output.errGeneric("Security provider exited without sending any data (possible deadlock prevented)", .{});
+                    Output.errGeneric("Security provider exited without sending any data", .{});
                 }
             },
             .signaled => |sig| {
@@ -1405,8 +1338,67 @@ fn performSecurityScanAfterResolution(
                 Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
                 Global.exit(1);
             } else if (has_warn) {
-                // TODO: Prompt user to continue
-                Output.pretty("\n<yellow>Security warnings found. Continuing anyway...<r>\n\n", .{});
+                // Check if TTY is available for prompting
+                const is_tty = Output.enable_ansi_colors_stdout;
+
+                if (is_tty) {
+                    // Prompt user to continue
+                    Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
+                    Output.flush();
+
+                    var stdin = std.io.getStdIn();
+                    const unbuffered_reader = stdin.reader();
+                    var buffered = std.io.bufferedReader(unbuffered_reader);
+                    var reader = buffered.reader();
+
+                    const first_byte = reader.readByte() catch {
+                        Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                        Global.exit(1);
+                    };
+
+                    const should_continue = switch (first_byte) {
+                        '\n' => false,
+                        '\r' => blk: {
+                            const next_byte = reader.readByte() catch {
+                                break :blk false;
+                            };
+                            break :blk next_byte == '\n' and false;
+                        },
+                        'y', 'Y' => blk: {
+                            const next_byte = reader.readByte() catch {
+                                break :blk false;
+                            };
+                            if (next_byte == '\n') {
+                                break :blk true;
+                            } else if (next_byte == '\r') {
+                                const second_byte = reader.readByte() catch {
+                                    break :blk false;
+                                };
+                                break :blk second_byte == '\n';
+                            }
+                            break :blk false;
+                        },
+                        else => blk: {
+                            // Consume the rest of the line
+                            while (reader.readByte()) |b| {
+                                if (b == '\n' or b == '\r') break;
+                            } else |_| {}
+                            break :blk false;
+                        },
+                    };
+
+                    if (!should_continue) {
+                        Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                        Global.exit(1);
+                    }
+
+                    Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
+                } else {
+                    // No TTY available, exit with error
+                    Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
+                    Output.pretty("<red>Installation cancelled.<r>\n\n", .{});
+                    Global.exit(1);
+                }
             }
         }
     }

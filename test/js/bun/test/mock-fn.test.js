@@ -599,6 +599,11 @@ describe("mock()", () => {
     expect(await expectRejects(fn())).toBe(44);
     expect(await expectRejects(fn())).toBe(42);
   });
+  test("mockRejectedValue doesn't throw when never called", () => {
+    const fn = jest.fn().mockRejectedValue(new Error("Test error"));
+    expect(fn).toBeDefined();
+    expect(typeof fn).toBe("function");
+  });
   test("withImplementation (sync)", () => {
     const fn = jest.fn(() => "1");
     expect(fn()).toBe("1");

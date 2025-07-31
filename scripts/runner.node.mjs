@@ -263,15 +263,18 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipArray = (() => {
-  const path = join(cwd, "test/no-validate-exceptions.txt");
+function normalizeFilePathTextFile(path) {
   if (!existsSync(path)) {
     return [];
   }
   return readFileSync(path, "utf-8")
     .split("\n")
-    .filter(line => !line.startsWith("#") && line.length > 0);
-})();
+    .filter(line => !line.startsWith("#") && line.length > 0)
+    .map(line => line.replace(/\\/g, "/").trim());
+}
+
+const skipArray = normalizeFilePathTextFile(join(cwd, "test/no-validate-exceptions.txt"));
+const noStackOverflowArray = normalizeFilePathTextFile(join(cwd, "test/stackoverflow-tests.txt"));
 
 /**
  * Returns whether we should validate exception checks running the given test
@@ -1026,7 +1029,7 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
+async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr, testPath }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1052,6 +1055,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
+
+  if (testPath) {
+    if (noStackOverflowArray.includes(testPath)) {
+      delete bunEnv.BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW;
+    }
+  }
 
   if (basename(execPath).includes("asan")) {
     bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
@@ -1251,6 +1260,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+    testPath,
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,

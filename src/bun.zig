@@ -3732,7 +3732,7 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
     @branchHint(.cold);
     if (comptime bun.Environment.is_canary) {
         if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW)) {
-            @panic("Stack overflow");
+            @panic("Stack overflow. If this was intentional, update test/stackoverflow-tests.txt");
         }
     }
 

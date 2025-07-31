@@ -84,7 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
-
+            SecurityScanSubprocess,
             SyncProcess,
         },
     );
@@ -113,6 +113,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
+                const subprocess = this.ptr.as(SecurityScanSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
@@ -2249,6 +2253,7 @@ const PosixSpawn = bun.spawn;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
+const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;

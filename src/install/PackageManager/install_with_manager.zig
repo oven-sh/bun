@@ -999,6 +999,8 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
     if (manager.update_requests.len == 0) return;
+    
+    Output.prettyErrorln("Running security scan with provider: {s}", .{security_provider});
 
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
     defer pkg_dedupe.deinit();
@@ -1149,315 +1151,33 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\}}
     , .{ security_provider, json_buf.items });
 
-    const pipe_result = bun.sys.pipe();
-    const pipe_fds = switch (pipe_result) {
-        .err => |err| {
-            Output.errGeneric("Failed to create IPC pipe: {s}", .{@tagName(err.getErrno())});
-            Global.exit(1);
-        },
-        .result => |fds| fds,
-    };
+    var scanner = SecurityScanSubprocess.new(.{
+        .manager = manager,
+        .code = try manager.allocator.dupe(u8, code_buf.items),
+        .json_data = try manager.allocator.dupe(u8, json_buf.items),
+        .ipc_data = undefined,
+        .stderr_data = undefined,
+    });
     defer {
-        pipe_fds[0].close();
-        pipe_fds[1].close();
+        manager.allocator.free(scanner.code);
+        manager.allocator.free(scanner.json_data);
+        manager.allocator.destroy(scanner);
     }
 
-    const exec_path = bun.selfExePath() catch unreachable;
-    const code_z = manager.allocator.dupeZ(u8, code_buf.items) catch bun.outOfMemory();
-    defer manager.allocator.free(code_z);
+    Output.prettyErrorln("Spawning security scan subprocess...", .{});
+    try scanner.spawn();
 
-    const exec_path_z = manager.allocator.dupeZ(u8, exec_path) catch bun.outOfMemory();
-    defer manager.allocator.free(exec_path_z);
+    var closure = struct {
+        scanner: *SecurityScanSubprocess,
 
-    const argv = [_][]const u8{ exec_path, "-e", code_buf.items };
-    const argv_z = [_]?[*:0]const u8{ exec_path_z, "-e", code_z, null };
-
-    const options = bun.spawn.sync.Options{
-        .stdout = .inherit,
-        .stderr = .inherit,
-        .stdin = .ignore,
-        .ipc = pipe_fds[1],
-        .argv = &argv,
-        .envp = null,
-    };
-
-    const sync_result = switch (try bun.spawn.sync.spawnWithArgv(
-        &options,
-        @constCast(@ptrCast(&argv_z)),
-        @ptrCast(std.os.environ.ptr),
-    )) {
-        .err => |err| {
-            Output.errGeneric("Security provider spawn failed: {s}", .{@tagName(err.getErrno())});
-            Global.exit(1);
-        },
-        .result => |res| res,
-    };
-
-    var ipc_data = std.ArrayList(u8).init(manager.allocator);
-    defer ipc_data.deinit();
-
-    var buf: [4096]u8 = undefined;
-    while (true) {
-        switch (bun.sys.read(pipe_fds[0], &buf)) {
-            .err => |err| {
-                if (err.getErrno() == .AGAIN) {
-                    continue;
-                }
-                break;
-            },
-            .result => |bytes_read| {
-                if (bytes_read == 0) {
-                    break; // EOF
-                }
-                try ipc_data.appendSlice(buf[0..bytes_read]);
-            },
+        pub fn isDone(this: *@This()) bool {
+            return this.scanner.isDone();
         }
-    }
+    }{ .scanner = scanner };
 
-    const status = sync_result.status;
+    manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
-    if (ipc_data.items.len == 0) {
-        switch (status) {
-            .exited => |exit| {
-                if (exit.code != 0) {
-                    const stderr_output = sync_result.stderr.items;
-
-                    Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
-                    if (stderr_output.len > 0) {
-                        Output.errGeneric("Error output: {s}", .{stderr_output});
-                    }
-                } else {
-                    Output.errGeneric("Security provider exited without sending any data", .{});
-                }
-            },
-            .signaled => |sig| {
-                Output.errGeneric("Security provider terminated by signal {s} without sending data", .{@tagName(sig)});
-            },
-            else => {
-                Output.errGeneric("Security provider terminated abnormally without sending data", .{});
-            },
-        }
-        Global.exit(1);
-    }
-
-    if (ipc_data.items.len > 0) {
-        const json_source = logger.Source{
-            .contents = ipc_data.items,
-            .path = bun.fs.Path.init("security-advisories.json"),
-        };
-
-        var temp_log = logger.Log.init(manager.allocator);
-        defer temp_log.deinit();
-
-        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
-            Output.errGeneric("Security provider returned invalid JSON: {s}", .{@errorName(err)});
-            if (ipc_data.items.len < 1000) {
-                // If the response is reasonably small, show it to help debugging
-                Output.errGeneric("Response: {s}", .{ipc_data.items});
-            }
-            if (temp_log.errors > 0) {
-                temp_log.print(Output.errorWriter()) catch {};
-            }
-            Global.exit(1);
-        };
-
-        var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
-        defer advisories_list.deinit();
-
-        if (json_expr.data != .e_object) {
-            Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
-            Global.exit(1);
-        }
-
-        const obj = json_expr.data.e_object;
-
-        const advisories_expr = obj.get("advisories") orelse {
-            Output.errGeneric("Security provider response missing required 'advisories' field", .{});
-            Global.exit(1);
-        };
-
-        if (advisories_expr.data != .e_array) {
-            Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
-            Global.exit(1);
-        }
-
-        const array = advisories_expr.data.e_array;
-        for (array.items.slice(), 0..) |item, i| {
-            if (item.data != .e_object) {
-                Output.errGeneric("Security advisory at index {d} must be an object, got: {s}", .{ i, @tagName(item.data) });
-                Global.exit(1);
-            }
-
-            const item_obj = item.data.e_object;
-
-            const name_expr = item_obj.get("package") orelse {
-                Output.errGeneric("Security advisory at index {d} missing required 'package' field", .{i});
-                Global.exit(1);
-            };
-            const name_str = name_expr.asString(manager.allocator) orelse {
-                Output.errGeneric("Security advisory at index {d} 'package' field must be a string", .{i});
-                Global.exit(1);
-            };
-            if (name_str.len == 0) {
-                Output.errGeneric("Security advisory at index {d} 'package' field cannot be empty", .{i});
-                Global.exit(1);
-            }
-
-            const desc_expr = item_obj.get("description") orelse {
-                Output.errGeneric("Security advisory at index {d} missing required 'description' field", .{i});
-                Global.exit(1);
-            };
-            const desc_str = desc_expr.asString(manager.allocator) orelse {
-                Output.errGeneric("Security advisory at index {d} 'description' field must be a string", .{i});
-                Global.exit(1);
-            };
-
-            const url_expr = item_obj.get("url") orelse {
-                Output.errGeneric("Security advisory at index {d} missing required 'url' field", .{i});
-                Global.exit(1);
-            };
-            const url_str = url_expr.asString(manager.allocator) orelse {
-                Output.errGeneric("Security advisory at index {d} 'url' field must be a string", .{i});
-                Global.exit(1);
-            };
-
-            const level_expr = item_obj.get("level") orelse {
-                Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
-                Global.exit(1);
-            };
-            const level_str = level_expr.asString(manager.allocator) orelse {
-                Output.errGeneric("Security advisory at index {d} 'level' field must be a string", .{i});
-                Global.exit(1);
-            };
-            const level = if (std.mem.eql(u8, level_str, "fatal"))
-                SecurityAdvisoryLevel.fatal
-            else if (std.mem.eql(u8, level_str, "warn"))
-                SecurityAdvisoryLevel.warn
-            else {
-                Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
-                Global.exit(1);
-            };
-
-            const advisory = SecurityAdvisory{
-                .level = level,
-                .package = name_str,
-                .url = url_str,
-                .description = desc_str,
-            };
-
-            try advisories_list.append(advisory);
-        }
-
-        if (advisories_list.items.len > 0) {
-            var has_fatal = false;
-            var has_warn = false;
-
-            Output.pretty("\n<red>Security advisories found:<r>\n", .{});
-            for (advisories_list.items) |advisory| {
-                Output.print("\n", .{});
-
-                switch (advisory.level) {
-                    .fatal => {
-                        has_fatal = true;
-                        Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
-                    },
-                    .warn => {
-                        has_warn = true;
-                        Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
-                    },
-                }
-
-                if (advisory.description) |desc| {
-                    Output.pretty("    {s}\n", .{desc});
-                }
-                if (advisory.url) |url| {
-                    Output.pretty("    <cyan>{s}<r>\n", .{url});
-                }
-            }
-
-            if (has_fatal) {
-                Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
-                Global.exit(1);
-            } else if (has_warn) {
-                const can_prompt = Output.enable_ansi_colors_stdout;
-
-                if (can_prompt) {
-                    Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
-                    Output.flush();
-
-                    var stdin = std.io.getStdIn();
-                    const unbuffered_reader = stdin.reader();
-                    var buffered = std.io.bufferedReader(unbuffered_reader);
-                    var reader = buffered.reader();
-
-                    const first_byte = reader.readByte() catch {
-                        Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
-                        Global.exit(1);
-                    };
-
-                    const should_continue = switch (first_byte) {
-                        '\n' => false,
-                        '\r' => blk: {
-                            const next_byte = reader.readByte() catch {
-                                break :blk false;
-                            };
-                            break :blk next_byte == '\n' and false;
-                        },
-                        'y', 'Y' => blk: {
-                            const next_byte = reader.readByte() catch {
-                                break :blk false;
-                            };
-                            if (next_byte == '\n') {
-                                break :blk true;
-                            } else if (next_byte == '\r') {
-                                const second_byte = reader.readByte() catch {
-                                    break :blk false;
-                                };
-                                break :blk second_byte == '\n';
-                            }
-                            break :blk false;
-                        },
-                        else => blk: {
-                            while (reader.readByte()) |b| {
-                                if (b == '\n' or b == '\r') break;
-                            } else |_| {}
-                            break :blk false;
-                        },
-                    };
-
-                    if (!should_continue) {
-                        Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
-                        Global.exit(1);
-                    }
-
-                    Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
-                } else {
-                    Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
-                    Output.pretty("<red>Installation cancelled.<r>\n\n", .{});
-                    Global.exit(1);
-                }
-            }
-        }
-    }
-
-    if (!status.isOK()) {
-        switch (status) {
-            .exited => |exited| {
-                if (exited.code != 0) {
-                    Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
-                    Global.exit(1);
-                }
-            },
-            .signaled => |signal| {
-                Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
-                Global.exit(1);
-            },
-            else => {
-                Output.errGeneric("Security provider failed", .{});
-                Global.exit(1);
-            },
-        }
-    }
+    try scanner.handleResults();
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -1468,6 +1188,381 @@ const SecurityAdvisory = struct {
     url: ?[]const u8,
     description: ?[]const u8,
 };
+
+pub const SecurityScanSubprocess = struct {
+    manager: *PackageManager,
+    code: []const u8,
+    json_data: []const u8,
+    process: ?*bun.spawn.Process = null,
+    ipc_reader: bun.io.BufferedReader = bun.io.BufferedReader.init(@This()),
+    ipc_data: std.ArrayList(u8),
+    stderr_data: std.ArrayList(u8),
+    has_process_exited: bool = false,
+    has_received_ipc: bool = false,
+    exit_status: ?bun.spawn.Status = null,
+    remaining_fds: i8 = 0,
+
+    pub const new = bun.TrivialNew(@This());
+
+    pub fn spawn(this: *SecurityScanSubprocess) !void {
+        this.ipc_data = std.ArrayList(u8).init(this.manager.allocator);
+        this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
+        this.ipc_reader.setParent(this);
+
+        const pipe_result = bun.sys.pipe();
+        const pipe_fds = switch (pipe_result) {
+            .err => |err| {
+                Output.errGeneric("Failed to create IPC pipe: {s}", .{@tagName(err.getErrno())});
+                Global.exit(1);
+            },
+            .result => |fds| fds,
+        };
+
+        const exec_path = try bun.selfExePath();
+
+        var argv = [_]?[*:0]const u8{
+            try this.manager.allocator.dupeZ(u8, exec_path),
+            "-e",
+            try this.manager.allocator.dupeZ(u8, this.code),
+            null,
+        };
+        defer {
+            this.manager.allocator.free(bun.span(argv[0].?));
+            this.manager.allocator.free(bun.span(argv[2].?));
+        }
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdout = .inherit,
+            .stderr = .buffer,
+            .stdin = .ignore,
+            .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
+        };
+
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
+
+        pipe_fds[1].close();
+
+        _ = bun.sys.setNonblocking(pipe_fds[0]);
+        this.remaining_fds = 1;
+        this.ipc_reader.flags.nonblocking = true;
+        this.ipc_reader.flags.socket = false;
+        try this.ipc_reader.start(pipe_fds[0], true).unwrap();
+
+        var process = spawned.toProcess(&this.manager.event_loop, false);
+        this.process = process;
+        process.setExitHandler(this);
+
+        switch (process.watchOrReap()) {
+            .err => |err| {
+                Output.errGeneric("Failed to watch security scanner process: {}", .{err});
+                Global.exit(1);
+            },
+            .result => {},
+        }
+    }
+
+    pub fn isDone(this: *SecurityScanSubprocess) bool {
+        return this.has_process_exited and this.remaining_fds == 0;
+    }
+
+    pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {
+        return &this.manager.event_loop;
+    }
+
+    pub fn loop(this: *const SecurityScanSubprocess) *bun.uws.Loop {
+        return this.manager.event_loop.loop();
+    }
+
+    pub fn onReaderDone(this: *SecurityScanSubprocess) void {
+        this.has_received_ipc = true;
+        this.remaining_fds -= 1;
+    }
+
+    pub fn onReaderError(this: *SecurityScanSubprocess, err: bun.sys.Error) void {
+        Output.errGeneric("Failed to read security scanner IPC: {}", .{err});
+        this.has_received_ipc = true;
+        this.remaining_fds -= 1;
+    }
+
+    pub fn getReadBuffer(this: *SecurityScanSubprocess) []u8 {
+        const available = this.ipc_data.unusedCapacitySlice();
+        if (available.len < 4096) {
+            this.ipc_data.ensureTotalCapacity(this.ipc_data.capacity + 4096) catch bun.outOfMemory();
+            return this.ipc_data.unusedCapacitySlice();
+        }
+        return available;
+    }
+
+    pub fn onReadChunk(this: *SecurityScanSubprocess, chunk: []const u8, hasMore: bun.io.ReadState) bool {
+        _ = hasMore;
+        this.ipc_data.appendSlice(chunk) catch bun.outOfMemory();
+        return true;
+    }
+
+    pub fn onProcessExit(this: *SecurityScanSubprocess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        this.has_process_exited = true;
+        this.exit_status = status;
+
+        if (this.remaining_fds > 0 and !this.has_received_ipc) {
+            this.ipc_reader.deinit();
+            this.remaining_fds = 0;
+        }
+    }
+
+    pub fn handleResults(this: *SecurityScanSubprocess) !void {
+        defer {
+            this.ipc_data.deinit();
+            this.stderr_data.deinit();
+        }
+
+        const status = this.exit_status orelse bun.spawn.Status{ .exited = .{ .code = 0 } };
+
+        if (this.ipc_data.items.len == 0) {
+            switch (status) {
+                .exited => |exit| {
+                    if (exit.code != 0) {
+                        Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
+                        if (this.stderr_data.items.len > 0) {
+                            Output.errGeneric("Error output: {s}", .{this.stderr_data.items});
+                        }
+                    } else {
+                        Output.errGeneric("Security provider exited without sending any data", .{});
+                    }
+                },
+                .signaled => |sig| {
+                    Output.errGeneric("Security provider terminated by signal {s} without sending data", .{@tagName(sig)});
+                },
+                else => {
+                    Output.errGeneric("Security provider terminated abnormally without sending data", .{});
+                },
+            }
+            Global.exit(1);
+        }
+
+        try handleSecurityAdvisories(this.manager, this.ipc_data.items);
+
+        if (!status.isOK()) {
+            switch (status) {
+                .exited => |exited| {
+                    if (exited.code != 0) {
+                        Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+                        Global.exit(1);
+                    }
+                },
+                .signaled => |signal| {
+                    Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
+                    Global.exit(1);
+                },
+                else => {
+                    Output.errGeneric("Security provider failed", .{});
+                    Global.exit(1);
+                },
+            }
+        }
+    }
+};
+
+fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8) !void {
+    if (ipc_data.len == 0) return;
+
+    const json_source = logger.Source{
+        .contents = ipc_data,
+        .path = bun.fs.Path.init("security-advisories.json"),
+    };
+
+    var temp_log = logger.Log.init(manager.allocator);
+    defer temp_log.deinit();
+
+    const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
+        Output.errGeneric("Security provider returned invalid JSON: {s}", .{@errorName(err)});
+        if (ipc_data.len < 1000) {
+            // If the response is reasonably small, show it to help debugging
+            Output.errGeneric("Response: {s}", .{ipc_data});
+        }
+        if (temp_log.errors > 0) {
+            temp_log.print(Output.errorWriter()) catch {};
+        }
+        Global.exit(1);
+    };
+
+    var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
+    defer advisories_list.deinit();
+
+    if (json_expr.data != .e_object) {
+        Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
+        Global.exit(1);
+    }
+
+    const obj = json_expr.data.e_object;
+
+    const advisories_expr = obj.get("advisories") orelse {
+        Output.errGeneric("Security provider response missing required 'advisories' field", .{});
+        Global.exit(1);
+    };
+
+    if (advisories_expr.data != .e_array) {
+        Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
+        Global.exit(1);
+    }
+
+    const array = advisories_expr.data.e_array;
+    for (array.items.slice(), 0..) |item, i| {
+        if (item.data != .e_object) {
+            Output.errGeneric("Security advisory at index {d} must be an object, got: {s}", .{ i, @tagName(item.data) });
+            Global.exit(1);
+        }
+
+        const item_obj = item.data.e_object;
+
+        const name_expr = item_obj.get("package") orelse {
+            Output.errGeneric("Security advisory at index {d} missing required 'package' field", .{i});
+            Global.exit(1);
+        };
+        const name_str = name_expr.asString(manager.allocator) orelse {
+            Output.errGeneric("Security advisory at index {d} 'package' field must be a string", .{i});
+            Global.exit(1);
+        };
+        if (name_str.len == 0) {
+            Output.errGeneric("Security advisory at index {d} 'package' field cannot be empty", .{i});
+            Global.exit(1);
+        }
+
+        const desc_expr = item_obj.get("description") orelse {
+            Output.errGeneric("Security advisory at index {d} missing required 'description' field", .{i});
+            Global.exit(1);
+        };
+        const desc_str = desc_expr.asString(manager.allocator) orelse {
+            Output.errGeneric("Security advisory at index {d} 'description' field must be a string", .{i});
+            Global.exit(1);
+        };
+
+        const url_expr = item_obj.get("url") orelse {
+            Output.errGeneric("Security advisory at index {d} missing required 'url' field", .{i});
+            Global.exit(1);
+        };
+        const url_str = url_expr.asString(manager.allocator) orelse {
+            Output.errGeneric("Security advisory at index {d} 'url' field must be a string", .{i});
+            Global.exit(1);
+        };
+
+        const level_expr = item_obj.get("level") orelse {
+            Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
+            Global.exit(1);
+        };
+        const level_str = level_expr.asString(manager.allocator) orelse {
+            Output.errGeneric("Security advisory at index {d} 'level' field must be a string", .{i});
+            Global.exit(1);
+        };
+        const level = if (std.mem.eql(u8, level_str, "fatal"))
+            SecurityAdvisoryLevel.fatal
+        else if (std.mem.eql(u8, level_str, "warn"))
+            SecurityAdvisoryLevel.warn
+        else {
+            Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
+            Global.exit(1);
+        };
+
+        const advisory = SecurityAdvisory{
+            .level = level,
+            .package = name_str,
+            .url = url_str,
+            .description = desc_str,
+        };
+
+        try advisories_list.append(advisory);
+    }
+
+    if (advisories_list.items.len > 0) {
+        var has_fatal = false;
+        var has_warn = false;
+
+        Output.pretty("\n<red>Security advisories found:<r>\n", .{});
+        for (advisories_list.items) |advisory| {
+            Output.print("\n", .{});
+
+            switch (advisory.level) {
+                .fatal => {
+                    has_fatal = true;
+                    Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
+                },
+                .warn => {
+                    has_warn = true;
+                    Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
+                },
+            }
+
+            if (advisory.description) |desc| {
+                Output.pretty("    {s}\n", .{desc});
+            }
+            if (advisory.url) |url| {
+                Output.pretty("    <cyan>{s}<r>\n", .{url});
+            }
+        }
+
+        if (has_fatal) {
+            Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
+            Global.exit(1);
+        } else if (has_warn) {
+            const can_prompt = Output.enable_ansi_colors_stdout;
+
+            if (can_prompt) {
+                Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
+                Output.flush();
+
+                var stdin = std.io.getStdIn();
+                const unbuffered_reader = stdin.reader();
+                var buffered = std.io.bufferedReader(unbuffered_reader);
+                var reader = buffered.reader();
+
+                const first_byte = reader.readByte() catch {
+                    Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                    Global.exit(1);
+                };
+
+                const should_continue = switch (first_byte) {
+                    '\n' => false,
+                    '\r' => blk: {
+                        const next_byte = reader.readByte() catch {
+                            break :blk false;
+                        };
+                        break :blk next_byte == '\n' and false;
+                    },
+                    'y', 'Y' => blk: {
+                        const next_byte = reader.readByte() catch {
+                            break :blk false;
+                        };
+                        if (next_byte == '\n') {
+                            break :blk true;
+                        } else if (next_byte == '\r') {
+                            const second_byte = reader.readByte() catch {
+                                break :blk false;
+                            };
+                            break :blk second_byte == '\n';
+                        }
+                        break :blk false;
+                    },
+                    else => blk: {
+                        while (reader.readByte()) |b| {
+                            if (b == '\n' or b == '\r') break;
+                        } else |_| {}
+                        break :blk false;
+                    },
+                };
+
+                if (!should_continue) {
+                    Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                    Global.exit(1);
+                }
+
+                Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
+            } else {
+                Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
+                Output.pretty("<red>Installation cancelled.<r>\n\n", .{});
+                Global.exit(1);
+            }
+        }
+    }
+}
 
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
@@ -1508,3 +1603,4 @@ const Package = Lockfile.Package;
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const jsc = bun.jsc;

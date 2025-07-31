@@ -171,16 +171,15 @@ pub const UpdateInteractiveCommand = struct {
         try manager.installWithManager(ctx, new_package_json_source, original_cwd);
     }
 
-
     fn updateCatalogDefinitions(
-        manager: *PackageManager, 
+        manager: *PackageManager,
         original_cwd: string,
         catalog_updates: bun.StringHashMap(CatalogUpdate),
     ) !void {
         // For catalog updates, we need to update the package.json catalog definitions
         Output.prettyln("", .{});
         Output.prettyln("<r><yellow>Updating catalog definitions...<r>", .{});
-        
+
         // Group catalog updates by workspace path
         var workspace_catalog_updates = std.StringHashMap(std.ArrayList(CatalogUpdateItem)).init(bun.default_allocator);
         defer {
@@ -190,37 +189,37 @@ pub const UpdateInteractiveCommand = struct {
             }
             workspace_catalog_updates.deinit();
         }
-        
+
         // Group updates by workspace
         var catalog_it = catalog_updates.iterator();
         while (catalog_it.next()) |entry| {
             const catalog_key = entry.key_ptr.*;
             const update = entry.value_ptr.*;
-            
+
             const result = try workspace_catalog_updates.getOrPut(update.workspace_path);
             if (!result.found_existing) {
                 result.value_ptr.* = std.ArrayList(CatalogUpdateItem).init(bun.default_allocator);
             }
-            
+
             try result.value_ptr.append(.{
                 .catalog_key = catalog_key,
                 .version = update.version,
             });
         }
-        
+
         // Update catalog definitions for each workspace
         var workspace_it = workspace_catalog_updates.iterator();
         while (workspace_it.next()) |workspace_entry| {
             const workspace_path = workspace_entry.key_ptr.*;
             const updates_for_workspace = workspace_entry.value_ptr.*;
-            
+
             // Build the package.json path for this workspace
             var path_buf: bun.PathBuffer = undefined;
             const package_json_path = if (workspace_path.len > 0)
                 bun.path.joinAbsStringBuf(
                     original_cwd,
                     &path_buf,
-                    &[_]string{workspace_path, "package.json"},
+                    &[_]string{ workspace_path, "package.json" },
                     .auto,
                 )
             else
@@ -230,33 +229,33 @@ pub const UpdateInteractiveCommand = struct {
                     &[_]string{"package.json"},
                     .auto,
                 );
-            
+
             const file = try std.fs.openFileAbsolute(package_json_path, .{});
             defer file.close();
-            
+
             const package_json_contents = try file.readToEndAlloc(bun.default_allocator, 1024 * 1024); // 1MB max
             defer bun.default_allocator.free(package_json_contents);
-        
+
             // For simplicity, let's do string replacement for catalog updates
             // This preserves the original formatting
             var modified_contents = try bun.default_allocator.dupe(u8, package_json_contents);
             defer bun.default_allocator.free(modified_contents);
-            
+
             var modified = false;
-            
+
             // Update catalog definitions for this workspace
             for (updates_for_workspace.items) |update| {
                 const catalog_key = update.catalog_key;
                 const new_version = update.version;
-                
+
                 // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
                 const colon_index = std.mem.indexOf(u8, catalog_key, ":");
                 const package_name = if (colon_index) |idx| catalog_key[0..idx] else catalog_key;
                 const catalog_name = if (colon_index) |idx| catalog_key[idx + 1 ..] else "";
-                
+
                 // Build search patterns
                 var search_buf: [512]u8 = undefined;
-                
+
                 const search_pattern = if (catalog_name.len > 0) blk: {
                     // Look for pattern in catalogs.{catalog_name}
                     break :blk try std.fmt.bufPrint(&search_buf, "\"{s}\": \"", .{package_name});
@@ -264,14 +263,14 @@ pub const UpdateInteractiveCommand = struct {
                     // Look for pattern in catalog
                     break :blk try std.fmt.bufPrint(&search_buf, "\"{s}\": \"", .{package_name});
                 };
-                
+
                 // Find the package in the appropriate catalog section
                 if (std.mem.indexOf(u8, modified_contents, search_pattern)) |start_idx| {
                     // Find the end of the version string
                     if (std.mem.indexOf(u8, modified_contents[start_idx + search_pattern.len ..], "\"")) |version_end_offset| {
                         const version_start = start_idx + search_pattern.len;
                         const version_end = version_start + version_end_offset;
-                        
+
                         // Replace the version
                         const new_contents = try std.mem.concat(bun.default_allocator, u8, &[_][]const u8{
                             modified_contents[0..version_start],
@@ -281,7 +280,7 @@ pub const UpdateInteractiveCommand = struct {
                         bun.default_allocator.free(modified_contents);
                         modified_contents = new_contents;
                         modified = true;
-                        
+
                         const workspace_display = if (workspace_path.len > 0) workspace_path else "root";
                         if (catalog_name.len > 0) {
                             Output.prettyln("  Updated {s} in catalogs.{s} to {s} ({s})", .{ package_name, catalog_name, new_version, workspace_display });
@@ -291,7 +290,7 @@ pub const UpdateInteractiveCommand = struct {
                     }
                 }
             }
-            
+
             if (modified) {
                 // Write the updated package.json
                 const write_file = try std.fs.openFileAbsolute(package_json_path, .{ .mode = .write_only });
@@ -299,14 +298,14 @@ pub const UpdateInteractiveCommand = struct {
                 try write_file.writeAll(modified_contents);
             }
         }
-        
+
         Output.prettyln("", .{});
         Output.prettyln("<r><green>✓<r> Updated catalog definitions", .{});
-        
+
         // After updating catalogs, we need to reinstall to apply the changes
         const exe_path = try std.fs.selfExePathAlloc(manager.allocator);
         defer manager.allocator.free(exe_path);
-        
+
         const install_args = &[_][]const u8{ exe_path, "install" };
         const result = std.process.Child.run(.{
             .allocator = manager.allocator,
@@ -318,7 +317,7 @@ pub const UpdateInteractiveCommand = struct {
         };
         defer manager.allocator.free(result.stdout);
         defer manager.allocator.free(result.stderr);
-        
+
         if (result.term != .Exited or result.term.Exited != 0) {
             Output.errGeneric("Install failed after catalog update", .{});
             if (result.stderr.len > 0) {
@@ -688,24 +687,21 @@ pub const UpdateInteractiveCommand = struct {
                             try std.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, pkg.catalog_name })
                         else
                             pkg.name;
-                        
+
                         // Get the workspace path for this catalog dependency
                         const catalog_workspace_resolution = manager.lockfile.packages.items(.resolution)[pkg.workspace_pkg_id];
                         const catalog_workspace_path = if (catalog_workspace_resolution.tag == .workspace)
                             try bun.default_allocator.dupe(u8, catalog_workspace_resolution.value.workspace.slice(manager.lockfile.buffers.string_bytes.items))
                         else
                             try bun.default_allocator.dupe(u8, ""); // Root workspace
-                        
-                        try catalog_updates.put(
-                            try bun.default_allocator.dupe(u8, catalog_key),
-                            .{
-                                .version = try bun.default_allocator.dupe(u8, target_version),
-                                .workspace_path = catalog_workspace_path,
-                            }
-                        );
+
+                        try catalog_updates.put(try bun.default_allocator.dupe(u8, catalog_key), .{
+                            .version = try bun.default_allocator.dupe(u8, target_version),
+                            .workspace_path = catalog_workspace_path,
+                        });
                         continue;
                     }
-                    
+
                     // Create package specifier for regular (non-catalog) dependencies only
                     const package_specifier = try std.fmt.allocPrint(bun.default_allocator, "{s}@{s}", .{ pkg.name, target_version });
 
@@ -726,7 +722,7 @@ pub const UpdateInteractiveCommand = struct {
                 // Check if we have any updates
                 const has_workspace_updates = workspace_updates.count() > 0;
                 const has_catalog_updates = catalog_updates.count() > 0;
-                
+
                 if (!has_workspace_updates and !has_catalog_updates) {
                     Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
                     return;
@@ -735,28 +731,28 @@ pub const UpdateInteractiveCommand = struct {
                 // Use the proven standard update mechanism instead of custom broken implementation
                 Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
                 Output.flush();
-                
+
                 // Collect all package specifiers for the standard update mechanism
                 var all_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
                 defer all_specifiers.deinit();
-                
+
                 if (has_workspace_updates) {
                     var it = workspace_updates.iterator();
                     while (it.next()) |entry| {
                         try all_specifiers.appendSlice(entry.value_ptr.items);
                     }
                 }
-                
+
                 // Update catalog definitions first if needed
                 if (has_catalog_updates) {
                     try updateCatalogDefinitions(manager, original_cwd, catalog_updates);
                 }
-                
+
                 // Actually update the selected packages
                 if (has_workspace_updates or has_catalog_updates) {
                     Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
                     Output.flush();
-                    
+
                     // Collect all packages with their workspace paths
                     const PackageWithWorkspace = struct {
                         name: []const u8,
@@ -764,7 +760,7 @@ pub const UpdateInteractiveCommand = struct {
                     };
                     var all_packages = std.ArrayList(PackageWithWorkspace).init(bun.default_allocator);
                     defer all_packages.deinit();
-                    
+
                     if (has_workspace_updates) {
                         var it = workspace_updates.iterator();
                         while (it.next()) |entry| {
@@ -786,17 +782,17 @@ pub const UpdateInteractiveCommand = struct {
                             }
                         }
                     }
-                    
+
                     // For now, just run the regular update commands for selected packages
                     // This avoids the memory aliasing issue while still providing functionality
                     for (all_packages.items) |pkg_info| {
                         Output.prettyln("Updating {s}...", .{pkg_info.name});
                         Output.flush();
-                        
+
                         // Use spawn to run the regular update command to avoid memory issues
                         var cmd_args = std.ArrayList([]const u8).init(bun.default_allocator);
                         defer cmd_args.deinit();
-                        
+
                         // Get the current executable path
                         const exe_path = std.fs.selfExePathAlloc(bun.default_allocator) catch "/Users/risky/Documents/GitHub/bun3/build/debug/bun-debug";
                         defer if (!strings.eqlComptime(exe_path, "/Users/risky/Documents/GitHub/bun3/build/debug/bun-debug")) bun.default_allocator.free(exe_path);
@@ -806,7 +802,7 @@ pub const UpdateInteractiveCommand = struct {
                         if (manager.options.do.update_to_latest) {
                             try cmd_args.append("--latest");
                         }
-                        
+
                         // Build the workspace directory path
                         const workspace_cwd = if (pkg_info.workspace_path.len > 0) blk: {
                             var path_buf: bun.PathBuffer = undefined;
@@ -819,8 +815,7 @@ pub const UpdateInteractiveCommand = struct {
                             break :blk try bun.default_allocator.dupe(u8, workspace_full_path);
                         } else try bun.default_allocator.dupe(u8, original_cwd);
                         defer bun.default_allocator.free(workspace_cwd);
-                        
-                        
+
                         // Run the update command as a subprocess
                         const result = std.process.Child.run(.{
                             .allocator = bun.default_allocator,
@@ -834,7 +829,7 @@ pub const UpdateInteractiveCommand = struct {
                             bun.default_allocator.free(result.stdout);
                             bun.default_allocator.free(result.stderr);
                         }
-                        
+
                         if (result.term.Exited == 0) {
                             Output.prettyln("✓ Updated {s}", .{pkg_info.name});
                         } else {
@@ -848,7 +843,6 @@ pub const UpdateInteractiveCommand = struct {
             },
         }
     }
-
 
     fn getAllWorkspaces(
         allocator: std.mem.Allocator,
@@ -1124,7 +1118,7 @@ pub const UpdateInteractiveCommand = struct {
                     dep.version.value.catalog.slice(string_buf)
                 else
                     "";
-                
+
                 try outdated_packages.append(.{
                     .name = try allocator.dupe(u8, name_slice),
                     .current_version = try allocator.dupe(u8, current_version_buf),
@@ -1219,7 +1213,7 @@ pub const UpdateInteractiveCommand = struct {
             max_target_len = @max(max_target_len, pkg.update_version.len);
             max_latest_len = @max(max_latest_len, pkg.latest_version.len);
             max_workspace_len = @max(max_workspace_len, pkg.workspace_name.len);
-            
+
             // Check if we have any non-empty workspace names
             if (pkg.workspace_name.len > 0) {
                 has_workspaces = true;
@@ -1777,4 +1771,3 @@ const PackageManager = Install.PackageManager;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-

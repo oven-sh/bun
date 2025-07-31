@@ -1135,34 +1135,25 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     try writer.writeAll("\n]");
 
-    Output.prettyErrorln("Scanned {d} packages", .{package_count});
 
     var code_buf = std.ArrayList(u8).init(manager.allocator);
     defer code_buf.deinit();
     var code_writer = code_buf.writer();
 
     try code_writer.print(
-        \\console.error('[Scanner] Starting security scanner subprocess...');
-        \\console.error('[Scanner] Provider path: {s}');
-        \\
         \\try {{
         \\  const {{provider}} = await import('{s}');
-        \\  console.error('[Scanner] Provider loaded successfully');
         \\  const packages = {s};
-        \\  console.error('[Scanner] Packages data:', JSON.stringify(packages));
         \\
         \\  if (provider.version !== '1') {{
         \\    throw new Error('Security provider must be version 1');
         \\  }}
-        \\  console.error('[Scanner] Provider version check passed');
         \\
         \\  if (typeof provider.scan !== 'function') {{
         \\    throw new Error('provider.scan is not a function');
         \\  }}
         \\
-        \\  console.error('[Scanner] Calling provider.scan()...');
         \\  const result = await provider.scan({{packages:packages}});
-        \\  console.error('[Scanner] provider.scan() returned:', JSON.stringify(result));
         \\
         \\  if (!Array.isArray(result)) {{
         \\    throw new Error('Security provider must return an array of advisories');
@@ -1170,27 +1161,16 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\
         \\  const fs = require('fs');
         \\  const data = JSON.stringify({{advisories: result}});
-        \\  console.error('[Scanner] Writing', data.length, 'bytes to IPC fd 3...');
+        \\  fs.writeSync(3, data);
+        \\  fs.closeSync(3);
         \\
-        \\  try {{
-        \\    fs.writeSync(3, data);
-        \\    fs.closeSync(3);
-        \\    console.error('[Scanner] IPC write successful');
-        \\  }} catch (writeErr) {{
-        \\    console.error('[Scanner] Failed to write to IPC fd 3:', writeErr);
-        \\    throw writeErr;
-        \\  }}
-        \\
-        \\  console.error('[Scanner] Exiting with code 0');
         \\  process.exit(0);
         \\}} catch (error) {{
-        \\  console.error('[Scanner] Error:', error);
-        \\  console.error('[Scanner] Stack:', error.stack);
+        \\  console.error(error);
         \\  process.exit(1);
         \\}}
-    , .{ security_provider, security_provider, json_buf.items });
+    , .{ security_provider, json_buf.items });
 
-    Output.prettyErrorln("Sending packages JSON to scanner: {s}", .{json_buf.items});
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
@@ -1205,7 +1185,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         manager.allocator.destroy(scanner);
     }
 
-    Output.prettyErrorln("Spawning security scan subprocess...", .{});
     try scanner.spawn();
 
     var closure = struct {
@@ -1250,7 +1229,6 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
-        Output.prettyErrorln("SecurityScanSubprocess.spawn() starting...", .{});
 
         const pipe_result = bun.sys.pipe();
         const pipe_fds = switch (pipe_result) {
@@ -1282,7 +1260,6 @@ pub const SecurityScanSubprocess = struct {
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
-        Output.prettyErrorln("Process spawned with pid: {d}", .{spawned.pid});
 
         pipe_fds[1].close();
 
@@ -1296,7 +1273,6 @@ pub const SecurityScanSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        Output.prettyErrorln("Process set up with PID {d}, starting watch...", .{process.pid});
 
         switch (process.watchOrReap()) {
             .err => |err| {
@@ -1308,11 +1284,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn isDone(this: *SecurityScanSubprocess) bool {
-        const done = this.has_process_exited and this.remaining_fds == 0;
-        if (done) {
-            Output.prettyErrorln("SecurityScanSubprocess.isDone() = true (exited: {}, remaining_fds: {})", .{ this.has_process_exited, this.remaining_fds });
-        }
-        return done;
+        return this.has_process_exited and this.remaining_fds == 0;
     }
 
     pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {
@@ -1324,7 +1296,6 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onReaderDone(this: *SecurityScanSubprocess) void {
-        Output.prettyErrorln("SecurityScanSubprocess.onReaderDone() - total IPC data: {d} bytes", .{this.ipc_data.items.len});
         this.has_received_ipc = true;
         this.remaining_fds -= 1;
     }
@@ -1336,7 +1307,6 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onStderrChunk(this: *SecurityScanSubprocess, chunk: []const u8) void {
-        Output.prettyErrorln("SecurityScanSubprocess.onStderrChunk() received {d} bytes", .{chunk.len});
         this.stderr_data.appendSlice(chunk) catch bun.outOfMemory();
     }
 
@@ -1351,13 +1321,11 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn onReadChunk(this: *SecurityScanSubprocess, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        Output.prettyErrorln("SecurityScanSubprocess.onReadChunk() received {d} bytes", .{chunk.len});
         this.ipc_data.appendSlice(chunk) catch bun.outOfMemory();
         return true;
     }
 
     pub fn onProcessExit(this: *SecurityScanSubprocess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
-        Output.prettyErrorln("SecurityScanSubprocess.onProcessExit() called with status: {}", .{status});
         this.has_process_exited = true;
         this.exit_status = status;
 
@@ -1394,7 +1362,6 @@ pub const SecurityScanSubprocess = struct {
             Global.exit(1);
         }
 
-        Output.prettyErrorln("Handling security advisories with data: {s}", .{this.ipc_data.items});
         try handleSecurityAdvisories(this.manager, this.ipc_data.items);
 
         if (!status.isOK()) {

@@ -994,6 +994,11 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 
 const string = []const u8;
 
+const PackagePath = struct {
+    pkg_path: []PackageID,
+    dep_path: []DependencyID,
+};
+
 fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     const security_provider = manager.options.security_provider orelse return;
 
@@ -1015,10 +1020,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     var ids_queue: std.fifo.LinearFifo(QueueItem, .Dynamic) = .init(bun.default_allocator);
     defer ids_queue.deinit();
 
-    var package_paths = std.AutoArrayHashMap(PackageID, struct {
-        pkg_path: []PackageID,
-        dep_path: []DependencyID,
-    }).init(manager.allocator);
+    var package_paths = std.AutoArrayHashMap(PackageID, PackagePath).init(manager.allocator);
     defer {
         var iter = package_paths.iterator();
         while (iter.next()) |entry| {
@@ -1388,10 +1390,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, struct {
-        pkg_path: []PackageID,
-        dep_path: []DependencyID,
-    })) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -1441,10 +1440,7 @@ pub const SecurityScanSubprocess = struct {
     }
 };
 
-fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, struct {
-    pkg_path: []PackageID,
-    dep_path: []DependencyID,
-})) !void {
+fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) !void {
     if (ipc_data.len == 0) return;
 
     const json_source = logger.Source{
@@ -1558,7 +1554,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
         var has_fatal = false;
         var has_warn = false;
 
-        Output.pretty("\n<red>Security advisories found:<r>\n", .{});
+        Output.pretty("<red>Security advisories found:<r>\n", .{});
         for (advisories_list.items) |advisory| {
             Output.print("\n", .{});
 
@@ -1605,12 +1601,12 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
                 Output.pretty("    {s}\n", .{desc});
             }
             if (advisory.url) |url| {
-                Output.pretty("    \x1b]8;;{s}\x1b\\<cyan>{s}<r>\x1b]8;;\x1b\\\n", .{ url, url });
+                Output.pretty("    <cyan>{s}<r>\n", .{url});
             }
         }
 
         if (has_fatal) {
-            Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
+            Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n", .{});
             Global.exit(1);
         } else if (has_warn) {
             const can_prompt = Output.enable_ansi_colors_stdout;

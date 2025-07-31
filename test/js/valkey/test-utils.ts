@@ -14,6 +14,8 @@ export const isEnabled =
         stderr: "inherit",
         env: bunEnv,
       });
+      if (info.exitCode !== 0) return false;
+      if (info.signalCode) return false;
       return info.stdout.toString().indexOf("Server Version:") !== -1;
     } catch (error) {
       return false;

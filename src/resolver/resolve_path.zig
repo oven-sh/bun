@@ -1829,7 +1829,7 @@ pub const PosixToWinNormalizer = struct {
 
     _raw_bytes: Buf,
 
-    pub fn get() PosixToWinNormalizer {
+    pub inline fn get() PosixToWinNormalizer {
         if (comptime bun.Environment.isWindows) {
             return .{
                 ._raw_bytes = bun.path_buffer_pool.get(),

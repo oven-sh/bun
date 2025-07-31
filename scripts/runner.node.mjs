@@ -1057,7 +1057,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr, tes
   };
 
   if (testPath) {
-    if (noStackOverflowArray.includes(testPath)) {
+    if (noStackOverflowArray.includes(testPath.replaceAll("\\", "/"))) {
       delete bunEnv.BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW;
     }
   }

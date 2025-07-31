@@ -539,7 +539,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
         error.LoadCAFile => {
-            var normalizer = bun.path.PosixToWinNormalizer.get();
+            const normalizer = bun.path.PosixToWinNormalizer.get();
             defer normalizer.deinit();
             const normalized = normalizer.resolveZ(FileSystem.instance.top_level_dir, opts.abs_ca_file_name);
             if (!bun.sys.existsZ(normalized)) {

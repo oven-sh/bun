@@ -1231,7 +1231,7 @@ pub const RunCommand = struct {
         const file = bun.FD.fromStdFile((brk: {
             // This whole scope should be refactored.
             if (std.fs.path.isAbsolute(script_name_to_search)) {
-                var win_resolver = resolve_path.PosixToWinNormalizer.get();
+                const win_resolver = resolve_path.PosixToWinNormalizer.get();
                 defer win_resolver.deinit();
                 var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                 if (comptime Environment.isWindows) {

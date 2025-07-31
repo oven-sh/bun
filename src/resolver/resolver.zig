@@ -761,7 +761,7 @@ pub const Resolver = struct {
         // It's always relative to the current working directory of the project root.
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
-        var source_dir_resolver: bun.path.PosixToWinNormalizer = bun.path.PosixToWinNormalizer.get();
+        const source_dir_resolver: bun.path.PosixToWinNormalizer = bun.path.PosixToWinNormalizer.get();
         defer source_dir_resolver.deinit();
         const source_dir_normalized = brk: {
             if (r.standalone_module_graph) |graph| {
@@ -1141,7 +1141,7 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            var normalizer = ResolvePath.PosixToWinNormalizer.get();
+            const normalizer = ResolvePath.PosixToWinNormalizer.get();
             defer normalizer.deinit();
             const entry = r.loadAsFileOrDirectory(
                 normalizer.resolve(source_dir, import_path),

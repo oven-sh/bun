@@ -35,15 +35,15 @@ describe("test.failing", () => {
     expect(stderr.replaceAll(/ \[\d+ms\]/g, "")).toMatchInlineSnapshot(`
       "
       failing-test-passes.fixture.ts:
-      (fail) This should fail but it doesnt [0.24ms]
+      (fail) This should fail but it doesnt
         ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-      (fail) This should fail but it doesnt (async) [0.23ms]
+      (fail) This should fail but it doesnt (async)
         ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
 
        0 pass
        2 fail
        2 expect() calls
-      Ran 2 tests across 1 file. [67.00ms]
+      Ran 2 tests across 1 file.
       "
     `);
   });

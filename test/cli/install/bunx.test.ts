@@ -310,11 +310,7 @@ it.each(["--version", "-v"])("should print the version using %s and exit", async
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(Bun.version);
@@ -331,11 +327,7 @@ it("should print the revision and exit", async () => {
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(Bun.version);
@@ -353,11 +345,7 @@ it("should pass --version to the package if specified", async () => {
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
@@ -387,11 +375,7 @@ it('should set "npm_config_user_agent" to bun', async () => {
     stderr: "pipe",
   });
 
-  const [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  const [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(`bun/${Bun.version}`);
@@ -412,11 +396,7 @@ describe("bunx --no-install", () => {
       stderr: "pipe",
     });
 
-    return Promise.all([
-      new Response(subprocess.stderr).text(),
-      new Response(subprocess.stdout).text(),
-      subprocess.exited,
-    ] as const);
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
   };
 
   it("if the package is not installed, it should fail and print an error message", async () => {
@@ -487,11 +467,7 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
     },
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
 
   expect(err).not.toContain("error:");
   expect(err).not.toContain("Cannot find module 'exec'");
@@ -509,11 +485,7 @@ it("should handle package that requires node 24", async () => {
     env,
   });
 
-  let [err, out, exited] = await Promise.all([
-    new Response(subprocess.stderr).text(),
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ]);
+  let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
   expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
@@ -531,8 +503,8 @@ describe("--package flag", () => {
     });
 
     const [err, out, exited] = await Promise.all([
-      new Response(subprocess.stderr).text(),
-      new Response(subprocess.stdout).text(),
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
       subprocess.exited,
     ]);
 
@@ -585,8 +557,8 @@ describe("--package flag", () => {
       });
 
       const [err, out, exited] = await Promise.all([
-        new Response(subprocess.stderr).text(),
-        new Response(subprocess.stdout).text(),
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
         subprocess.exited,
       ]);
 
@@ -625,8 +597,8 @@ describe("--package flag", () => {
       });
 
       const [err, out, exited] = await Promise.all([
-        new Response(subprocess.stderr).text(),
-        new Response(subprocess.stdout).text(),
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
         subprocess.exited,
       ]);
 
@@ -664,8 +636,8 @@ describe("--package flag", () => {
       });
 
       const [err, out, exited] = await Promise.all([
-        new Response(subprocess.stderr).text(),
-        new Response(subprocess.stdout).text(),
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
         subprocess.exited,
       ]);
 
@@ -701,8 +673,8 @@ describe("--package flag", () => {
       });
 
       const [err, out, exited] = await Promise.all([
-        new Response(subprocess.stderr).text(),
-        new Response(subprocess.stdout).text(),
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
         subprocess.exited,
       ]);
 
@@ -725,8 +697,8 @@ describe("--package flag", () => {
       });
 
       const [err, _out, exited] = await Promise.all([
-        new Response(subprocess.stderr).text(),
-        new Response(subprocess.stdout).text(),
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
         subprocess.exited,
       ]);
 

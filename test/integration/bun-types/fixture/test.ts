@@ -144,3 +144,10 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+test("expectTypeOf basic type checks", () => {
+  expectTypeOf({ name: "test" }).toMatchObjectType<{ name: string }>();
+
+  // @ts-expect-error
+  expectTypeOf({ name: 123 }).toMatchObjectType<{ name: string }>();
+});

@@ -1508,7 +1508,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8) !voi
                 Output.pretty("    {s}\n", .{desc});
             }
             if (advisory.url) |url| {
-                Output.pretty("    <cyan>{s}<r>\n", .{url});
+                Output.pretty("    \x1b]8;;{s}\x1b\\<cyan>{s}<r>\x1b]8;;\x1b\\\n", .{ url, url });
             }
         }
 

@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
-import { isLinux, tempDirWithFiles, bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 

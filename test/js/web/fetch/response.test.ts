@@ -99,3 +99,13 @@ test("Response.redirect status code validation", () => {
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
 });
+
+test("new Response(123, { statusText: 123 }) does not throw", () => {
+  // @ts-expect-error
+  expect(new Response("123", { statusText: 123 }).statusText).toBe("123");
+});
+
+test("new Response(123, { method: 456 }) does not throw", () => {
+  // @ts-expect-error
+  expect(() => new Response("123", { method: 456 })).not.toThrow();
+});

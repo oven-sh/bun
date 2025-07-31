@@ -1117,7 +1117,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
     if (context->microtaskMode() == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
-        vm.drainMicrotasks();
+        vm.drainMicrotasks(globalObject);
     }
 
     if (exception) [[unlikely]] {

@@ -42,7 +42,7 @@ pub const BunxCommand = struct {
 
             while (i < argv.len) : (i += 1) {
                 const positional = argv[i];
-                
+
                 if (maybe_package_name != null) {
                     opts.passthrough_list.appendAssumeCapacity(positional);
                     continue;

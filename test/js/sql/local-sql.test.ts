@@ -191,7 +191,7 @@ if (isDockerEnabled()) {
       constraint posts_pkey primary key (id),
       constraint posts_user_id_fkey foreign KEY (user_id) references users (id) on update CASCADE on delete CASCADE
     ) TABLESPACE pg_default;`.simple();
-    await sql.file(path.join(import.meta.dirname, "repro-hot-sql-issue", "populate_users_posts.sql"));
+    await sql.file(path.join(import.meta.dirname, "issue-21351.fixture.sql"));
 
     const dir = tempDirWithFiles("import-meta-no-inline", {
       "index.ts": `

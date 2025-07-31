@@ -3755,7 +3755,8 @@ pub const Resolver = struct {
         }
 
         const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
-        bun.strings.assertIsValidWindowsPath(u8, dir_path);
+        // Don't validate the path, let our error handling if it is invalid
+        // bun.strings.assertIsValidWindowsPath(u8, dir_path);
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,

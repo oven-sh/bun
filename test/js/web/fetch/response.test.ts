@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (3.48 KB) {
+    "Response (3.82 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -98,4 +98,14 @@ test("Response.redirect status code validation", () => {
   // Check that the correct status is set
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
+});
+
+test("new Response(123, { statusText: 123 }) does not throw", () => {
+  // @ts-expect-error
+  expect(new Response("123", { statusText: 123 }).statusText).toBe("123");
+});
+
+test("new Response(123, { method: 456 }) does not throw", () => {
+  // @ts-expect-error
+  expect(() => new Response("123", { method: 456 })).not.toThrow();
 });

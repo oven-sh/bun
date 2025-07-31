@@ -692,11 +692,11 @@ pub const Init = struct {
             return error.JSError;
         }
 
-        if (try response_init.fastGet(globalThis, .statusText)) |status_text| {
+        if (try response_init.getTruthy(globalThis, "statusText")) |status_text| {
             result.status_text = try bun.String.fromJS(status_text, globalThis);
         }
 
-        if (try response_init.fastGet(globalThis, .method)) |method_value| {
+        if (try response_init.getTruthy(globalThis, "method")) |method_value| {
             if (try Method.fromJS(globalThis, method_value)) |method| {
                 result.method = method;
             }

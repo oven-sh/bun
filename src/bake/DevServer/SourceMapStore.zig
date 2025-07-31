@@ -108,13 +108,21 @@ pub const Entry = struct {
 
             if (std.fs.path.isAbsolute(path)) {
                 const is_windows_drive_path = Environment.isWindows and path[0] != '/';
-                try source_map_strings.appendSlice(if (is_windows_drive_path)
-                    "\"file:///"
-                else
-                    "\"file://");
+
+                // On the client we prefix the sourcemap path with "file://" and
+                // percent encode it
+                if (side == .client) {
+                    try source_map_strings.appendSlice(if (is_windows_drive_path)
+                        "\"file:///"
+                    else
+                        "\"file://");
+                } else {
+                    try source_map_strings.append('"');
+                }
+
                 if (Environment.isWindows and !is_windows_drive_path) {
                     // UNC namespace -> file://server/share/path.ext
-                    bun.strings.percentEncodeWrite(
+                    encodeSourceMapPath(
                         if (path.len > 2 and path[0] == '/' and path[1] == '/')
                             path[2..]
                         else
@@ -129,7 +137,7 @@ pub const Entry = struct {
                     // -> file:///path/to/file.js
                     // windows drive letter paths have the extra slash added
                     // -> file:///C:/path/to/file.js
-                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| switch (err) {
+                    encodeSourceMapPath(side, path, &source_map_strings) catch |err| switch (err) {
                         error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
                         error.OutOfMemory => |e| return e,
                     };
@@ -191,6 +199,20 @@ pub const Entry = struct {
         };
 
         return json_bytes;
+    }
+
+    fn encodeSourceMapPath(
+        side: bake.Side,
+        utf8_input: []const u8,
+        writer: *std.ArrayList(u8),
+    ) error{ OutOfMemory, IncompleteUTF8 }!void {
+        // On the client, percent encode everything so it works in the browser
+        if (side == .client) {
+            return bun.strings.percentEncodeWrite(utf8_input, writer);
+        }
+
+        // On the server, we don't need to do anything
+        try writer.appendSlice(utf8_input);
     }
 
     fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {

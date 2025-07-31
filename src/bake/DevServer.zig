@@ -2243,7 +2243,7 @@ pub fn finalizeBundle(
         const server_script_id = SourceMapStore.Key.init((1 << 63) | @as(u64, dev.generation));
 
         // Get the source map if available and render to JSON
-        const source_map_json = if (dev.server_graph.current_chunk_source_maps.items.len > 0) json: {
+        var source_map_json = if (dev.server_graph.current_chunk_source_maps.items.len > 0) json: {
             // Create a temporary source map entry to render
             var source_map_entry = SourceMapStore.Entry{
                 .ref_count = 1,
@@ -2270,7 +2270,7 @@ pub fn finalizeBundle(
             );
             break :json json_data;
         } else null;
-        defer if (source_map_json) |json| dev.allocator.free(json);
+        defer if (source_map_json) |json| bun.default_allocator.free(json);
 
         const server_bundle = try dev.server_graph.takeJSBundle(&.{
             .kind = .hmr_chunk,
@@ -2278,10 +2278,13 @@ pub fn finalizeBundle(
         });
         defer dev.allocator.free(server_bundle);
 
-        const server_modules = if (source_map_json) |json| blk: {
-            const json_string = bun.String.cloneUTF8(json);
-            defer json_string.deref();
-            break :blk c.BakeLoadServerHmrPatchWithSourceMap(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle), json_string) catch |err| {
+        const server_modules = if (bun.take(&source_map_json)) |json| blk: {
+            break :blk c.BakeLoadServerHmrPatchWithSourceMap(
+                @ptrCast(dev.vm.global),
+                bun.String.cloneLatin1(server_bundle),
+                json.ptr,
+                json.len,
+            ) catch |err| {
                 // No user code has been evaluated yet, since everything is to
                 // be wrapped in a function clousure. This means that the likely
                 // error is going to be a syntax error, or other mistake in the
@@ -3599,9 +3602,9 @@ const c = struct {
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
     }
 
-    fn BakeLoadServerHmrPatchWithSourceMap(global: *jsc.JSGlobalObject, code: bun.String, source_map_json: bun.String) bun.JSError!JSValue {
-        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatchWithSourceMap" }).*;
-        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, source_map_json });
+    fn BakeLoadServerHmrPatchWithSourceMap(global: *jsc.JSGlobalObject, code: bun.String, source_map_json_ptr: [*]const u8, source_map_json_len: usize) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, [*]const u8, usize) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatchWithSourceMap" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, source_map_json_ptr, source_map_json_len });
     }
 
     fn BakeLoadInitialServerCode(global: *jsc.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {

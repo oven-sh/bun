@@ -79,7 +79,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, BunString sourceMapJSON) {
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -90,7 +90,8 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   auto provider = DevServerSourceProvider::create(
     global,
     source.toWTFString(),
-    sourceMapJSON.toWTFString(),
+    sourceMapJSONPtr,
+    sourceMapJSONLength,
     origin,
     WTFMove(string),
     WTF::TextPosition(),

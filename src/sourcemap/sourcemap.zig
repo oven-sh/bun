@@ -1292,25 +1292,26 @@ pub fn getSourceMapImpl(
         if (load_hint != .is_inline_map) try_external: {
             if (comptime SourceProviderKind == DevServerSourceProvider) {
                 // For DevServerSourceProvider, get the source map JSON directly
-                const json_string = provider.getSourceMapJSON();
-                defer json_string.deref();
-                
-                // Convert to UTF-8 slice
-                const json_data = json_string.toUTF8(allocator);
-                defer json_data.deinit();
-                
+                const source_map_data = provider.getSourceMapJSON();
+
+                if (source_map_data.length == 0) {
+                    break :try_external;
+                }
+
+                const json_slice = source_map_data.ptr[0..source_map_data.length];
+
                 // Parse the JSON source map
                 break :parsed .{
                     .is_external_map,
                     parseJSON(
                         bun.default_allocator,
                         allocator,
-                        json_data.slice(),
+                        json_slice,
                         result,
                     ) catch return null,
                 };
             }
-            
+
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
                 const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
@@ -1465,12 +1466,17 @@ pub const BakeSourceProvider = opaque {
 };
 
 pub const DevServerSourceProvider = opaque {
+    pub const SourceMapData = extern struct {
+        ptr: [*]const u8,
+        length: usize,
+    };
+
     extern fn DevServerSourceProvider__getSourceSlice(*DevServerSourceProvider) bun.String;
-    extern fn DevServerSourceProvider__getSourceMapJSON(*DevServerSourceProvider) bun.String;
-    
+    extern fn DevServerSourceProvider__getSourceMapJSON(*DevServerSourceProvider) SourceMapData;
+
     pub const getSourceSlice = DevServerSourceProvider__getSourceSlice;
     pub const getSourceMapJSON = DevServerSourceProvider__getSourceMapJSON;
-    
+
     pub fn toSourceContentPtr(this: *DevServerSourceProvider) ParsedSourceMap.SourceContentPtr {
         return ParsedSourceMap.SourceContentPtr.fromDevServerProvider(this);
     }

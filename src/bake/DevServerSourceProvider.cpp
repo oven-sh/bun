@@ -6,10 +6,12 @@
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, Bake::DevServerSourceProvider* opaque_source_provider, BunString* specifier);
 
 // Export functions for Zig to access DevServerSourceProvider
-extern "C" BunString DevServerSourceProvider__getSourceSlice(Bake::DevServerSourceProvider* provider) {
+extern "C" BunString DevServerSourceProvider__getSourceSlice(Bake::DevServerSourceProvider* provider)
+{
     return Bun::toStringView(provider->source());
 }
 
-extern "C" BunString DevServerSourceProvider__getSourceMapJSON(Bake::DevServerSourceProvider* provider) {
-    return Bun::toStringView(provider->sourceMapJSON());
+extern "C" Bake::SourceMapData DevServerSourceProvider__getSourceMapJSON(Bake::DevServerSourceProvider* provider)
+{
+    return provider->sourceMapJSON();
 }

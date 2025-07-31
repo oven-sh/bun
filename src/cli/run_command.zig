@@ -1222,79 +1222,76 @@ pub const RunCommand = struct {
         };
         return true;
     }
+
+    // This is split into another function to ensure we don't keep all this stack space used for the entire lifetime of the application.
+    fn resolveAbsoluteScriptPath(script_name_to_search: string) !?string {
+        var file_path = script_name_to_search;
+        var script_name_buf: bun.PathBuffer = undefined;
+
+        const file = bun.FD.fromStdFile((brk: {
+            // This whole scope should be refactored.
+            if (std.fs.path.isAbsolute(script_name_to_search)) {
+                var win_resolver = resolve_path.PosixToWinNormalizer.get();
+                defer win_resolver.deinit();
+                var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                if (comptime Environment.isWindows) {
+                    resolved = resolve_path.normalizeString(resolved, false, .windows);
+                }
+                break :brk bun.openFile(
+                    resolved,
+                    .{ .mode = .read_only },
+                );
+            } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                const file_pathZ = brk2: {
+                    @memcpy(script_name_buf[0..file_path.len], file_path);
+                    script_name_buf[file_path.len] = 0;
+                    break :brk2 script_name_buf[0..file_path.len :0];
+                };
+
+                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+            } else {
+                var path_buf_2: bun.PathBuffer = undefined;
+                const cwd = bun.getcwd(&path_buf_2) catch return null;
+                path_buf_2[cwd.len] = std.fs.path.sep;
+                var parts = [_]string{script_name_to_search};
+                file_path = resolve_path.joinAbsStringBuf(
+                    path_buf_2[0 .. cwd.len + 1],
+                    &script_name_buf,
+                    &parts,
+                    .auto,
+                );
+                if (file_path.len == 0) return null;
+                script_name_buf[file_path.len] = 0;
+                const file_pathZ = script_name_buf[0..file_path.len :0];
+                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+            }
+        }) catch return null).makeLibUVOwnedForSyscall(.open, .close_on_fail).unwrap() catch return null;
+        defer file.close();
+
+        switch (bun.sys.fstat(file)) {
+            .result => |stat| {
+                // directories cannot be run. if only there was a faster way to check this
+                if (bun.S.ISDIR(@intCast(stat.mode))) return null;
+            },
+            .err => return null,
+        }
+
+        Global.configureAllocator(.{ .long_running = true });
+
+        return try bun.default_allocator.dupe(u8, try bun.getFdPath(file, &script_name_buf));
+    }
     fn maybeOpenWithBunJS(ctx: Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
-        var script_name_buf: bun.PathBuffer = undefined;
 
         const script_name_to_search = ctx.args.entry_points[0];
-
-        var absolute_script_path: ?string = null;
-
-        // TODO: optimize this pass for Windows. we can make better use of system apis available
-        var file_path = script_name_to_search;
-        {
-            const file = bun.FD.fromStdFile((brk: {
-                if (std.fs.path.isAbsolute(script_name_to_search)) {
-                    var win_resolver = resolve_path.PosixToWinNormalizer{};
-                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
-                    if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, false, .windows);
-                    }
-                    break :brk bun.openFile(
-                        resolved,
-                        .{ .mode = .read_only },
-                    );
-                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                    const file_pathZ = brk2: {
-                        @memcpy(script_name_buf[0..file_path.len], file_path);
-                        script_name_buf[file_path.len] = 0;
-                        break :brk2 script_name_buf[0..file_path.len :0];
-                    };
-
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                } else {
-                    var path_buf_2: bun.PathBuffer = undefined;
-                    const cwd = bun.getcwd(&path_buf_2) catch return false;
-                    path_buf_2[cwd.len] = std.fs.path.sep;
-                    var parts = [_]string{script_name_to_search};
-                    file_path = resolve_path.joinAbsStringBuf(
-                        path_buf_2[0 .. cwd.len + 1],
-                        &script_name_buf,
-                        &parts,
-                        .auto,
-                    );
-                    if (file_path.len == 0) return false;
-                    script_name_buf[file_path.len] = 0;
-                    const file_pathZ = script_name_buf[0..file_path.len :0];
-                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                }
-            }) catch return false).makeLibUVOwnedForSyscall(.open, .close_on_fail).unwrap() catch return false;
-            defer file.close();
-
-            switch (bun.sys.fstat(file)) {
-                .result => |stat| {
-                    // directories cannot be run. if only there was a faster way to check this
-                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
-                },
-                .err => return false,
-            }
-
-            Global.configureAllocator(.{ .long_running = true });
-
-            absolute_script_path = brk: {
-                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
-
-                var fd_path_buf: bun.PathBuffer = undefined;
-                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
-            };
-        }
+        const absolute_script_path = (resolveAbsoluteScriptPath(script_name_to_search) catch null) orelse return false;
 
         if (!ctx.debug.loaded_bunfig) {
             bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
-        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
+        _ = _bootAndHandleError(ctx, absolute_script_path, null);
         return true;
     }
     pub fn exec(
@@ -1373,26 +1370,7 @@ pub const RunCommand = struct {
         if (target_name.len == 1 and target_name[0] == '-') {
             log("Executing from stdin", .{});
 
-            // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.ArrayList(u8).init(stack_fallback.get());
-            errdefer list.deinit();
-
-            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval.script = list.items;
-
-            const trigger = bun.pathLiteral("/[stdin]");
-            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.posix.getcwd(&entry_point_buf);
-            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
-
-            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
-            passthrough_list.appendAssumeCapacity("-");
-            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
-            ctx.passthrough = passthrough_list.items;
-
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
+            Run.bootFromStdin(ctx) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1590,15 +1568,23 @@ pub const RunCommand = struct {
         return false;
     }
 
+    fn resolveEvalScriptPath() !string {
+        const trigger = bun.pathLiteral("/[eval]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        return try bun.default_allocator.dupe(u8, entry_point_buf[0 .. cwd.len + trigger.len]);
+    }
+
+    fn execEvalScriptAsIfNode(ctx: Command.Context) !void {
+        try Run.boot(ctx, try resolveEvalScriptPath(), null);
+    }
+
     pub fn execAsIfNode(ctx: Command.Context) !void {
         bun.assert(CLI.pretend_to_be_node);
 
         if (ctx.runtime_options.eval.script.len > 0) {
-            const trigger = bun.pathLiteral("/[eval]");
-            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.posix.getcwd(&entry_point_buf);
-            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+            try execEvalScriptAsIfNode(ctx);
             return;
         }
 
@@ -1607,16 +1593,9 @@ pub const RunCommand = struct {
             Global.exit(1);
         }
 
-        // TODO(@paperclover): merge windows branch
-        // var win_resolver = resolve_path.PosixToWinNormalizer{};
-
         const filename = ctx.positionals[0];
 
-        const normalized_filename = if (std.fs.path.isAbsolute(filename))
-            // TODO(@paperclover): merge windows branch
-            // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
-            filename
-        else brk: {
+        const normalized_filename = if (std.fs.path.isAbsolute(filename)) filename else brk: {
             const cwd = try bun.getcwd(&path_buf);
             path_buf[cwd.len] = std.fs.path.sep_posix;
             var parts = [_]string{filename};

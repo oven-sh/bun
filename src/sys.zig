@@ -4280,8 +4280,18 @@ pub const File = struct {
         return .{ .result = buf[0..read_amount] };
     }
 
-    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
-        if (probably_small) {
+    pub const ReadToEndWithArrayListOptions = packed struct(u8) {
+        probably_small: bool = false,
+        allow_pread: bool = true,
+        _padding: u6 = 0,
+    };
+
+    pub fn readToEndWithArrayList(
+        this: File,
+        list: *std.ArrayList(u8),
+        opts: ReadToEndWithArrayListOptions,
+    ) Maybe(usize) {
+        if (opts.probably_small) {
             list.ensureUnusedCapacity(64) catch bun.outOfMemory();
         } else {
             list.ensureTotalCapacityPrecise(
@@ -4300,7 +4310,7 @@ pub const File = struct {
                 list.ensureUnusedCapacity(16) catch bun.outOfMemory();
             }
 
-            switch (if (comptime Environment.isPosix)
+            switch (if ((comptime Environment.isPosix) and opts.allow_pread)
                 pread(this.handle, list.unusedCapacitySlice(), total)
             else
                 sys.read(this.handle, list.unusedCapacitySlice())) {
@@ -4325,7 +4335,7 @@ pub const File = struct {
     /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
     pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list, false)) {
+        return switch (readToEndWithArrayList(this, &list, .{ .probably_small = false })) {
             .err => |err| .{ .err = err, .bytes = list },
             .result => .{ .err = null, .bytes = list },
         };
@@ -4335,7 +4345,7 @@ pub const File = struct {
     /// This will skip the fstat() call, preallocating 64 bytes instead of the file's size.
     pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
         var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list, true)) {
+        return switch (readToEndWithArrayList(this, &list, .{ .probably_small = true })) {
             .err => |err| .{ .err = err, .bytes = list },
             .result => .{ .err = null, .bytes = list },
         };
@@ -4406,6 +4416,28 @@ pub const File = struct {
     /// 4. Return the buffer
     pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
+            .err => |err| return .{ .err = err },
+            .result => |result| result,
+        };
+
+        file.close();
+        return .{ .result = bytes };
+    }
+
+    pub fn readFromJoinedPath(dir_fd: anytype, path_parts: []const []const u8, allocator: std.mem.Allocator) Maybe([]u8) {
+        const path = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path);
+
+        const file, const bytes = switch (readFileFrom(
+            dir_fd,
+            bun.path.joinAbsStringBufZ(
+                if (path_parts.len > 0 and std.fs.path.isAbsolute(path_parts[0])) path_parts[0] else bun.fs.FileSystem.instance.top_level_dir,
+                path,
+                path_parts,
+                .auto,
+            ),
+            allocator,
+        )) {
             .err => |err| return .{ .err = err },
             .result => |result| result,
         };

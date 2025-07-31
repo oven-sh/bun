@@ -1825,46 +1825,56 @@ pub fn nextDirname(path_: []const u8) ?[]const u8 {
 ///
 /// This API does nothing on Linux (it has a size of zero)
 pub const PosixToWinNormalizer = struct {
-    const Buf = if (bun.Environment.isWindows) bun.PathBuffer else void;
+    const Buf = if (bun.Environment.isWindows) *bun.PathBuffer else void;
 
-    _raw_bytes: Buf = undefined,
+    _raw_bytes: Buf,
+
+    pub fn get() PosixToWinNormalizer {
+        if (comptime bun.Environment.isWindows) {
+            return .{
+                ._raw_bytes = bun.path_buffer_pool.get(),
+            };
+        }
+        return .{
+            ._raw_bytes = {},
+        };
+    }
+
+    pub inline fn deinit(this: PosixToWinNormalizer) void {
+        if (comptime bun.Environment.isWindows) {
+            bun.path_buffer_pool.put(this._raw_bytes);
+        }
+    }
 
     // methods on PosixToWinNormalizer, to be minimal yet stack allocate the PathBuffer
     // these do not force inline of much code
     pub inline fn resolve(
-        this: *PosixToWinNormalizer,
+        this: PosixToWinNormalizer,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        return resolveWithExternalBuf(&this._raw_bytes, source_dir, maybe_posix_path);
+        return resolveWithExternalBuf(this._raw_bytes, source_dir, maybe_posix_path);
     }
 
     pub inline fn resolveZ(
-        this: *PosixToWinNormalizer,
+        this: PosixToWinNormalizer,
         source_dir: []const u8,
         maybe_posix_path: [:0]const u8,
     ) [:0]const u8 {
-        return resolveWithExternalBufZ(&this._raw_bytes, source_dir, maybe_posix_path);
+        return resolveWithExternalBufZ(this._raw_bytes, source_dir, maybe_posix_path);
     }
 
     pub inline fn resolveCWD(
-        this: *PosixToWinNormalizer,
+        this: PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
-        return resolveCWDWithExternalBuf(&this._raw_bytes, maybe_posix_path);
-    }
-
-    pub inline fn resolveCWDZ(
-        this: *PosixToWinNormalizer,
-        maybe_posix_path: []const u8,
-    ) ![:0]const u8 {
-        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+        return resolveCWDWithExternalBuf(this._raw_bytes, maybe_posix_path);
     }
 
     // underlying implementation:
 
     fn resolveWithExternalBuf(
-        buf: *Buf,
+        buf: Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
@@ -1889,7 +1899,7 @@ pub const PosixToWinNormalizer = struct {
     }
 
     fn resolveWithExternalBufZ(
-        buf: *Buf,
+        buf: Buf,
         source_dir: []const u8,
         maybe_posix_path: [:0]const u8,
     ) [:0]const u8 {
@@ -1915,7 +1925,7 @@ pub const PosixToWinNormalizer = struct {
     }
 
     pub fn resolveCWDWithExternalBuf(
-        buf: *Buf,
+        buf: Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
         assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
@@ -2054,6 +2064,12 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index + 1) {
         path_buffer[index] = std.fs.path.sep;
     }
+}
+
+pub fn makeOpen(cwd: []const u8, parts: []const []const u8) !std.fs.Dir {
+    var buf: bun.PathBuffer = undefined;
+    const path = joinAbsStringBuf(cwd, &buf, parts, .auto);
+    return try std.fs.cwd().makeOpenPath(path, .{});
 }
 
 const Fs = @import("../fs.zig");

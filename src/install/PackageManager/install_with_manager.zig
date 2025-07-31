@@ -1100,7 +1100,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         try writer.print(
             \\  {{
             \\    "name": {},
-            \\    "version": {s},
+            \\    "version": "{s}",
             \\    "requestedRange": {},
             \\    "tarball": {}
             \\  }}
@@ -1142,32 +1142,53 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     var code_writer = code_buf.writer();
 
     try code_writer.print(
+        \\console.error('[Scanner] Starting security scanner subprocess...');
+        \\console.error('[Scanner] Provider path: {s}');
+        \\
         \\try {{
         \\  const {{provider}} = await import('{s}');
+        \\  console.error('[Scanner] Provider loaded successfully');
         \\  const packages = {s};
+        \\  console.error('[Scanner] Packages data:', JSON.stringify(packages));
         \\
         \\  if (provider.version !== '1') {{
         \\    throw new Error('Security provider must be version 1');
         \\  }}
+        \\  console.error('[Scanner] Provider version check passed');
         \\
+        \\  if (typeof provider.scan !== 'function') {{
+        \\    throw new Error('provider.scan is not a function');
+        \\  }}
+        \\
+        \\  console.error('[Scanner] Calling provider.scan()...');
         \\  const result = await provider.scan({{packages:packages}});
+        \\  console.error('[Scanner] provider.scan() returned:', JSON.stringify(result));
         \\
         \\  if (!Array.isArray(result)) {{
-        \\    console.error('Security provider must return an array of advisories');
-        \\    process.exit(1);
+        \\    throw new Error('Security provider must return an array of advisories');
         \\  }}
         \\
         \\  const fs = require('fs');
         \\  const data = JSON.stringify({{advisories: result}});
-        \\  fs.writeSync(3, data);
-        \\  fs.closeSync(3);
+        \\  console.error('[Scanner] Writing', data.length, 'bytes to IPC fd 3...');
         \\
+        \\  try {{
+        \\    fs.writeSync(3, data);
+        \\    fs.closeSync(3);
+        \\    console.error('[Scanner] IPC write successful');
+        \\  }} catch (writeErr) {{
+        \\    console.error('[Scanner] Failed to write to IPC fd 3:', writeErr);
+        \\    throw writeErr;
+        \\  }}
+        \\
+        \\  console.error('[Scanner] Exiting with code 0');
         \\  process.exit(0);
         \\}} catch (error) {{
-        \\  console.error(error);
+        \\  console.error('[Scanner] Error:', error);
+        \\  console.error('[Scanner] Stack:', error.stack);
         \\  process.exit(1);
         \\}}
-    , .{ security_provider, json_buf.items });
+    , .{ security_provider, security_provider, json_buf.items });
 
     Output.prettyErrorln("Sending packages JSON to scanner: {s}", .{json_buf.items});
 
@@ -1255,7 +1276,7 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
-            .stderr = .buffer,
+            .stderr = .inherit,
             .stdin = .ignore,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
         };
@@ -1313,7 +1334,7 @@ pub const SecurityScanSubprocess = struct {
         this.has_received_ipc = true;
         this.remaining_fds -= 1;
     }
-    
+
     pub fn onStderrChunk(this: *SecurityScanSubprocess, chunk: []const u8) void {
         Output.prettyErrorln("SecurityScanSubprocess.onStderrChunk() received {d} bytes", .{chunk.len});
         this.stderr_data.appendSlice(chunk) catch bun.outOfMemory();
@@ -1359,9 +1380,6 @@ pub const SecurityScanSubprocess = struct {
                 .exited => |exit| {
                     if (exit.code != 0) {
                         Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
-                        if (this.stderr_data.items.len > 0) {
-                            Output.errGeneric("Error output: {s}", .{this.stderr_data.items});
-                        }
                     } else {
                         Output.errGeneric("Security provider exited without sending any data", .{});
                     }

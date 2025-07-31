@@ -127,13 +127,14 @@ pub extern fn mi_reserve_huge_os_pages_at(pages: usize, numa_node: c_int, timeou
 pub extern fn mi_reserve_os_memory(size: usize, commit: bool, allow_large: bool) c_int;
 pub extern fn mi_manage_os_memory(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int) bool;
 pub extern fn mi_debug_show_arenas() void;
-pub const ArenaID = c_int;
-pub extern fn mi_arena_area(arena_id: ArenaID, size: [*c]usize) ?*anyopaque;
+pub const ArenaID = ?*anyopaque;
+pub extern fn mi_arena_area(arena_id: ArenaID, size: *usize) ?*anyopaque;
 pub extern fn mi_reserve_huge_os_pages_at_ex(pages: usize, numa_node: c_int, timeout_msecs: usize, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_reserve_os_memory_ex(size: usize, commit: bool, allow_large: bool, exclusive: bool, arena_id: *ArenaID) c_int;
 pub extern fn mi_manage_os_memory_ex(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int, exclusive: bool, arena_id: *ArenaID) bool;
 pub extern fn mi_heap_new_in_arena(arena_id: ArenaID) ?*Heap;
 pub extern fn mi_reserve_huge_os_pages(pages: usize, max_secs: f64, pages_reserved: [*c]usize) c_int;
+pub extern fn mi_thread_set_in_threadpool() void;
 pub const Option = enum(c_uint) {
     show_errors = 0,
     show_stats = 1,
@@ -202,13 +203,13 @@ pub const MI_SMALL_WSIZE_MAX = @as(c_int, 128);
 pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translation.sizeof(?*anyopaque);
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
 
-pub fn canUseAlignedAlloc(len: usize, alignment: usize) bool {
-    return alignment > 0 and std.math.isPowerOfTwo(alignment) and !mi_malloc_satisfies_alignment(alignment, len);
-}
 const MI_MAX_ALIGN_SIZE = 16;
-inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-    return (alignment == @sizeOf(*anyopaque) or
-        (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
+
+pub fn mustUseAlignedAlloc(alignment: std.mem.Alignment) bool {
+    return alignment.toByteUnits() > MI_MAX_ALIGN_SIZE;
 }
+
+pub const mi_arena_id_t = ?*anyopaque;
+pub extern fn mi_heap_new_ex(heap_tag: c_int, allow_destroy: bool, arena_id: mi_arena_id_t) ?*Heap;
 
 const std = @import("std");

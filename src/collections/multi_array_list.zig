@@ -1,3 +1,10 @@
+/// Copy of `std.MultiArrayList` with the following changes:
+///
+/// * Added `zero` method to zero-initialize memory.
+/// * Added `memoryCost` method, which returns the memory usage in bytes.
+///
+/// Synchronized with std as of Zig 0.14.1.
+///
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
 /// stores separate lists for each field of the struct or
@@ -14,7 +21,7 @@ pub fn MultiArrayList(comptime T: type) type {
         bytes: [*]align(@alignOf(T)) u8 = undefined,
         len: usize = 0,
         capacity: usize = 0,
-        alloc_ptr: CheckedAllocPtr = .{},
+        alloc_ptr: bun.safety.AllocPtr = .{},
 
         pub const empty: Self = .{
             .bytes = undefined,
@@ -163,6 +170,7 @@ pub fn MultiArrayList(comptime T: type) type {
                     return lhs.alignment > rhs.alignment;
                 }
             };
+            @setEvalBranchQuota(3 * fields.len * std.math.log2(fields.len));
             mem.sort(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
@@ -177,10 +185,10 @@ pub fn MultiArrayList(comptime T: type) type {
         };
 
         /// Release all allocated memory.
-        pub fn deinit(self: *const Self, gpa: Allocator) void {
+        pub fn deinit(self: *Self, gpa: Allocator) void {
             self.alloc_ptr.assertEq(gpa);
             gpa.free(self.allocatedBytes());
-            @constCast(self).* = undefined;
+            self.* = undefined;
         }
 
         /// The caller owns the returned memory. Empties this MultiArrayList.
@@ -259,7 +267,7 @@ pub fn MultiArrayList(comptime T: type) type {
             return index;
         }
 
-        /// Remove and return the last element from the list, or return null if list is empty.
+        /// Remove and return the last element from the list, or return `null` if list is empty.
         /// Invalidates pointers to fields of the removed element.
         pub fn pop(self: *Self) ?T {
             if (self.len == 0) return null;
@@ -276,11 +284,6 @@ pub fn MultiArrayList(comptime T: type) type {
             self.alloc_ptr.set(gpa);
             try self.ensureUnusedCapacity(gpa, 1);
             self.insertAssumeCapacity(index, elem);
-        }
-
-        /// Invalidates all element pointers.
-        pub fn clearRetainingCapacity(this: *Self) void {
-            this.len = 0;
         }
 
         /// Inserts an item into an ordered list which has room for it.
@@ -307,11 +310,11 @@ pub fn MultiArrayList(comptime T: type) type {
             }
         }
 
-        pub fn appendListAssumeCapacity(this: *Self, other: Self) void {
-            const offset = this.len;
-            this.len += other.len;
+        pub fn appendListAssumeCapacity(self: *Self, other: Self) void {
+            const offset = self.len;
+            self.len += other.len;
             const other_slice = other.slice();
-            const this_slice = this.slice();
+            const this_slice = self.slice();
             inline for (fields, 0..) |field_info, i| {
                 if (@sizeOf(field_info.type) != 0) {
                     const field = @as(Field, @enumFromInt(i));
@@ -416,20 +419,34 @@ pub fn MultiArrayList(comptime T: type) type {
             self.len = new_len;
         }
 
+        /// Invalidates all element pointers.
+        pub fn clearRetainingCapacity(self: *Self) void {
+            self.len = 0;
+        }
+
         /// Modify the array so that it can hold at least `new_capacity` items.
         /// Implements super-linear growth to achieve amortized O(1) append operations.
-        /// Invalidates pointers if additional memory is needed.
-        pub fn ensureTotalCapacity(self: *Self, gpa: Allocator, new_capacity: usize) !void {
-            self.alloc_ptr.set(gpa);
-            var better_capacity = self.capacity;
-            if (better_capacity >= new_capacity) return;
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn ensureTotalCapacity(self: *Self, gpa: Allocator, new_capacity: usize) Allocator.Error!void {
+            if (self.capacity >= new_capacity) return;
+            return self.setCapacity(gpa, growCapacity(self.capacity, new_capacity));
+        }
 
+        const init_capacity = init: {
+            var max = 1;
+            for (fields) |field| max = @as(comptime_int, @max(max, @sizeOf(field.type)));
+            break :init @as(comptime_int, @max(1, std.atomic.cache_line / max));
+        };
+
+        /// Called when memory growth is necessary. Returns a capacity larger than
+        /// minimum that grows super-linearly.
+        fn growCapacity(current: usize, minimum: usize) usize {
+            var new = current;
             while (true) {
-                better_capacity += better_capacity / 2 + 8;
-                if (better_capacity >= new_capacity) break;
+                new +|= new / 2 + init_capacity;
+                if (new >= minimum)
+                    return new;
             }
-
-            return self.setCapacity(gpa, better_capacity);
         }
 
         /// Modify the array so that it can hold at least `additional_count` **more** items.
@@ -560,7 +577,7 @@ pub fn MultiArrayList(comptime T: type) type {
             self.sortInternal(a, b, ctx, .unstable);
         }
 
-        fn capacityInBytes(capacity: usize) usize {
+        pub fn capacityInBytes(capacity: usize) usize {
             comptime var elem_bytes: usize = 0;
             inline for (sizes.bytes) |size| elem_bytes += size;
             return elem_bytes * capacity;
@@ -570,10 +587,12 @@ pub fn MultiArrayList(comptime T: type) type {
             return self.bytes[0..capacityInBytes(self.capacity)];
         }
 
+        /// Returns the amount of memory used by this list, in bytes.
         pub fn memoryCost(self: Self) usize {
             return capacityInBytes(self.capacity);
         }
 
+        /// Zero-initialize all allocated memory.
         pub fn zero(self: Self) void {
             @memset(self.allocatedBytes(), 0);
         }
@@ -617,7 +636,6 @@ pub fn MultiArrayList(comptime T: type) type {
 }
 
 const builtin = @import("builtin");
-const CheckedAllocPtr = @import("./safety.zig").AllocPtr;
 
 const bun = @import("bun");
 const assert = bun.assert;

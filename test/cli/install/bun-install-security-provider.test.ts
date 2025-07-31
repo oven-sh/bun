@@ -604,10 +604,12 @@ test("receives transitive dependencies", {
   packages: ["depends-on-monkey"], // This package depends on monkey
   expectedExitCode: 0,
   scanner: async ({ packages }) => {
+    console.log("Total packages received:", packages.length);
     for (const pkg of packages) console.log("Scanning:", pkg.name);
     return [];
   },
   expect: ({ out }) => {
+    expect(out).toContain("Total packages received:");
     expect(out).toContain("Scanning: depends-on-monkey");
     expect(out).toContain("Scanning: monkey");
   },

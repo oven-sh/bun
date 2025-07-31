@@ -510,6 +510,6 @@ pub fn printDiff(
     try printDiffFooter(writer, config, removed_diff_lines, inserted_diff_lines);
 }
 
+const bun = @import("bun");
 const diff_match_patch = @import("./diff_match_patch.zig");
 const std = @import("std");
-const bun = @import("bun");

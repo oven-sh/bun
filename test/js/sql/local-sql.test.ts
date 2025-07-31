@@ -210,32 +210,36 @@ if (isDockerEnabled()) {
       const server = Bun.serve({
         port: 0,
         fetch: async (req) => {
-          await Bun.sleep(100);
-          let fragment = db\`\`;
+          try{
+            await Bun.sleep(100);
+            let fragment = db\`\`;
 
-          const searchs = await db\`
-            WITH cte AS (
-              SELECT 
-                post.id,
-                post."content",
-                post.created_at AS "createdAt",
-                users."name" AS "userName",
-                users.id AS "userId",
-                users.identifier AS "userIdentifier",
-                users.picture AS "userPicture",
-                '{}'::json AS "group"
-              FROM posts post
-              INNER JOIN users
-                ON users.id = post.user_id
-              \${fragment}
-              ORDER BY post.created_at DESC
-            )
-            SELECT 
-              * 
-            FROM cte
-            -- LIMIT 5 
-          \`;
-        return Response.json(searchs);
+              const searchs = await db\`
+                WITH cte AS (
+                  SELECT 
+                    post.id,
+                    post."content",
+                    post.created_at AS "createdAt",
+                    users."name" AS "userName",
+                    users.id AS "userId",
+                    users.identifier AS "userIdentifier",
+                    users.picture AS "userPicture",
+                    '{}'::json AS "group"
+                  FROM posts post
+                  INNER JOIN users
+                    ON users.id = post.user_id
+                  \${fragment}
+                  ORDER BY post.created_at DESC
+                )
+                SELECT 
+                  * 
+                FROM cte
+                -- LIMIT 5 
+              \`;
+            return Response.json(searchs);
+          } catch {
+            return new Response(null, { status: 500 });
+          }
         },
       });
 
@@ -261,7 +265,7 @@ if (isDockerEnabled()) {
         const server = Bun.spawn([bunExe(), "index.ts"], {
           stdin: "ignore",
           stdout: "pipe",
-          stderr: "inherit",
+          stderr: "pipe",
           cwd: dir,
           env: {
             ...bunEnv,
@@ -278,21 +282,34 @@ if (isDockerEnabled()) {
           },
         });
 
-        let url: string | null = null;
         const reader = server.stdout.getReader();
+        const errorReader = server.stderr.getReader();
+
         const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            const text = decoder.decode(value);
-            console.log(text);
-            if (!url) {
-              url = text;
-              resolve({ url, kill: () => server.kill() });
+        async function outputData(reader, type = "log") {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              if (type === "error") {
+                console.error(decoder.decode(value));
+              } else {
+                console.log(decoder.decode(value));
+              }
             }
           }
         }
+
+        const url = decoder.decode((await reader.read()).value);
+        resolve({ url, kill: () => server.kill() });
+        outputData(reader);
+        errorReader.read().then(({ value }) => {
+          if (value) {
+            console.error(decoder.decode(value));
+            failed = true;
+          }
+          outputData(errorReader, "error");
+        });
       });
     }
     async function spawnRestarts(controller) {

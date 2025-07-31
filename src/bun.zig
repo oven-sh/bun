@@ -3767,6 +3767,8 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
     };
 }
 
+pub const safety = @import("./safety.zig");
+
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");
 const std = @import("std");

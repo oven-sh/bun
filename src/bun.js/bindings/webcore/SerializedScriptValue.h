@@ -86,7 +86,7 @@ using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue, SerializedScriptValue);
 
 public:
     static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
@@ -249,7 +249,7 @@ void SerializedScriptValue::encode(Encoder& encoder) const
     for (const auto& videoChunk : m_serializedVideoChunks)
         encoder << videoChunk->data();
 
-        // FIXME: encode video frames
+    // FIXME: encode video frames
 #endif
 }
 

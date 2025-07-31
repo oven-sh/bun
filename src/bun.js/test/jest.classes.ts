@@ -630,4 +630,167 @@ export default [
       },
     },
   }),
+  define({
+    name: "ExpectTypeOf",
+    construct: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: [],
+    configurable: false,
+    klass: {},
+    proto: {
+      toBeAny: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeUnknown: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeNever: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeFunction: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeObject: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeArray: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeNumber: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeString: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeBoolean: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeVoid: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeSymbol: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeNull: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeUndefined: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeBigInt: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeCallableWith: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toBeConstructibleWith: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      extract: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      exclude: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      pick: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      omit: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      parameter: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      parameters: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      constructorParameters: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      thisParameter: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      instance: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      returns: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      resolves: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      items: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      guards: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      asserts: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toMatchObjectType: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toExtend: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toEqualTypeOf: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toMatchTypeOf: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+      toHaveProperty: {
+        fn: "fnOneArgumentReturnsVoid",
+        length: 1,
+      },
+
+      map: {
+        fn: "fnOneArgumentReturnsExpectTypeOf",
+        length: 1,
+      },
+      not: {
+        getter: "getReturnsExpectTypeOf",
+      },
+      branded: {
+        getter: "getReturnsExpectTypeOf",
+      },
+    },
+  }),
 ];

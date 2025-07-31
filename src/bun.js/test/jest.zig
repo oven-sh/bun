@@ -439,6 +439,13 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
+        // Add expectTypeOf function
+        module.put(
+            globalObject,
+            ZigString.static("expectTypeOf"),
+            ExpectTypeOf.js.getConstructor(globalObject),
+        );
+
         createMockObjects(globalObject, module);
 
         return module;
@@ -2429,6 +2436,7 @@ const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
+const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;

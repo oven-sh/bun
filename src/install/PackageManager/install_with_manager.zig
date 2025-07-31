@@ -537,6 +537,11 @@ pub fn installWithManager(
         }
     }
 
+    // Security scan must run after all dependencies are resolved but before cleaning the lockfile
+    if (manager.subcommand == .add and manager.options.security_provider != null) {
+        try performSecurityScanAfterResolution(manager, original_cwd);
+    }
+
     const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
     try manager.log.print(Output.errorWriter());
     manager.log.reset();
@@ -564,10 +569,6 @@ pub fn installWithManager(
             }
         }
         manager.verifyResolutions(log_level);
-    }
-
-    if (manager.subcommand == .add and manager.options.security_provider != null) {
-        try performSecurityScanAfterResolution(manager, original_cwd);
     }
 
     // append scripts to lockfile before generating new metahash
@@ -1014,12 +1015,24 @@ fn performSecurityScanAfterResolution(
     try writer.writeAll("[\n");
     var first = true;
 
-    for (manager.update_requests) |update| {
-        const package_id = update.package_id;
-        if (package_id == invalid_package_id) continue;
-        if (package_id >= packages.len) continue;
+    var update_request_map = std.AutoHashMap(PackageID, *PackageManager.UpdateRequest).init(manager.allocator);
+    defer update_request_map.deinit();
 
+    for (manager.update_requests) |*update| {
+        if (update.package_id != invalid_package_id) {
+            try update_request_map.put(update.package_id, update);
+        }
+    }
+
+    for (0..packages.len) |i| {
+        const package_id: PackageID = @intCast(i);
         const resolution = resolutions[package_id];
+
+        switch (resolution.tag) {
+            .root, .workspace, .uninitialized => continue,
+            else => {},
+        }
+
         const name = names[package_id].slice(string_buf);
 
         var version_buf: [256]u8 = undefined;
@@ -1043,10 +1056,13 @@ fn performSecurityScanAfterResolution(
             else => continue,
         };
 
-        const requested_range = if (update.version.tag == .uninitialized or update.version.literal.isEmpty())
-            "latest"
+        const requested_range = if (update_request_map.get(package_id)) |update|
+            if (update.version.tag == .uninitialized or update.version.literal.isEmpty())
+                "latest"
+            else
+                update.version.literal.slice(update.version_buf)
         else
-            update.version.literal.slice(update.version_buf);
+            version;
 
         if (!first) try writer.writeAll(",\n");
         first = false;
@@ -1386,11 +1402,11 @@ fn performSecurityScanAfterResolution(
             }
 
             if (has_fatal) {
-                Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n", .{});
+                Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
                 Global.exit(1);
             } else if (has_warn) {
                 // TODO: Prompt user to continue
-                Output.pretty("\n<yellow>Security warnings found. Continuing anyway...<r>\n", .{});
+                Output.pretty("\n<yellow>Security warnings found. Continuing anyway...<r>\n\n", .{});
             }
         }
     }

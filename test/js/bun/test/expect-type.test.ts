@@ -1,4 +1,4 @@
-import { test, expectTypeOf } from "bun:test";
+import { expectTypeOf, test } from "bun:test";
 
 test("types", () => {
   expectTypeOf({ a: 1 }).toMatchObjectType<{ a: number }>();

@@ -193,8 +193,8 @@
 */
 
 import type {
-  StrictEqualUsingTSInternalIdenticalToOperator,
   IsNever,
+  StrictEqualUsingTSInternalIdenticalToOperator,
   UnionToIntersection,
   UnionToTuple,
 } from "./utils";

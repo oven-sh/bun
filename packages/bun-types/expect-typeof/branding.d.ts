@@ -194,13 +194,13 @@
 
 import type { ConstructorOverloadParameters, NumOverloads, OverloadsInfoUnion } from "./overloads";
 import type {
-  IsNever,
   IsAny,
+  IsNever,
   IsUnknown,
+  MutuallyExtends,
+  OptionalKeys,
   ReadonlyKeys,
   RequiredKeys,
-  OptionalKeys,
-  MutuallyExtends,
   UnionToTuple,
 } from "./utils";
 /**

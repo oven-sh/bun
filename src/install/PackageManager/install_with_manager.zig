@@ -1003,10 +1003,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         return;
     }
 
-    Output.prettyErrorln("Processing {d} update requests for security scan", .{manager.update_requests.len});
-
-    Output.prettyErrorln("Running security scan with provider: {s}", .{security_provider});
-
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
     defer pkg_dedupe.deinit();
 

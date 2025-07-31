@@ -252,6 +252,7 @@ pub const OutdatedCommand = struct {
 
         const CatalogKey = struct {
             name_hash: u64,
+            catalog_name_hash: u64,
             behavior: Behavior,
         };
         var catalog_map = std.AutoHashMap(CatalogKey, std.ArrayList(PackageID)).init(allocator);
@@ -266,7 +267,9 @@ pub const OutdatedCommand = struct {
             if (item.is_catalog) {
                 const dep = dependencies[item.dep_id];
                 const name_hash = bun.hash(dep.name.slice(string_buf));
-                const key = CatalogKey{ .name_hash = name_hash, .behavior = dep.behavior };
+                const catalog_name = dep.version.value.catalog.slice(string_buf);
+                const catalog_name_hash = bun.hash(catalog_name);
+                const key = CatalogKey{ .name_hash = name_hash, .catalog_name_hash = catalog_name_hash, .behavior = dep.behavior };
 
                 const entry = try catalog_map.getOrPut(key);
                 if (!entry.found_existing) {
@@ -290,7 +293,9 @@ pub const OutdatedCommand = struct {
 
             const dep = dependencies[item.dep_id];
             const name_hash = bun.hash(dep.name.slice(string_buf));
-            const key = CatalogKey{ .name_hash = name_hash, .behavior = dep.behavior };
+            const catalog_name = dep.version.value.catalog.slice(string_buf);
+            const catalog_name_hash = bun.hash(catalog_name);
+            const key = CatalogKey{ .name_hash = name_hash, .catalog_name_hash = catalog_name_hash, .behavior = dep.behavior };
 
             const workspace_list = catalog_map.get(key) orelse continue;
 
@@ -298,7 +303,14 @@ pub const OutdatedCommand = struct {
             var workspace_names = std.ArrayList(u8).init(allocator);
             defer workspace_names.deinit();
 
-            try workspace_names.appendSlice("catalog (");
+            const cat_name = dep.version.value.catalog.slice(string_buf);
+            if (cat_name.len > 0) {
+                try workspace_names.appendSlice("catalog:");
+                try workspace_names.appendSlice(cat_name);
+                try workspace_names.appendSlice(" (");
+            } else {
+                try workspace_names.appendSlice("catalog (");
+            }
             for (workspace_list.items, 0..) |workspace_id, i| {
                 if (i > 0) try workspace_names.appendSlice(", ");
                 const workspace_name = pkg_names[workspace_id].slice(string_buf);

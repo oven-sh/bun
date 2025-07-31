@@ -537,11 +537,6 @@ pub fn installWithManager(
         }
     }
 
-    // Security scan must run after all dependencies are resolved but before cleaning the lockfile
-    if (manager.subcommand == .add and manager.options.security_provider != null) {
-        try performSecurityScanAfterResolution(manager);
-    }
-
     const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
     try manager.log.print(Output.errorWriter());
     manager.log.reset();
@@ -568,7 +563,12 @@ pub fn installWithManager(
                 return error.InstallFailed;
             }
         }
+
         manager.verifyResolutions(log_level);
+
+        if (manager.subcommand == .add and manager.options.security_provider != null) {
+            try performSecurityScanAfterResolution(manager);
+        }
     }
 
     // append scripts to lockfile before generating new metahash
@@ -998,8 +998,13 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     const security_provider = manager.options.security_provider orelse return;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
-    if (manager.update_requests.len == 0) return;
-    
+    if (manager.update_requests.len == 0) {
+        Output.prettyErrorln("No update requests to scan", .{});
+        return;
+    }
+
+    Output.prettyErrorln("Processing {d} update requests for security scan", .{manager.update_requests.len});
+
     Output.prettyErrorln("Running security scan with provider: {s}", .{security_provider});
 
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
@@ -1042,6 +1047,10 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
                     const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
 
+                    if (dep_pkg_id == invalid_package_id) {
+                        continue;
+                    }
+
                     if (dep_pkg_id != update_pkg_id) {
                         continue;
                     }
@@ -1063,6 +1072,9 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         }
     }
 
+    // For new packages being added via 'bun add', we just scan the update requests directly
+    // since they haven't been added to the lockfile yet
+
     var json_buf = std.ArrayList(u8).init(manager.allocator);
     var writer = json_buf.writer();
     defer json_buf.deinit();
@@ -1073,23 +1085,27 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     var first = true;
 
+    var package_count: usize = 0;
+
     while (ids_queue.readItem()) |ids| {
         const pkg_id, const dep_id = ids;
+        package_count += 1;
 
         const pkg_name = pkg_names[pkg_id];
         const pkg_res = pkg_resolutions[pkg_id];
         const dep_version = manager.lockfile.buffers.dependencies.items[dep_id].version;
+
+        if (!first) try writer.writeAll(",\n");
 
         try writer.print(
             \\  {{
             \\    "name": {},
             \\    "version": {s},
             \\    "requestedRange": {},
-            \\    "registryUrl": {}
+            \\    "tarball": {}
             \\  }}
         , .{ bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}), pkg_res.value.npm.version.fmt(string_buf), bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}), bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}) });
 
-        if (!first) try writer.writeAll(",\n");
         first = false;
 
         // then go through it's dependencies and queue them up if
@@ -1118,6 +1134,8 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     }
 
     try writer.writeAll("\n]");
+
+    Output.prettyErrorln("Scanned {d} packages", .{package_count});
 
     var code_buf = std.ArrayList(u8).init(manager.allocator);
     defer code_buf.deinit();
@@ -1150,6 +1168,8 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\  process.exit(1);
         \\}}
     , .{ security_provider, json_buf.items });
+
+    Output.prettyErrorln("Sending packages JSON to scanner: {s}", .{json_buf.items});
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
@@ -1209,6 +1229,8 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
+        Output.prettyErrorln("SecurityScanSubprocess.spawn() starting...", .{});
+
         const pipe_result = bun.sys.pipe();
         const pipe_fds = switch (pipe_result) {
             .err => |err| {
@@ -1239,6 +1261,7 @@ pub const SecurityScanSubprocess = struct {
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        Output.prettyErrorln("Process spawned with pid: {d}", .{spawned.pid});
 
         pipe_fds[1].close();
 
@@ -1252,6 +1275,8 @@ pub const SecurityScanSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
+        Output.prettyErrorln("Process set up with PID {d}, starting watch...", .{process.pid});
+
         switch (process.watchOrReap()) {
             .err => |err| {
                 Output.errGeneric("Failed to watch security scanner process: {}", .{err});
@@ -1262,7 +1287,11 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn isDone(this: *SecurityScanSubprocess) bool {
-        return this.has_process_exited and this.remaining_fds == 0;
+        const done = this.has_process_exited and this.remaining_fds == 0;
+        if (done) {
+            Output.prettyErrorln("SecurityScanSubprocess.isDone() = true (exited: {}, remaining_fds: {})", .{ this.has_process_exited, this.remaining_fds });
+        }
+        return done;
     }
 
     pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {
@@ -1274,6 +1303,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onReaderDone(this: *SecurityScanSubprocess) void {
+        Output.prettyErrorln("SecurityScanSubprocess.onReaderDone() - total IPC data: {d} bytes", .{this.ipc_data.items.len});
         this.has_received_ipc = true;
         this.remaining_fds -= 1;
     }
@@ -1282,6 +1312,11 @@ pub const SecurityScanSubprocess = struct {
         Output.errGeneric("Failed to read security scanner IPC: {}", .{err});
         this.has_received_ipc = true;
         this.remaining_fds -= 1;
+    }
+    
+    pub fn onStderrChunk(this: *SecurityScanSubprocess, chunk: []const u8) void {
+        Output.prettyErrorln("SecurityScanSubprocess.onStderrChunk() received {d} bytes", .{chunk.len});
+        this.stderr_data.appendSlice(chunk) catch bun.outOfMemory();
     }
 
     pub fn getReadBuffer(this: *SecurityScanSubprocess) []u8 {
@@ -1295,11 +1330,13 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn onReadChunk(this: *SecurityScanSubprocess, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
+        Output.prettyErrorln("SecurityScanSubprocess.onReadChunk() received {d} bytes", .{chunk.len});
         this.ipc_data.appendSlice(chunk) catch bun.outOfMemory();
         return true;
     }
 
     pub fn onProcessExit(this: *SecurityScanSubprocess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        Output.prettyErrorln("SecurityScanSubprocess.onProcessExit() called with status: {}", .{status});
         this.has_process_exited = true;
         this.exit_status = status;
 
@@ -1339,6 +1376,7 @@ pub const SecurityScanSubprocess = struct {
             Global.exit(1);
         }
 
+        Output.prettyErrorln("Handling security advisories with data: {s}", .{this.ipc_data.items});
         try handleSecurityAdvisories(this.manager, this.ipc_data.items);
 
         if (!status.isOK()) {

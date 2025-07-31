@@ -10,6 +10,29 @@
   //   cloned it at all, that script will suggest how.
   "version": "0.2.0",
   "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun add malware",
+      "program": "${workspaceFolder}/build/debug/bun-debug",
+      "args": ["add", "malware"],
+      "cwd": "/Users/ali/code/lab",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
+      "console": "internalConsole",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
+    },
+
     // bun test [file]
     {
       "type": "lldb",

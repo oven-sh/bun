@@ -544,6 +544,7 @@ src/HTMLScanner.zig
 src/http.zig
 src/http/AsyncHTTP.zig
 src/http/CertificateInfo.zig
+src/http/ContentRange.zig
 src/http/Decompressor.zig
 src/http/Encoding.zig
 src/http/ETag.zig

@@ -219,6 +219,14 @@ pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
         }
     }
 
+    // Handle Range requests for GET with 200 status
+    if (this.status_code == 200) {
+        if (req.header("range")) |range_header| {
+            this.handleRangeRequest(req, resp, range_header);
+            return;
+        }
+    }
+
     // Continue with normal GET request handling
     req.setYield(false);
     this.on(resp);
@@ -336,6 +344,12 @@ fn renderMetadata(this: *StaticRoute, resp: AnyResponse) void {
         status;
 
     this.doWriteStatus(status, resp);
+    
+    // Add Accept-Ranges header for 200 responses to indicate range support
+    if (status == 200) {
+        resp.writeHeader("Accept-Ranges", "bytes");
+    }
+    
     this.doWriteHeaders(resp);
 }
 
@@ -375,6 +389,217 @@ fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: *uws.Request, resp: 
     return true;
 }
 
+fn handleRangeRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse, range_header: []const u8) void {
+    const content_size = this.cached_blob_size;
+    
+    // Parse range requests
+    const ranges = ContentRange.parseRangeHeader(range_header, bun.default_allocator) catch {
+        // Invalid range header, serve full content
+        req.setYield(false);
+        this.on(resp);
+        return;
+    };
+    defer bun.default_allocator.free(ranges);
+    
+    // Filter valid ranges
+    const valid_ranges = ContentRange.filterValidRanges(ranges, content_size, bun.default_allocator) catch {
+        // Memory allocation error, serve full content
+        req.setYield(false);
+        this.on(resp);
+        return;
+    };
+    defer bun.default_allocator.free(valid_ranges);
+    
+    // If no valid ranges, return 416 Range Not Satisfiable
+    if (valid_ranges.len == 0) {
+        this.sendRangeNotSatisfiable(resp, content_size);
+        return;
+    }
+    
+    // For now, only handle single ranges (multipart ranges would need more complex implementation)
+    if (valid_ranges.len > 1) {
+        // Fall back to serving full content for multipart ranges
+        req.setYield(false);
+        this.on(resp);
+        return;
+    }
+    
+    const range = valid_ranges[0];
+    
+    // Check if this is actually a full content request
+    if (range.start == 0 and range.actualEnd(content_size) == content_size - 1) {
+        req.setYield(false);
+        this.on(resp);
+        return;
+    }
+    
+    req.setYield(false);
+    this.sendPartialContent(resp, range, content_size);
+}
+
+fn sendRangeNotSatisfiable(this: *StaticRoute, resp: AnyResponse, content_size: u64) void {
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    
+    this.doWriteStatus(416, resp);
+    
+    // Add Content-Range header for unsatisfiable range
+    const content_range_header = ContentRange.formatUnsatisfiableRangeHeader(content_size, bun.default_allocator) catch {
+        // Fallback without Content-Range header
+        this.doWriteHeaders(resp);
+        resp.endWithoutBody(resp.shouldCloseConnection());
+        this.onResponseComplete(resp);
+        return;
+    };
+    defer bun.default_allocator.free(content_range_header);
+    
+    resp.writeHeader("Content-Range", content_range_header);
+    this.doWriteHeaders(resp);
+    resp.endWithoutBody(resp.shouldCloseConnection());
+    this.onResponseComplete(resp);
+}
+
+fn sendPartialContent(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64) void {
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    
+    // Prepare headers for partial content
+    var finished = false;
+    this.doRenderPartialContent(resp, range, content_size, &finished);
+    if (finished) {
+        this.onResponseComplete(resp);
+        return;
+    }
+    
+    this.toAsyncPartial(resp, range, content_size);
+}
+
+fn doRenderPartialContent(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64, did_finish: *bool) void {
+    const range_length = range.length(content_size);
+    
+    // We are not corked
+    // The range is small
+    // Faster to do the memcpy than to do the two network calls
+    if (range_length < 16384 - 1024) {
+        resp.corked(doRenderPartialContentCorked, .{ this, resp, range, content_size, did_finish });
+    } else {
+        this.doRenderPartialContentCorked(resp, range, content_size, did_finish);
+    }
+}
+
+fn doRenderPartialContentCorked(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64, did_finish: *bool) void {
+    this.renderPartialMetadata(resp, range, content_size);
+    this.renderPartialBytes(resp, range, content_size, did_finish);
+}
+
+fn renderPartialMetadata(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64) void {
+    // Write 206 Partial Content status
+    this.doWriteStatus(206, resp);
+    
+    // Add Content-Range header
+    const content_range_header = ContentRange.formatContentRangeHeader(range, content_size, bun.default_allocator) catch {
+        // Fallback without Content-Range header
+        this.doWriteHeaders(resp);
+        return;
+    };
+    defer bun.default_allocator.free(content_range_header);
+    
+    resp.writeHeader("Content-Range", content_range_header);
+    
+    // Add Accept-Ranges header to indicate range support
+    resp.writeHeader("Accept-Ranges", "bytes");
+    
+    // Write original headers
+    this.doWriteHeaders(resp);
+    
+    // Override Content-Length with range length
+    const range_length = range.length(content_size);
+    resp.writeHeaderInt("Content-Length", range_length);
+}
+
+fn renderPartialBytes(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64, did_finish: *bool) void {
+    _ = content_size;
+    did_finish.* = this.onWritablePartialBytes(range, 0, resp);
+}
+
+fn toAsyncPartial(this: *StaticRoute, resp: AnyResponse, range: ContentRange.Range, content_size: u64) void {
+    _ = content_size;
+    
+    const pending = bun.new(PendingRangeResponse, .{
+        .range = range,
+        .resp = resp,
+        .route = this,
+    });
+    
+    this.ref(); // Keep the route alive while the response is pending
+    
+    resp.onAborted(*PendingRangeResponse, PendingRangeResponse.onAborted, pending);
+    resp.onWritable(*PendingRangeResponse, PendingRangeResponse.onWritable, pending);
+}
+
+const PendingRangeResponse = struct {
+    range: ContentRange.Range,
+    resp: AnyResponse,
+    route: *StaticRoute,
+    is_response_pending: bool = true,
+    
+    pub fn deinit(this: *PendingRangeResponse) void {
+        if (this.is_response_pending) {
+            this.resp.clearAborted();
+            this.resp.clearOnWritable();
+        }
+        this.route.deref();
+        bun.destroy(this);
+    }
+    
+    pub fn onAborted(this: *PendingRangeResponse, _: AnyResponse) void {
+        bun.debugAssert(this.is_response_pending == true);
+        this.is_response_pending = false;
+        this.route.onResponseComplete(this.resp);
+        this.deinit();
+    }
+    
+    pub fn onWritable(this: *PendingRangeResponse, write_offset: u64, resp: AnyResponse) bool {
+        if (this.route.server) |server| {
+            resp.timeout(server.config().idleTimeout);
+        }
+        
+        if (!this.route.onWritablePartialBytes(this.range, write_offset, resp)) {
+            return false;
+        }
+        
+        this.is_response_pending = false;
+        this.route.onResponseComplete(resp);
+        this.deinit();
+        return true;
+    }
+};
+
+fn onWritablePartialBytes(this: *StaticRoute, range: ContentRange.Range, write_offset: u64, resp: AnyResponse) bool {
+    const blob = this.blob;
+    const all_bytes = blob.slice();
+    
+    // Calculate the actual slice for this range
+    const range_start = @min(range.start, all_bytes.len);
+    const range_end = @min(range.actualEnd(all_bytes.len), all_bytes.len - 1);
+    
+    if (range_start > range_end or range_start >= all_bytes.len) {
+        // Empty range
+        return resp.tryEnd(&[_]u8{}, 0, resp.shouldCloseConnection());
+    }
+    
+    const range_bytes = all_bytes[range_start..range_end + 1];
+    const bytes = range_bytes[@min(range_bytes.len, write_offset)..];
+    
+    return resp.tryEnd(bytes, range_bytes.len, resp.shouldCloseConnection());
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -386,6 +611,7 @@ const AnyBlob = jsc.WebCore.Blob.Any;
 
 const ETag = bun.http.ETag;
 const Headers = bun.http.Headers;
+const ContentRange = bun.http.ContentRange;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

@@ -2425,6 +2425,7 @@ pub const ThreadlocalAsyncHTTP = struct {
 };
 
 pub const ETag = @import("./http/ETag.zig");
+pub const ContentRange = @import("./http/ContentRange.zig");
 pub const Method = @import("./http/Method.zig").Method;
 pub const Headers = @import("./http/Headers.zig");
 pub const MimeType = @import("./http/MimeType.zig");

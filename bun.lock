@@ -39,9 +39,6 @@
       },
     },
   },
-  "patchedDependencies": {
-    "@lezer/cpp@1.1.3": "patches/@lezer%2Fcpp@1.1.3.patch",
-  },
   "overrides": {
     "@types/bun": "workspace:packages/@types/bun",
     "bun-types": "workspace:packages/bun-types",

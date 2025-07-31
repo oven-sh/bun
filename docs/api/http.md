@@ -173,14 +173,15 @@ Bun.serve({
   routes: {
     // Static route - content is buffered in memory at startup
     "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
-    
-    // File route - content is read from filesystem on each request  
+
+    // File route - content is read from filesystem on each request
     "/download.zip": new Response(Bun.file("./download.zip")),
   },
 });
 ```
 
 **Static routes** (`new Response(await file.bytes())`) buffer content in memory at startup:
+
 - **Zero filesystem I/O** during requests - content served entirely from memory
 - **ETag support** - Automatically generates and validates ETags for caching
 - **If-None-Match** - Returns `304 Not Modified` when client ETag matches
@@ -189,6 +190,7 @@ Bun.serve({
 - **Best for**: Small static assets, API responses, frequently accessed files
 
 **File routes** (`new Response(Bun.file(path))`) read from filesystem per request:
+
 - **Filesystem reads** on each request - checks file existence and reads content
 - **Built-in 404 handling** - Returns `404 Not Found` if file doesn't exist or becomes inaccessible
 - **Last-Modified support** - Uses file modification time for `If-Modified-Since` headers
@@ -203,13 +205,15 @@ Bun.serve({
 Both route types implement HTTP caching standards but with different strategies:
 
 #### Static Routes Caching
+
 - **ETag generation**: Automatically computes ETag hash from content at startup
 - **If-None-Match**: Validates client ETag against server ETag
 - **304 responses**: Returns `304 Not Modified` with empty body when ETags match
 - **Cache headers**: Inherits any `Cache-Control` headers you provide in the Response
 - **Consistency**: ETag remains constant until server restart or route reload
 
-#### File Routes Caching  
+#### File Routes Caching
+
 - **Last-Modified**: Uses file's `mtime` for `Last-Modified` header
 - **If-Modified-Since**: Compares client date with file modification time
 - **304 responses**: Returns `304 Not Modified` when file unchanged since client's cached version
@@ -219,6 +223,7 @@ Both route types implement HTTP caching standards but with different strategies:
 #### Status Code Handling
 
 Both route types automatically adjust status codes:
+
 - **200 → 204**: Empty files (0 bytes) return `204 No Content` instead of `200 OK`
 - **200 → 304**: Successful cache validation returns `304 Not Modified`
 - **File routes only**: Missing or inaccessible files return `404 Not Found`

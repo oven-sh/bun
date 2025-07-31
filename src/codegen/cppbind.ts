@@ -732,7 +732,9 @@ async function main() {
   const rootDir = args[0];
   const dstDir = args[1];
   if (!rootDir || !dstDir) {
-    console.error(String.raw`                   _     _           _ 
+    console.error(
+      String.raw`
+                   _     _           _ 
                   | |   (_)         | |
    ___ _ __  _ __ | |__  _ _ __   __| |
   / __| '_ \| '_ \| '_ \| | '_ \ / _' |
@@ -740,7 +742,8 @@ async function main() {
   \___| .__/| .__/|_.__/|_|_| |_|\__,_|
       | |   | |                        
       |_|   |_|                        
-`);
+`.slice(1),
+    );
     console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
     process.exit(1);
   }

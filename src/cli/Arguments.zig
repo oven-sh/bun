@@ -171,6 +171,10 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-title <STR>            When using --compile targeting Windows, set the executable title") catch unreachable,
+    clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable publisher") catch unreachable,
+    clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
+    clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -884,26 +888,47 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--windows-hide-console")) {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
-                Global.crash();
-            }
+            // --windows-hide-console is now supported cross-platform
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_hide_console = true;
+            ctx.bundler_options.windows.hide_console = true;
         }
         if (args.option("--windows-icon")) |path| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-icon requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_icon = path;
+            ctx.bundler_options.windows.icon = path;
+        }
+        if (args.option("--windows-title")) |title| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-title requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.title = title;
+        }
+        if (args.option("--windows-publisher")) |publisher| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-publisher requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.publisher = publisher;
+        }
+        if (args.option("--windows-version")) |version| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-version requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.version = version;
+        }
+        if (args.option("--windows-description")) |description| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-description requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.description = description;
         }
 
         if (args.option("--outdir")) |outdir| {

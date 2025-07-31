@@ -193,3 +193,8 @@ interface setSocketOptionsFn {
 }
 
 export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
+
+export const windowsResourceInternals = {
+  parseIconFile: $newZigFunction("windows_resources.zig", "TestingAPIs.parseIconFile", 1),
+  parseResources: $newZigFunction("windows_resources.zig", "TestingAPIs.parseResources", 1),
+};

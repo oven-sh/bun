@@ -503,7 +503,7 @@ pub const StandaloneModuleGraph = struct {
                 // Ensure we own the file
                 if (Environment.isPosix) {
                     // Make the file writable so we can delete it
-                    _ = Syscall.fchmod(fd, 0o777);
+                    _ = Syscall.fchmod(fd, 0o755);
                 }
                 fd.close();
                 _ = Syscall.unlink(name);
@@ -559,7 +559,7 @@ pub const StandaloneModuleGraph = struct {
             const fd = brk2: {
                 var tried_changing_abs_dir = false;
                 for (0..3) |retry| {
-                    switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0)) {
+                    switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0o755)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -627,6 +627,12 @@ pub const StandaloneModuleGraph = struct {
                 cleanup(zname, fd);
                 Global.exit(1);
             };
+
+            // Ensure the file has proper permissions after copying
+            if (comptime !Environment.isWindows) {
+                _ = bun.c.fchmod(fd.native(), 0o644);
+            }
+
             break :brk fd;
         };
 
@@ -678,51 +684,66 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o755);
                 }
                 return cloned_executable_fd;
             },
             .windows => {
-                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
-                if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                }
-                var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
-                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                };
-                defer pe_file.deinit();
-                pe_file.addBunSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                };
-                input_result.bytes.deinit();
+                // Implement .bun section support for Windows executables
+                const pe_module = @import("./pe.zig");
 
-                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                // Get the path from fd
+                var path_buf: bun.PathBuffer = undefined;
+                const path = cloned_executable_fd.getFdPath(&path_buf) catch |err| {
+                    Output.prettyErrorln("Error getting executable path: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+
+                // We need to close the fd before modifying the file
+                cloned_executable_fd.close();
+
+                // Create temporary path for PE with .bun section
+                const tmp_path = std.fmt.allocPrint(bun.default_allocator, "{s}.bun.tmp", .{path}) catch |err| {
+                    Output.prettyErrorln("Error allocating temporary path: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer bun.default_allocator.free(tmp_path);
+
+                // Add .bun section to PE file
+                pe_module.PEFile.addBunSection(bun.default_allocator, path, tmp_path, bytes) catch |err| {
+                    Output.prettyErrorln("Error adding .bun section to PE file: {}", .{err});
+                    std.fs.cwd().deleteFile(path) catch {};
+                    Global.exit(1);
+                };
+
+                // Move temporary file to final location
+                std.fs.cwd().rename(tmp_path, path) catch |err| {
+                    Output.prettyErrorln("Error renaming temporary file: {}", .{err});
+                    std.fs.cwd().deleteFile(tmp_path) catch {};
+                    Global.exit(1);
+                };
+
+                // Reopen the modified file
+                var path_z_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const path_z = std.fmt.bufPrintZ(&path_z_buf, "{s}", .{path}) catch {
+                    Output.prettyErrorln("Error creating null-terminated path", .{});
+                    Global.exit(1);
+                };
+                const modified_fd = switch (Syscall.open(path_z, bun.O.CLOEXEC | bun.O.RDWR, 0)) {
+                    .result => |res| res,
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
+                        Output.prettyErrorln("Error reopening modified executable: {}", .{err});
                         Global.exit(1);
                     },
-                    else => {},
-                }
-
-                var file = bun.sys.File{ .handle = cloned_executable_fd };
-                const writer = file.writer();
-                pe_file.write(writer) catch |err| {
-                    Output.prettyErrorln("Error writing PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
                 };
-                // Set executable permissions when running on POSIX hosts, even for Windows targets
-                if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+
+                // Set executable permissions (not needed on Windows)
+                if (comptime !bun.Environment.isWindows) {
+                    _ = bun.c.fchmod(modified_fd.native(), 0o755);
                 }
-                return cloned_executable_fd;
+                return modified_fd;
             },
             else => {
                 var total_byte_count: usize = undefined;
@@ -788,7 +809,7 @@ pub const StandaloneModuleGraph = struct {
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
                 _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o755);
                 }
 
                 return cloned_executable_fd;
@@ -831,8 +852,7 @@ pub const StandaloneModuleGraph = struct {
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
         output_format: bun.options.Format,
-        windows_hide_console: bool,
-        windows_icon: ?[]const u8,
+        windows: bun.options.WindowsSettings,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
@@ -849,7 +869,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
-            .{ .windows_hide_console = windows_hide_console },
+            .{ .windows_hide_console = windows.hide_console },
             target,
         );
         bun.debugAssert(fd.kind == .system);
@@ -875,15 +895,21 @@ pub const StandaloneModuleGraph = struct {
 
                 Global.exit(1);
             };
-            fd.close();
-
-            if (windows_icon) |icon_utf8| {
-                var icon_buf: bun.OSPathBuffer = undefined;
-                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
-                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
-                    Output.warn("Failed to set executable icon", .{});
+            // Apply Windows resource edits if needed
+            if (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null) {
+                const windows_resources = @import("./windows_resources.zig");
+                windows_resources.editWindowsResources(allocator, fd, &windows) catch |err| {
+                    if (windows.icon != null and err == error.InvalidIconFile) {
+                        Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
+                        Output.flush();
+                        Global.exit(1);
+                    } else {
+                        Output.warn("Failed to set Windows resources: {s}", .{@errorName(err)});
+                    }
                 };
             }
+
+            fd.close();
             return;
         }
 
@@ -911,6 +937,24 @@ pub const StandaloneModuleGraph = struct {
 
             Global.exit(1);
         };
+
+        // Apply Windows resource edits if needed (cross-platform)
+        if (target.os == .windows and (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null)) {
+            const windows_resources = @import("./windows_resources.zig");
+            // The file was moved to root_dir with just the basename
+            const basename = std.fs.path.basename(outfile);
+            const full_path = try root_dir.realpathAlloc(allocator, basename);
+            defer allocator.free(full_path);
+            windows_resources.editWindowsResourcesByPath(allocator, full_path, &windows) catch |err| {
+                if (windows.icon != null and err == error.InvalidIconFile) {
+                    Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
+                    Output.flush();
+                    Global.exit(1);
+                } else {
+                    Output.warn("Failed to set Windows resources: {s}", .{@errorName(err)});
+                }
+            };
+        }
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {

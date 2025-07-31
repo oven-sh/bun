@@ -891,6 +891,7 @@ src/watcher/KEventWatcher.zig
 src/watcher/WindowsWatcher.zig
 src/which_npm_client.zig
 src/which.zig
+src/windows_resources.zig
 src/windows.zig
 src/work_pool.zig
 src/workaround_missing_symbols.zig

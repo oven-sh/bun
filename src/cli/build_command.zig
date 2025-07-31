@@ -434,8 +434,7 @@ pub const BuildCommand = struct {
                     outfile,
                     this_transpiler.env,
                     this_transpiler.options.output_format,
-                    ctx.bundler_options.windows_hide_console,
-                    ctx.bundler_options.windows_icon,
+                    ctx.bundler_options.windows,
                 );
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {

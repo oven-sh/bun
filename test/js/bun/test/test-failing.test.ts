@@ -32,7 +32,7 @@ describe("test.failing", () => {
       fail("Expected exit code to be non-zero\n\n" + stderr);
     }
     expect(stderr).toContain(" 2 fail\n");
-    expect(stderr.replaceAll(/ \[\d+ms\]/g, "")).toMatchInlineSnapshot(`
+    expect(stderr.replaceAll(/ \[[\d.]+ms\]/g, "")).toMatchInlineSnapshot(`
       "
       failing-test-passes.fixture.ts:
       (fail) This should fail but it doesnt

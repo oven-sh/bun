@@ -13,6 +13,11 @@ const code = `
   Promise.resolve().then(() => {
     console.log('Microtask inside VM');
   });
+
+  Promise.resolve().then(() => {
+    console.log('Microtask inside VM 2');
+  });
+
   console.log('End of VM code');
 `;
 

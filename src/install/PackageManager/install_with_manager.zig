@@ -1135,7 +1135,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     try writer.writeAll("\n]");
 
-
     var code_buf = std.ArrayList(u8).init(manager.allocator);
     defer code_buf.deinit();
     var code_writer = code_buf.writer();
@@ -1171,7 +1170,6 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\}}
     , .{ security_provider, json_buf.items });
 
-
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
         .code = try manager.allocator.dupe(u8, code_buf.items),
@@ -1179,6 +1177,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         .ipc_data = undefined,
         .stderr_data = undefined,
     });
+
     defer {
         manager.allocator.free(scanner.code);
         manager.allocator.free(scanner.json_data);
@@ -1229,7 +1228,6 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
         this.ipc_reader.setParent(this);
 
-
         const pipe_result = bun.sys.pipe();
         const pipe_fds = switch (pipe_result) {
             .err => |err| {
@@ -1272,7 +1270,6 @@ pub const SecurityScanSubprocess = struct {
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);
-
 
         switch (process.watchOrReap()) {
             .err => |err| {

@@ -136,7 +136,7 @@ test(
               headers: {
                 "Cache-Control": "private, no-cache, no-store, must-revalidate",
               },
-            });
+            }).catch(() => {});
             expect(x.status).toBe(200);
             const text = await x.text();
             console.count("Completed request");

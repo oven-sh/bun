@@ -3841,10 +3841,8 @@ pub const Expect = struct {
             return globalThis.throw("toIncludeRepeated() requires the first argument to be a non-empty string", .{});
         }
 
-        if (countAsNum == 0)
-            pass = !strings.contains(expectStringAsStr, subStringAsStr)
-        else
-            pass = std.mem.containsAtLeast(u8, expectStringAsStr, countAsNum, subStringAsStr);
+        const actual_count = std.mem.count(u8, expectStringAsStr, subStringAsStr);
+        pass = actual_count == countAsNum;
 
         if (not) pass = !pass;
         if (pass) return .js_undefined;

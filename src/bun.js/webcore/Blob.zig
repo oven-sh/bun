@@ -590,7 +590,7 @@ export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
     if (this.store) |store| {
         if (store.data == .bytes) {
             if (store.data.bytes.stored_name.len == 0) {
-                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable;
+                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch unreachable;
                 store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
             }
         }
@@ -1715,7 +1715,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
                     );
                 },
                 .s3, .file => {
@@ -1728,7 +1728,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
                         bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
                         ),
                         allocator,
                     ),
@@ -2461,7 +2461,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{
                     .path = ZigString.Slice.fromUTF8NeverFree(
                         store.data.file.pathlike.path.slice(),
-                    ).clone(
+                    ).cloneIfNeeded(
                         bun.default_allocator,
                     ) catch bun.outOfMemory(),
                 };
@@ -2704,7 +2704,7 @@ pub fn getWriter(
             break :brk .{
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
-                ).clone(
+                ).cloneIfNeeded(
                     globalThis.allocator(),
                 ) catch bun.outOfMemory(),
             };

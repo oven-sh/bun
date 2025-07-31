@@ -6,10 +6,22 @@ sourcemap: *bun.sourcemap.ParsedSourceMap,
 sources: []bun.String = &.{},
 names: []bun.String = &.{},
 
+/// TODO: when we implement --enable-source-map CLI flag, set this to true.
+pub var @"--enable-source-maps" = false;
+
 fn findSourceMap(
     globalObject: *JSGlobalObject,
     callFrame: *CallFrame,
 ) bun.JSError!JSValue {
+    // Node.js doesn't enable source maps by default.
+    // In Bun, we do use them for almost all files since we transpile almost all files
+    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
+    // This causes Next.js to emit errors like the below on start:
+    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
+    if (!@"--enable-source-maps") {
+        return .js_undefined;
+    }
+
     const source_url_value = callFrame.argument(0);
     if (!source_url_value.isString()) {
         return .js_undefined;

@@ -702,7 +702,7 @@ pub const Signal = struct {
 pub fn HTTPServerWritable(comptime ssl: bool) type {
     return struct {
         const UWSResponse = uws.NewApp(ssl).Response;
-        res: *UWSResponse,
+        res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,
         offset: Blob.SizeType = 0,
@@ -774,22 +774,26 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             bun.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
-            if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
+            const res = this.res orelse {
+                return false;
+            };
+
+            if (this.requested_end and !res.state().isHttpWriteCalled()) {
                 this.handleFirstWriteIfNecessary();
-                const success = this.res.tryEnd(buf, this.end_len, false);
+                const success = res.tryEnd(buf, this.end_len, false);
                 if (success) {
                     this.has_backpressure = false;
                     this.handleWrote(this.end_len);
-                } else {
+                } else if (this.res != null) {
                     this.has_backpressure = true;
-                    this.res.onWritable(*@This(), onWritable, this);
+                    res.onWritable(*@This(), onWritable, this);
                 }
                 return success;
             }
             // clean this so we know when its relevant or not
             this.end_len = 0;
             // we clear the onWritable handler so uWS can handle the backpressure for us
-            this.res.clearOnWritable();
+            res.clearOnWritable();
             this.handleFirstWriteIfNecessary();
             // uWebSockets lacks a tryWrite() function
             // This means that backpressure will be handled by appending to an "infinite" memory buffer
@@ -797,10 +801,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // so in this scenario, we just append to the buffer
             // and report success
             if (this.requested_end) {
-                this.res.end(buf, false);
+                res.end(buf, false);
                 this.has_backpressure = false;
             } else {
-                this.has_backpressure = this.res.write(buf) == .backpressure;
+                this.has_backpressure = res.write(buf) == .backpressure;
             }
             this.handleWrote(buf.len);
             return true;
@@ -821,7 +825,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // onWritable reset backpressure state to allow flushing
             this.has_backpressure = false;
             if (this.aborted) {
-                this.res.clearOnWritable();
                 this.signal.close(null);
                 this.flushPromise();
                 this.finalize();
@@ -837,7 +840,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // if we have nothing to write, we are done
             if (chunk.len == 0) {
                 if (this.done) {
-                    this.res.clearOnWritable();
                     this.signal.close(null);
                     this.flushPromise();
                     this.finalize();
@@ -851,7 +853,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 total_written = chunk.len;
 
                 if (this.requested_end) {
-                    this.res.clearOnWritable();
+                    if (this.res) |res| {
+                        res.clearOnWritable();
+                    }
                     this.signal.close(null);
                     this.flushPromise();
                     this.finalize();
@@ -874,11 +878,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
-            if (this.aborted or this.res.hasResponded()) {
+        pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
+            if (this.aborted or this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
-                return .{ .result = {} };
+                return .success;
             }
 
             this.wrote = 0;
@@ -917,10 +921,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             log("start({d})", .{this.highWaterMark});
 
-            return .{ .result = {} };
+            return .success;
         }
 
-        fn flushFromJSNoWait(this: *@This()) jsc.Maybe(JSValue) {
+        fn flushFromJSNoWait(this: *@This()) bun.sys.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
 
             return .{ .result = JSValue.jsNumber(this.flushNoWait()) };
@@ -944,7 +948,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return 0;
         }
 
-        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) jsc.Maybe(JSValue) {
+        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
             log("flushFromJS({any})", .{wait});
             this.unregisterAutoFlusher();
 
@@ -977,20 +981,20 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = promise_value };
         }
 
-        pub fn flush(this: *@This()) jsc.Maybe(void) {
+        pub fn flush(this: *@This()) bun.sys.Maybe(void) {
             log("flush()", .{});
             this.unregisterAutoFlusher();
 
             if (!this.hasBackpressure() or this.done) {
-                return .{ .result = {} };
+                return .success;
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn write(this: *@This(), data: Result) Result.Writable {
@@ -1040,7 +1044,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .owned = 0 };
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(null);
                 this.markDone();
                 return .{ .done = {} };
@@ -1098,7 +1102,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .owned = 0 };
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(null);
                 this.markDone();
                 return .{ .done = {} };
@@ -1131,18 +1135,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         // In this case, it's always an error
-        pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
+        pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
             log("end({any})", .{err});
 
             if (this.requested_end) {
-                return .{ .result = {} };
+                return .success;
             }
 
-            if (this.done or this.res.hasResponded()) {
+            if (this.done or this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(err);
                 this.markDone();
                 this.finalize();
-                return .{ .result = {} };
+                return .success;
             }
 
             this.requested_end = true;
@@ -1155,19 +1159,19 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 // we do not close the stream here
                 // this.res.endStream(false);
                 this.finalize();
-                return .{ .result = {} };
+                return .success;
             }
-            return .{ .result = {} };
+            return .success;
         }
 
-        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) jsc.Maybe(JSValue) {
+        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
             log("endFromJS()", .{});
 
             if (this.requested_end) {
                 return .{ .result = jsc.JSValue.jsNumber(0) };
             }
 
-            if (this.done or this.res.hasResponded()) {
+            if (this.done or this.res == null or this.res.?.hasResponded()) {
                 this.requested_end = true;
                 this.signal.close(null);
                 this.markDone();
@@ -1188,7 +1192,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     return .{ .result = value };
                 }
             } else {
-                this.res.end("", false);
+                if (this.res) |res| {
+                    res.end("", false);
+                }
             }
 
             this.markDone();
@@ -1206,6 +1212,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn abort(this: *@This()) void {
             log("onAborted()", .{});
             this.done = true;
+            this.res = null;
             this.unregisterAutoFlusher();
 
             this.aborted = true;
@@ -1222,8 +1229,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn registerAutoFlusher(this: *@This()) void {
+            const res = this.res orelse return;
             // if we enqueue data we should reset the timeout
-            this.res.resetTimeout();
+            res.resetTimeout();
             if (!this.auto_flusher.registered)
                 AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
         }
@@ -1268,14 +1276,19 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("finalize()", .{});
             if (!this.done) {
                 this.unregisterAutoFlusher();
-                // make sure we detached the handlers before flushing inside the finalize function
-                this.res.clearOnWritable();
-                this.res.clearAborted();
-                this.res.clearOnData();
+                if (this.res) |res| {
+                    // make sure we detached the handlers before flushing inside the finalize function
+                    res.clearOnWritable();
+                    res.clearAborted();
+                    res.clearOnData();
+                }
                 _ = this.flushNoWait();
                 this.done = true;
-                // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                this.res.endStream(false);
+
+                if (this.res) |res| {
+                    // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
+                    res.endStream(false);
+                }
             }
 
             if (comptime !FeatureFlags.http_buffer_pooling) {
@@ -1353,9 +1366,9 @@ pub const NetworkSink = struct {
         return null;
     }
 
-    pub fn start(this: *@This(), stream_start: Start) jsc.Maybe(void) {
+    pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
         if (this.ended) {
-            return .{ .result = {} };
+            return .success;
         }
 
         switch (stream_start) {
@@ -1368,7 +1381,7 @@ pub const NetworkSink = struct {
         }
         this.ended = false;
         this.signal.start();
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn connect(this: *@This(), signal: Signal) void {
@@ -1398,11 +1411,11 @@ pub const NetworkSink = struct {
         }
     }
 
-    pub fn flush(_: *@This()) jsc.Maybe(void) {
-        return .{ .result = {} };
+    pub fn flush(_: *@This()) bun.sys.Maybe(void) {
+        return .success;
     }
 
-    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) jsc.Maybe(JSValue) {
+    pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) bun.sys.Maybe(JSValue) {
         // still waiting for more data tobe flushed
         if (this.flushPromise.hasValue()) {
             return .{ .result = this.flushPromise.value() };
@@ -1483,9 +1496,9 @@ pub const NetworkSink = struct {
         return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
     }
 
-    pub fn end(this: *@This(), err: ?Syscall.Error) jsc.Maybe(void) {
+    pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
         if (this.ended) {
-            return .{ .result = {} };
+            return .success;
         }
 
         // send EOF
@@ -1496,9 +1509,9 @@ pub const NetworkSink = struct {
         }
 
         this.signal.close(err);
-        return .{ .result = {} };
+        return .success;
     }
-    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) jsc.Maybe(JSValue) {
+    pub fn endFromJS(this: *@This(), _: *JSGlobalObject) bun.sys.Maybe(JSValue) {
         _ = this.end(null);
         if (this.endPromise.hasValue()) {
             // we are already waiting for the end

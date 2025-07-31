@@ -20,7 +20,7 @@
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_crash_in_gc(napi_env);
+extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Napi {
@@ -47,7 +47,11 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
-#define NAPI_ABORT(message) Bun__crashHandler(message "", sizeof(message "") - 1)
+#define NAPI_ABORT(message)                                    \
+    do {                                                       \
+        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__crashHandler(message "", sizeof(message "") - 1); \
+    } while (0)
 
 #define NAPI_PERISH(...)                                                      \
     do {                                                                      \

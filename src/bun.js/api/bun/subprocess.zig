@@ -671,9 +671,9 @@ pub fn hasKilled(this: *const Subprocess) bool {
     return this.process.hasKilled();
 }
 
-pub fn tryKill(this: *Subprocess, sig: SignalCode) jsc.Maybe(void) {
+pub fn tryKill(this: *Subprocess, sig: SignalCode) bun.sys.Maybe(void) {
     if (this.hasExited()) {
-        return .{ .result = {} };
+        return .success;
     }
     return this.process.kill(@intFromEnum(sig));
 }
@@ -873,7 +873,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             return this;
         }
 
-        pub fn start(this: *This) jsc.Maybe(void) {
+        pub fn start(this: *This) bun.sys.Maybe(void) {
             log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
             this.ref();
             this.buffer = this.source.slice();
@@ -890,7 +890,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
                         poll.flags.insert(.socket);
                     }
 
-                    return .{ .result = {} };
+                    return .success;
                 },
             }
         }
@@ -996,7 +996,7 @@ pub const PipeReader = struct {
             this.reader.read();
     }
 
-    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop) jsc.Maybe(void) {
+    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop) bun.sys.Maybe(void) {
         this.ref();
         this.process = process;
         this.event_loop = event_loop;
@@ -1018,7 +1018,7 @@ pub const PipeReader = struct {
                     poll.flags.insert(.nonblocking);
                 }
 
-                return .{ .result = {} };
+                return .success;
             },
         }
     }

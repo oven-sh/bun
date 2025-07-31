@@ -122,7 +122,7 @@ pub const WriteFile = struct {
         const fd = this.opened_fd;
         bun.assert(fd != invalid_fd);
 
-        const result: jsc.Maybe(usize) =
+        const result: bun.sys.Maybe(usize) =
             // We do not use pwrite() because the file may not be
             // seekable (such as stdout)
             //
@@ -502,7 +502,7 @@ pub const WriteFileWindows = struct {
         this.open();
     }
 
-    fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: jsc.Maybe(void)) void {
+    fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: bun.sys.Maybe(void)) void {
         log("mkdirp complete", .{});
         bun.assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;

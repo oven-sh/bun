@@ -375,7 +375,7 @@ pub fn parse_declaration_impl(
         declarations.append(input.allocator(), property) catch bun.outOfMemory();
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const DeclarationHandler = struct {

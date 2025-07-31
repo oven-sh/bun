@@ -23,16 +23,6 @@ pub const Scripts = extern struct {
         cwd: stringZ,
         package_name: string,
 
-        pub fn initPreinstall(allocator: std.mem.Allocator, preinstall: string, cwd: string, package_name: string) @This() {
-            return .{
-                .items = .{ allocator.dupe(u8, preinstall) catch bun.outOfMemory(), null, null, null, null, null },
-                .first_index = 0,
-                .total = 1,
-                .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
-                .package_name = allocator.dupe(u8, package_name) catch bun.outOfMemory(),
-            };
-        }
-
         pub fn printScripts(
             this: Package.Scripts.List,
             resolution: *const Resolution,

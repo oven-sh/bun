@@ -104,6 +104,7 @@ pub fn isExiting() bool {
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
+    _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
 
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();

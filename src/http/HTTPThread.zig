@@ -196,7 +196,7 @@ pub fn init(opts: *const InitOpts) void {
 pub fn onStart(opts: InitOpts) void {
     Output.Source.configureNamedThread("HTTP Client");
     bun.http.default_arena = Arena.init() catch unreachable;
-    bun.http.default_allocator = bun.http.default_arena.allocator();
+    bun.http.default_allocator = bun.default_allocator;
 
     const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 

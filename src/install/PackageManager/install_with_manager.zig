@@ -1000,79 +1000,121 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
     if (manager.update_requests.len == 0) return;
 
+    var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
+    defer pkg_dedupe.deinit();
+
+    var ids_queue: std.fifo.LinearFifo(struct { PackageID, DependencyID }, .Dynamic) = .init(bun.default_allocator);
+    defer ids_queue.deinit();
+
+    const pkgs = manager.lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_dependencies = pkgs.items(.dependencies);
+
+    for (manager.update_requests) |req| {
+        for (0..pkgs.len) |_update_pkg_id| {
+            const update_pkg_id: PackageID = @intCast(_update_pkg_id);
+
+            if (update_pkg_id != req.package_id) {
+                continue;
+            }
+
+            if (pkg_resolutions[update_pkg_id].tag != .npm) {
+                continue;
+            }
+
+            var update_dep_id: DependencyID = invalid_dependency_id;
+
+            for (0..pkgs.len) |_pkg_id| update_dep_id: {
+                const pkg_id: PackageID = @intCast(_pkg_id);
+
+                const pkg_res = pkg_resolutions[pkg_id];
+
+                if (pkg_res.tag != .root and pkg_res.tag != .workspace) {
+                    continue;
+                }
+
+                const pkg_deps = pkg_dependencies[pkg_id];
+                for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+                    const dep_id: DependencyID = @intCast(_dep_id);
+
+                    const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+                    if (dep_pkg_id != update_pkg_id) {
+                        continue;
+                    }
+
+                    update_dep_id = dep_id;
+                    break :update_dep_id;
+                }
+            }
+
+            if (update_dep_id == invalid_dependency_id) {
+                continue;
+            }
+
+            if ((try pkg_dedupe.getOrPut(update_pkg_id)).found_existing) {
+                continue;
+            }
+
+            try ids_queue.writeItem(.{ update_pkg_id, update_dep_id });
+        }
+    }
+
     var json_buf = std.ArrayList(u8).init(manager.allocator);
     var writer = json_buf.writer();
     defer json_buf.deinit();
 
     const string_buf = manager.lockfile.buffers.string_bytes.items;
-    const packages = manager.lockfile.packages.slice();
-    const names = packages.items(.name);
-    const resolutions = packages.items(.resolution);
 
     try writer.writeAll("[\n");
+
     var first = true;
 
-    var update_request_map = std.AutoHashMap(PackageID, *PackageManager.UpdateRequest).init(manager.allocator);
-    defer update_request_map.deinit();
+    while (ids_queue.readItem()) |ids| {
+        const pkg_id, const dep_id = ids;
 
-    for (manager.update_requests) |*update| {
-        if (update.package_id != invalid_package_id) {
-            try update_request_map.put(update.package_id, update);
-        }
-    }
+        const pkg_name = pkg_names[pkg_id];
+        const pkg_res = pkg_resolutions[pkg_id];
+        const dep_version = manager.lockfile.buffers.dependencies.items[dep_id].version;
 
-    for (0..packages.len) |i| {
-        const package_id: PackageID = @intCast(i);
-        const resolution = resolutions[package_id];
-
-        switch (resolution.tag) {
-            .root, .workspace, .uninitialized => continue,
-            else => {},
-        }
-
-        const name = names[package_id].slice(string_buf);
-
-        var version_buf: [256]u8 = undefined;
-        const version = switch (resolution.tag) {
-            .npm => std.fmt.bufPrint(&version_buf, "{}", .{resolution.value.npm.version.fmt(string_buf)}) catch "",
-            .local_tarball => resolution.value.local_tarball.slice(string_buf),
-            .remote_tarball => resolution.value.remote_tarball.slice(string_buf),
-            .folder => resolution.value.folder.slice(string_buf),
-            .git => blk: {
-                var stream = std.io.fixedBufferStream(&version_buf);
-                resolution.value.git.formatAs("git+", string_buf, "", .{}, stream.writer()) catch break :blk "";
-                break :blk stream.getWritten();
-            },
-            .github => blk: {
-                var stream = std.io.fixedBufferStream(&version_buf);
-                resolution.value.github.formatAs("github:", string_buf, "", .{}, stream.writer()) catch break :blk "";
-                break :blk stream.getWritten();
-            },
-            .workspace => "workspace",
-            .symlink => "link",
-            else => continue,
-        };
-
-        const requested_range = if (update_request_map.get(package_id)) |update|
-            if (update.version.tag == .uninitialized or update.version.literal.isEmpty())
-                "latest"
-            else
-                update.version.literal.slice(update.version_buf)
-        else
-            version;
+        try writer.print(
+            \\  {{
+            \\    "name": {},
+            \\    "version": {s},
+            \\    "requestedRange": {},
+            \\    "registryUrl": {}
+            \\  }}
+        , .{ bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}), pkg_res.value.npm.version.fmt(string_buf), bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}), bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}) });
 
         if (!first) try writer.writeAll(",\n");
         first = false;
 
-        try writer.print(
-            \\  {{
-            \\    "name": "{s}",
-            \\    "version": "{s}",
-            \\    "requestedRange": "{s}",
-            \\    "registryUrl": "{s}"
-            \\  }}
-        , .{ name, version, requested_range, manager.options.scope.url.href });
+        // then go through it's dependencies and queue them up if
+        // valid and first time we've seen them
+        const pkg_deps = pkg_dependencies[pkg_id];
+
+        for (pkg_deps.begin()..pkg_deps.end()) |_next_dep_id| {
+            const next_dep_id: DependencyID = @intCast(_next_dep_id);
+
+            const next_pkg_id = manager.lockfile.buffers.resolutions.items[next_dep_id];
+            if (next_pkg_id == invalid_package_id) {
+                continue;
+            }
+
+            const next_pkg_res = pkg_resolutions[next_pkg_id];
+            if (next_pkg_res.tag != .npm) {
+                continue;
+            }
+
+            if ((try pkg_dedupe.getOrPut(next_pkg_id)).found_existing) {
+                continue;
+            }
+
+            try ids_queue.writeItem(.{ next_pkg_id, next_dep_id });
+        }
     }
+
     try writer.writeAll("\n]");
 
     var code_buf = std.ArrayList(u8).init(manager.allocator);
@@ -1337,9 +1379,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                 Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
                 Global.exit(1);
             } else if (has_warn) {
-                const is_stdin_tty = Output.bun_stdio_tty[0] != 0;
-                const is_stdout_tty = Output.enable_ansi_colors_stdout;
-                const can_prompt = is_stdin_tty and is_stdout_tty;
+                const can_prompt = Output.enable_ansi_colors_stdout;
 
                 if (can_prompt) {
                     Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
@@ -1460,6 +1500,7 @@ const PatchTask = bun.install.PatchTask;
 const Resolution = bun.install.Resolution;
 const TextLockfile = bun.install.TextLockfile;
 const invalid_package_id = bun.install.invalid_package_id;
+const invalid_dependency_id = bun.install.invalid_dependency_id;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

@@ -21,7 +21,7 @@ function test(
   name: string,
   options: {
     testTimeout?: number;
-    scanner: Bun.Install.Security.Provider["scan"] | string;
+    scanner: Bun.Security.Provider["scan"] | string;
     fails?: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
     expectedExitCode?: number;
@@ -662,7 +662,7 @@ describe("Workspaces", () => {
       for (const pkg of packages) {
         console.log(`- ${pkg.name}@${pkg.version} (${pkg.requestedRange || "direct"})`);
         // Check if this package is from a workspace
-        if (!pkg.registryUrl || pkg.registryUrl === "") {
+        if (!pkg.tarball || pkg.tarball === "") {
           console.log("  ^ This appears to be a workspace package");
         }
       }
@@ -1175,7 +1175,7 @@ describe("Complex Scenarios", () => {
 
   test("scanner with conditional vulnerability detection", {
     scanner: async ({ packages }) => {
-      const advisories = [];
+      const advisories: Bun.Security.Advisory[] = [];
 
       // Flag old versions
       const oldPackages = packages.filter(p => p.version && p.version.startsWith("0."));
@@ -1219,108 +1219,3 @@ describe("Complex Scenarios", () => {
     },
   });
 });
-
-// describe("Transitive Dependencies", () => {
-//   test("scanner receives direct and transitive dependencies", {
-//     scanner: async ({ packages }) => {
-//       for (const pkg of packages) {
-//         console.log("Scanning:", pkg.name);
-//       }
-
-//       return [];
-//     },
-//     packages: ["bar"],
-//     expectedExitCode: 0,
-//     expect: ({ out }) => {
-//       expect(out).toContain("Scanning: baz");
-//       expect(out).toContain("Scanning: bar");
-//     },
-//   });
-
-//   test("scanner receives all metadata for transitive dependencies", {
-//     scanner: async ({ packages }) => {
-//       console.log(JSON.stringify(packages, null, 2));
-//       return [];
-//     },
-//     packages: ["@barn/moo"],
-//     expectedExitCode: 0,
-//     expect: ({ out }) => {
-//       // Verify scanner output contains transitive dep info
-//       expect(out).toContain('"name":"bar"');
-//       expect(out).toContain('"version":"0.0.2"');
-//       expect(out).toContain('"name":"baz"');
-//       expect(out).toContain('"registryUrl"');
-//     },
-//   });
-
-//   test("scanner can flag vulnerabilities in transitive dependencies", {
-//     scanner: async ({ packages }) => {
-//       const transDep = packages.find(p => p.name === "bar");
-//       if (transDep) {
-//         return [
-//           {
-//             package: transDep.name,
-//             description: "Vulnerability in transitive dependency bar",
-//             level: "fatal",
-//             url: "https://example.com/transitive-vuln",
-//           },
-//         ];
-//       }
-//       return [];
-//     },
-//     packages: ["@barn/moo"],
-//     fails: true,
-//     expect: ({ out }) => {
-//       expect(out).toContain("FATAL: bar");
-//       expect(out).toContain("Vulnerability in transitive dependency bar");
-//     },
-//   });
-
-//   test("scanner handles multiple dependency trees", {
-//     scanner: async ({ packages }) => {
-//       console.log(`Received ${packages.length} packages:`);
-//       for (const pkg of packages) {
-//         console.log(`- ${pkg.name}@${pkg.version}`);
-//       }
-//       return [];
-//     },
-//     packages: ["@barn/moo", "qux"],
-//     expectedExitCode: 0,
-//     expect: ({ out }) => {
-//       // Installing both @barn/moo and qux
-//       // Should get: @barn/moo -> bar, baz, plus qux
-//       expect(out).toContain("- @barn/moo@");
-//       expect(out).toContain("- bar@0.0.2");
-//       expect(out).toContain("- baz@");
-//       expect(out).toContain("- qux@0.0.2");
-//     },
-//   });
-
-//   test("scanner receives peer dependencies", {
-//     scanner: async ({ packages }) => {
-//       console.log("Packages with peer deps:");
-//       for (const pkg of packages) {
-//         console.log(`- ${pkg.name}@${pkg.version}`);
-//       }
-//       return [];
-//     },
-//     packages: ["boba"],
-//     expectedExitCode: 0,
-//     expect: ({ out }) => {
-//       expect(out).toContain("- boba@0.0.2");
-//       expect(out).toContain("- peer@");
-//     },
-//   });
-
-//   test("scanner counts all packages including transitive", {
-//     scanner: async ({ packages }) => {
-//       console.log(`Total packages scanned: ${packages.length}`);
-//       return [];
-//     },
-//     packages: ["@barn/moo"],
-//     expectedExitCode: 0,
-//     expect: ({ out }) => {
-//       expect(out).toContain("Total packages scanned: 3");
-//     },
-//   });
-// });

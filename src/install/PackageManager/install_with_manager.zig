@@ -1081,11 +1081,8 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     var first = true;
 
-    var package_count: usize = 0;
-
     while (ids_queue.readItem()) |ids| {
         const pkg_id, const dep_id = ids;
-        package_count += 1;
 
         const pkg_name = pkg_names[pkg_id];
         const pkg_res = pkg_resolutions[pkg_id];

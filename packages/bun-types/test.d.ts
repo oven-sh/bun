@@ -2183,5 +2183,5 @@ declare module "bun:test" {
     export type UnknownFunction = (...args: unknown[]) => unknown;
   }
 
-  export const expectTypeOf: typeof import("./expect-typeof/index").expectTypeOf;
+  export const expectTypeOf: typeof import("./expect-type/index").expectTypeOf;
 }

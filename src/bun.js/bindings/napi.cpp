@@ -92,19 +92,6 @@ using namespace Zig;
     auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env)
 
-// Every NAPI function should use this at the start. It does the following:
-// - if NAPI_VERBOSE is 1, log that the function was called
-// - if env is nullptr, return napi_invalid_arg
-// - if there is a pending exception, return napi_pending_exception
-// No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    /* You should not use this throw scope directly -- if you need */   \
-    /* to throw or clear exceptions, make your own scope */             \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
-
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
 #define NAPI_PREAMBLE_NO_THROW_SCOPE(_env) \

@@ -67,6 +67,8 @@ import {
   uploadArtifact,
 } from "./utils.mjs";
 
+process.on("SIGTRAP", () => {});
+
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");

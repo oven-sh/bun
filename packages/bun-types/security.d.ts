@@ -77,7 +77,7 @@ declare module "bun" {
       description: string | null;
     }
 
-    export type Provider = {
+    export interface Provider {
       /**
        * This is the version of the provider implementation. It may change in
        * future versions, so we will use this version to discriminate between
@@ -104,6 +104,6 @@ declare module "bun" {
        * @returns A list of advisories.
        */
       scan: (info: { packages: Package[] }) => Promise<Advisory[]>;
-    };
+    }
   }
 }

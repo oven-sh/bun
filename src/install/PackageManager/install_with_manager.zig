@@ -1621,7 +1621,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
                 var reader = buffered.reader();
 
                 const first_byte = reader.readByte() catch {
-                    Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                    Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
                     Global.exit(1);
                 };
 
@@ -1656,14 +1656,14 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
                 };
 
                 if (!should_continue) {
-                    Output.pretty("\n<red>Installation cancelled.<r>\n\n", .{});
+                    Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
                     Global.exit(1);
                 }
 
                 Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
             } else {
                 Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
-                Output.pretty("<red>Installation cancelled.<r>\n\n", .{});
+                Output.pretty("<red>Installation cancelled.<r>\n", .{});
                 Global.exit(1);
             }
         }

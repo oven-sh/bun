@@ -1078,7 +1078,7 @@ fn advance(this: *PostgresSQLConnection) void {
     defer {
         while (this.requests.readableLength() > 0) {
             const result = this.requests.peekItem(0);
-            // An item maybe in the success or failed state and still be inside the queue (see deinit later comments)
+            // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             switch (result.status) {
                 .success => {

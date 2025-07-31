@@ -725,40 +725,31 @@ export default [
         length: 1,
       },
       parameters: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       constructorParameters: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       thisParameter: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       instance: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       returns: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       resolves: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       items: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       guards: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       asserts: {
-        fn: "fnOneArgumentReturnsVoid",
-        length: 1,
+        getter: "getReturnsExpectTypeOf",
       },
       toMatchObjectType: {
         fn: "fnOneArgumentReturnsVoid",

@@ -1337,9 +1337,11 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
                 Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n\n", .{});
                 Global.exit(1);
             } else if (has_warn) {
-                const is_tty = Output.enable_ansi_colors_stdout;
+                const is_stdin_tty = Output.bun_stdio_tty[0] != 0;
+                const is_stdout_tty = Output.enable_ansi_colors_stdout;
+                const can_prompt = is_stdin_tty and is_stdout_tty;
 
-                if (is_tty) {
+                if (can_prompt) {
                     Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
                     Output.flush();
 

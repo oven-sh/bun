@@ -294,7 +294,10 @@ describe("Script", () => {
   test("can throw without new", () => {
     // @ts-ignore
     const result = () => Script();
-    expect(result).toThrow({ name: "TypeError", message: "Class constructor Script cannot be invoked without 'new'" });
+    expect(result).toThrow({
+      name: "TypeError",
+      message: "Class constructor Script cannot be invoked without 'new'",
+    });
   });
 });
 
@@ -353,12 +356,18 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test("can throw a syntax error", () => {
     const context = createContext({});
     const result = () => fn("!?", context);
-    expect(result).toThrow({ name: "SyntaxError", message: "Unexpected token '?'" });
+    expect(result).toThrow({
+      name: "SyntaxError",
+      message: "Unexpected token '?'",
+    });
   });
   test("can throw an error", () => {
     const context = createContext({});
     const result = () => fn("throw new TypeError('Oops!');", context);
-    expect(result).toThrow({ name: "TypeError", message: "Oops!" });
+    expect(result).toThrow({
+      name: "TypeError",
+      message: "Oops!",
+    });
   });
   test("can resolve a promise", async () => {
     const context = createContext({});
@@ -386,12 +395,17 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   });
   if (isIsolated) {
     test("can access context", () => {
-      const context = createContext({ foo: "bar", fizz: (n: number) => "buzz".repeat(n) });
+      const context = createContext({
+        foo: "bar",
+        fizz: (n: number) => "buzz".repeat(n),
+      });
       const result = fn("foo + fizz(2);", context);
       expect(result).toBe("barbuzzbuzz");
     });
     test("can modify context", () => {
-      const context = createContext({ baz: ["a", "b", "c"] });
+      const context = createContext({
+        baz: ["a", "b", "c"],
+      });
       const result = fn("foo = 'baz'; delete baz[0];", context);
       expect(context.foo).toBe("baz");
       expect(context.baz).toEqual([undefined, "b", "c"]);
@@ -417,7 +431,9 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     });
     test("can specify a filename", () => {
       const context = createContext({});
-      const result = fn("new Error().stack;", context, { filename: "foo.js" });
+      const result = fn("new Error().stack;", context, {
+        filename: "foo.js",
+      });
       expect(result).toContain("foo.js");
     });
   } else {
@@ -476,12 +492,17 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       }
     });
     test.skip("can specify an error on SIGINT", () => {
-      const result = () => fn("process.kill(process.pid, 'SIGINT');", { breakOnSigint: true });
+      const result = () =>
+        fn("process.kill(process.pid, 'SIGINT');", {
+          breakOnSigint: true,
+        });
       // TODO: process.kill() is not implemented
       expect(result).toThrow();
     });
     test("can specify a filename", () => {
-      const result = fn("new Error().stack;", { filename: "foo.js" });
+      const result = fn("new Error().stack;", {
+        filename: "foo.js",
+      });
       expect(result).toContain("foo.js");
     });
     test.each([
@@ -566,7 +587,12 @@ test("can extend generated globals & WebCore globals", async () => {
   const vm = require("vm");
 
   for (let j = 0; j < 100; j++) {
-    const context = createContext({ URL, urlProto: URL.prototype, console, Response });
+    const context = createContext({
+      URL,
+      urlProto: URL.prototype,
+      console,
+      Response,
+    });
 
     const code = /*js*/ `
 class ExtendedDOMGlobal extends URL {
@@ -702,18 +728,24 @@ test("can't use export syntax in vm.Script", () => {
 
 test("rejects invalid bytecode", () => {
   const cachedData = Buffer.from("fhqwhgads");
-  const script = new Script("1 + 1;", { cachedData });
+  const script = new Script("1 + 1;", {
+    cachedData,
+  });
   expect(script.cachedDataRejected).toBeTrue();
   expect(script.runInThisContext()).toBe(2);
 });
 
 test("accepts valid bytecode", () => {
   const source = "1 + 1;";
-  const firstScript = new Script(source, { produceCachedData: false });
+  const firstScript = new Script(source, {
+    produceCachedData: false,
+  });
   const cachedData = firstScript.createCachedData();
   expect(cachedData).toBeDefined();
   expect(cachedData).toBeInstanceOf(Buffer);
-  const secondScript = new Script(source, { cachedData });
+  const secondScript = new Script(source, {
+    cachedData,
+  });
   expect(secondScript.cachedDataRejected).toBeFalse();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(2);
@@ -722,7 +754,9 @@ test("accepts valid bytecode", () => {
 test("can't use bytecode from a different script", () => {
   const firstScript = new Script("1 + 1;");
   const cachedData = firstScript.createCachedData();
-  const secondScript = new Script("2 + 2;", { cachedData });
+  const secondScript = new Script("2 + 2;", {
+    cachedData,
+  });
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);

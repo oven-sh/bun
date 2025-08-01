@@ -69,6 +69,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+    invalid_ciphers,
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
@@ -79,6 +80,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
+            .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
         };
     }
 };

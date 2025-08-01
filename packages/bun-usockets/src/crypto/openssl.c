@@ -45,7 +45,7 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs_header.h"
-
+#include "./default_ciphers.h"
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
   unsigned int ssl_read_input_length;
@@ -848,12 +848,10 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
     if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+            ssl_context,DEFAULT_CIPHER_LIST) != 1) {
+
+            
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -861,8 +859,16 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   if (options.ssl_ciphers) {
     if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      unsigned long ssl_err = ERR_get_error(); 
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 
@@ -1288,12 +1294,9 @@ SSL_CTX *create_ssl_context_from_bun_options(
       return NULL;
     }
 
-    /* OWASP Cipher String 'A+'
-     * (https://www.owasp.org/index.php/TLS_Cipher_String_Cheat_Sheet) */
+
     if (SSL_CTX_set_cipher_list(
-            ssl_context,
-            "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
-            "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
+              ssl_context,DEFAULT_CIPHER_LIST) != 1) {
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1301,8 +1304,18 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.ssl_ciphers) {
     if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      unsigned long ssl_err = ERR_get_error(); 
+
+      if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
+        // TLS1.2 ciphers were deliberately cleared, so don't consider
+        // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
+        // works). If the user actually sets a value (like "no-such-cipher"), then
+        // that's actually an error.
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+      ERR_clear_error();
     }
   }
 

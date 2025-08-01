@@ -57,10 +57,14 @@ pub fn NewReaderWrap(
         pub fn int(this: @This(), comptime Int: type) !Int {
             var data = try this.read(@sizeOf((Int)));
             defer data.deinit();
-            if (comptime Int == u8) {
-                return @as(Int, data.slice()[0]);
+            const slice = data.slice();
+            if (slice.len < @sizeOf(Int)) {
+                return error.ShortRead;
             }
-            return @byteSwap(@as(Int, @bitCast(data.slice()[0..@sizeOf(Int)].*)));
+            if (comptime Int == u8) {
+                return @as(Int, slice[0]);
+            }
+            return @byteSwap(@as(Int, @bitCast(slice[0..@sizeOf(Int)].*)));
         }
 
         pub fn peekInt(this: @This(), comptime Int: type) ?Int {

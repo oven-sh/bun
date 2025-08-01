@@ -1802,18 +1802,14 @@ inline fn createScope(
     comptime tag: Tag,
 ) bun.JSError!JSValue {
     const this = callframe.this();
-    const arguments = callframe.arguments_old(3);
-    const args = arguments.slice();
 
-    if (args.len == 0) {
+    if (callframe.argumentsCount() == 0) {
         return globalThis.throwPretty("{s} expects a description or function", .{signature});
     }
 
-    var description = args[0];
-    var function = if (args.len > 1) args[1] else .zero;
-    var options = if (args.len > 2) args[2] else .zero;
+    var description, var function, var options = callframe.argumentsAsArray(3);
 
-    if (args.len == 1 and description.isFunction()) {
+    if (description.isFunction()) {
         function = description;
         description = .zero;
     } else {
@@ -1828,9 +1824,8 @@ inline fn createScope(
         }
 
         // Handle the case where options are the second parameter and function is the third
-        if (args.len >= 3 and !function.isFunction() and function.isObject() and args[2].isFunction()) {
-            options = function;
-            function = args[2];
+        if (!function.isFunction()) {
+            std.mem.swap(JSValue, &function, &options);
         }
 
         if (!function.isFunction()) {
@@ -1872,7 +1867,7 @@ inline fn createScope(
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try options.coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {

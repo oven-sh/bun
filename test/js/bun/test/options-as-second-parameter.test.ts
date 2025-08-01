@@ -20,10 +20,16 @@ describe("test() parameter order", () => {
     expect(true).toBe(true);
   });
 
+  test("vitest compatability syntax - number as second parameter", 500, () => {
+    expect(true).toBe(true);
+  });
+
   // Test other methods work with vitest compatability syntax
   test.skip("skip with vitest compatability syntax", { timeout: 1000 }, () => {
     expect(true).toBe(true);
   });
 
   test.todo("todo with vitest-compatible syntax", { timeout: 1000 });
+
+  test.skip("skip with options but no function", 300);
 });

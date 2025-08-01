@@ -14,6 +14,7 @@ fetch("https://example.com", { body: Buffer.from("buffer content") });
 fetch("https://example.com", { body: Bun.file("path") });
 fetch("https://example.com", { body: new Response("bun").body });
 fetch("https://example.com", { body: Bun.s3.file("hey") });
+fetch("https://example.com", { body: Bun.s3.file("hey").stream() });
 
 async function* asyncGenerator() {
   yield "chunk1";

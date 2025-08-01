@@ -307,17 +307,17 @@ describe("@types/bun integration test", () => {
     expect(diagnostics).toEqual([
       {
         code: 2769,
-        line: "fetch.ts:22:32",
+        line: "fetch.ts:23:32",
         message: "No overload matches this call.",
       },
       {
         code: 2769,
-        line: "fetch.ts:30:32",
+        line: "fetch.ts:31:32",
         message: "No overload matches this call.",
       },
       {
         code: 2769,
-        line: "fetch.ts:166:36",
+        line: "fetch.ts:167:36",
         message: "No overload matches this call.",
       },
       {

@@ -140,6 +140,14 @@ async function diagnose(
   const program = service.getProgram();
   if (!program) throw new Error("Failed to create program");
 
+  function getLine(diagnostic: ts.Diagnostic) {
+    if (!diagnostic.file) return null;
+    if (diagnostic.start === undefined) return null;
+
+    const lineAndCharacter = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
+  }
+
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
     .concat(program.getOptionsDiagnostics())
@@ -148,8 +156,7 @@ async function diagnose(
     .concat(program.getDeclarationDiagnostics())
     .concat(program.emit().diagnostics)
     .map(diagnostic => ({
-      category: ts.DiagnosticCategory[diagnostic.category],
-      file: diagnostic.file?.fileName ? relative(fixtureDir, diagnostic.file?.fileName) : null,
+      line: getLine(diagnostic),
       message: typeof diagnostic.messageText === "string" ? diagnostic.messageText : diagnostic.messageText.messageText,
       code: diagnostic.code,
     }));

@@ -10,11 +10,11 @@
   },
   "files": [
     "./*.d.ts",
-    "vendor/**/*.d.ts",
-    "docs/**/*.md",
-    "docs/*.md",
-    "CLAUDE.md",
-    "README.md"
+    "./vendor/**/*.d.ts",
+    "./docs/**/*.md",
+    "./docs/*.md",
+    "./CLAUDE.md",
+    "./README.md"
   ],
   "homepage": "https://bun.com",
   "dependencies": {

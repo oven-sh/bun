@@ -165,9 +165,7 @@ fetch("https://example.com", {}); // No body
   fetch("https://example.com", { body: searchParams });
 }
 {
-  if (typeof SharedArrayBuffer !== "undefined") {
-    fetch("https://example.com", { body: new SharedArrayBuffer(16) });
-  }
+  fetch("https://example.com", { body: new SharedArrayBuffer(16) });
 }
 
 {

@@ -1426,6 +1426,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Disconnect all imports
             var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            g.first_import.items[index.get()] = .none;
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
                 it = dep.next_import.unwrap();
@@ -1766,6 +1767,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Disconnect all imports
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                g.first_import.items[file_index.get()] = .none;
                 while (it) |edge_index| {
                     const dep = g.edges.items[edge_index.get()];
                     it = dep.next_import.unwrap();
@@ -1832,7 +1834,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// So we'll check it manually by making sure there are no references to
         /// `edge_index` in the graph.
         fn checkEdgeRemoval(g: *@This(), edge_index: EdgeIndex) void {
-            if (comptime !Environment.isDebug) return;
+            // Enable this on any builds with asan enabled so we can catch stuff
+            // in CI too
+            if (comptime bun.asan.enabled) return;
 
             for (g.first_dep.items) |maybe_first_dep| {
                 if (maybe_first_dep.unwrap()) |first_dep| {

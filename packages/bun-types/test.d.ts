@@ -519,7 +519,7 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const test: Test;
-  export { test as it };
+  export { test as it, xtest as xit };
 
   /**
    * Skips a test.
@@ -530,7 +530,6 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const xtest: Test;
-  export { xtest as xit };
 
   /**
    * Asserts that a value matches some criteria.

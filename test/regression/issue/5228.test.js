@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // Test for issue #5228: Implement xit, xtest, xdescribe aliases for test.skip
 test("xit, xtest, and xdescribe aliases should work as test.skip/describe.skip", async () => {
@@ -54,7 +54,7 @@ describe("normal describe block", () => {
 
   // Test should pass (exit code 0) even though some tests are skipped
   expect(exitCode).toBe(0);
-  
+
   // Should have no errors since skipped tests don't run
   expect(stderr).not.toContain("This should not run");
 });
@@ -97,7 +97,7 @@ test("passing test", () => {
   ]);
 
   expect(exitCode).toBe(0);
-  
+
   // No errors should occur
   expect(stderr).not.toContain("Should not run");
 });
@@ -142,13 +142,13 @@ describe("normal describe", () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),  
+    new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
 
   expect(exitCode).toBe(0);
-  
+
   // No errors should occur
   expect(stderr).not.toContain("Should not run");
 });
@@ -194,12 +194,12 @@ xdescribe("imported xdescribe should work", () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(), 
+    new Response(proc.stderr).text(),
     proc.exited,
   ]);
 
   expect(exitCode).toBe(0);
-  
+
   // No errors should occur
   expect(stderr).not.toContain("Should not run");
 });

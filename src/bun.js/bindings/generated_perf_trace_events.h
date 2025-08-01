@@ -48,15 +48,18 @@
   macro(JSPrinter.printWithSourceMap, 44) \
   macro(ModuleResolver.resolve, 45) \
   macro(PackageInstaller.install, 46) \
-  macro(PackageInstaller.installPatch, 47) \
-  macro(PackageManifest.Serializer.loadByFile, 48) \
-  macro(PackageManifest.Serializer.save, 49) \
-  macro(RuntimeTranspilerCache.fromFile, 50) \
-  macro(RuntimeTranspilerCache.save, 51) \
-  macro(RuntimeTranspilerCache.toFile, 52) \
-  macro(StandaloneModuleGraph.serialize, 53) \
-  macro(Symbols.followAll, 54) \
-  macro(TestCommand.printCodeCoverageLCov, 55) \
-  macro(TestCommand.printCodeCoverageLCovAndText, 56) \
-  macro(TestCommand.printCodeCoverageText, 57) \
+  macro(PackageManifest.Serializer.loadByFile, 47) \
+  macro(PackageManifest.Serializer.save, 48) \
+  macro(RuntimeTranspilerCache.fromFile, 49) \
+  macro(RuntimeTranspilerCache.save, 50) \
+  macro(RuntimeTranspilerCache.toFile, 51) \
+  macro(StandaloneModuleGraph.serialize, 52) \
+  macro(Symbols.followAll, 53) \
+  macro(TestCommand.printCodeCoverageAll, 54) \
+  macro(TestCommand.printCodeCoverageHtml, 55) \
+  macro(TestCommand.printCodeCoverageLCov, 56) \
+  macro(TestCommand.printCodeCoverageLCovAndHtml, 57) \
+  macro(TestCommand.printCodeCoverageLCovAndText, 58) \
+  macro(TestCommand.printCodeCoverageText, 59) \
+  macro(TestCommand.printCodeCoverageTextAndHtml, 60) \
   // end

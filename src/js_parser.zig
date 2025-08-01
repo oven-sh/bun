@@ -4735,6 +4735,10 @@ const Jest = struct {
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+    // Jest compatibility aliases
+    xit: Ref = Ref.None,
+    xtest: Ref = Ref.None,
+    xdescribe: Ref = Ref.None,
 };
 
 // workaround for https://github.com/ziglang/zig/issues/10903
@@ -6740,6 +6744,10 @@ fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                // Jest compatibility aliases
+                p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");
+                p.jest.xtest = try p.declareCommonJSSymbol(.unbound, "xtest");
+                p.jest.xdescribe = try p.declareCommonJSSymbol(.unbound, "xdescribe");
             }
 
             if (p.options.features.react_fast_refresh) {

@@ -1112,9 +1112,10 @@ else()
     ${WEBKIT_LIB_PATH}/libWTF.a
     ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
   )
-  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
-  endif()
+  # bmalloc is now disabled
+  # if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
+  #   target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
+  # endif()
 endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})

@@ -1,6 +1,4 @@
 declare module "bun" {
-  type ShellFunction = (input: Uint8Array) => Uint8Array;
-
   type ShellExpression =
     | { toString(): string }
     | Array<ShellExpression>

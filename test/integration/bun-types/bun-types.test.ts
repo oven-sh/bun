@@ -330,13 +330,13 @@ describe("@types/bun integration test", () => {
       {
         category: "Error",
         file: "spawn.ts",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         code: 2339,
       },
       {
         category: "Error",
         file: "spawn.ts",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         code: 2339,
       },
       {

@@ -846,35 +846,6 @@ declare module "bun" {
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single {@link ArrayBuffer}.
-   *
-   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
-   * chunks of different types, consider {@link readableStreamToBlob}
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
-   *
-   * @deprecated Use {@link ReadableStream.bytes}
-   */
-  function readableStreamToBytes(
-    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
-  ): Promise<Uint8Array<ArrayBuffer>> | Uint8Array<ArrayBuffer>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single {@link Blob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
-   *
-   * @deprecated Use {@link ReadableStream.blob}
-   */
-  function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
    * Reads the multi-part or URL-encoded form data into a {@link FormData} object
    *
    * @param stream The stream to consume.
@@ -903,18 +874,6 @@ declare module "bun" {
     stream: ReadableStream<string | NodeJS.TypedArray | ArrayBufferView>,
     multipartBoundaryExcludingDashes?: string | NodeJS.TypedArray | ArrayBufferView,
   ): Promise<FormData>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
-   *
-   * @deprecated Use {@link ReadableStream.text}
-   */
-  function readableStreamToText(stream: ReadableStream): Promise<string>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -1027,8 +986,8 @@ declare module "bun" {
      *
      * This API might change later to separate Uint8ArraySink and ArrayBufferSink
      */
-    flush(): number | Uint8Array | ArrayBuffer;
-    end(): ArrayBuffer | Uint8Array;
+    flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
+    end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
   }
 
   /** DNS Related APIs */
@@ -4635,7 +4594,7 @@ declare module "bun" {
    *
    * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
+  function file(path: ArrayBufferLike | Uint8Array<ArrayBuffer>, options?: BlobPropertyBag): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -4658,7 +4617,7 @@ declare module "bun" {
    *
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
    */
-  function allocUnsafe(size: number): Uint8Array;
+  function allocUnsafe(size: number): Uint8Array<ArrayBuffer>;
 
   /**
    * Options for `Bun.inspect`
@@ -4941,7 +4900,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null` and it will be garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
+  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -4971,7 +4930,7 @@ declare module "bun" {
     | { r: number; g: number; b: number; a?: number }
     | [number, number, number]
     | [number, number, number, number]
-    | Uint8Array
+    | Uint8Array<ArrayBuffer>
     | Uint8ClampedArray
     | Float32Array
     | Float64Array
@@ -5095,7 +5054,7 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    function arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
+    function arrayBufferToString(buffer: Uint8Array<ArrayBuffer> | ArrayBufferLike): string;
 
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint16Array`
@@ -5644,9 +5603,9 @@ declare module "bun" {
    * @returns The output buffer with the compressed data
    */
   function deflateSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
@@ -5654,27 +5613,27 @@ declare module "bun" {
    * @returns The output buffer with the compressed data
    */
   function gzipSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
   function inflateSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
   function gunzipSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
@@ -6651,7 +6610,7 @@ declare module "bun" {
   interface BinaryTypeList {
     arraybuffer: ArrayBuffer;
     buffer: Buffer;
-    uint8array: Uint8Array;
+    uint8array: Uint8Array<ArrayBuffer>;
     // TODO: DataView
     // dataview: DataView;
   }
@@ -7223,7 +7182,7 @@ declare module "bun" {
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Uint8Array>
+      ? ReadableStream<Uint8Array<ArrayBuffer>>
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;

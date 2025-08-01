@@ -1506,14 +1506,14 @@ interface Uint8ArrayConstructor {
       alphabet?: "base64" | "base64url";
       lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
     },
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Create a new Uint8Array from a hex encoded string
    * @param hex The hex encoded string to convert to a Uint8Array
    * @returns A new Uint8Array containing the decoded data
    */
-  fromHex(hex: string): Uint8Array;
+  fromHex(hex: string): Uint8Array<ArrayBuffer>;
 }
 
 interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}

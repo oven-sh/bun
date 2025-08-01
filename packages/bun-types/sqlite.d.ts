@@ -383,19 +383,28 @@ declare module "bun:sqlite" {
      * ]);
      * ```
      */
-    transaction(insideTransaction: (...args: any) => void): CallableFunction & {
+    transaction<A extends any[], T>(
+      insideTransaction: (...args: A) => T,
+    ): {
       /**
-       * uses "BEGIN DEFERRED"
+       * Execute the transaction
        */
-      deferred: (...args: any) => void;
+      (...args: A): T;
+
       /**
-       * uses "BEGIN IMMEDIATE"
+       * Execute the transaction using "BEGIN DEFERRED"
        */
-      immediate: (...args: any) => void;
+      deferred: (...args: A) => T;
+
       /**
-       * uses "BEGIN EXCLUSIVE"
+       * Execute the transaction using "BEGIN IMMEDIATE"
        */
-      exclusive: (...args: any) => void;
+      immediate: (...args: A) => T;
+
+      /**
+       * Execute the transaction using "BEGIN EXCLUSIVE"
+       */
+      exclusive: (...args: A) => T;
     };
 
     /**

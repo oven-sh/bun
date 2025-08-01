@@ -151,7 +151,7 @@ async function request(
     reset: false,
     throwOnError: false,
     body: null,
-    // dispatcher,
+    dispatcher,
   },
 ) {
   let {
@@ -168,7 +168,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
+    dispatcher,
   } = options;
 
   // TODO: More validations
@@ -225,6 +225,7 @@ async function request(
     body: inputBody,
     redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
     keepalive: !reset,
+    dispatcher,
   }));
 
   // Throw if received 4xx or 5xx response indicating HTTP error
@@ -263,7 +264,24 @@ class MockAgent {
 function mockErrors() {}
 
 class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
+class Agent extends Dispatcher {
+  constructor(options = {}) {
+    super();
+    this.options = options;
+    this.connect = options.connect || null;
+    this.keepAliveTimeout = options.keepAliveTimeout;
+    this.keepAliveMaxTimeout = options.keepAliveMaxTimeout;
+    this.connections = options.connections || 10;
+  }
+
+  dispatch(opts, handler) {
+    // Custom connect function should be handled by fetch layer
+    if (this.connect && typeof this.connect === "function") {
+      throw new Error("fetch failed");
+    }
+    return super.dispatch(opts, handler);
+  }
+}
 class Pool extends Dispatcher {
   request() {}
 }

@@ -878,18 +878,6 @@ declare module "bun" {
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
-   *
-   * @deprecated Use {@link ReadableStream.json}
-   */
-  function readableStreamToJSON(stream: ReadableStream): Promise<any>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
    * @param stream The stream to consume
    * @returns A promise that resolves with the chunks as an array
    */

@@ -21,7 +21,7 @@ declare module "bun" {
     | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array<ArrayBuffer>>;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
     | ReadableStreamDefaultReadValueResult<T>
@@ -826,7 +826,7 @@ declare module "bun" {
     buffers: Array<ArrayBufferView | ArrayBufferLike>,
     maxLength: number,
     asUint8Array: true,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -858,7 +858,7 @@ declare module "bun" {
    */
   function readableStreamToBytes(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
-  ): Promise<Uint8Array> | Uint8Array;
+  ): Promise<Uint8Array<ArrayBuffer>> | Uint8Array<ArrayBuffer>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.

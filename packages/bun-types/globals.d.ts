@@ -57,24 +57,7 @@ declare module "bun" {
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {
-  /**
-   * Consume a ReadableStream as text
-   */
-  text(): Promise<string>;
-  /**
-   * Consume a ReadableStream as a Uint8Array
-   */
-  bytes(): Promise<Uint8Array>;
-  /**
-   * Consume a ReadableStream as JSON
-   */
-  json(): Promise<any>;
-  /**
-   * Consume a ReadableStream as a Blob
-   */
-  blob(): Promise<Blob>;
-}
+interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {

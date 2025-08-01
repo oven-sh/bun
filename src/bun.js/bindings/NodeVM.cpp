@@ -1089,6 +1089,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
         contextOptions, globalObjectDynamicImportCallback);
 
+    if (contextOptions.microtaskMode == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+        context->createContextMicrotaskQueue();
+    }
+
     context->setContextifiedObject(sandbox);
 
     JSValue optionsArg = callFrame->argument(2);
@@ -1117,7 +1121,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
     if (context->microtaskMode() == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
-        vm.drainMicrotasks(globalObject);
+        context->drainMicrotasks();
     }
 
     if (exception) [[unlikely]] {
@@ -1334,6 +1338,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto* targetContext = NodeVMGlobalObject::create(vm,
         zigGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions, importer);
+
+    if (contextOptions.microtaskMode == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+        targetContext->createContextMicrotaskQueue();
+    }
 
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -324,11 +324,10 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
 
 static void runScript(JSGlobalObject* globalObject, NodeVMScript* script, NakedPtr<JSC::Exception>& exception, JSValue& result)
 {
-    VM& vm = JSC::getVM(globalObject);
     result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     if (auto* nodeVmObj = JSC::jsDynamicCast<NodeVMGlobalObject*>(globalObject)) {
         if (nodeVmObj->microtaskMode() == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
-            vm.drainMicrotasks(globalObject);
+            globalObject->drainMicrotasks();
         }
     }
 }

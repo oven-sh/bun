@@ -38,7 +38,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
                     break :brk node_modules;
                 }
             };
-            
+
             const cache_dir = fetchCacheDirectoryPathWithInstallDir(this.env, &this.options, install_dir);
             this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
@@ -152,8 +152,6 @@ noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
     return tempdir;
 }
 
-const filesystem_utils = @import("../filesystem_utils.zig");
-
 const CacheDir = struct { path: string, is_node_modules: bool, is_same_filesystem: bool = true };
 pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
     return fetchCacheDirectoryPathWithInstallDir(env, options, null);
@@ -179,17 +177,17 @@ pub fn fetchCacheDirectoryPathWithInstallDir(env: *DotEnv.Loader, options: ?*con
             var parts = [_]string{ dir, "install/", "cache/" };
             break :brk Fs.FileSystem.instance.abs(&parts);
         }
-        
+
         if (env.get("XDG_CACHE_HOME")) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             break :brk Fs.FileSystem.instance.abs(&parts);
         }
-        
+
         if (env.get(bun.DotEnv.home_env)) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             break :brk Fs.FileSystem.instance.abs(&parts);
         }
-        
+
         break :brk null;
     };
 
@@ -200,7 +198,7 @@ pub fn fetchCacheDirectoryPathWithInstallDir(env: *DotEnv.Loader, options: ?*con
             if (is_same_fs) {
                 return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = true };
             }
-            
+
             // Different filesystem - find optimal cache location
             const optimal_cache = findOptimalCacheDir(install) catch null;
             if (optimal_cache) |opt_cache| {
@@ -208,12 +206,12 @@ pub fn fetchCacheDirectoryPathWithInstallDir(env: *DotEnv.Loader, options: ?*con
             }
         }
     }
-    
+
     // Fallback to default cache or node_modules/.bun-cache
     if (default_cache) |cache_path| {
         return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = false };
     }
-    
+
     var fallback_parts = [_]string{"node_modules/.bun-cache"};
     return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts), .is_same_filesystem = true };
 }
@@ -793,46 +791,46 @@ var using_fallback_temp_dir: bool = false;
 fn findOptimalCacheDir(install_dir: []const u8) ![]const u8 {
     // Get the mount point of the install directory
     const mount_point = try filesystem_utils.getMountPoint(install_dir);
-    
+
     // Get absolute path of install directory
     var install_abs_buf: bun.PathBuffer = undefined;
     const install_abs = try std.fs.cwd().realpath(install_dir, &install_abs_buf);
-    
+
     // Start from mount point and walk down toward the project
     var current_path_buf: bun.PathBuffer = undefined;
     @memcpy(current_path_buf[0..mount_point.len], mount_point);
     current_path_buf[mount_point.len] = 0;
     var current_path = current_path_buf[0..mount_point.len :0];
-    
+
     const install_parent = std.fs.path.dirname(install_abs) orelse install_abs;
-    
+
     while (true) {
         var cache_path_buf: bun.PathBuffer = undefined;
         const cache_dir_name = ".bun-cache";
         const cache_path = Path.joinZBuf(&cache_path_buf, &[_][]const u8{ current_path, cache_dir_name }, .auto);
-        
+
         // Try to create cache directory at this level
         if (filesystem_utils.canCreateDir(cache_path)) {
             return bun.default_allocator.dupeZ(u8, cache_path) catch bun.outOfMemory();
         }
-        
+
         // Stop if we've reached the install directory's parent
         if (strings.eql(current_path, install_parent)) {
             break;
         }
-        
+
         // Move down one level toward the project
         const next_component = filesystem_utils.getNextPathComponent(current_path, install_abs) orelse break;
-        
+
         const new_len = current_path.len + 1 + next_component.len;
         if (new_len >= bun.MAX_PATH_BYTES) break;
-        
+
         current_path_buf[current_path.len] = std.fs.path.sep;
         @memcpy(current_path_buf[current_path.len + 1 .. new_len], next_component);
         current_path_buf[new_len] = 0;
         current_path = current_path_buf[0..new_len :0];
     }
-    
+
     // Last resort: project-local cache
     var final_cache_buf: bun.PathBuffer = undefined;
     const project_cache = Path.joinZBuf(&final_cache_buf, &[_][]const u8{ install_parent, ".bun-cache" }, .auto);
@@ -842,6 +840,7 @@ fn findOptimalCacheDir(install_dir: []const u8) ![]const u8 {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
+const filesystem_utils = @import("../filesystem_utils.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -854,9 +853,9 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
+const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
-const strings = bun.strings;
 
 const Semver = bun.Semver;
 const String = Semver.String;

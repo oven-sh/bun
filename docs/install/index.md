@@ -41,7 +41,7 @@ Running `bun install` will:
 
 - **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
-- **Write** a `bun.lockb` lockfile to the project root.
+- **Write** a `bun.lock` lockfile to the project root.
 
 To install in production mode (i.e. without `devDependencies`):
 
@@ -55,10 +55,23 @@ To install dependencies without allowing changes to lockfile (useful on CI):
 $ bun install --frozen-lockfile
 ```
 
-To perform a dry run (i.e. don't actually install anything):
+To exclude dependency types from installing, use `--omit` with `dev`, `optional`, or `peer`:
+
+```bash
+# Disable devDependencies and optionalDependencies
+$ bun install --omit=dev --omit=optional
+```
+
+To perform a dry run (i.e. don't actually install anything or update the lockfile):
 
 ```bash
 $ bun install --dry-run
+```
+
+To generate a lockfile without install packages:
+
+```bash
+$ bun install --lockfile-only
 ```
 
 To modify logging verbosity:
@@ -67,6 +80,14 @@ To modify logging verbosity:
 $ bun install --verbose # debug logging
 $ bun install --silent  # no logging
 ```
+
+To use isolated installs instead of the default hoisted strategy:
+
+```bash
+$ bun install --linker isolated
+```
+
+Isolated installs create strict dependency isolation similar to pnpm, preventing phantom dependencies and ensuring more deterministic builds. For complete documentation, see [Isolated installs](https://bun.com/docs/install/isolated).
 
 {% details summary="Configuring behavior" %}
 The default behavior of `bun install` can be configured in `bunfig.toml`:
@@ -86,6 +107,9 @@ peer = true
 # equivalent to `--production` flag
 production = false
 
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
+
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
 
@@ -94,6 +118,10 @@ dryRun = false
 
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
+
+# installation strategy: "hoisted" or "isolated"
+# default: "hoisted"
+linker = "hoisted"
 ```
 
 {% /details %}
@@ -125,6 +153,12 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 
 ```bash
 $ bun add --optional lodash
+```
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
 ```
 
 To install a package globally:

@@ -49,7 +49,7 @@ public:
     using Base = JSFunction;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static void destroy(JSCell* cell)
     {
         static_cast<JSFFIFunction*>(cell)->JSFFIFunction::~JSFFIFunction();
@@ -87,6 +87,7 @@ public:
 #endif
 
     void* dataPtr;
+    void* symbolFromDynamicLibrary { nullptr };
 
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);

@@ -6,7 +6,7 @@
   alert                           WebCore__alert                                       Function 1
   atob                            functionATOB                                         Function 1
   btoa                            functionBTOA                                         Function 1
-  clearImmediate                  functionClearTimeout                                 Function 1
+  clearImmediate                  functionClearImmediate                               Function 1
   clearInterval                   functionClearInterval                                Function 1
   clearTimeout                    functionClearTimeout                                 Function 1
   confirm                         WebCore__confirm                                     Function 1
@@ -66,6 +66,9 @@
   PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
   PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
   PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
+  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
+  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
+  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
@@ -73,13 +76,13 @@
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
+  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
-  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
-  URL                             DOMURLConstructorCallback                            PropertyCallback
-  URLSearchParams                 URLSearchParamsConstructorCallback                   PropertyCallback
+  URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
+  URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback
   WritableStream                  WritableStreamConstructorCallback                    PropertyCallback

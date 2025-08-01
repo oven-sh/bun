@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+	<form action="/form-data" method="POST"
+		style="display: flex; flex-direction: column; gap: 8px; padding: 16px; max-width: 300px;"
+	>
+		<input type="text" name="name" value="John Doe" />
+		<input type="email" name="email" value="john.doe@example.com" />
+		<input type="submit" value="Submit" />
+	</form>
+</Layout>

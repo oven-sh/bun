@@ -1,5 +1,5 @@
+import { tempDirWithFiles } from "harness";
 import { join } from "path";
-
 const assert = require("assert");
 const os = require("os");
 const fs = require("fs");
@@ -47,11 +47,11 @@ async function getHandle() {
   return [p, await open(p, "r+")];
 }
 
+let fsPromisesTestIndex = 0;
 async function tmpDir() {
-  const n = (Math.random() * 10000) | 0;
-  const p = join(os.tmpdir(), n.toString());
-  await fs.promises.mkdir(p);
-  return p;
+  return tempDirWithFiles(`fspromisestest-${fsPromisesTestIndex++}`, {
+    "hello.txt": "",
+  });
 }
 
 function verifyStatObject(stat) {

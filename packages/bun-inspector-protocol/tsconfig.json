@@ -3,7 +3,7 @@
     "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "NodeNext",
+    "moduleResolution": "Bundler",
     "moduleDetection": "force",
     "strict": true,
     "downlevelIteration": true,
@@ -12,7 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "inlineSourceMap": true,
     "allowJs": true,
-    "outDir": "dist",
+    "outDir": "dist"
   },
   "include": [".", "../bun-types/index.d.ts"]
 }

@@ -82,7 +82,14 @@ namespace ofats {
 
 namespace any_detail {
 
-using buffer = std::aligned_storage_t<sizeof(void*) * 2, alignof(void*)>;
+template <std::size_t Len, std::size_t Align>
+class my_aligned_storage_t {
+private:
+    alignas(Align) std::byte t_buff[Len];
+};
+
+
+using buffer = my_aligned_storage_t<sizeof(void*) * 2, alignof(void*)>;
 
 template <class T>
 inline constexpr bool is_small_object_v =

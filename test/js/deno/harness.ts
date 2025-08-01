@@ -130,6 +130,22 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
     }
   };
 
+  const assertGreaterThan = (actual: number, expected: number, message?: string) => {
+    expect(actual).toBeGreaterThan(expected);
+  }
+
+  const assertGreaterThanOrEqual = (actual: number, expected: number, message?: string) => {
+    expect(Math.ceil(actual)).toBeGreaterThanOrEqual(expected);
+  }
+
+  const assertLessThan = (actual: number, expected: number, message?: string) => {
+    expect(actual).toBeLessThan(expected);
+  }
+
+  const assertLessThanOrEqual = (actual: number, expected: number, message?: string) => {
+    expect(actual).toBeLessThanOrEqual(expected);
+  }
+
   const assertInstanceOf = (actual: unknown, expected: unknown, message?: string) => {
     expect(actual).toBeInstanceOf(expected);
   };
@@ -328,6 +344,10 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
     assertStrictEquals,
     assertNotStrictEquals,
     assertAlmostEquals,
+    assertGreaterThan,
+    assertGreaterThanOrEqual,
+    assertLessThan,
+    assertLessThanOrEqual,
     assertInstanceOf,
     assertNotInstanceOf,
     assertStringIncludes,

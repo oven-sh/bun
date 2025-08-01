@@ -545,8 +545,9 @@ describe("async context passes through", () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;
     await s.run("value", async () => {
-      Bun.build({
+      return Bun.build({
         entrypoints: [import.meta.path],
+        target: "bun",
         plugins: [
           {
             name: "test",

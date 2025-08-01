@@ -15,11 +15,10 @@
  *
  */
 import grpc from "@grpc/grpc-js";
-import assert from "node:assert";
-import { afterAll, beforeAll, describe, it, beforeEach, afterEach } from "bun:test";
-import { Server, ServerCredentials } from "@grpc/grpc-js/build/src";
-import { Client } from "@grpc/grpc-js/build/src";
+import { Client, Server, ServerCredentials } from "@grpc/grpc-js/build/src";
 import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
+import { afterAll, beforeAll, describe, it } from "bun:test";
+import assert from "node:assert";
 
 const clientInsecureCreds = grpc.credentials.createInsecure();
 const serverInsecureCreds = ServerCredentials.createInsecure();

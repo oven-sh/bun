@@ -1,3 +1,5 @@
+/** Module Ids are pre-resolved by the bundler, and should be treated as opaque strings.
+ * In practice, these strings are the relative file path to the module. */
 type Id = string;
 
 /** Index with same usage as `IncrementalGraph(.client).Index` */
@@ -11,6 +13,8 @@ interface Config {
   separateSSRGraph?: true;
 
   // Client
+  /** Bun version */
+  bun: string;
   /** Dev Server's `configuration_hash_key` */
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
@@ -20,48 +24,130 @@ interface Config {
    * the framework entry point, as well as every client component.
    */
   roots: FileIndex[];
+  /**
+   * If true, the client will receive console logs from the server.
+   */
+  console: boolean;
 }
 
 /**
- * All modules for the initial bundle.
+ * Set globally in debug builds.
+ * Removed using --drop=ASSERT in releases.
  */
-declare const input_graph: Record<string, ModuleLoadFunction>;
+declare namespace DEBUG {
+  declare function ASSERT(condition: any, message?: string): asserts condition;
+}
+
+/** All modules for the initial bundle. */
+declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
+declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
+declare type UnloadedESM = [
+  deps: EncodedDependencyArray,
+  exportKeys: string[],
+  starImports: Id[],
+  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  isAsync: boolean,
+];
+declare type EncodedDependencyArray = (string | number)[];
+declare type UnloadedCommonJS = (
+  hmr: import("./hmr-module").HMRModule,
+  module: import("./hmr-module").HMRModule["cjs"],
+  exports: unknown,
+) => unknown;
+declare type CommonJSModule = {
+  id: Id;
+  exports: any;
+  require: (id: Id) => unknown;
+};
 
 declare const config: Config;
 
 /**
  * The runtime is bundled for server and client, which influences
- * how hmr connection should be established, as well if there is
+ * how HMR connection should be established, as well if there is
  * a window to visually display errors with.
  */
 declare const side: "client" | "server";
 
 /*
- * This variable becomes the default export. Kit uses this
- * interface as opposed to a WebSocket connection.
- */
-declare var server_exports: {
-  handleRequest: (req: Request, routeModuleId: Id, clientEntryUrl: string, styles: string[]) => any;
-  registerUpdate: (
-    modules: any,
-    componentManifestAdd: null | string[],
-    componentManifestDelete: null | string[],
-  ) => void;
-};
-
-/*
  * If you are running a debug build of Bun. These debug builds should provide
- * helpful information to someone working on the bundler itself.
+ * helpful information to someone working on the bundler itself. Assertions
+ * aimed for the end user should always be enabled.
  */
 declare const IS_BUN_DEVELOPMENT: any;
 
-// shims for experimental react types
-declare module "react" {
-  export function use<T>(promise: Promise<T>): T;
+/** If this is the fallback error page */
+declare const IS_ERROR_RUNTIME: boolean;
+
+declare var __bun_f: any;
+
+// The following interfaces have been transcribed manually.
+
+declare module "react-server-dom-bun/client.browser" {
+  export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array>): Promise<T>;
 }
-declare module "react-server-dom-webpack/client.browser" {
-  export function createFromReadableStream<T = any>(readable: ReadableStream, manifest?: any): Promise<T>;
+
+declare module "react-server-dom-bun/client.node.unbundled.js" {
+  import type { ReactClientManifest } from "bun:bake/server";
+  import type { Readable } from "node:stream";
+  export interface Manifest {
+    moduleMap: ReactClientManifest;
+    moduleLoading?: ModuleLoading;
+  }
+  export interface ModuleLoading {
+    prefix: string;
+    crossOrigin?: string;
+  }
+  export interface Options {
+    encodeFormAction?: any;
+    findSourceMapURL?: any;
+    environmentName?: string;
+  }
+  export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
-declare module "react-server-dom-webpack/server.browser" {
-  export function renderToReadableStream<T = any>(element: JSX.Element, manifest: any): ReadableStream;
+
+declare module "react-server-dom-bun/server.node.unbundled.js" {
+  import type { ReactServerManifest } from "bun:bake/server";
+  import type { ReactElement } from "react";
+
+  export interface PipeableStream<T> {
+    /** Returns the input, which should match the Node.js writable interface */
+    pipe: <T>(destination: T) => T;
+    abort: () => void;
+  }
+
+  export function renderToPipeableStream<T = any>(
+    model: ReactElement,
+    webpackMap: ReactServerManifest,
+    options?: RenderToPipeableStreamOptions,
+  ): PipeableStream<T>;
+
+  export interface RenderToPipeableStreamOptions {
+    onError?: Function;
+    identifierPrefix?: string;
+    onPostpone?: Function;
+    temporaryReferences?: any;
+    environmentName?: string;
+    filterStackFrame?: Function;
+  }
+}
+
+declare module "react-dom/server.node" {
+  import type { ReactElement } from "react";
+  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
+
+  export type RenderToPipeableStreamOptions = any;
+  export function renderToPipeableStream(
+    model: ReactElement,
+    options: RenderToPipeableStreamOptions,
+  ): PipeableStream<Uint8Array>;
+}
+
+declare module "bun:wrap" {
+  export const __name: unique symbol;
+  export const __legacyDecorateClassTS: unique symbol;
+  export const __legacyDecorateParamTS: unique symbol;
+  export const __legacyMetadataTS: unique symbol;
+  export const __using: unique symbol;
+  export const __callDispose: unique symbol;
 }

@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("deepEqual", () => {
   assert.deepEqual({ foo: "123", bar: "baz" }, { foo: "123", bar: "baz" });

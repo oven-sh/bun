@@ -1,5 +1,4 @@
-import { group } from "mitata";
-import { bench, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const sizes = [
   ["small (63 bytes)", 63],
@@ -10,7 +9,7 @@ for (let [name, size] of sizes) {
   group(name, () => {
     var buf = new Uint8Array(size);
     for (let algorithm of ["SHA-1", "SHA-256", "SHA-384", "SHA-512"]) {
-      bench(algorithm, async () => {
+      bench(`${algorithm} (${name})`, async () => {
         await crypto.subtle.digest(algorithm, buf);
       });
     }

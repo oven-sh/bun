@@ -32,7 +32,10 @@
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <openssl/rand.h>
-
+#include <openssl/evp.h>
+#include "CryptoKeyRSA.h"
+#include "CryptoKeyEC.h"
+#include "CryptoKeyHMAC.h"
 namespace WebCore {
 
 CryptoKey::CryptoKey(CryptoAlgorithmIdentifier algorithmIdentifier, Type type, bool extractable, CryptoKeyUsageBitmap usages)
@@ -76,7 +79,7 @@ WebCoreOpaqueRoot root(CryptoKey* key)
 Vector<uint8_t> CryptoKey::randomData(size_t size)
 {
     Vector<uint8_t> result(size);
-    RAND_bytes(result.data(), result.size());
+    RAND_bytes(result.begin(), result.size());
     return result;
 }
 

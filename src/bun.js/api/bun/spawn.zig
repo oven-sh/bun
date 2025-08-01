@@ -1,37 +1,3 @@
-const JSC = bun.JSC;
-const bun = @import("root").bun;
-const string = bun.string;
-const std = @import("std");
-const Output = bun.Output;
-
-fn _getSystem() type {
-    // this is a workaround for a Zig stage1 bug
-    // the "usingnamespace" is evaluating in dead branches
-    return brk: {
-        if (comptime bun.Environment.isLinux) {
-            const Type = bun.C.linux;
-            break :brk struct {
-                pub usingnamespace std.posix.system;
-                pub usingnamespace Type;
-            };
-        }
-
-        break :brk std.posix.system;
-    };
-}
-
-const Environment = bun.Environment;
-const system = _getSystem();
-
-const Maybe = JSC.Maybe;
-
-const fd_t = std.posix.fd_t;
-const pid_t = std.posix.pid_t;
-const toPosixPath = std.posix.toPosixPath;
-const errno = std.posix.errno;
-const mode_t = std.posix.mode_t;
-const unexpectedErrno = std.posix.unexpectedErrno;
-
 pub const BunSpawn = struct {
     pub const Action = extern struct {
         pub const FileActionType = enum(u8) {
@@ -43,7 +9,7 @@ pub const BunSpawn = struct {
 
         kind: FileActionType = .none,
         path: ?[*:0]const u8 = null,
-        fds: [2]bun.FileDescriptor,
+        fds: [2]fd_t,
         flags: c_int = 0,
         mode: c_int = 0,
 
@@ -93,21 +59,21 @@ pub const BunSpawn = struct {
                 .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
-                .fds = .{ fd, bun.toFD(0) },
+                .fds = .{ fd.native(), 0 },
             });
         }
 
         pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .close,
-                .fds = .{ fd, bun.toFD(0) },
+                .fds = .{ fd.native(), 0 },
             });
         }
 
         pub fn dup2(self: *Actions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .dup2,
-                .fds = .{ fd, newfd },
+                .fds = .{ fd.native(), newfd.native() },
             });
         }
 
@@ -144,7 +110,7 @@ pub const BunSpawn = struct {
         }
 
         pub fn set(self: *Attr, flags: u16) !void {
-            self.detached = (flags & bun.C.POSIX_SPAWN_SETSID) != 0;
+            self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
         }
 
         pub fn resetSignals(this: *Attr) !void {
@@ -388,7 +354,7 @@ pub const PosixSpawn = struct {
             });
 
         // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-        // That is why bun.C.getErrno() is not used here, since that checks for -1.
+        // That is why bun.sys.getErrno() is not used here, since that checks for -1.
         if (rc == 0) {
             return Maybe(pid_t){ .result = pid };
         }
@@ -420,7 +386,7 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
@@ -440,11 +406,36 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
 
-    pub usingnamespace @import("./process.zig");
-    pub usingnamespace @import("./spawn/stdio.zig");
+    pub const process = @import("./process.zig");
+    pub const Process = process.Process;
+    pub const SpawnOptions = process.SpawnOptions;
+    pub const Status = process.Status;
+    pub const sync = process.sync;
+    pub const spawnProcess = process.spawnProcess;
+    pub const WindowsSpawnResult = process.WindowsSpawnResult;
+    pub const PosixSpawnResult = process.PosixSpawnResult;
+    pub const SpawnProcessResult = process.SpawnProcessResult;
+    pub const WindowsSpawnOptions = process.WindowsSpawnOptions;
+    pub const Rusage = process.Rusage;
+
+    pub const Stdio = @import("./spawn/stdio.zig").Stdio;
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Maybe = bun.sys.Maybe;
+
+const errno = std.posix.errno;
+const fd_t = std.posix.fd_t;
+const mode_t = std.posix.mode_t;
+const pid_t = std.posix.pid_t;
+const system = std.posix.system;
+const toPosixPath = std.posix.toPosixPath;
+const unexpectedErrno = std.posix.unexpectedErrno;

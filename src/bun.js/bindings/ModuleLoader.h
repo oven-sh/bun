@@ -47,6 +47,8 @@ struct OnLoadResult {
     bool wasMock;
 };
 
+extern "C" bool isBunTest;
+
 class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<3>;
@@ -90,7 +92,7 @@ public:
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
-    JSValue spceifierJS,
+    JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
@@ -98,7 +100,7 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
-    JSValue spceifierJS,
+    JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
@@ -108,8 +110,32 @@ JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
-    BunString* specifier,
+    String specifier,
     BunString* referrer,
     BunString* typeAttribute);
+
+template<bool isExtension>
+JSValue fetchCommonJSModuleNonBuiltin(
+    void* bunVM,
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    JSC::JSValue specifierValue,
+    BunString* referrer,
+    BunString* typeAttribute,
+    ErrorableResolvedSource* res,
+    JSCommonJSModule* target,
+    String specifierWtfString,
+    BunLoaderType forceLoaderType,
+    JSC::ThrowScope& scope);
+
+JSValue resolveAndFetchBuiltinModule(
+    Zig::GlobalObject* globalObject,
+    BunString* specifier);
+
+JSValue fetchBuiltinModuleWithoutResolution(
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    ErrorableResolvedSource* res);
 
 } // namespace Bun

@@ -11,6 +11,8 @@ export type UnixSignalEventMap = {
   "Signal.error": [Error];
   "Signal.received": [string];
   "Signal.closed": [];
+  "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
 };
 
 /**
@@ -21,7 +23,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
   #server: Server;
   #ready: Promise<void>;
 
-  constructor(path?: string | URL) {
+  constructor(path?: string | URL | undefined) {
     super();
     this.#path = path ? parseUnixPath(path) : randomUnixPath();
     this.#server = createServer();
@@ -29,8 +31,12 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
     this.#server.on("error", error => this.emit("Signal.error", error));
     this.#server.on("close", () => this.emit("Signal.closed"));
     this.#server.on("connection", socket => {
+      this.emit("Signal.Socket.connect", socket);
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
+      });
+      socket.on("close", () => {
+        this.emit("Signal.Socket.closed", socket);
       });
     });
     this.#ready = new Promise((resolve, reject) => {
@@ -45,7 +51,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
       console.log(event, ...args);
     }
 
-    return super.emit(event, ...args);
+    return super.emit(event, ...(args as never));
   }
 
   /**
@@ -91,6 +97,8 @@ export type TCPSocketSignalEventMap = {
   "Signal.error": [Error];
   "Signal.closed": [];
   "Signal.received": [string];
+  "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
 };
 
 export class TCPSocketSignal extends EventEmitter {
@@ -103,6 +111,8 @@ export class TCPSocketSignal extends EventEmitter {
     this.#port = port;
 
     this.#server = createServer((socket: Socket) => {
+      this.emit("Signal.Socket.connect", socket);
+
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
       });
@@ -112,8 +122,12 @@ export class TCPSocketSignal extends EventEmitter {
       });
 
       socket.on("close", () => {
-        this.emit("Signal.closed");
+        this.emit("Signal.Socket.closed", socket);
       });
+    });
+
+    this.#server.on("close", () => {
+      this.emit("Signal.closed");
     });
 
     this.#ready = new Promise((resolve, reject) => {

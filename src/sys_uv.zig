@@ -1,25 +1,5 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-const std = @import("std");
-const posix = std.posix;
-const bun = @import("root").bun;
-
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const fd_t = bun.FileDescriptor;
-const default_allocator = bun.default_allocator;
-const kernel32 = bun.windows;
-const linux = posix.linux;
-const uv = bun.windows.libuv;
-
-const C = bun.C;
-const E = C.E;
-const Environment = bun.Environment;
-const FDImpl = bun.FDImpl;
-const FileDescriptor = bun.FileDescriptor;
-const JSC = bun.JSC;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const Maybe = JSC.Maybe;
-const SystemError = JSC.SystemError;
 
 comptime {
     bun.assert(Environment.isWindows);
@@ -28,16 +8,17 @@ comptime {
 pub const log = bun.sys.syslog;
 pub const Error = bun.sys.Error;
 
-// libuv dont suppport openat (https://github.com/libuv/libuv/issues/4167)
+// libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
 pub const openat = bun.sys.openat;
 pub const getFdPath = bun.sys.getFdPath;
 pub const setFileOffset = bun.sys.setFileOffset;
 pub const openatOSPath = bun.sys.openatOSPath;
 pub const mkdirOSPath = bun.sys.mkdirOSPath;
+pub const access = bun.sys.access;
 
-// Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
+// Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
-pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, c_flags: i32, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
     assertIsValidWindowsPath(u8, file_path);
 
     var req: uv.fs_t = uv.fs_t.uninitialized;
@@ -47,16 +28,16 @@ pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(b
 
     var perm = _perm;
     if (perm == 0) {
-        // Set a sensible default, otherwise on windows the file will be unuseable
+        // Set a sensible default, otherwise on windows the file will be unusable
         perm = 0o644;
     }
 
     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
     log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .open } }
+        .{ .err = .{ .errno = errno, .syscall = .open, .path = file_path } }
     else
-        .{ .result = bun.toFD(@as(i32, @intCast(req.result.int()))) };
+        .{ .result = req.result.toFD() };
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
@@ -67,9 +48,9 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv mkdir({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        .{ .err = .{ .errno = errno, .syscall = .mkdir, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
@@ -81,22 +62,35 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv chmod({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chmod } }
+        .{ .err = .{ .errno = errno, .syscall = .chmod, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fchmod(uv.Loop.get(), &req, uv_fd, flags, null);
 
     log("uv fchmod({}, {d}) = {d}", .{ uv_fd, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchmod } }
+        .{ .err = .{ .errno = errno, .syscall = .fchmod, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
+}
+
+pub fn statfs(file_path: [:0]const u8) Maybe(bun.StatFS) {
+    assertIsValidWindowsPath(u8, file_path);
+    var req: uv.fs_t = uv.fs_t.uninitialized;
+    defer req.deinit();
+    const rc = uv.uv_fs_statfs(uv.Loop.get(), &req, file_path.ptr, null);
+
+    log("uv statfs({s}) = {d}", .{ file_path, rc.int() });
+    return if (rc.errno()) |errno|
+        .{ .err = .{ .errno = errno, .syscall = .statfs, .path = file_path } }
+    else
+        .{ .result = bun.StatFS.init(req.ptrAs(*align(1) bun.StatFS)) };
 }
 
 pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
@@ -107,13 +101,13 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
 
     log("uv chown({s}, {d}, {d}) = {d}", .{ file_path, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chown } }
+        .{ .err = .{ .errno = errno, .syscall = .chown, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
 
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -121,22 +115,9 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
 
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchown } }
+        .{ .err = .{ .errno = errno, .syscall = .fchown, .fd = fd } }
     else
-        .{ .result = {} };
-}
-
-pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
-    assertIsValidWindowsPath(u8, file_path);
-    var req: uv.fs_t = uv.fs_t.uninitialized;
-    defer req.deinit();
-    const rc = uv.uv_fs_access(uv.Loop.get(), &req, file_path.ptr, flags, null);
-
-    log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
-    return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .access } }
-    else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
@@ -147,9 +128,9 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
 
     log("uv rmdir({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .rmdir } }
+        .{ .err = .{ .errno = errno, .syscall = .rmdir, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn unlink(file_path: [:0]const u8) Maybe(void) {
@@ -160,9 +141,9 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
 
     log("uv unlink({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .unlink } }
+        .{ .err = .{ .errno = errno, .syscall = .unlink, .path = file_path } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
@@ -174,14 +155,14 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
 
     if (rc.errno()) |errno| {
         log("uv readlink({s}) = {d}, [err]", .{ file_path, rc.int() });
-        return .{ .err = .{ .errno = errno, .syscall = .readlink } };
+        return .{ .err = .{ .errno = errno, .syscall = .readlink, .path = file_path } };
     } else {
         // Seems like `rc` does not contain the size?
         bun.assert(rc.int() == 0);
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink } };
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .readlink, .path = file_path } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);
@@ -199,9 +180,10 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv rename({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
+        // which one goes in the .path field?
         .{ .err = .{ .errno = errno, .syscall = .rename } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -213,27 +195,27 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv link({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .link } }
+        .{ .err = .{ .errno = errno, .syscall = .link, .path = from, .dest = to } }
     else
-        .{ .result = {} };
+        .success;
 }
 
-pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
-    assertIsValidWindowsPath(u8, from);
-    assertIsValidWindowsPath(u8, to);
+pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) Maybe(void) {
+    assertIsValidWindowsPath(u8, target);
+    assertIsValidWindowsPath(u8, new_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
-    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
+    const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, target.ptr, new_path.ptr, flags, null);
 
-    log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
+    log("uv symlink({s}, {s}) = {d}", .{ target, new_path, rc.int() });
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_ftruncate(uv.Loop.get(), &req, uv_fd, size, null);
@@ -242,11 +224,11 @@ pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .ftruncate, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fstat(uv.Loop.get(), &req, uv_fd, null);
@@ -259,7 +241,7 @@ pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
 }
 
 pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fdatasync(uv.Loop.get(), &req, uv_fd, null);
@@ -268,11 +250,11 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn fsync(fd: FileDescriptor) Maybe(void) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_fsync(uv.Loop.get(), &req, uv_fd, null);
@@ -281,7 +263,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
     return if (rc.errno()) |errno|
         .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd } }
     else
-        .{ .result = {} };
+        .success;
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -292,7 +274,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv stat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .stat } }
+        .{ .err = .{ .errno = errno, .syscall = .stat, .path = path } }
     else
         .{ .result = req.statbuf };
 }
@@ -305,21 +287,21 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv lstat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .lstat } }
+        .{ .err = .{ .errno = errno, .syscall = .lstat, .path = path } }
     else
         .{ .result = req.statbuf };
 }
 
 pub fn close(fd: FileDescriptor) ?bun.sys.Error {
-    return FDImpl.decode(fd).close();
+    return fd.closeAllowingBadFileDescriptor(@returnAddress());
 }
 
 pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?bun.sys.Error {
-    return FDImpl.decode(fd).closeAllowingStdoutAndStderr();
+    return fd.closeAllowingStandardIo(@returnAddress());
 }
 
 pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
@@ -353,7 +335,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
 }
 
 pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
-    const uv_fd = bun.uvfdcast(fd);
+    const uv_fd = fd.uv();
     comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
@@ -415,3 +397,10 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 }
 
 pub const Tag = @import("./sys.zig").Tag;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptor = bun.FileDescriptor;
+const Maybe = bun.sys.Maybe;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const uv = bun.windows.libuv;

@@ -1,9 +1,3 @@
-const JSC = bun.JSC;
-const std = @import("std");
-const bun = @import("root").bun;
-const mem = std.mem;
-const strings = @import("./string_immutable.zig");
-
 /// Comptime string map optimized for small sets of disparate string keys.
 /// Works by separating the keys by length at comptime and only checking strings of
 /// equal length at runtime.
@@ -165,30 +159,55 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        /// Caller must ensure that the input is a string.
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
+        /// Returns the index of the key in the sorted list of keys.
+        pub fn indexOf(str: []const KeyType) ?usize {
+            if (str.len < precomputed.min_len or str.len > precomputed.max_len)
+                return null;
+
+            comptime var len: usize = precomputed.min_len;
+            inline while (len <= precomputed.max_len) : (len += 1) {
+                if (str.len == len) {
+                    const end = comptime brk: {
+                        var i = len_indexes[len];
+                        @setEvalBranchQuota(99999);
+
+                        while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
+                        break :brk i;
+                    };
+
+                    // This benchmarked faster for both small and large lists of strings than using a big switch statement
+                    // But only so long as the keys are a sorted list.
+                    inline for (len_indexes[len]..end) |i| {
+                        if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
+                            return i;
+                        }
+                    }
+
+                    return null;
                 }
             }
+            return null;
+        }
 
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+        /// Throws if toString() throws.
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
+            const str = try bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return getWithEql(str, bun.String.eqlComptime);
         }
 
-        /// Caller must ensure that the input is a string.
-        pub fn fromJSCaseInsensitive(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
-                }
-            }
-
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+        /// Throws if toString() throws.
+        pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
+            const str = try bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return str.inMapCaseInsensitive(@This());
+        }
+
+        pub fn fromString(str: bun.String) ?V {
+            return getWithEql(str, bun.String.eqlComptime);
         }
 
         pub fn getASCIIICaseInsensitive(input: anytype) ?V {
@@ -520,3 +539,10 @@ const TestEnum2 = enum {
         .{ "00", .FL },
     });
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;
+
+const std = @import("std");
+const mem = std.mem;

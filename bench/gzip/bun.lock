@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bench",
+      "dependencies": {
+        "@babel/standalone": "7.24.10",
+      },
+    },
+  },
+  "packages": {
+    "@babel/standalone": ["@babel/standalone@7.24.10", "", {}, "sha512-nGC37EKfmelpyCXto1pw6SBkD5ZQRdMbL6WISi28xWit9dtiy9dChU1WgEfzturUTxrmOGkMDRrCydFMA7uOaQ=="],
+  }
+}

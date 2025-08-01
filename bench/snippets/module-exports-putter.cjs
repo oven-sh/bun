@@ -1,6 +1,6 @@
 // This is a stress test of some internals in How Bun does the module.exports assignment.
 // If it crashes or throws then this fails
-import("./runner.mjs").then(({ bench, run }) => {
+import("../runner.mjs").then(({ bench, run }) => {
   bench("Object.defineProperty(module, 'exports', { get() { return 42; } })", () => {
     Object.defineProperty(module, "exports", {
       get() {
@@ -36,7 +36,9 @@ import("./runner.mjs").then(({ bench, run }) => {
       a: 1,
     };
 
-    console.log(
+    const log = !process?.env?.BENCHMARK_RUNNER ? console.log : () => {};
+
+    log(
       module?.exports,
       require.cache[module.id].exports,
       module?.exports === require.cache[module.id],
@@ -49,10 +51,11 @@ import("./runner.mjs").then(({ bench, run }) => {
       return 42;
     };
 
-    console.log(module.exports, module.exports());
+    log(module.exports);
+    log(module.exports, module.exports());
 
     queueMicrotask(() => {
-      console.log(
+      log(
         module?.exports,
         require.cache[module.id].exports,
         module?.exports === require.cache[module.id]?.exports,

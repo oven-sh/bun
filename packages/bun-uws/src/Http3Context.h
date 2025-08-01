@@ -17,7 +17,7 @@ namespace uWS {
             us_quic_socket_context_on_stream_data(context, [](us_quic_stream_t *s, char *data, int length) {
 
                 Http3ResponseData *responseData = (Http3ResponseData *) us_quic_stream_ext(s);
-                
+
                 /* We never emit FIN here */
                 if (responseData->onData) {
                     responseData->onData({data, (size_t) length}, false);
@@ -26,7 +26,7 @@ namespace uWS {
             us_quic_socket_context_on_stream_end(context, [](us_quic_stream_t *s) {
 
                 Http3ResponseData *responseData = (Http3ResponseData *) us_quic_stream_ext(s);
-                
+
                 /* Emit FIN to app */
                 if (responseData->onData) {
                     responseData->onData({nullptr, 0}, true);
@@ -77,7 +77,7 @@ namespace uWS {
 
                 std::string_view upperCasedMethod = req->getHeader(":method");
                 std::string_view path = req->getHeader(":path");
-                
+
                 contextData->router.getUserData() = {(Http3Response *) s, (Http3Request *) nullptr};
                 contextData->router.route(upperCasedMethod, path);
 
@@ -92,7 +92,7 @@ namespace uWS {
                 //lsquic_stream_has_unacked_data
 
                 Http3ResponseData *responseData = (Http3ResponseData *) us_quic_stream_ext(s);
-                
+
                 if (responseData->onAborted) {
                     responseData->onAborted();
                 }
@@ -130,9 +130,9 @@ namespace uWS {
         }
 
         // generic for get, post, any, etc
-        void onHttp(std::string method, std::string path, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&cb) {
+        void onHttp(std::string_view method, std::string_view path, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&cb) {
             // modifies the router we own as part of Http3ContextData, used in callbacks set in init
-        
+
             Http3ContextData *contextData = (Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this);
 
             /* Todo: This is ugly, fix */
@@ -141,7 +141,7 @@ namespace uWS {
                 methods = contextData->router.upperCasedMethods; //bug! needs to be upper cased!
                 // router.upperCasedMethods;
             } else {
-                methods = {method};
+                methods = {std::string(method)};
             }
 
             contextData->router.add(methods, path, [handler = std::move(cb)](HttpRouter<Http3ContextData::RouterData> *router) mutable {

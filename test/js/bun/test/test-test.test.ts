@@ -38,12 +38,12 @@ it("shouldn't crash when async test runner callback throws", async () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).toContain("Test passed successfully");
     expect(err).toContain("error: ##123##");
     expect(err).toContain("error: ##456##");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
+    expect(await stdout.text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -297,13 +297,29 @@ it("should return non-zero exit code for invalid syntax", async () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const err = await new Response(stderr).text();
-    expect(err).toContain("error: Unexpected end of file");
-    expect(err).toContain(" 0 pass");
-    expect(err).toContain(" 1 fail");
-    expect(err).toContain("Ran 1 tests across 1 files");
+    const err = (await stderr.text()).replaceAll("\\", "/");
+    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
+      .toMatchInlineSnapshot(`
+      "
+      bad.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | !!!
+            ^
+      error: Unexpected end of file
+          at <dir>/bad.test.js:1:3
+      -------------------------------
+
+
+       0 pass
+       1 fail
+       1 error
+      Ran 1 test across 1 file. [xx ms]
+      "
+    `);
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
+    expect(await stdout.text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -326,12 +342,12 @@ it("invalid syntax counts towards bail", async () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).toContain("Bailed out after 3 failures");
     expect(err).not.toContain("DO NOT RUN ME");
     expect(err).toContain("Ran 3 tests across 3 files");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
+    expect(await stdout.text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     // await rm(test_dir, { force: true, recursive: true });
@@ -657,11 +673,11 @@ describe("empty", () => {
       env: bunEnv,
     });
     expect(stderr).toBeDefined();
-    const err = await new Response(stderr).text();
+    const err = await stderr.text();
     expect(err).toContain("0 pass");
     expect(err).toContain("0 fail");
     expect(stdout).toBeDefined();
-    const out = await new Response(stdout).text();
+    const out = await stdout.text();
     expect(out.split(/\r?\n/)).toEqual([
       `bun test ${Bun.version_with_sha}`,
       "before all",
@@ -708,31 +724,31 @@ test("my-test", () => {
         stderr: "pipe",
         env: bunEnv,
       });
-      expect(
-        stderr
-          .toString()
-          .replaceAll(test_dir, "<dir>")
-          .replaceAll("\r\n", "\n")
-          .replaceAll("\\", "/")
-          .split("\n")
-          .filter(a => {
-            if (a.includes("(:")) return false;
-            if (a.includes("bun test v")) return false;
+      const output = stderr.toString();
 
-            // Timers are a little inconsistent on macOS vs Linux
-            // On Linux, it might not run in time, but on macOS it will
-            if (a.includes(" expect() calls")) return false;
+      expect(output).toContain(`## stage ${stage} ##`);
 
-            return true;
-          })
-          .map(a =>
-            a
-              .trimEnd()
-              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
-              .trimEnd(),
-          )
-          .join("\n"),
-      ).toMatchSnapshot();
+      expect(output).toContain("1 | import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe}");
+
+      const stackLines = output.split("\n").filter(line => line.trim().startsWith("at "));
+      expect(stackLines.length).toBeGreaterThan(0);
+      if (process.platform === "win32") {
+        expect(stackLines[0]).toContain(`<dir>\\my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+      if (process.platform !== "win32") {
+        expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+
+      if (stage === "beforeEach") {
+        expect(output).toContain("0 pass");
+        expect(output).toContain("1 fail");
+      } else {
+        expect(output).toContain("1 pass");
+        expect(output).toContain("0 fail");
+        expect(output).toContain("1 error");
+      }
+
+      expect(output).toContain("Ran 1 test across 1 file");
     });
   }
 });

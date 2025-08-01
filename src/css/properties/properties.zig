@@ -1,13 +1,4 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const Allocator = std.mem.Allocator;
-const css = @import("../css_parser.zig");
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 const Position = position.Position;
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
 
@@ -25,6 +16,7 @@ pub const display = @import("./display.zig");
 pub const effects = @import("./effects.zig");
 pub const flex = @import("./flex.zig");
 pub const font = @import("./font.zig");
+pub const grid = @import("./grid.zig");
 pub const list = @import("./list.zig");
 pub const margin_padding = @import("./margin_padding.zig");
 pub const masking = @import("./masking.zig");
@@ -40,7 +32,6 @@ pub const transform = @import("./transform.zig");
 pub const transition = @import("./transition.zig");
 pub const ui = @import("./ui.zig");
 
-const generated = @import("./properties_generated.zig");
 pub const PropertyId = generated.PropertyId;
 pub const Property = generated.Property;
 pub const PropertyIdTag = generated.PropertyIdTag;
@@ -58,7 +49,12 @@ pub const CSSWideKeyword = enum {
     /// Rolls back the cascade to the value of the previous cascade layer.
     @"revert-layer",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 // pub fn DefineProperties(comptime properties: anytype) type {
@@ -219,7 +215,7 @@ pub const CSSWideKeyword = enum {
 //                     const prop = @field(properties, field.name);
 //                     const allowed_prefixes = allowed_prefixes: {
 //                         var prefixes: css.VendorPrefix = if (@hasField(@TypeOf(prop), "unprefixed") and !prop.unprefixed)
-//                             css.VendorPrefix.empty()
+//                             css.VendorPrefix{}
 //                         else
 //                             css.VendorPrefix{ .none = true };
 
@@ -1878,3 +1874,13 @@ pub const CSSWideKeyword = enum {
 //         .ty = ColorScheme,
 //     },
 // });
+
+const bun = @import("bun");
+const generated = @import("./properties_generated.zig");
+
+const css = @import("../css_parser.zig");
+const Error = css.Error;
+const SmallList = css.SmallList;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

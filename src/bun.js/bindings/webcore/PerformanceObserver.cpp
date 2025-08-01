@@ -150,6 +150,7 @@ Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& 
     Vector<String> entryTypes = {
         "mark"_s,
         "measure"_s,
+        "resource"_s
     };
 
     // if (context.settingsValues().performanceNavigationTimingAPIEnabled)
@@ -157,8 +158,6 @@ Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& 
 
     // if (is<Document>(context) && downcast<Document>(context).supportsPaintTiming())
     //     entryTypes.append("paint"_s);
-
-    // entryTypes.append("resource"_s);
 
     return entryTypes;
 }

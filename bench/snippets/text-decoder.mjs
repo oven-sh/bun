@@ -1,4 +1,4 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../runner.mjs";
 
 var short = new TextEncoder().encode("Hello World!");
 var shortUTF16 = new TextEncoder().encode("Hello World 💕💕💕");

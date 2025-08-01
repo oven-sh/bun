@@ -2,7 +2,6 @@
 const http = require("node:http");
 const { urlToHttpOptions } = require("internal/url");
 
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
@@ -42,7 +41,7 @@ function Agent(options) {
   this.maxCachedSessions = this.options.maxCachedSessions;
   if (this.maxCachedSessions === undefined) this.maxCachedSessions = 100;
 }
-Agent.prototype = Object.create(http.Agent.prototype);
+$toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = http.createConnection;
 
 var https = {

@@ -21,6 +21,31 @@
         height: 100vh;
       }
 
+      .legend {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        background-color: #1e1e2e99;
+        padding: 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+      }
+
+      .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
       h1 {
         position: fixed;
         top: 1rem;
@@ -40,6 +65,36 @@
   <body>
     <h1>IncrementalGraph Visualization <span id="stat"></span></h1>
     <div id="network"></div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f38ba8"></div>
+        <span>Stale</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #cba6f7"></div>
+        <span>Client</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #bb56f5"></div>
+        <span>HTML</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89b4fa"></div>
+        <span>Route</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #a6e3a1"></div>
+        <span>SSR</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89dceb"></div>
+        <span>Server</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f9e2af"></div>
+        <span>SSR + Server</span>
+      </div>
+    </div>
 
     <script>
       // Connect to HMR WebSocket and enable visualization packets. This
@@ -47,6 +102,7 @@
       // over the wire. A visualization is provided by `vis.js`. Support
       //
       // Script written partially by ChatGPT
+      let isFirst = false;
 
       const c = {
         // Derived from mocha theme on https://catppuccin.com/palette
@@ -58,13 +114,7 @@
         sky: "#89dceb",
         blue: "#89b4fa",
         yellow: "#f9e2af",
-      };
-      const ws = new WebSocket(location.origin + "/_bun/hmr");
-
-      ws.binaryType = "arraybuffer"; // We are expecting binary data
-
-      ws.onopen = function () {
-        ws.send(new Uint8Array([118])); // Send 'v' byte to initiate connection
+        purple: "#bb56f5",
       };
 
       // Store nodes and edges
@@ -74,15 +124,34 @@
       let serverEdges = [];
       let currentEdgeIds = new Set();
       let currentNodeIds = new Set();
-      let isFirst = true;
+      let = true;
 
-      // When a message is received
-      ws.onmessage = function (event) {
-        const buffer = new Uint8Array(event.data);
+      // Initialize Vis.js network
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
 
+      const container = document.getElementById("network");
+      const data = { nodes, edges };
+      const options = {};
+      const network = new vis.Network(container, data, options);
+
+      // Crash handler injects `inlinedData` to produce an offline-compatible version of IncrementalVisualizer
+      if (typeof inlinedData !== "undefined") {
+        decodeAndUpdate(inlinedData);
+      } else {
+        const ws = new WebSocket(location.origin + "/_bun/hmr");
+        ws.binaryType = "arraybuffer"; // We are expecting binary data
+        ws.onopen = function () {
+          ws.send("sv"); // Subscribe to visualizer events
+        };
+        ws.onmessage = function (event) {
+          decodeAndUpdate(new Uint8Array(event.data));
+        };
+      }
+
+      function decodeAndUpdate(buffer) {
         // Only process messages starting with 'v' (ASCII code 118)
         if (buffer[0] !== 118) return;
-        console.log("Got Event");
 
         let offset = 1; // Skip the 'v' byte
 
@@ -118,7 +187,7 @@
 
         // Update the graph visualization
         updateGraph();
-      };
+      }
 
       // Helper to read 4-byte unsigned int
       function readUint32(buffer, offset) {
@@ -126,7 +195,8 @@
       }
 
       function basename(path) {
-        return path.slice(path.lastIndexOf("/") + 1);
+        const match = /node_modules\/(.*?)\//.exec(path);
+        return match ? match[1] : path;
       }
 
       // Parse the files from the buffer
@@ -182,26 +252,19 @@
         return { edges, offset };
       }
 
-      // Initialize Vis.js network
-      const nodes = new vis.DataSet();
-      const edges = new vis.DataSet();
-
-      const container = document.getElementById("network");
-      const data = { nodes, edges };
-      const options = {};
-      const network = new vis.Network(container, data, options);
-
       // Helper function to add or update nodes in the graph
       function updateNode(id, file, group) {
         const label = basename(file.name);
-        const color = file.name.includes("/node_modules/")
-          ? c.gray
-          : file.isStale
-            ? c.red
+        const color = file.isStale
+          ? c.red
+          : file.name.startsWith("node_modules/")
+            ? c.gray
             : file.isBoundary
               ? c.orange
               : group === "client"
-                ? c.mauve
+                ? file.isRoute
+                  ? c.purple
+                  : c.mauve
                 : file.isRoute
                   ? c.blue
                   : file.isSSR
@@ -216,7 +279,7 @@
           color: color,
           borderWidth: file.isRoute ? 3 : 1,
           group,
-          font: file.name.includes("/node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
+          font: file.name.startsWith("node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
         };
         if (nodes.get(id)) {
           nodes.update(props);

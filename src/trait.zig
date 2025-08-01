@@ -14,14 +14,14 @@ pub inline fn isZigString(comptime T: type) bool {
     return comptime blk: {
         // Only pointer types can be strings, no optionals
         const info = @typeInfo(T);
-        if (info != .Pointer) break :blk false;
+        if (info != .pointer) break :blk false;
 
-        const ptr = &info.Pointer;
+        const ptr = &info.pointer;
         // Check for CV qualifiers that would prevent coerction to []const u8
         if (ptr.is_volatile or ptr.is_allowzero) break :blk false;
 
         // If it's already a slice, simple check.
-        if (ptr.size == .Slice) {
+        if (ptr.size == .slice) {
             break :blk ptr.child == u8;
         }
 
@@ -40,50 +40,50 @@ pub inline fn isZigString(comptime T: type) bool {
 
 pub inline fn isSlice(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and info.Pointer.size == .Slice;
+    return info == .pointer and info.pointer.size == .slice;
 }
 
 pub inline fn isNumber(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Int, .Float, .ComptimeInt, .ComptimeFloat => true,
+        .int, .float, .comptime_int, .comptime_float => true,
         else => false,
     };
 }
 
 pub inline fn isContainer(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct, .Enum, .Opaque, .Union => true,
+        .@"struct", .@"enum", .@"opaque", .@"union" => true,
         else => false,
     };
 }
 
 pub inline fn isSingleItemPtr(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and .Pointer.size == .One;
+    return info == .pointer and .pointer.size == .One;
 }
 
 pub fn isExternContainer(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct => |s| s.layout == .@"extern",
-        .Union => |u| u.layout == .@"extern",
+        .@"struct" => |s| s.layout == .@"extern",
+        .@"union" => |u| u.layout == .@"extern",
         else => false,
     };
 }
 
 pub fn isConstPtr(comptime T: type) bool {
     const info = @typeInfo(T);
-    return info == .Pointer and info.Pointer.is_const;
+    return info == .pointer and info.pointer.is_const;
 }
 
 pub fn isIndexable(comptime T: type) bool {
     const info = @typeInfo(T);
     return switch (info) {
-        .Pointer => |ptr| switch (ptr.size) {
-            .One => @typeInfo(ptr.child) == .Array,
+        .pointer => |ptr| switch (ptr.size) {
+            .One => @typeInfo(ptr.child) == .array,
             else => true,
         },
-        .Array, .Vector => true,
-        .Struct => |s| s.is_tuple,
+        .array, .vector => true,
+        .@"struct" => |s| s.is_tuple,
         else => false,
     };
 }

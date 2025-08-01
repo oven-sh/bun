@@ -1,10 +1,10 @@
 import { dlopen, ptr } from "bun:ffi";
+import { libcPathForDlopen } from "harness";
 
 var lazyMkfifo: any;
 export function mkfifo(path: string, permissions: number = 0o666): void {
   if (!lazyMkfifo) {
-    const suffix = process.platform === "darwin" ? "dylib" : "so.6";
-    lazyMkfifo = dlopen(`libc.${suffix}`, {
+    lazyMkfifo = dlopen(libcPathForDlopen(), {
       mkfifo: {
         args: ["ptr", "i32"],
         returns: "i32",

@@ -59,8 +59,6 @@
 #include <wtf/FastMalloc.h>
 #endif
 
-#include <wtf/DisallowCType.h>
-
 /* Disabling warning C4206: nonstandard extension used: translation unit is empty.
    By design, we rely on #define flags to make some translation units empty.
    Make sure this warning does not turn into an error.
@@ -73,13 +71,20 @@
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
+#include <wtf/Platform.h>
+
+#ifdef __cplusplus
+#if OS(LINUX)
+#include <limits>
+#endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <wtf/IsoMalloc.h>
-#include <wtf/IsoMallocInlines.h>
 #include <JavaScriptCore/HandleSet.h>
+#include <wtf/Ref.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#endif
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1
@@ -92,5 +97,8 @@
 #define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
+
+// can be nothrow | zero_is_throw | check_slow
+#define ZIG_EXPORT(...)
 
 #endif

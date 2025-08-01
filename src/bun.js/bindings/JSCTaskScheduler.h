@@ -22,8 +22,8 @@ public:
 
 public:
     Lock m_lock;
-    HashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;
-    HashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsOther;
+    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;
+    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsOther;
 };
 
 }

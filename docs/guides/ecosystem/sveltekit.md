@@ -52,9 +52,9 @@ $ cd my-app
 $ bun --bun run dev
   $ vite dev
   Forced re-optimization of dependencies
-  
+
     VITE v5.4.10  ready in 424 ms
-  
+
     ➜  Local:   http://localhost:5173/
     ➜  Network: use --host to expose
     ➜  press h + enter to show help
@@ -88,7 +88,7 @@ Now, make the following changes to your `svelte.config.js`.
   	// Consult https://svelte.dev/docs/kit/integrations#preprocessors
   	// for more information about preprocessors
   	preprocess: vitePreprocess(),
-  
+
   	kit: {
   		// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
   		// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
@@ -96,7 +96,7 @@ Now, make the following changes to your `svelte.config.js`.
   		adapter: adapter()
   	}
   };
-  
+
   export default config;
 ```
 
@@ -116,9 +116,9 @@ $ bun --bun run build
   ✓ built in 231ms
   ...
   ✓ built in 899ms
-  
+
   Run npm run preview to preview your production build locally.
-  
+
   > Using svelte-adapter-bun
     ✔ Start server with: bun ./build/index.js
     ✔ done

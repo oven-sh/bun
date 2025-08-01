@@ -1,13 +1,6 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Location = css.css_rules.Location;
 const CustomIdent = css.css_values.ident.CustomIdent;
@@ -62,7 +55,7 @@ pub const ContainerSizeFeatureId = enum {
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
     orientation,
 
-    pub usingnamespace css.DeriveValueType(@This());
+    pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
 
     pub const ValueTypeMap = .{
         .width = css.MediaFeatureType.length,
@@ -141,7 +134,7 @@ pub const StyleQuery = union(enum) {
         if (input.expectColon().asErr()) |e| return .{ .err = e };
         input.skipWhitespace();
         const opts = css.ParserOptions.default(input.allocator(), null);
-        const feature = .{
+        const feature: StyleQuery = .{
             .feature = switch (css.Property.parse(
                 property_id,
                 input,
@@ -334,7 +327,7 @@ pub fn ContainerRule(comptime R: type) type {
 
             // Don't downlevel range syntax in container queries.
             const exclude = dest.targets.exclude;
-            dest.targets.exclude.insert(css.targets.Features.media_queries);
+            bun.bits.insert(css.targets.Features, &dest.targets.exclude, .media_queries);
             try this.condition.toCss(W, dest);
             dest.targets.exclude = exclude;
 
@@ -353,3 +346,8 @@ pub fn ContainerRule(comptime R: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

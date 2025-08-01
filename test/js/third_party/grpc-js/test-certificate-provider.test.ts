@@ -15,11 +15,11 @@
  *
  */
 
-import assert from "node:assert";
-import * as path from "path";
-import * as fs from "fs/promises";
 import * as grpc from "@grpc/grpc-js";
 import { beforeAll, describe, it } from "bun:test";
+import * as fs from "fs/promises";
+import assert from "node:assert";
+import * as path from "path";
 const { experimental } = grpc;
 describe("Certificate providers", () => {
   describe("File watcher", () => {

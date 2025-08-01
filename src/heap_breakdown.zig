@@ -1,7 +1,3 @@
-const bun = @import("root").bun;
-const std = @import("std");
-const Environment = bun.Environment;
-const Allocator = std.mem.Allocator;
 const vm_size_t = usize;
 
 pub const enabled = Environment.allow_assert and Environment.isMac;
@@ -50,10 +46,10 @@ pub const Zone = opaque {
         return zone;
     }
 
-    fn alignedAlloc(zone: *Zone, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(zone: *Zone, len: usize, alignment: std.mem.Alignment) ?[*]u8 {
         // The posix_memalign only accepts alignment values that are a
         // multiple of the pointer size
-        const eff_alignment = @max(alignment, @sizeOf(usize));
+        const eff_alignment = @max(alignment.toByteUnits(), @sizeOf(usize));
         const ptr = malloc_zone_memalign(zone, eff_alignment, len);
         return @as(?[*]u8, @ptrCast(ptr));
     }
@@ -62,12 +58,11 @@ pub const Zone = opaque {
         return std.c.malloc_size(ptr);
     }
 
-    fn rawAlloc(zone: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
-        const alignment = @as(usize, 1) << @intCast(log2_align);
+    fn rawAlloc(zone: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(@ptrCast(zone), len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+    fn resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -80,13 +75,14 @@ pub const Zone = opaque {
         return false;
     }
 
-    fn rawFree(zone: *anyopaque, buf: []u8, _: u8, _: usize) void {
+    fn rawFree(zone: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
         malloc_zone_free(@ptrCast(zone), @ptrCast(buf.ptr));
     }
 
     pub const vtable = std.mem.Allocator.VTable{
         .alloc = &rawAlloc,
         .resize = &resize,
+        .remap = &std.mem.Allocator.noRemap,
         .free = &rawFree,
     };
 
@@ -99,10 +95,9 @@ pub const Zone = opaque {
 
     /// Create a single-item pointer with initialized data.
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
-        const align_of_t: usize = @alignOf(T);
-        const log2_align_of_t = @ctz(align_of_t);
+        const alignment: std.mem.Alignment = .fromByteUnits(@alignOf(T));
         const ptr: *T = @alignCast(@ptrCast(
-            rawAlloc(zone, @sizeOf(T), log2_align_of_t, @returnAddress()) orelse bun.outOfMemory(),
+            rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
         ));
         ptr.* = data;
         return ptr;
@@ -111,6 +106,10 @@ pub const Zone = opaque {
     /// Free a single-item pointer
     pub inline fn destroy(zone: *Zone, comptime T: type, ptr: *T) void {
         malloc_zone_free(zone, @ptrCast(ptr));
+    }
+
+    pub fn isInstance(allocator_: std.mem.Allocator) bool {
+        return allocator_.vtable == &vtable;
     }
 
     pub extern fn malloc_default_zone() *Zone;
@@ -134,3 +133,9 @@ pub const Zone = opaque {
     pub extern fn malloc_get_zone_name(zone: *Zone) ?[*:0]const u8;
     pub extern fn malloc_zone_pressure_relief(zone: *Zone, goal: usize) usize;
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;

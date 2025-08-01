@@ -8563,7 +8563,7 @@
     },
     "node:wasi": {
       "name": "ReferenceError",
-      "message": "Can't find variable: constants"
+      "message": "constants is not defined"
     }
   }
 }

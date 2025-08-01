@@ -1,10 +1,3 @@
-const bun = @import("root").bun;
-const Output = bun.Output;
-const JSC = bun.JSC;
-const uws = bun.uws;
-const Environment = bun.Environment;
-const std = @import("std");
-
 pub const Loop = uws.Loop;
 
 /// Track if an object whose file descriptor is being watched should keep the event loop alive.
@@ -22,7 +15,7 @@ pub const KeepAlive = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *KeepAlive) void {
-        this.unref(JSC.VirtualMachine.get());
+        this.unref(jsc.VirtualMachine.get());
         this.status = .done;
     }
 
@@ -54,16 +47,16 @@ pub const KeepAlive = struct {
             return;
         this.status = .inactive;
 
-        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+        if (comptime @TypeOf(event_loop_ctx_) == jsc.EventLoopHandle) {
             event_loop_ctx_.loop().unref();
             return;
         }
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         event_loop_ctx.platformEventLoop().unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
@@ -72,7 +65,7 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
@@ -81,7 +74,7 @@ pub const KeepAlive = struct {
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
@@ -95,27 +88,27 @@ pub const KeepAlive = struct {
 
         this.status = .active;
         const EventLoopContext = @TypeOf(event_loop_ctx_);
-        if (comptime EventLoopContext == JSC.EventLoopHandle) {
+        if (comptime EventLoopContext == jsc.EventLoopHandle) {
             event_loop_ctx_.ref();
             return;
         }
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         event_loop_ctx.platformEventLoop().ref();
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn refConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+    pub fn refConcurrently(this: *KeepAlive, vm: *jsc.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
         vm.event_loop.refConcurrently();
     }
 
-    pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
+    pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *jsc.EventLoop) void {
         this.refConcurrently(loop.virtual_machine);
     }
 
-    pub fn unrefConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
+    pub fn unrefConcurrentlyFromEventLoop(this: *KeepAlive, loop: *jsc.EventLoop) void {
         this.unrefConcurrently(loop.virtual_machine);
     }
 };
@@ -141,9 +134,9 @@ pub const FilePoll = struct {
     const ShellBufferedWriter = bun.shell.Interpreter.IOWriter.Poll;
     // const ShellBufferedWriter = bun.shell.Interpreter.WriterImpl;
 
-    const FileReader = JSC.WebCore.FileReader;
-    // const FIFO = JSC.WebCore.FIFO;
-    // const FIFOMini = JSC.WebCore.FIFOMini;
+    const FileReader = jsc.WebCore.FileReader;
+    // const FIFO = jsc.WebCore.FIFO;
+    // const FIFOMini = jsc.WebCore.FIFOMini;
 
     // const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
     // const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
@@ -153,15 +146,16 @@ pub const FilePoll = struct {
     // const ShellBufferedOutput = bun.shell.Subprocess.BufferedOutput;
     // const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
     const Process = bun.spawn.Process;
-    const Subprocess = JSC.Subprocess;
+    const Subprocess = jsc.Subprocess;
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
-    const FileSink = JSC.WebCore.FileSink.Poll;
-    const DNSResolver = JSC.DNS.DNSResolver;
-    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
-    const Request = JSC.DNS.InternalDNS.Request;
+    const FileSink = jsc.WebCore.FileSink.Poll;
+    const DNSResolver = bun.api.dns.Resolver;
+    const GetAddrInfoRequest = bun.api.dns.GetAddrInfoRequest;
+    const Request = bun.api.dns.internal.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
+
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
 
@@ -271,16 +265,16 @@ pub const FilePoll = struct {
     pub fn deinit(this: *FilePoll) void {
         switch (this.allocator_type) {
             .js => {
-                const vm = JSC.VirtualMachine.get();
-                const handle = JSC.AbstractVM(vm);
+                const vm = jsc.VirtualMachine.get();
+                const handle = jsc.AbstractVM(vm);
                 // const loop = vm.event_loop_handle.?;
                 const loop = handle.platformEventLoop();
                 const file_polls = handle.filePolls();
                 this.deinitPossiblyDefer(vm, loop, file_polls, false);
             },
             .mini => {
-                const vm = JSC.MiniEventLoop.global;
-                const handle = JSC.AbstractVM(vm);
+                const vm = jsc.MiniEventLoop.global;
+                const handle = jsc.AbstractVM(vm);
                 // const loop = vm.event_loop_handle.?;
                 const loop = handle.platformEventLoop();
                 const file_polls = handle.filePolls();
@@ -292,12 +286,12 @@ pub const FilePoll = struct {
     pub fn deinitForceUnregister(this: *FilePoll) void {
         switch (this.allocator_type) {
             .js => {
-                var vm = JSC.VirtualMachine.get();
+                var vm = jsc.VirtualMachine.get();
                 const loop = vm.event_loop_handle.?;
                 this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), true);
             },
             .mini => {
-                var vm = JSC.MiniEventLoop.global;
+                var vm = jsc.MiniEventLoop.global;
                 const loop = vm.loop;
                 this.deinitPossiblyDefer(vm, loop, vm.filePolls(), true);
             },
@@ -315,7 +309,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm_: anytype) void {
-        const vm = JSC.AbstractVM(vm_);
+        const vm = jsc.AbstractVM(vm_);
         // const loop = vm.event_loop_handle.?;
         const loop = vm.platformEventLoop();
         this.deinitPossiblyDefer(vm_, loop, vm.filePolls(), false);
@@ -365,41 +359,42 @@ pub const FilePoll = struct {
             //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
             //     loader.onPoll(size_or_offset, 0);
             // },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
+            @field(Owner.Tag, @typeName(ShellBufferedWriter)) => {
                 var handler: *ShellBufferedWriter = ptr.as(ShellBufferedWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellStaticPipeWriter))) => {
+            @field(Owner.Tag, @typeName(ShellStaticPipeWriter)) => {
                 var handler: *ShellStaticPipeWriter = ptr.as(ShellStaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {
+            @field(Owner.Tag, @typeName(StaticPipeWriter)) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FileSink))) => {
+            @field(Owner.Tag, @typeName(FileSink)) => {
                 var handler: *FileSink = ptr.as(FileSink);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(BufferedReader))) => {
+            @field(Owner.Tag, @typeName(BufferedReader)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Reader", .{poll.fd});
                 var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
+
+            @field(Owner.Tag, @typeName(Process)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
                 var loader = ptr.as(Process);
 
                 loader.onWaitPidFromEventLoopTask();
             },
 
-            @field(Owner.Tag, "DNSResolver") => {
+            @field(Owner.Tag, @typeName(DNSResolver)) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) DNSResolver", .{poll.fd});
                 var loader: *DNSResolver = ptr.as(DNSResolver);
                 loader.onDNSPoll(poll);
             },
 
-            @field(Owner.Tag, "GetAddrInfoRequest") => {
+            @field(Owner.Tag, @typeName(GetAddrInfoRequest)) => {
                 if (comptime !Environment.isMac) {
                     unreachable;
                 }
@@ -409,7 +404,7 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "Request") => {
+            @field(Owner.Tag, @typeName(Request)) => {
                 if (comptime !Environment.isMac) {
                     unreachable;
                 }
@@ -501,19 +496,19 @@ pub const FilePoll = struct {
 
         pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT.READ) {
                 flags.insert(Flags.readable);
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV.EOF != 0) {
                     flags.insert(Flags.hup);
                 }
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.PROC) {
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
                 flags.insert(Flags.machport);
             }
             return flags;
@@ -590,8 +585,10 @@ pub const FilePoll = struct {
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
-            vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
+
+            const callback = jsc.OpaqueWrap(Store, processDeferredFrees);
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?jsc.OpaqueCallback, callback));
+            vm.after_event_loop_callback = callback;
             vm.after_event_loop_callback_ctx = this;
         }
     };
@@ -609,15 +606,15 @@ pub const FilePoll = struct {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
-        if (comptime @TypeOf(event_loop_ctx_) == *JSC.EventLoop) {
-            disableKeepingProcessAlive(this, JSC.EventLoopHandle.init(event_loop_ctx_));
+        if (comptime @TypeOf(event_loop_ctx_) == *jsc.EventLoop) {
+            disableKeepingProcessAlive(this, jsc.EventLoopHandle.init(event_loop_ctx_));
             return;
         }
 
-        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+        if (comptime @TypeOf(event_loop_ctx_) == jsc.EventLoopHandle) {
             event_loop_ctx_.loop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         } else {
-            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+            const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
             // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
             // vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
             event_loop_ctx.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
@@ -639,18 +636,18 @@ pub const FilePoll = struct {
         }
     }
     pub fn enableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
-        if (comptime @TypeOf(event_loop_ctx_) == *JSC.EventLoop) {
-            enableKeepingProcessAlive(this, JSC.EventLoopHandle.init(event_loop_ctx_));
+        if (comptime @TypeOf(event_loop_ctx_) == *jsc.EventLoop) {
+            enableKeepingProcessAlive(this, jsc.EventLoopHandle.init(event_loop_ctx_));
             return;
         }
 
         if (this.flags.contains(.closed))
             return;
 
-        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+        if (comptime @TypeOf(event_loop_ctx_) == jsc.EventLoopHandle) {
             event_loop_ctx_.loop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         } else {
-            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+            const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
             event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         }
 
@@ -660,7 +657,7 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(this: *FilePoll, loop: *Loop) void {
-        loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        if (this.flags.contains(.has_incremented_poll_count)) loop.dec();
         this.flags.remove(.has_incremented_poll_count);
 
         loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
@@ -672,7 +669,7 @@ pub const FilePoll = struct {
     fn activate(this: *FilePoll, loop: *Loop) void {
         this.flags.remove(.closed);
 
-        loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
+        if (!this.flags.contains(.has_incremented_poll_count)) loop.inc();
         this.flags.insert(.has_incremented_poll_count);
 
         if (this.flags.contains(.keeps_event_loop_alive)) {
@@ -683,10 +680,10 @@ pub const FilePoll = struct {
 
     pub fn init(vm: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         if (comptime @TypeOf(vm) == *bun.install.PackageManager) {
-            return init(JSC.EventLoopHandle.init(&vm.event_loop), fd, flags, Type, owner);
+            return init(jsc.EventLoopHandle.init(&vm.event_loop), fd, flags, Type, owner);
         }
 
-        if (comptime @TypeOf(vm) == JSC.EventLoopHandle) {
+        if (comptime @TypeOf(vm) == jsc.EventLoopHandle) {
             var poll = vm.filePolls().get();
             poll.fd = fd;
             poll.flags = Flags.Set.init(flags);
@@ -706,13 +703,13 @@ pub const FilePoll = struct {
     }
 
     pub fn initWithOwner(vm_: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
-        const vm = JSC.AbstractVM(vm_);
+        const vm = jsc.AbstractVM(vm_);
         var poll = vm.allocFilePoll();
         poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         poll.next_to_free = null;
-        poll.allocator_type = if (comptime @TypeOf(vm_) == *JSC.VirtualMachine) .js else .mini;
+        poll.allocator_type = if (comptime @TypeOf(vm_) == *jsc.VirtualMachine) .js else .mini;
 
         if (KQueueGenerationNumber != u0) {
             max_generation_number +%= 1;
@@ -751,7 +748,7 @@ pub const FilePoll = struct {
     }
 
     pub fn onEnded(this: *FilePoll, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = jsc.AbstractVM(event_loop_ctx_);
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.insert(.closed);
         // this.deactivate(vm.event_loop_handle.?);
@@ -761,7 +758,7 @@ pub const FilePoll = struct {
     pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
         var tag = Pollable.from(tagged_pointer);
 
-        if (tag.tag() != @field(Pollable.Tag, "FilePoll"))
+        if (tag.tag() != @field(Pollable.Tag, @typeName(FilePoll)))
             return;
 
         var file_poll: *FilePoll = tag.as(FilePoll);
@@ -780,7 +777,7 @@ pub const FilePoll = struct {
     });
 
     comptime {
-        @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
+        @export(&onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 
     const timeout = std.mem.zeroes(std.posix.timespec);
@@ -789,11 +786,11 @@ pub const FilePoll = struct {
 
     pub const OneShotFlag = enum { dispatch, one_shot, none };
 
-    pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
+    pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) bun.sys.Maybe(void) {
         return registerWithFd(this, loop, flag, if (one_shot) .one_shot else .none, this.fd);
     }
 
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) JSC.Maybe(void) {
+    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
@@ -826,7 +823,7 @@ pub const FilePoll = struct {
                 &event,
             );
             this.flags.insert(.was_ever_registered);
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 this.deactivate(loop);
                 return errno;
             }
@@ -835,45 +832,45 @@ pub const FilePoll = struct {
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
                 0
             else if (one_shot == .dispatch)
-                std.c.EV_DISPATCH | std.c.EV_ENABLE
+                std.c.EV.DISPATCH | std.c.EV.ENABLE
             else
-                std.c.EV_ONESHOT;
+                std.c.EV.ONESHOT;
 
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT.PROC,
                     .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
+                    .fflags = std.c.NOTE.EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT.MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV.ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
                 else => unreachable,
@@ -900,7 +897,7 @@ pub const FilePoll = struct {
                         &timeout,
                     );
 
-                    if (bun.C.getErrno(rc) == .INTR) continue;
+                    if (bun.sys.getErrno(rc) == .INTR) continue;
                     break :rc rc;
                 }
             };
@@ -911,19 +908,17 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR and changelist[0].data != 0) {
-                return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+            if (changelist[0].flags == std.c.EV.ERROR and changelist[0].data != 0) {
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
 
             if (errno != .SUCCESS) {
                 this.deactivate(loop);
-                return JSC.Maybe(void){
-                    .err = bun.sys.Error.fromCode(errno, .kqueue),
-                };
+                return .initErr(bun.sys.Error.fromCode(errno, .kqueue));
             }
         } else {
             @compileError("unsupported platform");
@@ -938,7 +933,7 @@ pub const FilePoll = struct {
         });
         this.flags.remove(.needs_rearm);
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 
     const invalid_fd = bun.invalid_fd;
@@ -947,20 +942,20 @@ pub const FilePoll = struct {
         return @intCast(this.fd);
     }
 
-    pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) JSC.Maybe(void) {
+    pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) bun.sys.Maybe(void) {
         return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) bun.sys.Maybe(void) {
         if (Environment.allow_assert) {
-            bun.assert(fd.int() >= 0 and fd != bun.invalid_fd);
+            bun.assert(fd.native() >= 0 and fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
 
             // no-op
-            return JSC.Maybe(void).success;
+            return .success;
         }
 
         bun.assert(fd != invalid_fd);
@@ -975,7 +970,7 @@ pub const FilePoll = struct {
 
             if (this.flags.contains(.poll_machport))
                 break :brk .machport;
-            return JSC.Maybe(void).success;
+            return .success;
         };
 
         if (this.flags.contains(.needs_rearm) and !force_unregister) {
@@ -984,7 +979,7 @@ pub const FilePoll = struct {
             this.flags.remove(.poll_readable);
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_machport);
-            return JSC.Maybe(void).success;
+            return .success;
         }
 
         log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
@@ -997,7 +992,7 @@ pub const FilePoll = struct {
                 null,
             );
 
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
         } else if (comptime Environment.isMac) {
@@ -1006,38 +1001,38 @@ pub const FilePoll = struct {
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT.READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .machport => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_MACHPORT,
+                    .filter = std.posix.system.EVFILT.MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT.WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
                     .ident = @intCast(fd.cast()),
-                    .filter = std.posix.system.EVFILT_PROC,
+                    .filter = std.posix.system.EVFILT.PROC,
                     .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
+                    .fflags = std.c.NOTE.EXIT,
                     .udata = @intFromPtr(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE,
+                    .flags = std.c.EV.DELETE,
                     .ext = .{ 0, 0 },
                 },
                 else => unreachable,
@@ -1063,15 +1058,15 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
-                return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
+            if (changelist[0].flags == std.c.EV.ERROR) {
+                return bun.sys.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
             switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
+                std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
         } else {
@@ -1087,30 +1082,149 @@ pub const FilePoll = struct {
         this.flags.remove(.poll_process);
         this.flags.remove(.poll_machport);
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 };
 
-pub const Waker = bun.AsyncIO.Waker;
+pub const Waker = switch (Environment.os) {
+    .mac => KEventWaker,
+    .linux => LinuxWaker,
+    else => @compileError(unreachable),
+};
+
+pub const LinuxWaker = struct {
+    fd: bun.FileDescriptor,
+
+    pub fn init() !Waker {
+        return initWithFileDescriptor(.fromNative(try std.posix.eventfd(0, 0)));
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        return this.fd;
+    }
+
+    pub fn initWithFileDescriptor(fd: bun.FileDescriptor) Waker {
+        return Waker{ .fd = fd };
+    }
+
+    pub fn wait(this: Waker) void {
+        var bytes: usize = 0;
+        _ = std.posix.read(this.fd.cast(), @as(*[8]u8, @ptrCast(&bytes))) catch 0;
+    }
+
+    pub fn wake(this: *const Waker) void {
+        var bytes: usize = 1;
+        _ = std.posix.write(
+            this.fd.cast(),
+            @as(*[8]u8, @ptrCast(&bytes)),
+        ) catch 0;
+    }
+};
+
+pub const KEventWaker = struct {
+    kq: std.posix.fd_t,
+    machport: bun.mach_port = undefined,
+    machport_buf: []u8 = &.{},
+    has_pending_wake: bool = false,
+
+    const zeroed = std.mem.zeroes([16]Kevent64);
+
+    const Kevent64 = std.posix.system.kevent64_s;
+
+    pub fn wake(this: *Waker) void {
+        bun.jsc.markBinding(@src());
+
+        if (io_darwin_schedule_wakeup(this.machport)) {
+            this.has_pending_wake = false;
+            return;
+        }
+        this.has_pending_wake = true;
+    }
+
+    pub fn getFd(this: *const Waker) bun.FileDescriptor {
+        return .fromNative(this.kq);
+    }
+
+    pub fn wait(this: Waker) void {
+        if (!bun.FD.fromNative(this.kq).isValid()) {
+            return;
+        }
+
+        bun.jsc.markBinding(@src());
+        var events = zeroed;
+
+        _ = std.posix.system.kevent64(
+            this.kq,
+            &events,
+            0,
+            &events,
+            events.len,
+            0,
+            null,
+        );
+    }
+
+    extern fn io_darwin_close_machport(bun.mach_port) void;
+
+    extern fn io_darwin_create_machport(
+        std.posix.fd_t,
+        *anyopaque,
+        usize,
+    ) bun.mach_port;
+
+    extern fn io_darwin_schedule_wakeup(bun.mach_port) bool;
+
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());
+    }
+
+    pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
+        bun.jsc.markBinding(@src());
+        bun.assert(kq > -1);
+        const machport_buf = try allocator.alloc(u8, 1024);
+        const machport = io_darwin_create_machport(
+            kq,
+            machport_buf.ptr,
+            1024,
+        );
+        if (machport == 0) {
+            return error.MachportCreationFailed;
+        }
+
+        return Waker{
+            .kq = kq,
+            .machport = machport,
+            .machport_buf = machport_buf,
+        };
+    }
+};
 
 pub const Closer = struct {
     fd: bun.FileDescriptor,
-    task: JSC.WorkPoolTask = .{ .callback = &onClose },
+    task: jsc.WorkPoolTask = .{ .callback = &onClose },
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn close(
         fd: bun.FileDescriptor,
-        /// for compatibiltiy with windows version
-        _: anytype,
+        /// for compatibility with windows version
+        _: void,
     ) void {
-        bun.assert(fd != bun.invalid_fd);
-        JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
+        bun.assert(fd.isValid());
+        jsc.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }
 
-    fn onClose(task: *JSC.WorkPoolTask) void {
+    fn onClose(task: *jsc.WorkPoolTask) void {
         const closer: *Closer = @fieldParentPtr("task", task);
-        defer closer.destroy();
-        _ = bun.sys.close(closer.fd);
+        defer bun.destroy(closer);
+        closer.fd.close();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const jsc = bun.jsc;
+const uws = bun.uws;

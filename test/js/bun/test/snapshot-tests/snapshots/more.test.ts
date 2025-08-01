@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 describe("d0", () => {
-  test.todo("snapshot serialize edgecases", () => {
+  test("snapshot serialize edgecases", () => {
     expect(1).toMatchSnapshot();
     expect("1\b2\n3\r4").toMatchSnapshot();
     expect("\r\n").toMatchSnapshot();
@@ -47,7 +47,7 @@ describe("d0", () => {
 
 describe("d0", () => {
   describe("d1", () => {
-    test.todo("t1", () => {
+    test("t1", () => {
       expect("hello`snapshot\\").toEqual("hello`snapshot\\");
       expect("hello`snapshot\\").toMatchSnapshot();
     });
@@ -58,7 +58,7 @@ describe("d0", () => {
   test("t3", () => {
     expect("hello snapshot").toMatchSnapshot();
   });
-  test.todo("t4", () => {
+  test("t4", () => {
     expect("hello`snapshot\\").toMatchSnapshot();
   });
 });

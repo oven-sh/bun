@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "ContextDestructionObserver.h"
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 #include "ScriptExecutionContext.h"
 
@@ -42,6 +43,11 @@ ContextDestructionObserver::~ContextDestructionObserver()
     observeContext(nullptr);
 }
 
+RefPtr<ScriptExecutionContext> ContextDestructionObserver::protectedScriptExecutionContext() const
+{
+    return m_context.get();
+}
+
 void ContextDestructionObserver::observeContext(ScriptExecutionContext* scriptExecutionContext)
 {
     if (m_context) {
@@ -49,7 +55,7 @@ void ContextDestructionObserver::observeContext(ScriptExecutionContext* scriptEx
         m_context->willDestroyDestructionObserver(*this);
     }
 
-    m_context = scriptExecutionContext;
+    m_context = WeakPtr { scriptExecutionContext, EnableWeakPtrThreadingAssertions::No };
 
     if (m_context) {
         ASSERT(m_context->isContextThread());

@@ -29,8 +29,7 @@ export function initializeTransformStreamDefaultController(this) {
 
 $getter;
 export function desiredSize(this) {
-  if (!$isTransformStreamDefaultController(this))
-    throw $makeThisTypeError("TransformStreamDefaultController", "enqueue");
+  if (!$isTransformStreamDefaultController(this)) throw $ERR_INVALID_THIS("TransformStreamDefaultController");
 
   const stream = $getByIdDirectPrivate(this, "stream");
   const readable = $getByIdDirectPrivate(stream, "readable");
@@ -40,21 +39,19 @@ export function desiredSize(this) {
 }
 
 export function enqueue(this, chunk) {
-  if (!$isTransformStreamDefaultController(this))
-    throw $makeThisTypeError("TransformStreamDefaultController", "enqueue");
+  if (!$isTransformStreamDefaultController(this)) throw $ERR_INVALID_THIS("TransformStreamDefaultController");
 
   $transformStreamDefaultControllerEnqueue(this, chunk);
 }
 
 export function error(this, e) {
-  if (!$isTransformStreamDefaultController(this)) throw $makeThisTypeError("TransformStreamDefaultController", "error");
+  if (!$isTransformStreamDefaultController(this)) throw $ERR_INVALID_THIS("TransformStreamDefaultController");
 
   $transformStreamDefaultControllerError(this, e);
 }
 
 export function terminate(this) {
-  if (!$isTransformStreamDefaultController(this))
-    throw $makeThisTypeError("TransformStreamDefaultController", "terminate");
+  if (!$isTransformStreamDefaultController(this)) throw $ERR_INVALID_THIS("TransformStreamDefaultController");
 
   $transformStreamDefaultControllerTerminate(this);
 }

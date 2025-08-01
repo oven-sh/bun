@@ -1,0 +1,2 @@
+[type.md]
+extend-ignore-words-re = ["^ba"]

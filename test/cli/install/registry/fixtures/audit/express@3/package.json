@@ -1,0 +1,6 @@
+{
+  "name": "express-3",
+  "dependencies": {
+    "express": "3"
+  }
+}

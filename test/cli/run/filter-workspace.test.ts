@@ -86,6 +86,8 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
+  env = {},
+  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -93,22 +95,32 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
+  env?: Record<string, string | undefined>;
+  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
+
+  // Add elide-lines first if specified
+  if (elideCount !== undefined) {
+    cmd.push("--elide-lines", elideCount.toString());
+  }
+
   if (Array.isArray(pattern)) {
     for (const p of pattern) {
       cmd.push("--filter", p);
     }
   } else {
-    cmd.push("--filter", pattern);
+    cmd.push("-F", pattern);
   }
+
   for (const c of command) {
     cmd.push(c);
   }
+
   const { exitCode, stdout, stderr } = spawnSync({
-    cwd: cwd,
-    cmd: cmd,
-    env: bunEnv,
+    cwd,
+    cmd,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -415,5 +427,83 @@ describe("bun", () => {
     expect(stdoutval).toMatch(/code 0/);
     expect(stdoutval).toMatch(/code 23/);
     expect(exitCode).toBe(23);
+  });
+
+  function runElideLinesTest({
+    elideLines,
+    target_pattern,
+    antipattern,
+    win32ExpectedError,
+  }: {
+    elideLines: number;
+    target_pattern: RegExp[];
+    antipattern?: RegExp[];
+    win32ExpectedError: RegExp;
+  }) {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    if (process.platform === "win32") {
+      const { exitCode, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stderr.toString()).toMatch(win32ExpectedError);
+      expect(exitCode).not.toBe(0);
+      return;
+    }
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
+      target_pattern,
+      antipattern,
+      command: ["script"],
+      elideCount: elideLines,
+    });
+  }
+
+  test("elides output by default when using --filter", () => {
+    runElideLinesTest({
+      elideLines: 10,
+      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
+    });
+  });
+
+  test("respects --elide-lines argument", () => {
+    runElideLinesTest({
+      elideLines: 15,
+      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
+    });
+  });
+
+  test("--elide-lines=0 shows all output", () => {
+    runElideLinesTest({
+      elideLines: 0,
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
+      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
+    });
   });
 });

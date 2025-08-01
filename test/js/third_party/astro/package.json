@@ -1,0 +1,15 @@
+{
+  "name": "astro-repro",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/node": "9.1.3",
+    "astro": "5.5.5"
+  }
+}

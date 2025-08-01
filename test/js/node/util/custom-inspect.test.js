@@ -142,7 +142,7 @@ for (const [name, inspect] of process.versions.bun
 
     const expected = isBunInspect
       ? "{[Symbol(nodejs.util.inspect.custom)]:512,}"
-      : "{[Symbol(nodejs.util.inspect.custom)]:512}";
+      : "{Symbol(nodejs.util.inspect.custom):512}";
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
 
@@ -155,11 +155,6 @@ for (const [name, inspect] of process.versions.bun
       },
     };
 
-    if (Bun.inspect === inspect) {
-      // make sure this doesnt crash
-      expect(inspect(obj)).toBeString();
-    } else {
-      expect(() => inspect(obj)).toThrow();
-    }
+    expect(() => inspect(obj)).toThrow();
   });
 }

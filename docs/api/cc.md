@@ -2,7 +2,7 @@
 
 ## Usage (cc in `bun:ffi`)
 
-See the [introduction blog post](https://bun.sh/blog/compile-and-run-c-in-js) for more information.
+See the [introduction blog post](https://bun.com/blog/compile-and-run-c-in-js) for more information.
 
 JavaScript:
 
@@ -179,16 +179,16 @@ type Flags = string | string[];
 
 These are flags like `-I` for include directories and `-D` for preprocessor definitions.
 
-#### `defines: Record<string, string>`
+#### `define: Record<string, string>`
 
-The `defines` is an optional object that should be passed to the TinyCC compiler.
+The `define` is an optional object that should be passed to the TinyCC compiler.
 
 ```ts
 type Defines = Record<string, string>;
 
 cc({
   source: "hello.c",
-  defines: {
+  define: {
     "NDEBUG": "1",
   },
 });

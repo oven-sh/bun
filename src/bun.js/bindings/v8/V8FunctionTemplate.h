@@ -34,8 +34,8 @@ enum class SideEffectType {
 // (v8-fast-api-calls.h is not in the headers distribution)
 class CFunction {
 private:
-    const void* address;
-    const void* type_info;
+    [[maybe_unused]] const void* address;
+    [[maybe_unused]] const void* type_info;
 };
 
 class FunctionTemplate : public Template {

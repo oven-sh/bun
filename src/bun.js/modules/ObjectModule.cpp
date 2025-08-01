@@ -10,14 +10,15 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
-        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties,
-            DontEnumPropertiesMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
         for (auto& entry : properties) {
@@ -25,7 +26,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
 
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
+            if (scope.exception()) [[unlikely]] {
                 scope.clearException();
                 value = jsUndefined();
             }
@@ -43,15 +44,19 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties,
-            DontEnumPropertiesMode::Exclude);
+        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
         gcUnprotectNullTolerant(object);
+
+        exportNames.append(vm.propertyNames->defaultKeyword);
+        exportValues.append(object);
 
         for (auto& entry : properties) {
             if (entry == vm.propertyNames->defaultKeyword) {
@@ -60,17 +65,10 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
 
             exportNames.append(entry);
 
-            auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
-                scope.clearException();
-                value = jsUndefined();
-            }
+            RETURN_IF_EXCEPTION(scope, {});
             exportValues.append(value);
         }
-
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(object);
     };
 }
 
@@ -84,15 +82,25 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
             value.getObject());
     }
 
+    return generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+}
+
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value)
+{
     if (value.isCell())
         gcProtectNullTolerant(value.asCell());
     return [value](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
-        JSC::VM& vm = lexicalGlobalObject->vm();
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(value);
+        const Identifier& esModuleMarker = vm.propertyNames->__esModule;
+        exportNames.append(esModuleMarker);
+        exportValues.append(jsBoolean(true));
 
         if (value.isCell())
             gcUnprotectNullTolerant(value.asCell());

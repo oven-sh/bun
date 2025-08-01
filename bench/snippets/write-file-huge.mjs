@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { writeFile } from "node:fs/promises";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var hugeFile = Buffer.alloc(1024 * 1024 * 64);
 var medFile = Buffer.alloc(1024 * 1024 * 16);

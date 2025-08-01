@@ -39,7 +39,7 @@ namespace WebCore {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PerformanceEntry);
 class PerformanceEntry : public RefCounted<PerformanceEntry> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(PerformanceEntry);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(PerformanceEntry, PerformanceEntry);
 
 public:
     virtual ~PerformanceEntry();
@@ -58,6 +58,8 @@ public:
 
     virtual Type performanceEntryType() const = 0;
     virtual ASCIILiteral entryType() const = 0;
+
+    size_t memoryCost() const;
 
     static std::optional<Type> parseEntryTypeString(const String& entryType);
 

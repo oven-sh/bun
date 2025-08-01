@@ -3,12 +3,14 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(MD4) \
     macro(MD5) \
+    macro(S3Client) \
     macro(SHA1) \
     macro(SHA224) \
     macro(SHA256) \
@@ -17,28 +19,32 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
+    macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \
+    macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
-    macro(main) \
     macro(origin) \
+    macro(s3) \
+    macro(semver) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
-    macro(semver) \
-    macro(embeddedFiles) \
+    macro(valkey) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
     macro(braces) \
     macro(build) \
-    macro(connect) \
     macro(color) \
+    macro(connect) \
+    macro(createParsedShellScript) \
+    macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
     macro(fs) \
@@ -50,7 +56,6 @@
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(udpSocket) \
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \
@@ -59,27 +64,32 @@
     macro(resolveSync) \
     macro(serve) \
     macro(sha) \
+    macro(shellEscape) \
     macro(shrink) \
     macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
+    macro(stringWidth) \
+    macro(udpSocket) \
     macro(which) \
     macro(write) \
-    macro(stringWidth) \
-    macro(shellEscape) \
-    macro(createShellInterpreter) \
-    macro(createParsedShellScript) \
+    macro(zstdCompressSync) \
+    macro(zstdDecompressSync) \
+    macro(zstdCompress) \
+    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+// declaration for the exported function in BunObject.zig
+#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_getter_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_getter_##name(object->globalObject(), object)); \
+// definition of the C++ wrapper to call the Zig function
+#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

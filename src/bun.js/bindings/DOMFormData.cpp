@@ -110,14 +110,14 @@ void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& fi
     blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
     m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
-void DOMFormData::remove(const String& name)
+void DOMFormData::remove(const StringView name)
 {
-    m_items.removeAllMatching([&name](const auto& item) {
+    m_items.removeAllMatching([name](const auto& item) {
         return item.name == name;
     });
 }
 
-auto DOMFormData::get(const String& name) -> std::optional<FormDataEntryValue>
+auto DOMFormData::get(const StringView name) -> std::optional<FormDataEntryValue>
 {
     for (auto& item : m_items) {
         if (item.name == name)
@@ -127,7 +127,7 @@ auto DOMFormData::get(const String& name) -> std::optional<FormDataEntryValue>
     return std::nullopt;
 }
 
-auto DOMFormData::getAll(const String& name) -> Vector<FormDataEntryValue>
+auto DOMFormData::getAll(const StringView name) -> Vector<FormDataEntryValue>
 {
     Vector<FormDataEntryValue> result;
 
@@ -139,7 +139,7 @@ auto DOMFormData::getAll(const String& name) -> Vector<FormDataEntryValue>
     return result;
 }
 
-bool DOMFormData::has(const String& name)
+bool DOMFormData::has(const StringView name)
 {
     for (auto& item : m_items) {
         if (item.name == name)
@@ -198,6 +198,21 @@ std::optional<KeyValuePair<String, DOMFormData::FormDataEntryValue>> DOMFormData
 
     auto& item = items[m_index++];
     return makeKeyValuePair(item.name, item.data);
+}
+
+size_t DOMFormData::memoryCost() const
+{
+    size_t cost = m_items.sizeInBytes();
+    for (auto& item : m_items) {
+        cost += item.name.sizeInBytes();
+        if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
+            cost += value->get()->memoryCost();
+        } else if (auto value = std::get_if<String>(&item.data)) {
+            cost += value->sizeInBytes();
+        }
+    }
+
+    return cost;
 }
 
 } // namespace WebCore

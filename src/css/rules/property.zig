@@ -1,16 +1,9 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Location = css.css_rules.Location;
-const style = css.css_rules.style;
 const SyntaxString = css.css_values.syntax.SyntaxString;
 const ParsedComponent = css.css_values.syntax.ParsedComponent;
 
@@ -45,7 +38,7 @@ pub const PropertyRule = struct {
         const initial_value = switch (syntax) {
             .universal => if (parser.initial_value) |val| brk: {
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i, null);
+                var p2 = css.Parser.new(&i, null, .{}, null);
 
                 if (p2.isExhausted()) {
                     break :brk ParsedComponent{
@@ -62,7 +55,7 @@ pub const PropertyRule = struct {
             else => brk: {
                 const val = parser.initial_value orelse return .{ .err = input.newCustomError(css.ParserError.at_rule_body_invalid) };
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i, null);
+                var p2 = css.Parser.new(&i, null, .{}, null);
                 break :brk switch (syntax.parseValue(&p2)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
@@ -123,7 +116,7 @@ pub const PropertyRule = struct {
 
         dest.dedent();
         try dest.newline();
-        try dest.writeChar(';');
+        try dest.writeChar('}');
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
@@ -183,7 +176,7 @@ pub const PropertyRuleDeclarationParser = struct {
                 return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
     };
 
@@ -227,3 +220,6 @@ pub const PropertyRuleDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");

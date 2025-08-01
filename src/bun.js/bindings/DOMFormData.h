@@ -46,7 +46,7 @@ class HTMLFormElement;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData, DOMFormData);
 
 public:
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
@@ -65,15 +65,16 @@ public:
 
     void append(const String& name, const String& value);
     void append(const String& name, RefPtr<Blob>, const String& filename = {});
-    void remove(const String& name);
-    std::optional<FormDataEntryValue> get(const String& name);
-    Vector<FormDataEntryValue> getAll(const String& name);
-    bool has(const String& name);
+    void remove(const StringView name);
+    std::optional<FormDataEntryValue> get(const StringView name);
+    Vector<FormDataEntryValue> getAll(const StringView name);
+    bool has(const StringView name);
     void set(const String& name, const String& value);
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
     Ref<DOMFormData> clone() const;
 
     size_t count() const { return m_items.size(); }
+    size_t memoryCost() const;
 
     String toURLEncodedString();
 

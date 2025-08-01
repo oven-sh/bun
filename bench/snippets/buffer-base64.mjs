@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 function makeBenchmark(size, isToString) {
   const base64Input = Buffer.alloc(size, "latin1").toString("base64");

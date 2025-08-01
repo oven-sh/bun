@@ -1,24 +1,13 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
-const JSC = bun.JSC;
-const WebCore = @import("../webcore/response.zig");
-const ZigString = JSC.ZigString;
-const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Response = WebCore.Response;
-const LOLHTML = bun.LOLHTML;
-
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     selectors: SelectorMap = .{},
     element_handlers: std.ArrayListUnmanaged(*ElementHandler) = .{},
     document_handlers: std.ArrayListUnmanaged(*DocumentHandler) = .{},
-    ref_count: u32 = 1,
-
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     fn deinit(this: *LOLHTMLContext) void {
         for (this.selectors.items) |selector| {
@@ -39,22 +28,27 @@ pub const LOLHTMLContext = struct {
         this.document_handlers.deinit(bun.default_allocator);
         this.document_handlers = .{};
 
-        this.destroy();
+        bun.destroy(this);
     }
 };
 pub const HTMLRewriter = struct {
     builder: *LOLHTML.HTMLRewriter.Builder,
     context: *LOLHTMLContext,
 
-    pub usingnamespace JSC.Codegen.JSHTMLRewriter;
+    pub const js = jsc.Codegen.JSHTMLRewriter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*HTMLRewriter {
+    pub fn constructor(_: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*HTMLRewriter {
         const rewriter = bun.default_allocator.create(HTMLRewriter) catch bun.outOfMemory();
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
-            .context = LOLHTMLContext.new(.{}),
+            .context = bun.new(LOLHTMLContext, .{
+                .ref_count = .init(),
+            }),
         };
-        bun.Analytics.Features.html_rewriter += 1;
+        bun.analytics.Features.html_rewriter += 1;
         return rewriter;
     }
 
@@ -62,15 +56,15 @@ pub const HTMLRewriter = struct {
         this: *HTMLRewriter,
         global: *JSGlobalObject,
         selector_name: ZigString,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         listener: JSValue,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch bun.outOfMemory();
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
-            return throwLOLHTMLError(global);
-        const handler_ = ElementHandler.init(global, listener) catch return .zero;
-        const handler = getAllocator(global).create(ElementHandler) catch bun.outOfMemory();
+            return createLOLHTMLError(global);
+        const handler_ = try ElementHandler.init(global, listener);
+        const handler = bun.default_allocator.create(ElementHandler) catch bun.outOfMemory();
         handler.* = handler_;
 
         this.builder.addElementContentHandlers(
@@ -98,7 +92,7 @@ pub const HTMLRewriter = struct {
                 null,
         ) catch {
             selector.deinit();
-            return throwLOLHTMLError(global);
+            return createLOLHTMLError(global);
         };
 
         this.context.selectors.append(bun.default_allocator, selector) catch bun.outOfMemory();
@@ -110,11 +104,11 @@ pub const HTMLRewriter = struct {
         this: *HTMLRewriter,
         global: *JSGlobalObject,
         listener: JSValue,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
-        const handler_ = DocumentHandler.init(global, listener) catch return .zero;
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
+        const handler_ = try DocumentHandler.init(global, listener);
 
-        const handler = getAllocator(global).create(DocumentHandler) catch bun.outOfMemory();
+        const handler = bun.default_allocator.create(DocumentHandler) catch bun.outOfMemory();
         handler.* = handler_;
 
         // If this fails, subsequent calls to write or end should throw
@@ -152,7 +146,7 @@ pub const HTMLRewriter = struct {
         return callFrame.this();
     }
 
-    pub fn finalize(this: *HTMLRewriter) callconv(.C) void {
+    pub fn finalize(this: *HTMLRewriter) void {
         this.finalizeWithoutDestroy();
         bun.default_allocator.destroy(this);
     }
@@ -162,28 +156,19 @@ pub const HTMLRewriter = struct {
         this.builder.deinit();
     }
 
-    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
+    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) bun.JSError!JSValue {
         const new_context = this.context;
         new_context.ref();
         return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
-    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: JSC.JSValue) JSValue {
+    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: jsc.JSValue) bun.JSError!JSValue {
         if (response_value.as(Response)) |response| {
             if (response.body.value == .Used) {
-                global.throwInvalidArguments("Response body already used", .{});
-                return .zero;
+                return global.throwInvalidArguments("Response body already used", .{});
             }
-
-            const out = this.beginTransform(global, response);
-
-            if (out != .zero) {
-                if (out.toError()) |err| {
-                    global.throwValue(err);
-                    return .zero;
-                }
-            }
-
+            const out = try this.beginTransform(global, response);
+            if (out.toError()) |err| return global.throwValue(err);
             return out;
         }
 
@@ -191,14 +176,15 @@ pub const HTMLRewriter = struct {
         const kind: ResponseKind = brk: {
             if (response_value.isString())
                 break :brk .string
-            else if (response_value.jsType().isTypedArray())
+            else if (response_value.jsType().isTypedArrayOrArrayBuffer())
                 break :brk .array_buffer
             else
                 break :brk .other;
         };
 
         if (kind != .other) {
-            if (JSC.WebCore.Body.extract(global, response_value)) |body_value| {
+            {
+                const body_value = try jsc.WebCore.Body.extract(global, response_value);
                 const resp = bun.new(Response, Response{
                     .init = .{
                         .status_code = 200,
@@ -206,13 +192,13 @@ pub const HTMLRewriter = struct {
                     .body = body_value,
                 });
                 defer resp.finalize();
-                const out_response_value = this.beginTransform(global, resp);
+                const out_response_value = try this.beginTransform(global, resp);
                 out_response_value.ensureStillAlive();
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
 
                 defer {
-                    _ = Response.dangerouslySetPtr(out_response_value, null);
+                    _ = Response.js.dangerouslySetPtr(out_response_value, null);
                     // Manually invoke the finalizer to ensure it does what we want
                     out_response.finalize();
                 }
@@ -229,13 +215,12 @@ pub const HTMLRewriter = struct {
             }
         }
 
-        global.throwInvalidArguments("Expected Response or Body", .{});
-        return .zero;
+        return global.throwInvalidArguments("Expected Response or Body", .{});
     }
 
-    pub const on = JSC.wrapInstanceMethod(HTMLRewriter, "on_", false);
-    pub const onDocument = JSC.wrapInstanceMethod(HTMLRewriter, "onDocument_", false);
-    pub const transform = JSC.wrapInstanceMethod(HTMLRewriter, "transform_", false);
+    pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false);
+    pub const onDocument = host_fn.wrapInstanceMethod(HTMLRewriter, "onDocument_", false);
+    pub const transform = host_fn.wrapInstanceMethod(HTMLRewriter, "transform_", false);
 
     pub const HTMLRewriterLoader = struct {
         rewriter: *LOLHTML.HTMLRewriter,
@@ -243,8 +228,8 @@ pub const HTMLRewriter = struct {
         context: LOLHTMLContext,
         chunk_size: usize = 0,
         failed: bool = false,
-        output: JSC.WebCore.Sink,
-        signal: JSC.WebCore.Signal = .{},
+        output: jsc.WebCore.Sink,
+        signal: jsc.WebCore.Signal = .{},
         backpressure: std.fifo.LinearFifo(u8, .Dynamic) = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
 
         pub fn finalize(this: *HTMLRewriterLoader) void {
@@ -262,7 +247,7 @@ pub const HTMLRewriter = struct {
             this.finalize();
         }
 
-        pub fn connect(this: *HTMLRewriterLoader, signal: JSC.WebCore.Signal) void {
+        pub fn connect(this: *HTMLRewriterLoader, signal: jsc.WebCore.Signal) void {
             this.signal = signal;
         }
 
@@ -306,7 +291,7 @@ pub const HTMLRewriter = struct {
             builder: *LOLHTML.HTMLRewriter.Builder,
             context: *LOLHTMLContext,
             size_hint: ?usize,
-            output: JSC.WebCore.Sink,
+            output: jsc.WebCore.Sink,
         ) ?[]const u8 {
             const chunk_size = @max(size_hint orelse 16384, 1024);
             this.rewriter = builder.build(
@@ -332,8 +317,8 @@ pub const HTMLRewriter = struct {
             return null;
         }
 
-        pub fn sink(this: *HTMLRewriterLoader) JSC.WebCore.Sink {
-            return JSC.WebCore.Sink.init(this);
+        pub fn sink(this: *HTMLRewriterLoader) jsc.WebCore.Sink {
+            return jsc.WebCore.Sink.init(this);
         }
 
         fn writeBytes(this: *HTMLRewriterLoader, bytes: bun.ByteList, comptime deinit_: bool) ?bun.sys.Error {
@@ -348,7 +333,7 @@ pub const HTMLRewriter = struct {
             return null;
         }
 
-        pub fn write(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
+        pub fn write(this: *HTMLRewriterLoader, data: jsc.WebCore.StreamResult) jsc.WebCore.StreamResult.Writable {
             switch (data) {
                 .owned => |bytes| {
                     if (this.writeBytes(bytes, true)) |err| {
@@ -378,33 +363,41 @@ pub const HTMLRewriter = struct {
             }
         }
 
-        pub fn writeUTF16(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
-            return JSC.WebCore.Sink.UTF8Fallback.writeUTF16(HTMLRewriterLoader, this, data, write);
+        pub fn writeUTF16(this: *HTMLRewriterLoader, data: jsc.WebCore.StreamResult) jsc.WebCore.StreamResult.Writable {
+            return jsc.WebCore.Sink.UTF8Fallback.writeUTF16(HTMLRewriterLoader, this, data, write);
         }
 
-        pub fn writeLatin1(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
-            return JSC.WebCore.Sink.UTF8Fallback.writeLatin1(HTMLRewriterLoader, this, data, write);
+        pub fn writeLatin1(this: *HTMLRewriterLoader, data: jsc.WebCore.StreamResult) jsc.WebCore.StreamResult.Writable {
+            return jsc.WebCore.Sink.UTF8Fallback.writeLatin1(HTMLRewriterLoader, this, data, write);
         }
     };
 
     pub const BufferOutputSink = struct {
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         global: *JSGlobalObject,
         bytes: bun.MutableString,
         rewriter: ?*LOLHTML.HTMLRewriter = null,
         context: *LOLHTMLContext,
         response: *Response,
-        response_value: JSC.Strong = .{},
-        bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
-        tmp_sync_error: ?*JSC.JSValue = null,
+        response_value: jsc.Strong.Optional = .empty,
+        bodyValueBufferer: ?jsc.WebCore.Body.ValueBufferer = null,
+        tmp_sync_error: ?*jsc.JSValue = null,
+
         // const log = bun.Output.scoped(.BufferOutputSink, false);
-        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSC.JSValue {
-            var sink = bun.new(BufferOutputSink, BufferOutputSink{
+        pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) bun.JSError!jsc.JSValue {
+            var sink = bun.new(BufferOutputSink, .{
+                .ref_count = .init(),
                 .global = global,
                 .bytes = bun.MutableString.initEmpty(bun.default_allocator),
                 .rewriter = null,
                 .context = context,
                 .response = undefined,
             });
+            defer sink.deref();
             var result = bun.new(Response, .{
                 .init = .{
                     .status_code = 200,
@@ -420,12 +413,28 @@ pub const HTMLRewriter = struct {
             });
 
             sink.response = result;
-
+            var sink_error: jsc.JSValue = .zero;
             const input_size = original.body.len();
+            var vm = global.bunVM();
+
+            // Since we're still using vm.waitForPromise, we have to also
+            // override the error rejection handler. That way, we can propagate
+            // errors to the caller.
+            var scope = vm.unhandledRejectionScope();
+            const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+            vm.unhandled_pending_rejection_to_capture = &sink_error;
+            sink.tmp_sync_error = &sink_error;
+            vm.onUnhandledRejection = &jsc.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+            defer {
+                sink_error.ensureStillAlive();
+                vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
+                scope.apply(vm);
+            }
+
             sink.rewriter = builder.build(
                 .UTF8,
                 .{
-                    .preallocated_parsing_buffer_size = if (input_size == JSC.WebCore.Blob.max_size)
+                    .preallocated_parsing_buffer_size = if (input_size == jsc.WebCore.Blob.max_size)
                         1024
                     else
                         @max(input_size, 1024),
@@ -437,9 +446,8 @@ pub const HTMLRewriter = struct {
                 BufferOutputSink.write,
                 BufferOutputSink.done,
             ) catch {
-                sink.deinit();
                 result.finalize();
-                return throwLOLHTMLError(global);
+                return createLOLHTMLError(global);
             };
 
             result.init.method = original.init.method;
@@ -448,7 +456,7 @@ pub const HTMLRewriter = struct {
 
             // https://github.com/oven-sh/bun/issues/3334
             if (original.init.headers) |headers| {
-                result.init.headers = headers.cloneThis(global);
+                result.init.headers = try headers.cloneThis(global);
             }
 
             // Hold off on cloning until we're actually done.
@@ -456,22 +464,24 @@ pub const HTMLRewriter = struct {
             sink.response_value.set(global, response_js_value);
 
             result.url = original.url.clone();
-            var sink_error: JSC.JSValue = .zero;
-            sink.tmp_sync_error = &sink_error;
+
             const value = original.getBodyValue();
-            sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, onFinishedBuffering, sink.global, bun.default_allocator);
+            sink.ref();
+            sink.bodyValueBufferer = jsc.WebCore.Body.ValueBufferer.init(sink, @ptrCast(&onFinishedBuffering), sink.global, bun.default_allocator);
             response_js_value.ensureStillAlive();
+
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
+                defer sink.deref();
                 return switch (buffering_error) {
                     error.StreamAlreadyUsed => {
-                        var err = JSC.SystemError{
+                        var err = jsc.SystemError{
                             .code = bun.String.static("ERR_STREAM_ALREADY_FINISHED"),
                             .message = bun.String.static("Stream already used, please create a new one"),
                         };
                         return err.toErrorInstance(sink.global);
                     },
                     else => {
-                        var err = JSC.SystemError{
+                        var err = jsc.SystemError{
                             .code = bun.String.static("ERR_STREAM_CANNOT_PIPE"),
                             .message = bun.String.static("Failed to pipe stream"),
                         };
@@ -484,7 +494,6 @@ pub const HTMLRewriter = struct {
             if (sink_error != .zero) {
                 sink_error.ensureStillAlive();
                 sink_error.unprotect();
-                defer sink.deinit();
 
                 return sink_error;
             }
@@ -493,8 +502,8 @@ pub const HTMLRewriter = struct {
             return response_js_value;
         }
 
-        pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.WebCore.Body.Value.ValueError, is_async: bool) void {
-            const sink = bun.cast(*BufferOutputSink, ctx);
+        pub fn onFinishedBuffering(sink: *BufferOutputSink, bytes: []const u8, js_err: ?jsc.WebCore.Body.Value.ValueError, is_async: bool) void {
+            defer sink.deref();
             if (js_err) |err| {
                 if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                     sink.response.body.value.Locked.promise == null)
@@ -512,13 +521,13 @@ pub const HTMLRewriter = struct {
                 if (is_async) {
                     sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global);
                 } else {
-                    var ret_err = throwLOLHTMLError(sink.global);
+                    var ret_err = createLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
                     ret_err.protect();
                     sink.tmp_sync_error.?.* = ret_err;
                 }
                 sink.rewriter.?.end() catch {};
-                sink.deinit();
+
                 return;
             }
 
@@ -526,9 +535,7 @@ pub const HTMLRewriter = struct {
                 ret_err.ensureStillAlive();
                 ret_err.protect();
                 sink.tmp_sync_error.?.* = ret_err;
-            } else {
-                sink.deinit();
-            }
+            } else {}
         }
 
         pub fn runOutputSink(
@@ -541,27 +548,22 @@ pub const HTMLRewriter = struct {
             var response = sink.response;
 
             sink.rewriter.?.write(bytes) catch {
-                sink.deinit();
-
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = throwLOLHTMLStringError() }, global);
-
+                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
                     return null;
                 } else {
-                    return throwLOLHTMLError(global);
+                    return createLOLHTMLError(global);
                 }
             };
 
             sink.rewriter.?.end() catch {
                 if (!is_async) response.finalize();
                 sink.response = undefined;
-                sink.deinit();
-
                 if (is_async) {
-                    response.body.value.toErrorInstance(.{ .Message = throwLOLHTMLStringError() }, global);
+                    response.body.value.toErrorInstance(.{ .Message = createLOLHTMLStringError() }, global);
                     return null;
                 } else {
-                    return throwLOLHTMLError(global);
+                    return createLOLHTMLError(global);
                 }
             };
 
@@ -572,7 +574,7 @@ pub const HTMLRewriter = struct {
 
         pub fn done(this: *BufferOutputSink) void {
             var prev_value = this.response.body.value;
-            this.response.body.value = JSC.WebCore.Body.Value{
+            this.response.body.value = jsc.WebCore.Body.Value{
                 .InternalBlob = .{
                     .bytes = this.bytes.list.toManaged(bun.default_allocator),
                 },
@@ -597,7 +599,7 @@ pub const HTMLRewriter = struct {
             this.bytes.append(bytes) catch bun.outOfMemory();
         }
 
-        pub fn deinit(this: *BufferOutputSink) void {
+        fn deinit(this: *BufferOutputSink) void {
             this.bytes.deinit();
             if (this.bodyValueBufferer) |*bufferer| {
                 bufferer.deinit();
@@ -618,7 +620,7 @@ pub const HTMLRewriter = struct {
     //     rewriter: *LOLHTML.HTMLRewriter,
     //     context: LOLHTMLContext,
     //     response: *Response,
-    //     input: JSC.WebCore.Blob = undefined,
+    //     input: jsc.WebCore.Blob = undefined,
     //     pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
     //         var result = bun.default_allocator.create(Response) catch unreachable;
     //         var sink = bun.default_allocator.create(StreamOutputSink) catch unreachable;
@@ -651,7 +653,7 @@ pub const HTMLRewriter = struct {
     //             sink.deinit();
     //             bun.default_allocator.destroy(result);
 
-    //             return throwLOLHTMLError(global);
+    //             return createLOLHTMLError(global);
     //         };
 
     //         result.* = Response{
@@ -676,7 +678,7 @@ pub const HTMLRewriter = struct {
     //         result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
     //         result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
-    //         var input: JSC.WebCore.Blob = original.body.value.use();
+    //         var input: jsc.WebCore.Blob = original.body.value.use();
 
     //         const is_pending = input.needsToReadFile();
     //         defer if (!is_pending) input.detach();
@@ -689,7 +691,7 @@ pub const HTMLRewriter = struct {
 
     //         // Hold off on cloning until we're actually done.
 
-    //         return JSC.JSValue.fromRef(
+    //         return jsc.JSValue.fromRef(
     //             Response.makeMaybePooled(sink.global, sink.response),
     //         );
     //     }
@@ -712,7 +714,7 @@ pub const HTMLRewriter = struct {
     //         var prev_value = this.response.body.value;
     //         var bytes = this.bytes.slice();
     //         this.response.body.value = .{
-    //             .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
+    //             .Blob = jsc.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
     //         };
     //         prev_value.resolve(
     //             &this.response.body.value,
@@ -776,11 +778,7 @@ const DocumentHandler = struct {
         };
 
         if (!thisObject.isObject()) {
-            global.throwInvalidArguments(
-                "Expected object",
-                .{},
-            );
-            return error.InvalidArguments;
+            return global.throwInvalidArguments("Expected object", .{});
         }
 
         errdefer {
@@ -801,37 +799,33 @@ const DocumentHandler = struct {
             }
         }
 
-        if (thisObject.get(global, "doctype")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("doctype must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "doctype")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("doctype must be a function", .{});
             }
             val.protect();
             handler.onDocTypeCallback = val;
         }
 
-        if (thisObject.get(global, "comments")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("comments must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "comments")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
             handler.onCommentCallback = val;
         }
 
-        if (thisObject.get(global, "text")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("text must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "text")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
             handler.onTextCallback = val;
         }
 
-        if (thisObject.get(global, "end")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("end must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "end")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("end must be a function", .{});
             }
             val.protect();
             handler.onEndCallback = val;
@@ -875,10 +869,19 @@ fn HandlerCallback(
 ) (fn (*HandlerType, *LOLHTMLType) bool) {
     return struct {
         pub fn callback(this: *HandlerType, value: *LOLHTMLType) bool {
-            JSC.markBinding(@src());
-            var zig_element = bun.default_allocator.create(ZigType) catch bun.outOfMemory();
-            @field(zig_element, field_name) = value;
-            defer @field(zig_element, field_name) = null;
+            jsc.markBinding(@src());
+
+            var wrapper = ZigType.init(value);
+            wrapper.ref();
+
+            // When using RefCount, we don't check the count value directly
+            // as it's an opaque type now
+            // The init values are handled by bun.new with .init()
+
+            defer {
+                @field(wrapper, field_name) = null;
+                wrapper.deref();
+            }
 
             const result = @field(this, callback_name).?.call(
                 this.global,
@@ -886,8 +889,11 @@ fn HandlerCallback(
                     @field(this, "thisObject")
                 else
                     JSValue.zero,
-                &.{zig_element.toJS(this.global)},
-            ) catch |err| this.global.takeException(err);
+                &.{wrapper.toJS(this.global)},
+            ) catch {
+                // If there's an error, we'll propagate it to the caller.
+                return true;
+            };
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
@@ -898,7 +904,7 @@ fn HandlerCallback(
                     this.global.bunVM().waitForPromise(promise);
                     const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
-                        _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue(this.global));
+                        this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
                     }
                     return fail;
                 }
@@ -935,35 +941,28 @@ const ElementHandler = struct {
         }
 
         if (!thisObject.isObject()) {
-            global.throwInvalidArguments(
-                "Expected object",
-                .{},
-            );
-            return error.InvalidArguments;
+            return global.throwInvalidArguments("Expected object", .{});
         }
 
-        if (thisObject.get(global, "element")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("element must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "element")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("element must be a function", .{});
             }
             val.protect();
             handler.onElementCallback = val;
         }
 
-        if (thisObject.get(global, "comments")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("comments must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "comments")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
             handler.onCommentCallback = val;
         }
 
-        if (thisObject.get(global, "text")) |val| {
-            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("text must be a function", .{});
-                return error.InvalidArguments;
+        if (try thisObject.get(global, "text")) |val| {
+            if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable()) {
+                return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
             handler.onTextCallback = val;
@@ -1023,15 +1022,30 @@ pub const ContentOptions = struct {
     html: bool = false,
 };
 
-fn throwLOLHTMLError(global: *JSGlobalObject) JSValue {
-    const err = LOLHTML.HTMLString.lastError();
-    defer err.deinit();
-    return ZigString.fromUTF8(err.slice()).toErrorInstance(global);
+fn createLOLHTMLError(global: *JSGlobalObject) JSValue {
+    // If there was already a pending exception, we want to use that instead.
+    if (global.tryTakeException()) |err| {
+        // it's a synchronous error
+        return err;
+    } else if (global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+        if (err_ptr.* != .zero) {
+            // it's a promise rejection
+            const result = err_ptr.*;
+            err_ptr.* = .zero;
+            return result;
+        }
+    }
+
+    var err = createLOLHTMLStringError();
+    const value = err.toErrorInstance(global);
+    value.put(global, "name", ZigString.init("HTMLRewriterError").toJS(global));
+    return value;
 }
-fn throwLOLHTMLStringError() bun.String {
+fn createLOLHTMLStringError() bun.String {
+    // We must clone this string.
     const err = LOLHTML.HTMLString.lastError();
     defer err.deinit();
-    return bun.String.fromUTF8(err.slice());
+    return bun.String.cloneUTF8(err.slice());
 }
 
 fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {
@@ -1039,13 +1053,28 @@ fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSV
 }
 
 pub const TextChunk = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     text_chunk: ?*LOLHTML.TextChunk = null,
 
-    pub usingnamespace JSC.Codegen.JSTextChunk;
+    pub const js = jsc.Codegen.JSTextChunk;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub fn init(text_chunk: *LOLHTML.TextChunk) *TextChunk {
+        return bun.new(TextChunk, .{
+            .ref_count = .init(),
+            .text_chunk = text_chunk,
+        });
+    }
 
     fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.text_chunk == null)
-            return .undefined;
+            return .js_undefined;
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
 
@@ -1053,14 +1082,14 @@ pub const TextChunk = struct {
             this.text_chunk.?,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
 
         return thisObject;
     }
 
     pub fn before_(
         this: *TextChunk,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1070,7 +1099,7 @@ pub const TextChunk = struct {
 
     pub fn after_(
         this: *TextChunk,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1080,7 +1109,7 @@ pub const TextChunk = struct {
 
     pub fn replace_(
         this: *TextChunk,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1088,17 +1117,17 @@ pub const TextChunk = struct {
         return this.contentHandler(LOLHTML.TextChunk.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(TextChunk, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(TextChunk, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(TextChunk, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(TextChunk, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(TextChunk, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(TextChunk, "replace_", false);
 
     pub fn remove(
         this: *TextChunk,
         _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
         if (this.text_chunk == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         this.text_chunk.?.remove();
         return callFrame.this();
     }
@@ -1108,7 +1137,7 @@ pub const TextChunk = struct {
         global: *JSGlobalObject,
     ) JSValue {
         if (this.text_chunk == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toJS(global);
     }
 
@@ -1120,21 +1149,44 @@ pub const TextChunk = struct {
         return JSValue.jsBoolean(this.text_chunk.?.isLastInTextNode());
     }
 
-    pub fn finalize(this: *TextChunk) callconv(.C) void {
+    pub fn finalize(this: *TextChunk) void {
+        this.deref();
+    }
+
+    fn deinit(this: *TextChunk) void {
         this.text_chunk = null;
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 };
 
 pub const DocType = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     doctype: ?*LOLHTML.DocType = null,
 
-    pub fn finalize(this: *DocType) callconv(.C) void {
+    fn deinit(this: *DocType) void {
         this.doctype = null;
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 
-    pub usingnamespace JSC.Codegen.JSDocType;
+    pub fn finalize(this: *DocType) void {
+        this.deref();
+    }
+
+    pub fn init(doctype: *LOLHTML.DocType) *DocType {
+        return bun.new(DocType, .{
+            .ref_count = .init(),
+            .doctype = doctype,
+        });
+    }
+
+    pub const js = jsc.Codegen.JSDocType;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     /// The doctype name.
     pub fn name(
@@ -1142,7 +1194,7 @@ pub const DocType = struct {
         globalObject: *JSGlobalObject,
     ) JSValue {
         if (this.doctype == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         const str = this.doctype.?.getName().slice();
         if (str.len == 0)
             return JSValue.jsNull();
@@ -1154,7 +1206,7 @@ pub const DocType = struct {
         globalObject: *JSGlobalObject,
     ) JSValue {
         if (this.doctype == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         const str = this.doctype.?.getSystemId().slice();
         if (str.len == 0)
@@ -1167,24 +1219,54 @@ pub const DocType = struct {
         globalObject: *JSGlobalObject,
     ) JSValue {
         if (this.doctype == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         const str = this.doctype.?.getPublicId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
         return ZigString.init(str).toJS(globalObject);
     }
+
+    pub fn remove(
+        this: *DocType,
+        _: *JSGlobalObject,
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
+        if (this.doctype == null)
+            return .js_undefined;
+        this.doctype.?.remove();
+        return callFrame.this();
+    }
+
+    pub fn removed(
+        this: *DocType,
+        _: *JSGlobalObject,
+    ) JSValue {
+        if (this.doctype == null)
+            return .js_undefined;
+        return JSValue.jsBoolean(this.doctype.?.isRemoved());
+    }
 };
 
 pub const DocEnd = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     doc_end: ?*LOLHTML.DocEnd,
 
-    pub fn finalize(this: *DocEnd) callconv(.C) void {
-        this.doc_end = null;
-        bun.default_allocator.destroy(this);
-    }
+    pub const js = jsc.Codegen.JSDocEnd;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace JSC.Codegen.JSDocEnd;
+    pub fn init(doc_end: *LOLHTML.DocEnd) *DocEnd {
+        return bun.new(DocEnd, .{
+            .ref_count = .init(),
+            .doc_end = doc_end,
+        });
+    }
 
     fn contentHandler(this: *DocEnd, comptime Callback: (fn (*LOLHTML.DocEnd, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.doc_end == null)
@@ -1197,14 +1279,14 @@ pub const DocEnd = struct {
             this.doc_end.?,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
 
         return thisObject;
     }
 
     pub fn append_(
         this: *DocEnd,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1212,18 +1294,37 @@ pub const DocEnd = struct {
         return this.contentHandler(LOLHTML.DocEnd.append, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const append = JSC.wrapInstanceMethod(DocEnd, "append_", false);
+    pub const append = host_fn.wrapInstanceMethod(DocEnd, "append_", false);
+
+    pub fn finalize(this: *DocEnd) void {
+        this.deref();
+    }
+
+    fn deinit(this: *DocEnd) void {
+        this.doc_end = null;
+        bun.destroy(this);
+    }
 };
 
 pub const Comment = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     comment: ?*LOLHTML.Comment = null,
 
-    pub fn finalize(this: *Comment) callconv(.C) void {
-        this.comment = null;
-        bun.default_allocator.destroy(this);
-    }
+    pub const js = jsc.Codegen.JSComment;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace JSC.Codegen.JSComment;
+    pub fn init(comment: *LOLHTML.Comment) *Comment {
+        return bun.new(Comment, .{
+            .ref_count = .init(),
+            .comment = comment,
+        });
+    }
 
     fn contentHandler(this: *Comment, comptime Callback: (fn (*LOLHTML.Comment, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.comment == null)
@@ -1235,14 +1336,14 @@ pub const Comment = struct {
             this.comment.?,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
 
         return thisObject;
     }
 
     pub fn before_(
         this: *Comment,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1252,7 +1353,7 @@ pub const Comment = struct {
 
     pub fn after_(
         this: *Comment,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1262,7 +1363,7 @@ pub const Comment = struct {
 
     pub fn replace_(
         this: *Comment,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1270,15 +1371,15 @@ pub const Comment = struct {
         return this.contentHandler(LOLHTML.Comment.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(Comment, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(Comment, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(Comment, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(Comment, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(Comment, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(Comment, "replace_", false);
 
     pub fn remove(
         this: *Comment,
         _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         this.comment.?.remove();
@@ -1298,17 +1399,14 @@ pub const Comment = struct {
         this: *Comment,
         global: *JSGlobalObject,
         value: JSValue,
-    ) callconv(.C) bool {
+    ) JSError!void {
         if (this.comment == null)
-            return false;
-        var text = value.toSlice(global, bun.default_allocator);
+            return;
+        var text = try value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.comment.?.setText(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
-            return false;
+            return global.throwValue(createLOLHTMLError(global));
         };
-
-        return true;
     }
 
     pub fn removed(
@@ -1316,17 +1414,42 @@ pub const Comment = struct {
         _: *JSGlobalObject,
     ) JSValue {
         if (this.comment == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         return JSValue.jsBoolean(this.comment.?.isRemoved());
+    }
+
+    pub fn finalize(this: *Comment) void {
+        this.deref();
+    }
+
+    fn deinit(this: *Comment) void {
+        this.comment = null;
+        bun.destroy(this);
     }
 };
 
 pub const EndTag = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     end_tag: ?*LOLHTML.EndTag,
 
-    pub fn finalize(this: *EndTag) callconv(.C) void {
+    pub fn init(end_tag: *LOLHTML.EndTag) *EndTag {
+        return bun.new(EndTag, .{
+            .ref_count = .init(),
+            .end_tag = end_tag,
+        });
+    }
+
+    pub fn finalize(this: *EndTag) void {
+        this.deref();
+    }
+
+    fn deinit(this: *EndTag) void {
         this.end_tag = null;
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 
     pub const Handler = struct {
@@ -1344,7 +1467,10 @@ pub const EndTag = struct {
         pub const onEndTagHandler = LOLHTML.DirectiveHandler(LOLHTML.EndTag, Handler, onEndTag);
     };
 
-    pub usingnamespace JSC.Codegen.JSEndTag;
+    pub const js = jsc.Codegen.JSEndTag;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
@@ -1357,14 +1483,14 @@ pub const EndTag = struct {
             this.end_tag.?,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
 
         return thisObject;
     }
 
     pub fn before_(
         this: *EndTag,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1374,7 +1500,7 @@ pub const EndTag = struct {
 
     pub fn after_(
         this: *EndTag,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1384,7 +1510,7 @@ pub const EndTag = struct {
 
     pub fn replace_(
         this: *EndTag,
-        callFrame: *JSC.CallFrame,
+        callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
         content: ZigString,
         contentOptions: ?ContentOptions,
@@ -1392,17 +1518,17 @@ pub const EndTag = struct {
         return this.contentHandler(LOLHTML.EndTag.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
-    pub const before = JSC.wrapInstanceMethod(EndTag, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(EndTag, "after_", false);
-    pub const replace = JSC.wrapInstanceMethod(EndTag, "replace_", false);
+    pub const before = host_fn.wrapInstanceMethod(EndTag, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(EndTag, "after_", false);
+    pub const replace = host_fn.wrapInstanceMethod(EndTag, "replace_", false);
 
     pub fn remove(
         this: *EndTag,
         _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
         if (this.end_tag == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         this.end_tag.?.remove();
         return callFrame.this();
@@ -1413,7 +1539,7 @@ pub const EndTag = struct {
         globalObject: *JSGlobalObject,
     ) JSValue {
         if (this.end_tag == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         return this.end_tag.?.getName().toJS(globalObject);
     }
@@ -1422,51 +1548,72 @@ pub const EndTag = struct {
         this: *EndTag,
         global: *JSGlobalObject,
         value: JSValue,
-    ) callconv(.C) bool {
+    ) JSError!void {
         if (this.end_tag == null)
-            return false;
-        var text = value.toSlice(global, bun.default_allocator);
+            return;
+        var text = try value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.end_tag.?.setName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
-            return false;
+            return global.throwValue(createLOLHTMLError(global));
         };
-
-        return true;
     }
 };
 
 pub const AttributeIterator = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     iterator: ?*LOLHTML.Attribute.Iterator = null,
 
-    pub fn finalize(this: *AttributeIterator) callconv(.C) void {
+    pub fn init(iterator: *LOLHTML.Attribute.Iterator) *AttributeIterator {
+        return bun.new(AttributeIterator, .{
+            .ref_count = .init(),
+            .iterator = iterator,
+        });
+    }
+
+    fn detach(this: *AttributeIterator) void {
         if (this.iterator) |iter| {
             iter.deinit();
             this.iterator = null;
         }
-        bun.default_allocator.destroy(this);
     }
 
-    pub usingnamespace JSC.Codegen.JSAttributeIterator;
+    pub fn finalize(this: *AttributeIterator) void {
+        this.detach();
+        this.deref();
+    }
 
-    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        const done_label = JSC.ZigString.static("done");
-        const value_label = JSC.ZigString.static("value");
+    fn deinit(this: *AttributeIterator) void {
+        this.detach();
+        bun.destroy(this);
+    }
+
+    pub const js = jsc.Codegen.JSAttributeIterator;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+        const done_label = jsc.ZigString.static("done");
+        const value_label = jsc.ZigString.static("value");
 
         if (this.iterator == null) {
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), JSValue.jsUndefined());
+            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
         }
 
         var attribute = this.iterator.?.next() orelse {
             this.iterator.?.deinit();
             this.iterator = null;
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), JSValue.jsUndefined());
+            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
         };
 
         const value = attribute.value();
         const name = attribute.name();
 
-        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), bun.String.toJSArray(
+        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), try bun.String.toJSArray(
             globalObject,
             &[_]bun.String{
                 name.toString(),
@@ -1475,29 +1622,48 @@ pub const AttributeIterator = struct {
         ));
     }
 
-    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         return callFrame.this();
     }
 };
 pub const Element = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     element: ?*LOLHTML.Element = null,
 
-    pub usingnamespace JSC.Codegen.JSElement;
+    pub const js = jsc.Codegen.JSElement;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub fn finalize(this: *Element) callconv(.C) void {
+    pub fn init(element: *LOLHTML.Element) *Element {
+        return bun.new(Element, .{
+            .ref_count = .init(),
+            .element = element,
+        });
+    }
+
+    pub fn finalize(this: *Element) void {
+        this.deref();
+    }
+
+    fn deinit(this: *Element) void {
         this.element = null;
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 
     pub fn onEndTag_(
         this: *Element,
         globalObject: *JSGlobalObject,
         function: JSValue,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+        callFrame: *jsc.CallFrame,
+    ) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsNull();
-        if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
+        if (function.isUndefinedOrNull() or !function.isCallable()) {
             return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
@@ -1506,7 +1672,8 @@ pub const Element = struct {
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {
             bun.default_allocator.destroy(end_tag_handler);
-            return throwLOLHTMLError(globalObject);
+            const err = createLOLHTMLError(globalObject);
+            return globalObject.throwValue(err);
         };
 
         function.protect();
@@ -1537,46 +1704,46 @@ pub const Element = struct {
 
         var slice = name.toSlice(bun.default_allocator);
         defer slice.deinit();
-        return JSValue.jsBoolean(this.element.?.hasAttribute(slice.slice()) catch return throwLOLHTMLError(global));
+        return JSValue.jsBoolean(this.element.?.hasAttribute(slice.slice()) catch return createLOLHTMLError(global));
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
-    pub fn setAttribute_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, name_: ZigString, value_: ZigString) JSValue {
+    pub fn setAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name_: ZigString, value_: ZigString) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         var name_slice = name_.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
         var value_slice = value_.toSlice(bun.default_allocator);
         defer value_slice.deinit();
-        this.element.?.setAttribute(name_slice.slice(), value_slice.slice()) catch return throwLOLHTMLError(globalObject);
+        this.element.?.setAttribute(name_slice.slice(), value_slice.slice()) catch return createLOLHTMLError(globalObject);
         return callFrame.this();
     }
 
     ///  Removes the attribute.
-    pub fn removeAttribute_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, name: ZigString) JSValue {
+    pub fn removeAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name: ZigString) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         var name_slice = name.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
         this.element.?.removeAttribute(
             name_slice.slice(),
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
         return callFrame.this();
     }
 
-    pub const onEndTag = JSC.wrapInstanceMethod(Element, "onEndTag_", false);
-    pub const getAttribute = JSC.wrapInstanceMethod(Element, "getAttribute_", false);
-    pub const hasAttribute = JSC.wrapInstanceMethod(Element, "hasAttribute_", false);
-    pub const setAttribute = JSC.wrapInstanceMethod(Element, "setAttribute_", false);
-    pub const removeAttribute = JSC.wrapInstanceMethod(Element, "removeAttribute_", false);
+    pub const onEndTag = host_fn.wrapInstanceMethod(Element, "onEndTag_", false);
+    pub const getAttribute = host_fn.wrapInstanceMethod(Element, "getAttribute_", false);
+    pub const hasAttribute = host_fn.wrapInstanceMethod(Element, "hasAttribute_", false);
+    pub const setAttribute = host_fn.wrapInstanceMethod(Element, "setAttribute_", false);
+    pub const removeAttribute = host_fn.wrapInstanceMethod(Element, "removeAttribute_", false);
 
     fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
@@ -1585,13 +1752,13 @@ pub const Element = struct {
             this.element.?,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
-        ) catch return throwLOLHTMLError(globalObject);
+        ) catch return createLOLHTMLError(globalObject);
 
         return thisObject;
     }
 
     ///  Inserts content before the element.
-    pub fn before_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn before_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.before,
@@ -1603,7 +1770,7 @@ pub const Element = struct {
     }
 
     ///  Inserts content right after the element.
-    pub fn after_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn after_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.after,
@@ -1615,7 +1782,7 @@ pub const Element = struct {
     }
 
     /// Inserts content right after the start tag of the element.
-    pub fn prepend_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn prepend_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.prepend,
@@ -1627,7 +1794,7 @@ pub const Element = struct {
     }
 
     ///  Inserts content right before the end tag of the element.
-    pub fn append_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn append_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.append,
@@ -1639,7 +1806,7 @@ pub const Element = struct {
     }
 
     /// Removes the element and inserts content in place of it.
-    pub fn replace_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn replace_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.replace,
@@ -1651,7 +1818,7 @@ pub const Element = struct {
     }
 
     ///  Replaces content of the element.
-    pub fn setInnerContent_(this: *Element, callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn setInnerContent_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.setInnerContent,
@@ -1662,115 +1829,97 @@ pub const Element = struct {
         );
     }
 
-    pub const before = JSC.wrapInstanceMethod(Element, "before_", false);
-    pub const after = JSC.wrapInstanceMethod(Element, "after_", false);
-    pub const prepend = JSC.wrapInstanceMethod(Element, "prepend_", false);
-    pub const append = JSC.wrapInstanceMethod(Element, "append_", false);
-    pub const replace = JSC.wrapInstanceMethod(Element, "replace_", false);
-    pub const setInnerContent = JSC.wrapInstanceMethod(Element, "setInnerContent_", false);
+    pub const before = host_fn.wrapInstanceMethod(Element, "before_", false);
+    pub const after = host_fn.wrapInstanceMethod(Element, "after_", false);
+    pub const prepend = host_fn.wrapInstanceMethod(Element, "prepend_", false);
+    pub const append = host_fn.wrapInstanceMethod(Element, "append_", false);
+    pub const replace = host_fn.wrapInstanceMethod(Element, "replace_", false);
+    pub const setInnerContent = host_fn.wrapInstanceMethod(Element, "setInnerContent_", false);
 
     ///  Removes the element with all its content.
-    pub fn remove(
-        this: *Element,
-        _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+    pub fn remove(this: *Element, _: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         this.element.?.remove();
         return callFrame.this();
     }
 
     ///  Removes the start tag and end tag of the element but keeps its inner content intact.
-    pub fn removeAndKeepContent(
-        this: *Element,
-        _: *JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) JSValue {
+    pub fn removeAndKeepContent(this: *Element, _: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         this.element.?.removeAndKeepContent();
         return callFrame.this();
     }
+
     pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
         return htmlStringValue(this.element.?.tagName(), globalObject);
     }
 
-    pub fn setTagName(
-        this: *Element,
-        global: *JSGlobalObject,
-        value: JSValue,
-    ) bool {
+    pub fn setTagName(this: *Element, global: *JSGlobalObject, value: JSValue) JSError!void {
         if (this.element == null)
-            return false;
-
-        var text = value.toSlice(global, bun.default_allocator);
+            return;
+        var text = try value.toSlice(global, bun.default_allocator);
         defer text.deinit();
 
         this.element.?.setTagName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
-            return false;
+            return global.throwValue(createLOLHTMLError(global));
         };
-
-        return true;
     }
 
-    pub fn getRemoved(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getRemoved(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         return JSValue.jsBoolean(this.element.?.isRemoved());
     }
 
-    pub fn getSelfClosing(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getSelfClosing(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         return JSValue.jsBoolean(this.element.?.isSelfClosing());
     }
 
-    pub fn getCanHaveContent(
-        this: *Element,
-        _: *JSGlobalObject,
-    ) JSValue {
+    pub fn getCanHaveContent(this: *Element, _: *JSGlobalObject) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
         return JSValue.jsBoolean(this.element.?.canHaveContent());
     }
 
-    pub fn getNamespaceURI(
-        this: *Element,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getNamespaceURI(this: *Element, globalObject: *JSGlobalObject) JSError!JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
-        var str = bun.String.createUTF8(std.mem.span(this.element.?.namespaceURI()));
-        defer str.deref();
-        return str.toJS(globalObject);
+            return .js_undefined;
+        return bun.String.createUTF8ForJS(globalObject, std.mem.span(this.element.?.namespaceURI()));
     }
 
-    pub fn getAttributes(
-        this: *Element,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
+    pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
-            return JSValue.jsUndefined();
+            return .js_undefined;
 
-        const iter = this.element.?.attributes() orelse return throwLOLHTMLError(globalObject);
-        var attr_iter = bun.default_allocator.create(AttributeIterator) catch bun.outOfMemory();
-        attr_iter.* = .{ .iterator = iter };
-        var js_attr_iter = attr_iter.toJS(globalObject);
-        js_attr_iter.protect();
-        defer js_attr_iter.unprotect();
-        return js_attr_iter;
+        const iter = this.element.?.attributes() orelse return createLOLHTMLError(globalObject);
+        var attr_iter = bun.new(AttributeIterator, .{
+            .ref_count = .init(),
+            .iterator = iter,
+        });
+        return attr_iter.toJS(globalObject);
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const LOLHTML = bun.LOLHTML;
+const Response = bun.webcore.Response;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const host_fn = jsc.host_fn;

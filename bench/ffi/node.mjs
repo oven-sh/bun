@@ -1,5 +1,5 @@
-import { bench, group, run } from "mitata";
 import { createRequire } from "node:module";
+import { bench, group, run } from "../runner.mjs";
 
 const require = createRequire(import.meta.url);
 const { napiNoop, napiHash, napiString } = require("./src/ffi_napi_bench.node");

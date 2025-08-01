@@ -1,9 +1,12 @@
-const std = @import("std");
-
-const FeatureFlags = @import("./feature_flags.zig");
-const Environment = @import("./env.zig");
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const bun = @import("root").bun;
+pub const c_allocator = @import("./allocators/basic.zig").c_allocator;
+pub const z_allocator = @import("./allocators/basic.zig").z_allocator;
+pub const mimalloc = @import("./allocators/mimalloc.zig");
+pub const MimallocArena = @import("./allocators/MimallocArena.zig");
+pub const AllocationScope = @import("./allocators/AllocationScope.zig");
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
+pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
+pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
+pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -27,7 +30,7 @@ pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
         null;
 }
 
-pub const IndexType = packed struct {
+pub const IndexType = packed struct(u32) {
     index: u31,
     is_overflow: bool = false,
 };
@@ -81,9 +84,14 @@ fn OverflowGroup(comptime Block: type) type {
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
         const default_allocator = bun.default_allocator;
-        used: UsedSize = 0,
-        allocated: UsedSize = 0,
-        ptrs: [max]*Block = undefined,
+        used: UsedSize,
+        allocated: UsedSize,
+        ptrs: [max]*Block,
+
+        pub inline fn zero(this: *Overflow) void {
+            this.used = 0;
+            this.allocated = 0;
+        }
 
         pub fn tail(this: *Overflow) *Block {
             if (this.allocated > 0 and this.ptrs[this.used].isFull()) {
@@ -95,7 +103,7 @@ fn OverflowGroup(comptime Block: type) type {
 
             if (this.allocated <= this.used) {
                 this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
-                this.ptrs[this.allocated].* = Block{};
+                this.ptrs[this.allocated].zero();
                 this.allocated +%= 1;
             }
 
@@ -114,8 +122,12 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
         const SizeType = std.math.IntFittingRange(0, count);
 
         const Block = struct {
-            used: SizeType = 0,
-            items: [count]ValueType = undefined,
+            used: SizeType,
+            items: [count]ValueType,
+
+            pub inline fn zero(this: *Block) void {
+                this.used = 0;
+            }
 
             pub inline fn isFull(block: *const Block) bool {
                 return block.used >= @as(SizeType, count);
@@ -130,8 +142,13 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             }
         };
         const Overflow = OverflowGroup(Block);
-        list: Overflow = Overflow{},
-        count: u31 = 0,
+        list: Overflow,
+        count: u31,
+
+        pub inline fn zero(this: *This) void {
+            this.list.zero();
+            this.count = 0;
+        }
 
         pub inline fn len(this: *const This) u31 {
             return this.count;
@@ -177,15 +194,28 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
     };
 }
 
+/// "Formerly-BSSList"
+/// It's not actually BSS anymore.
+///
+/// We do keep a pointer to it globally, but because the data is not zero-initialized, it ends up taking space in the object file.
+/// We don't want to spend 1-2 MB on these structs.
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
     return struct {
         const ChunkSize = 256;
         const OverflowBlock = struct {
-            used: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
-            data: [ChunkSize]ValueType = undefined,
-            prev: ?*OverflowBlock = null,
+            used: std.atomic.Value(u16),
+            data: [ChunkSize]ValueType,
+            prev: ?*OverflowBlock,
+
+            pub inline fn zero(this: *OverflowBlock) void {
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                this.used = std.atomic.Value(u16).init(0);
+                this.prev = null;
+            }
 
             pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
                 const index = this.used.fetchAdd(1, .acq_rel);
@@ -200,12 +230,12 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         allocator: Allocator,
         mutex: Mutex = .{},
-        head: *OverflowBlock = undefined,
-        tail: OverflowBlock = OverflowBlock{},
-        backing_buf: [count]ValueType = undefined,
-        used: u32 = 0,
+        head: *OverflowBlock,
+        tail: OverflowBlock,
+        backing_buf: [count]ValueType,
+        used: u32,
 
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         pub var loaded = false;
 
         pub inline fn blockIndex(index: u31) usize {
@@ -214,15 +244,19 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
-                    .allocator = allocator,
-                    .tail = OverflowBlock{},
-                };
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.allocator = allocator;
+                instance.mutex = .{};
+                instance.tail.zero();
                 instance.head = &instance.tail;
+                instance.used = 0;
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -237,7 +271,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             instance.used += 1;
             return self.head.append(value) catch brk: {
                 var new_block = try self.allocator.create(OverflowBlock);
-                new_block.* = OverflowBlock{};
+                new_block.zero();
                 new_block.prev = self.head;
                 self.head = new_block;
                 break :brk self.head.append(value);
@@ -260,8 +294,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     };
 }
 
-const Mutex = @import("./lock.zig").Lock;
-
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file
 /// Overflows to heap when count is exceeded.
@@ -282,14 +314,14 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        backing_buf: [count * item_length]u8 = undefined,
-        backing_buf_used: u64 = undefined,
-        overflow_list: Overflow = Overflow{},
+        backing_buf: [count * item_length]u8,
+        backing_buf_used: u64,
+        overflow_list: Overflow,
         allocator: Allocator,
-        slice_buf: [count][]const u8 = undefined,
-        slice_buf_used: u16 = 0,
+        slice_buf: [count][]const u8,
+        slice_buf_used: u16,
         mutex: Mutex = .{},
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         var loaded: bool = false;
         // only need the mutex on append
 
@@ -299,14 +331,19 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
-                    .allocator = allocator,
-                    .backing_buf_used = 0,
-                };
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.allocator = allocator;
+                instance.backing_buf_used = 0;
+                instance.slice_buf_used = 0;
+                instance.overflow_list.zero();
+                instance.mutex = .{};
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub inline fn isOverflowing() bool {
@@ -321,7 +358,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return @constCast(slice);
         }
 
-        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
+        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]u8 {
             const appended = try @call(bun.callmod_inline, append, .{ self, AppendType, _value });
             return @constCast(appended);
         }
@@ -330,17 +367,17 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.appendMutable(EmptyType, EmptyType{ .len = len });
         }
 
-        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) ![]const u8 {
+        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) OOM![]const u8 {
             var buf = try self.appendMutable(EmptyType, EmptyType{ .len = std.fmt.count(fmt, args) + 1 });
             buf[buf.len - 1] = 0;
             return std.fmt.bufPrint(buf.ptr[0 .. buf.len - 1], fmt, args) catch unreachable;
         }
 
-        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) ![]const u8 {
+        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) OOM![]const u8 {
             return try printWithType(self, fmt, @TypeOf(args), args);
         }
 
-        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -348,7 +385,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
-        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -367,7 +404,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             self: *Self,
             comptime AppendType: type,
             _value: AppendType,
-        ) ![]const u8 {
+        ) OOM![]const u8 {
             const value_len: usize = brk: {
                 switch (comptime AppendType) {
                     EmptyType, []const u8, []u8, [:0]const u8, [:0]u8 => {
@@ -463,26 +500,31 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         const Overflow = OverflowList(ValueType, count / 4);
 
         index: IndexMap,
-        overflow_list: Overflow = Overflow{},
+        overflow_list: Overflow,
         allocator: Allocator,
         mutex: Mutex = .{},
-        backing_buf: [count]ValueType = undefined,
-        backing_buf_used: u16 = 0,
+        backing_buf: [count]ValueType,
+        backing_buf_used: u16,
 
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
 
         var loaded: bool = false;
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
-                    .index = IndexMap{},
-                    .allocator = allocator,
-                };
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance.index = IndexMap{};
+                instance.allocator = allocator;
+                instance.overflow_list.zero();
+                instance.backing_buf_used = 0;
+                instance.mutex = .{};
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -490,7 +532,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
 
             self.mutex.lock();
@@ -518,7 +560,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -580,7 +622,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             defer self.mutex.unlock();
 
             const key = if (comptime remove_trailing_slashes)
-                std.mem.trimRight(u8, denormalized_key, "/")
+                std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str)
             else
                 denormalized_key;
 
@@ -621,18 +663,22 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         key_list_overflow: OverflowList([]u8, count / 4) = OverflowList([]u8, count / 4){},
 
         const Self = @This();
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         pub var instance_loaded = false;
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
-                instance = Self{
-                    .map = BSSMapType.init(allocator),
-                };
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.map = BSSMapType.init(allocator);
+                instance.key_list_buffer_used = 0;
+                instance.key_list_overflow.zero();
                 instance_loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -725,3 +771,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
     };
 }
+
+const Environment = @import("./env.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Mutex = bun.threading.Mutex;

@@ -170,7 +170,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
         return std::nullopt;
 
     auto message = m_pendingMessages[i].first();
-    m_pendingMessages[i].remove(0);
+    m_pendingMessages[i].removeAt(0);
     return WTFMove(message);
 }
 

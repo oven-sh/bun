@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { dirname, join, resolve } from "node:path";
+import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -73,7 +73,6 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
-    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
@@ -97,7 +96,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/LoadThrowAsync", {
-    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
@@ -121,7 +119,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
-    todo: true,
     files: {
       "index.ts": /* ts */ `
       import foo from "./foo.magic";
@@ -151,7 +148,6 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
-    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
@@ -175,7 +171,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/ResolveThrowAsync", {
-    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
@@ -204,7 +199,6 @@ describe("bundler", () => {
     let onResolveCount = 0;
 
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
         import * as foo from "magic:some_string";
@@ -246,7 +240,6 @@ describe("bundler", () => {
     let onResolveCountBad = 0;
 
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "magic:some_string";
@@ -407,7 +400,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./foo.ts";
@@ -471,7 +463,6 @@ describe("bundler", () => {
     let onResolveCount = 0;
     let importers: string[] = [];
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./one.ts";
@@ -687,7 +678,7 @@ describe("bundler", () => {
         expect(resolveCount).toBe(5050);
         expect(loadCount).toBe(101);
       },
-      debugTimeoutScale: 3,
+      timeoutScale: 3,
     };
   });
   // itBundled("plugin/ManyPlugins", ({ root }) => {
@@ -828,5 +819,81 @@ describe("bundler", () => {
         expect(opts.sourcemap).toEqual(undefined);
       },
     };
+  });
+
+  itBundled("plugin/FileLoaderWithCustomContents", {
+    files: {
+      "index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Test</title>
+          </head>
+          <body>
+            <img src="./image.jpeg" />
+            <script src="./script.js"></script>
+          </body>
+        </html>
+      `,
+      "script.js": /* js */ `
+        console.log("Script loaded");
+      `,
+      "image.jpeg": "actual image data would be here",
+    },
+    entryPoints: ["./index.html"],
+    outdir: "/out",
+    plugins(build) {
+      // This plugin intercepts .jpeg files and returns them with custom contents
+      // This previously caused a crash because additional_files wasn't populated
+      build.onLoad({ filter: /\.jpe?g$/ }, async args => {
+        return {
+          loader: "file",
+          contents: "custom image contents",
+        };
+      });
+    },
+    onAfterBundle(api) {
+      // Verify the build succeeded and files were created
+      api.assertFileExists("index.html");
+      // The image should be copied with a hashed name
+      const html = api.readFile("index.html");
+      expect(html).toContain('src="');
+      expect(html).toContain('.jpeg"');
+    },
+  });
+
+  itBundled("plugin/FileLoaderMultipleAssets", {
+    files: {
+      "index.js": /* js */ `
+        import imgUrl from "./image.png";
+        import wasmUrl from "./module.wasm";
+        console.log(imgUrl, wasmUrl);
+      `,
+      "image.png": "png data",
+      "module.wasm": "wasm data",
+    },
+    entryPoints: ["./index.js"],
+    outdir: "/out",
+    plugins(build) {
+      // Test multiple file types with custom contents
+      build.onLoad({ filter: /\.(png|wasm)$/ }, async args => {
+        const ext = args.path.split(".").pop();
+        return {
+          loader: "file",
+          contents: `custom ${ext} contents`,
+        };
+      });
+    },
+    run: {
+      stdout: /\.(png|wasm)/,
+    },
+    onAfterBundle(api) {
+      // Verify the build succeeded and files were created
+      api.assertFileExists("index.js");
+      const js = api.readFile("index.js");
+      // Should contain references to the copied files
+      expect(js).toContain('.png"');
+      expect(js).toContain('.wasm"');
+    },
   });
 });

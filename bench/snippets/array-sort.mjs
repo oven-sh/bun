@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 var comparator = (a, b) => a - b;
 
 const numbers = [

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -48,6 +45,31 @@ pub fn encode(destination: []u8, source: []const u8) usize {
     return bun.simdutf.base64.encode(source, destination, false);
 }
 
+pub fn encodeAlloc(allocator: std.mem.Allocator, source: []const u8) !bun.ByteList {
+    const len = encodeLen(source);
+    const destination = try allocator.alloc(u8, len);
+    const encoded_len = encode(destination, source);
+    return .{
+        .ptr = destination.ptr,
+        .len = @truncate(encoded_len),
+        .cap = @truncate(len),
+    };
+}
+
+pub fn simdutfEncodeLenUrlSafe(source_len: usize) usize {
+    return bun.simdutf.base64.encode_len(source_len, true);
+}
+
+/// Encode with the following differences from regular `encode` function:
+///
+/// * No padding is added (the extra `=` characters at the end)
+/// * `-` and `_` are used instead of `+` and `/`
+///
+/// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
+pub fn simdutfEncodeUrlSafe(destination: []u8, source: []const u8) usize {
+    return bun.simdutf.base64.encode(source, destination, true);
+}
+
 pub fn decodeLenUpperBound(len: usize) usize {
     return zig_base64.standard.Decoder.calcSizeUpperBound(len) catch {
         //fallback
@@ -77,7 +99,7 @@ pub fn urlSafeEncodeLen(source: anytype) usize {
 }
 extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
 pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
-    bun.JSC.markBinding(@src());
+    bun.jsc.markBinding(@src());
     return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
 }
 
@@ -531,3 +553,6 @@ const zig_base64 = struct {
         } else |err| if (err != error.NoSpaceLeft) return err;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

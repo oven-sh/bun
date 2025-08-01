@@ -24,7 +24,7 @@ const obj = {
   w: 23,
 };
 
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var val = 0;
 bench("Object.values(literal)", () => {

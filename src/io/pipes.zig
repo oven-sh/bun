@@ -1,7 +1,3 @@
-const Async = bun.Async;
-const bun = @import("root").bun;
-const Environment = bun.Environment;
-
 pub const PollOrFd = union(enum) {
     /// When it's a pipe/fifo
     poll: *Async.FilePoll,
@@ -59,11 +55,11 @@ pub const PollOrFd = union(enum) {
 
             //TODO: We should make this call compatible using bun.FileDescriptor
             if (Environment.isWindows) {
-                bun.Async.Closer.close(bun.uvfdcast(fd), bun.windows.libuv.Loop.get());
+                bun.Async.Closer.close(fd, bun.windows.libuv.Loop.get());
             } else if (close_async and close_fd) {
                 bun.Async.Closer.close(fd, {});
             } else {
-                if (close_fd) _ = bun.sys.close(fd);
+                if (close_fd) _ = fd.closeAllowingBadFileDescriptor(null);
             }
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));
@@ -103,3 +99,7 @@ pub const ReadState = enum {
     /// Received an EAGAIN
     drained,
 };
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;

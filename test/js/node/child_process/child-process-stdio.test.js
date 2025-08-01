@@ -25,7 +25,7 @@ describe("process.stdout", () => {
 
 describe("process.stdin", () => {
   it("should allow us to read from stdin in readable mode", done => {
-    const input = "hello\n";
+    const input = "hello there\n";
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "READABLE"], {
       env: bunEnv,

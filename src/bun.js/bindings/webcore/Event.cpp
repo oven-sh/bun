@@ -33,13 +33,13 @@
 // #include "UserGestureIndicator.h"
 // #include "WorkerGlobalScope.h"
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(Event);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Event);
 
 ALWAYS_INLINE Event::Event(MonotonicTime createTime, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
     : m_isInitialized { !type.isNull() }
@@ -137,11 +137,16 @@ void Event::setCurrentTarget(EventTarget* currentTarget, std::optional<bool> isI
     m_currentTargetIsInShadowTree = false; // m_currentTargetIsInShadowTree = isInShadowTree ? *isInShadowTree : (is<Node>(currentTarget) && downcast<Node>(*currentTarget).isInShadowTree());
 }
 
-Vector<EventTarget*> Event::composedPath() const
+void Event::setEventPath(const EventPath& path)
 {
-    // if (!m_eventPath)
-    return Vector<EventTarget*>();
-    // return m_eventPath->computePathUnclosedToTarget(*m_currentTarget);
+    m_eventPath = &path;
+}
+
+Vector<Ref<EventTarget>> Event::composedPath() const
+{
+    if (!m_eventPath)
+        return Vector<Ref<EventTarget>>();
+    return m_eventPath->computePathUnclosedToTarget(*m_currentTarget);
 }
 
 void Event::setUnderlyingEvent(Event* underlyingEvent)

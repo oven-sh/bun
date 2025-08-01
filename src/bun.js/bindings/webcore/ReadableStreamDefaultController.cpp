@@ -77,7 +77,7 @@ void ReadableStreamDefaultController::error(const Exception& exception)
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto value = createDOMException(&lexicalGlobalObject, exception.code(), exception.message());
 
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }
@@ -100,7 +100,7 @@ void ReadableStreamDefaultController::error(JSC::JSValue error)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = JSC::Exception::create(vm, error);
 
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }
@@ -143,7 +143,7 @@ bool ReadableStreamDefaultController::enqueue(RefPtr<JSC::ArrayBuffer>&& buffer)
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto length = buffer->byteLength();
-    auto value = JSC::JSUint8Array::create(&lexicalGlobalObject, lexicalGlobalObject.typedArrayStructure(JSC::TypeUint8, true), WTFMove(buffer), 0, length);
+    auto value = JSC::JSUint8Array::create(&lexicalGlobalObject, lexicalGlobalObject.typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTFMove(buffer), 0, length);
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, false);

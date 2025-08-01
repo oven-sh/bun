@@ -8,8 +8,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <sys/fcntl.h>
-#include <sys/signal.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
 

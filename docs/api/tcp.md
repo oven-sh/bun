@@ -11,7 +11,7 @@ Bun.listen({
   socket: {
     data(socket, data) {}, // message received from client
     open(socket) {}, // socket opened
-    close(socket) {}, // socket closed
+    close(socket, error) {}, // socket closed
     drain(socket) {}, // socket ready for more data
     error(socket, error) {}, // error handler
   },
@@ -30,7 +30,7 @@ Bun.listen({
     open(socket) {},
     data(socket, data) {},
     drain(socket) {},
-    close(socket) {},
+    close(socket, error) {},
     error(socket, error) {},
   },
 });
@@ -122,7 +122,7 @@ const socket = await Bun.connect({
   socket: {
     data(socket, data) {},
     open(socket) {},
-    close(socket) {},
+    close(socket, error) {},
     drain(socket) {},
     error(socket, error) {},
 

@@ -1,13 +1,13 @@
 Use `bun publish` to publish a package to the npm registry.
 
-`bun publish` will automatically pack your package into a tarball, strip workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` will automatically pack your package into a tarball, strip catalog and workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh
 ## Publishing the package from the current working directory
 $ bun publish
 
 ## Output
-bun publish v1.1.30 (ca7428e9)
+bun publish v$BUN_LATEST_VERSION (ca7428e9)
 
 packed 203B package.json
 packed 224B README.md
@@ -82,6 +82,11 @@ The `--dry-run` flag can be used to simulate the publish process without actuall
 $ bun publish --dry-run
 ```
 
+### `--gzip-level`
+
+Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+{% bunCLIUsage command="publish" /%}
+
 ### `--auth-type`
 
 If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.
@@ -102,6 +107,6 @@ Provide a one-time password directly to the CLI. If the password is valid, this 
 $ bun publish --otp 123456
 ```
 
-### `--gzip-level`
-
-Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+{% callout %}
+**Note** - `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions or automated workflows.
+{% /callout %}

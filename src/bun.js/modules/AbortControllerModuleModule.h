@@ -15,7 +15,7 @@ inline void generateNativeModule_AbortControllerModule(
 {
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto* abortController = WebCore::JSAbortController::getConstructor(vm, globalObject).getObject();
     JSValue abortSignal = WebCore::JSAbortSignal::getConstructor(vm, globalObject);

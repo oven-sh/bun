@@ -77,7 +77,12 @@ describe("safeIntegers", () => {
     const query = db.query("SELECT * FROM foo");
     expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
     query.safeIntegers(true);
-    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    expect(query.all()).toEqual([
+      {
+        id: 1n,
+        age: BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+      },
+    ]);
   });
 
   it("should allow overwriting default", () => {
@@ -85,7 +90,12 @@ describe("safeIntegers", () => {
     db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
     db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
     const query = db.query("SELECT * FROM foo");
-    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    expect(query.all()).toEqual([
+      {
+        id: 1n,
+        age: BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+      },
+    ]);
     query.safeIntegers(false);
     query.as;
     expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
@@ -135,7 +145,13 @@ describe("safeIntegers", () => {
           expect(changes).toBe(1);
           expect(lastInsertRowid).toBe(1);
 
-          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{ id: 1, name: "myname", age: 42 }]);
+          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([
+            {
+              id: 1,
+              name: "myname",
+              age: 42,
+            },
+          ]);
           expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(input)).toStrictEqual([
             { id: 1, name: "myname", age: 42 },
           ]);
@@ -252,7 +268,9 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readonly: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
+      readonly: true,
+    });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -260,7 +278,9 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readwrite: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
+      readwrite: true,
+    });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -291,7 +311,12 @@ it("upsert cross-process, see #1366", () => {
 
   const db2 = Database.open(dir + "get-persist.sqlite");
 
-  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([{ id: "hello" }, { id: "world" }]);
+  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([
+    { id: "hello" },
+    {
+      id: "world",
+    },
+  ]);
 });
 
 it("creates", () => {
@@ -503,6 +528,60 @@ it("supports serialize/deserialize", () => {
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
+it("Database.deserialize should support strict mode", () => {
+  const db1 = new Database(":memory:");
+  db1.run("CREATE TABLE test (name TEXT)");
+  db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
+
+  // Deserialize the database with strict mode
+  const serialized = db1.serialize();
+  const db2 = Database.deserialize(serialized, {
+    strict: true,
+    readonly: false,
+  });
+
+  // Use strict mode
+  db2.run("CREATE TABLE test2 (name TEXT)");
+  db2.run("INSERT INTO test2 VALUES ($name)", { name: "test2" });
+
+  // Verify the data was inserted correctly
+  const result = db2.query("SELECT * FROM test2").all();
+  expect(result).toEqual([{ name: "test2" }]);
+
+  // Also verify we can access the data from the original database
+  const result1 = db2.query("SELECT * FROM test").all();
+  expect(result1).toEqual([{ name: "test1" }]);
+});
+
+it("Database.deserialize should support readonly when passed as a flag or boolean", () => {
+  expect.assertions(2);
+
+  const db1 = new Database(":memory:");
+  db1.run("CREATE TABLE test (name TEXT)");
+  db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
+
+  // Deserialize the database with readonly as flag
+  const serialized = db1.serialize();
+  const db2 = Database.deserialize(serialized, {
+    readonly: true,
+  });
+  // Create another table
+  // It should fail because it is readonly.
+  try {
+    db2.run("CREATE TABLE test2 (name TEXT)");
+  } catch (e) {
+    expect(e.message).toContain("attempt to write a readonly database");
+  }
+
+  // Deserialize the database with readonly as boolean
+  const db3 = Database.deserialize(serialized, true);
+  try {
+    db3.run("CREATE TABLE test2 (name TEXT)");
+  } catch (e) {
+    expect(e.message).toContain("attempt to write a readonly database");
+  }
+});
+
 it("db.query()", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
@@ -608,7 +687,9 @@ it("db.query()", () => {
 
   // iterate (args)
   i = 0;
-  for (const row of db.query("SELECT * FROM test WHERE name = $name").iterate({ $name: "World" })) {
+  for (const row of db.query("SELECT * FROM test WHERE name = $name").iterate({
+    $name: "World",
+  })) {
     i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
     i++;
   }
@@ -687,33 +768,31 @@ it("strict: true", () => {
 describe("does not throw missing parameter error in", () => {
   for (let method of ["all", "get", "values", "run"]) {
     it(`${method}()`, () => {
-      it(`${method}()`, () => {
-        const db = Database.open(":memory:");
+      const db = Database.open(":memory:");
 
-        db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
-        expect(() => {
-          const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
-          const result = query[method]({
-            "@name": "Joey",
-          });
-          switch (method) {
-            case "all":
-              expect(result).toHaveLength(1);
-              expect(result[0]).toStrictEqual({ name: "Joey" });
-              break;
-            case "get":
-              expect(result).toStrictEqual({ name: "Joey" });
-              break;
-            case "values":
-              expect(result).toStrictEqual([["Joey"]]);
-              break;
-            case "run":
-              expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
-              break;
-          }
-        }).not.toThrow();
-      });
+      expect(() => {
+        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+        const result = query[method]({
+          "@name": "Joey",
+        });
+        switch (method) {
+          case "all":
+            expect(result).toHaveLength(1);
+            expect(result[0]).toStrictEqual({ name: "Joey" });
+            break;
+          case "get":
+            expect(result).toStrictEqual({ name: "Joey" });
+            break;
+          case "values":
+            expect(result).toStrictEqual([["Joey"]]);
+            break;
+          case "run":
+            expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
+            break;
+        }
+      }).not.toThrow();
     });
   }
 });
@@ -884,7 +963,11 @@ it("supports FTS5", () => {
     { $title: "City of God" },
     { $title: "Spirited Away" },
   ]);
-  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([{ title: "WarGames" }]);
+  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([
+    {
+      title: "WarGames",
+    },
+  ]);
 });
 
 describe("Database.run", () => {
@@ -1087,10 +1170,26 @@ it.skipIf(
 )("math functions", () => {
   const db = new Database(":memory:");
 
-  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{ "ABS(-243.5)": 243.5 }]);
-  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([{ "ACOS(0.25)": 1.318116071652818 }]);
-  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([{ "ASIN(0.25)": 0.25268025514207865 }]);
-  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([{ "ATAN(0.25)": 0.24497866312686414 }]);
+  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([
+    {
+      "ABS(-243.5)": 243.5,
+    },
+  ]);
+  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([
+    {
+      "ACOS(0.25)": 1.318116071652818,
+    },
+  ]);
+  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([
+    {
+      "ASIN(0.25)": 0.25268025514207865,
+    },
+  ]);
+  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([
+    {
+      "ATAN(0.25)": 0.24497866312686414,
+    },
+  ]);
   db.exec(
     `
     CREATE TABLE num_table (value TEXT NOT NULL);
@@ -1098,21 +1197,77 @@ it.skipIf(
     `,
   );
   expect(db.prepare(`SELECT AVG(value) as value FROM num_table`).all()).toEqual([{ value: 3 }]);
-  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([{ "CEILING(0.25)": 1 }]);
-  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([{ "COUNT(*)": 3 }]);
-  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([{ "COS(0.25)": 0.9689124217106447 }]);
-  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([{ "DEGREES(0.25)": 14.32394487827058 }]);
-  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([{ "EXP(0.25)": 1.2840254166877414 }]);
-  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([{ "FLOOR(0.25)": 0 }]);
-  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([{ "LOG10(0.25)": -0.6020599913279624 }]);
-  expect(db.prepare("SELECT PI()").all()).toEqual([{ "PI()": 3.141592653589793 }]);
-  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([{ "POWER(0.25, 3)": 0.015625 }]);
-  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([{ "RADIANS(0.25)": 0.004363323129985824 }]);
-  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([{ "ROUND(0.25)": 0 }]);
+  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([
+    {
+      "CEILING(0.25)": 1,
+    },
+  ]);
+  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([
+    {
+      "COUNT(*)": 3,
+    },
+  ]);
+  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([
+    {
+      "COS(0.25)": 0.9689124217106447,
+    },
+  ]);
+  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([
+    {
+      "DEGREES(0.25)": 14.32394487827058,
+    },
+  ]);
+  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([
+    {
+      "EXP(0.25)": 1.2840254166877414,
+    },
+  ]);
+  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([
+    {
+      "FLOOR(0.25)": 0,
+    },
+  ]);
+  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([
+    {
+      "LOG10(0.25)": -0.6020599913279624,
+    },
+  ]);
+  expect(db.prepare("SELECT PI()").all()).toEqual([
+    {
+      "PI()": 3.141592653589793,
+    },
+  ]);
+  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([
+    {
+      "POWER(0.25, 3)": 0.015625,
+    },
+  ]);
+  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([
+    {
+      "RADIANS(0.25)": 0.004363323129985824,
+    },
+  ]);
+  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([
+    {
+      "ROUND(0.25)": 0,
+    },
+  ]);
   expect(db.prepare("SELECT SIGN(0.25)").all()).toEqual([{ "SIGN(0.25)": 1 }]);
-  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([{ "SIN(0.25)": 0.24740395925452294 }]);
-  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([{ "SQRT(0.25)": 0.5 }]);
-  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{ "TAN(0.25)": 0.25534192122103627 }]);
+  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([
+    {
+      "SIN(0.25)": 0.24740395925452294,
+    },
+  ]);
+  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([
+    {
+      "SQRT(0.25)": 0.5,
+    },
+  ]);
+  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([
+    {
+      "TAN(0.25)": 0.25534192122103627,
+    },
+  ]);
 });
 
 it("issue#6597", () => {
@@ -1242,27 +1397,33 @@ it("should dispose", () => {
 
 it("can continue to use existing statements after database has been GC'd", async () => {
   let called = false;
-  const registry = new FinalizationRegistry(() => {
-    called = true;
-  });
-  function leakTheStatement() {
-    const db = new Database(":memory:");
-    console.log("---");
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-    db.exec("INSERT INTO foo (name) VALUES ('foo')");
-    const prepared = db.prepare("SELECT * FROM foo");
-    registry.register(db);
-    return prepared;
+  async function run() {
+    const registry = new FinalizationRegistry(() => {
+      called = true;
+    });
+    function leakTheStatement() {
+      const db = new Database(":memory:");
+      console.log("---");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      const prepared = db.prepare("SELECT * FROM foo");
+      registry.register(db);
+      return prepared;
+    }
+
+    const stmt = leakTheStatement();
+
+    Bun.gc(true);
+    await Bun.sleep(1);
+    Bun.gc(true);
+    expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
+    stmt.finalize();
+    expect(() => stmt.all()).toThrow();
   }
-
-  const stmt = leakTheStatement();
-
+  await run();
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);
-  expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
-  stmt.finalize();
-  expect(() => stmt.all()).toThrow();
   if (!isWindows) {
     // on Windows, FinalizationRegistry is more flaky than on POSIX.
     expect(called).toBe(true);

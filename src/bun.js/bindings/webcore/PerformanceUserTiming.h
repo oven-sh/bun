@@ -42,7 +42,7 @@ class Performance;
 using PerformanceEntryMap = HashMap<String, Vector<RefPtr<PerformanceEntry>>>;
 
 class PerformanceUserTiming {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PerformanceUserTiming);
 
 public:
     explicit PerformanceUserTiming(Performance&);
@@ -61,6 +61,8 @@ public:
     Vector<RefPtr<PerformanceEntry>> getMeasures(const String& name) const;
 
     static bool isRestrictedMarkName(const String& markName);
+
+    size_t memoryCost() const;
 
 private:
     ExceptionOr<double> convertMarkToTimestamp(const std::variant<String, double>&) const;

@@ -14,11 +14,6 @@
 //! * `refresh_rate_ms`
 //! * `initial_delay_ms`
 
-const std = @import("std");
-const builtin = @import("builtin");
-const windows = std.os.windows;
-const testing = std.testing;
-const assert = (std.debug).assert;
 const Progress = @This();
 
 /// `null` if the current node (and its children) should
@@ -64,7 +59,7 @@ done: bool = true,
 /// Protects the `refresh` function, as well as `node.recently_updated_child`.
 /// Without this, callsites would call `Node.end` and then free `Node` memory
 /// while it was still being accessed by the `refresh` function.
-update_mutex: std.Thread.Mutex = .{},
+update_mutex: bun.Mutex = .{},
 
 /// Keeps track of how many columns in the terminal have been output, so that
 /// we can move the cursor back later.
@@ -453,3 +448,10 @@ test "basic functionality" {
         node.end();
     }
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+const windows = std.os.windows;
+
+const bun = @import("bun");
+const assert = bun.assert;

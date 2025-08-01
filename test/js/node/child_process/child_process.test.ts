@@ -82,6 +82,7 @@ describe("spawn()", () => {
     ]);
     await runBunInstall(bunEnv, tmpdir);
 
+    console.error({ tmpdir });
     const { exitCode, out } = await new Promise<any>(resolve => {
       const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
       child.on("exit", async exitCode => {
@@ -96,7 +97,7 @@ describe("spawn()", () => {
   it("should disallow invalid filename", () => {
     // @ts-ignore
     expect(() => spawn(123)).toThrow({
-      message: 'The "file" argument must be of type string. Received 123',
+      message: 'The "file" argument must be of type string. Received type number (123)',
       code: "ERR_INVALID_ARG_TYPE",
     });
   });
@@ -195,8 +196,8 @@ describe("spawn()", () => {
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {
-        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
-        child.stdout.on("data", data => {
+        const child = spawn(bunExe(), ["-e", "process.stderr.write(JSON.stringify(process.env))"], { env });
+        child.stderr.on("data", data => {
           resolve(data.toString());
         });
       });
@@ -231,6 +232,7 @@ describe("spawn()", () => {
       {
         argv0: bun,
         stdio: ["inherit", "pipe", "inherit"],
+        env: bunEnv,
       },
     );
     delete process.env.NO_COLOR;
@@ -386,7 +388,7 @@ it("should call close and exit before process exits", async () => {
     stdin: "inherit",
     stderr: "inherit",
   });
-  const data = await new Response(proc.stdout).text();
+  const data = await proc.stdout.text();
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
   expect(await proc.exited).toBe(0);
@@ -426,9 +428,11 @@ it("it accepts stdio passthrough", async () => {
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
   }));
-  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  console.log(package_dir);
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
+    console.log({ err, out });
     expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
       "$ run-p echo-hello echo-world",
       "$ echo hello",
@@ -444,3 +448,26 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
+    // @ts-expect-error
+    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF: "1" },
+  });
+
+  expect(signal).toBe("SIGTRAP");
+});
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

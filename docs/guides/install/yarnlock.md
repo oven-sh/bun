@@ -1,12 +1,14 @@
 ---
-name: Generate a human-readable lockfile
+name: Generate a yarn-compatible lockfile
 ---
 
-By default Bun generates a binary `bun.lockb` file when you run `bun install`. In some cases, it's preferable to generate a human-readable lockfile instead.
+{% callout %}
+Bun v1.1.39 introduced `bun.lock`, a JSONC formatted lockfile. `bun.lock` is human-readable and git-diffable without configuration, at no cost to performance. [**Learn more.**](https://bun.com/docs/install/lockfile#text-based-lockfile)
+{% /callout %}
 
 ---
 
-Use the `--yarn` flag to generate a Yarn-compatible `yarn.lock` file (in addition to `bun.lockb`).
+Use the `--yarn` flag to generate a Yarn-compatible `yarn.lock` file (in addition to `bun.lock`).
 
 ```sh
 $ bun install --yarn
@@ -23,7 +25,7 @@ print = "yarn"
 
 ---
 
-To print a Yarn lockfile to your console without writing it to disk, just "run" your `bun.lockb` with `bun`.
+To print a Yarn lockfile to your console without writing it to disk, "run" your `bun.lockb` with `bun`.
 
 ```sh
 $ bun bun.lockb
@@ -39,4 +41,4 @@ abab@^2.0.6:
 
 ---
 
-See [Docs > Package manager](https://bun.sh/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](https://bun.com/docs/cli/install) for complete documentation of Bun's package manager.

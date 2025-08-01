@@ -1,6 +1,6 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 import { createDenoTest } from "deno:harness";
-const { test, assert, assertEquals, assertThrows } = createDenoTest(import.meta.path);
+const { test, assert, assertEquals, assertGreaterThanOrEqual, assertThrows } = createDenoTest(import.meta.path);
 
 test({ permissions: { hrtime: false } }, async function performanceNow() {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -28,7 +28,7 @@ test(function performanceToJSON() {
   assert("timeOrigin" in json);
   assert(json.timeOrigin === performance.timeOrigin);
   // check there are no other keys
-  assertEquals(Object.keys(json).length, 1);
+  assertEquals(Object.keys(json).length, 2);
 });
 
 test(function performanceMark() {
@@ -90,7 +90,8 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
-        assert(measure1.duration >= 100, `duration below 100ms: ${measure1.duration}`);
+        // assert(measure1.duration >= 100, `duration below 100ms: ${measure1.duration}`);
+        assertGreaterThanOrEqual(measure1.duration, 100, `duration below 100ms: ${measure1.duration}`);
         assert(
           measure1.duration < (later - now) * 1.5,
           `duration exceeds 150% of wallclock time: ${measure1.duration}ms vs ${later - now}ms`,

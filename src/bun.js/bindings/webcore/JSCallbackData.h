@@ -42,7 +42,7 @@ namespace WebCore {
 // (and synchronization would be slow).
 
 class JSCallbackData {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSCallbackData);
 
 public:
     enum class CallbackType { Function,
@@ -57,13 +57,13 @@ protected:
     ~JSCallbackData()
     {
 #if !PLATFORM(IOS_FAMILY)
-        ASSERT(m_thread.ptr() == &Thread::current());
+        ASSERT(m_thread.ptr() == &Thread::currentSingleton());
 #endif
     }
 
 private:
 #if ASSERT_ENABLED
-    Ref<Thread> m_thread { Thread::current() };
+    Ref<Thread> m_thread { Thread::currentSingleton() };
 #endif
 };
 

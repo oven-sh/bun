@@ -47,13 +47,13 @@ void CryptoAlgorithmSHA512::digest(Vector<uint8_t>&& message, VectorCallback&& c
 {
     auto digest = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_512);
     if (!digest) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
     if (message.size() < 64) {
         auto moved = WTFMove(message);
-        digest->addBytes(moved.data(), moved.size());
+        digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();
         ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
             callback(result);
@@ -61,13 +61,10 @@ void CryptoAlgorithmSHA512::digest(Vector<uint8_t>&& message, VectorCallback&& c
         return;
     }
 
-    context.refEventLoop();
-    workQueue.dispatch([digest = WTFMove(digest), message = WTFMove(message), callback = WTFMove(callback), contextIdentifier = context.identifier()]() mutable {
-        digest->addBytes(message.data(), message.size());
+    workQueue.dispatch(context.globalObject(), [digest = WTFMove(digest), message = WTFMove(message), callback = WTFMove(callback), contextIdentifier = context.identifier()]() mutable {
+        digest->addBytes(message.begin(), message.size());
         auto result = digest->computeHash();
-
-        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto& context) {
-            context.unrefEventLoop();
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
             callback(result);
         });
     });

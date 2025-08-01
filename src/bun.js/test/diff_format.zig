@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const MutableString = bun.MutableString;
-const Output = bun.Output;
-const default_allocator = bun.default_allocator;
-const string = bun.string;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ConsoleObject = JSC.ConsoleObject;
-const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
-
 pub const DiffFormatter = struct {
     received_string: ?string = null,
     expected_string: ?string = null,
@@ -111,7 +99,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
 
             buffered_writer_.context = &expected_buf;
@@ -125,7 +113,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 buf_writer,
                 fmt_options,
-            );
+            ) catch {}; // TODO:
             buffered_writer.flush() catch unreachable;
         }
 
@@ -146,6 +134,7 @@ pub const DiffFormatter = struct {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
                 var formatter = ConsoleObject.Formatter{ .globalThis = this.globalThis, .quote_strings = true };
+                defer formatter.deinit();
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         expected.toFmt(&formatter),
@@ -292,3 +281,18 @@ pub const DiffFormatter = struct {
         return;
     }
 };
+
+const string = []const u8;
+
+const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+
+const jsc = bun.jsc;
+const ConsoleObject = jsc.ConsoleObject;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -1,5 +1,5 @@
 import { IncomingMessage } from "node:http";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const headers = {
   date: "Mon, 06 Nov 2023 05:12:49 GMT",

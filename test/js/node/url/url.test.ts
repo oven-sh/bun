@@ -79,3 +79,10 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
   // @ts-expect-error
   expect(err?.code).toEqual("ERR_MISSING_ARGS");
 });
+
+// https://github.com/oven-sh/bun/issues/16705
+it("#16705", () => {
+  expect(Bun.fileURLToPath("file://C:/firebase-gen-%7B%7B%20firebase.gen%20%7D%7D")).toEqual(
+    process.platform === "win32" ? "C:\\firebase-gen-{{ firebase.gen }}" : "/C:/firebase-gen-{{ firebase.gen }}",
+  );
+});

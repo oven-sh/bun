@@ -109,11 +109,28 @@ endif()
 add_executable(c2str.exe conftest.c)
 target_compile_options(c2str.exe PRIVATE -DC2STR)
 
+# somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run
+# when spawned by cmake (they run fine from a shell!)
+# otherwise they crash with:
+# ==856230==Shadow memory range interleaves with an existing memory mapping. ASan cannot proceed correctly. ABORTING.
+# ==856230==ASan shadow was supposed to be located in the [0x00007fff7000-0x10007fff7fff] range.
+# ==856230==This might be related to ELF_ET_DYN_BASE change in Linux 4.12.
+# ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
+# the linked issue refers to very old kernels but this still happens to us on modern ones.
+# disabling ASLR to run the binary works around it
+set(C2STR_COMMAND $<TARGET_FILE:c2str.exe> include/tccdefs.h tccdefs_.h)
+if(LINUX AND (CMAKE_C_FLAGS MATCHES "-fsanitize"))
+  # our CI builds run in a container where setarch isn't allowed to change the personality.
+  # but the ASan binaries seem to run fine there without ASLR disabled
+  # so, if the command fails with setarch, we try again without (|| ${C2STR_COMMAND}) as a fallback
+  set(C2STR_COMMAND setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${C2STR_COMMAND} || ${C2STR_COMMAND})
+endif()
+
 add_custom_command(
   TARGET
     c2str.exe POST_BUILD
   COMMAND
-    c2str.exe include/tccdefs.h tccdefs_.h
+    ${C2STR_COMMAND}
   WORKING_DIRECTORY
     ${CMAKE_CURRENT_SOURCE_DIR}
 )

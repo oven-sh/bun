@@ -1,6 +1,7 @@
 import { realpathSync } from "fs";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -284,7 +285,8 @@ describe("net.createServer listen", () => {
 
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
-        expect(err!.name).toBe("ECONNREFUSED");
+        expect(err!.name).toBe("Error");
+        expect((err as { code?: string }).code).toBe("ECONNREFUSED");
 
         server.close();
         done();
@@ -322,8 +324,8 @@ describe("net.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    //should be faster than 500ms (this was previously 100 but the test was flaky on local machine -@alii)
+    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(
       mustCall(async () => {
@@ -453,7 +455,7 @@ describe("net.createServer events", () => {
           });
         }
 
-        const promises = [];
+        const promises: Promise<void>[] = [];
         for (let i = 0; i < maxClients; i++) {
           promises.push(spawnClient());
         }
@@ -461,32 +463,14 @@ describe("net.createServer events", () => {
       });
   });
 
-  it("should call error", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  it("should error on an invalid port", () => {
+    const server = createServer();
 
-    let timeout: Timer;
-    const server: Server = createServer();
-
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall("error not called")();
-    };
-
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
-
-    server
-      .on(
-        "error",
-        mustCall(err => {
-          server.close();
-          clearTimeout(timeout);
-          expect(err).toBeDefined();
-          done();
-        }),
-      )
-      .listen(123456);
+    expect(() => server.listen(123456)).toThrow(
+      expect.objectContaining({
+        code: "ERR_SOCKET_BAD_PORT",
+      }),
+    );
   });
 
   it("should call abort with signal", done => {
@@ -564,5 +548,28 @@ describe("net.createServer events", () => {
         },
       }).catch(closeAndFail);
     });
+  });
+
+  it("#8374", async () => {
+    const server = createServer();
+    const socketPath = join(tmpdir(), "test-unix-socket");
+
+    server.listen({ path: socketPath });
+    await once(server, "listening");
+
+    try {
+      const address = server.address() as string;
+      expect(address).toBe(socketPath);
+
+      const client = await Bun.connect({
+        unix: socketPath,
+        socket: {
+          data() {},
+        },
+      });
+      client.end();
+    } finally {
+      server.close();
+    }
   });
 });

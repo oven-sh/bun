@@ -16,8 +16,6 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
-extern "C" void RefString__free(void*, void*, unsigned);
-
 namespace Zig {
 
 using Base = JSC::SourceProvider;
@@ -45,7 +43,6 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
             return SourceOrigin(WTF::URL(makeString("builtin://"_s, sourceURL)));
         }
     }
-
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
@@ -163,10 +160,10 @@ static JSC::VM& getVMForBytecodeCache()
     static thread_local JSC::VM* vmForBytecodeCache = nullptr;
     if (!vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
-        auto& vm = JSC::VM::create(heapSize).leakRef();
-        vm.ref();
-        vmForBytecodeCache = &vm;
-        vm.heap.acquireAccess();
+        auto vmPtr = JSC::VM::tryCreate(heapSize);
+        vmPtr->refSuppressingSaferCPPChecking();
+        vmForBytecodeCache = vmPtr.get();
+        vmPtr->heap.acquireAccess();
     }
     return *vmForBytecodeCache;
 }

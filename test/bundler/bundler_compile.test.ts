@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
-import { isFlaky, isWindows } from "harness";
 
-describe.todoIf(isFlaky && isWindows)("bundler", () => {
+describe("bundler", () => {
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {
@@ -13,6 +13,21 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
       `,
     },
     run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/HelloWorldWithProcessVersionsBun", {
+    compile: true,
+    files: {
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+      "/entry.ts": /* js */ `
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+    },
+    run: { exitCode: 0 },
   });
   itBundled("compile/HelloWorldBytecode", {
     compile: true,
@@ -58,7 +73,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
         import {rmSync} from 'fs';
         // Verify we're not just importing from the filesystem
         rmSync("./worker.ts", {force: true});
-        
+
         console.log("Hello, world!");
         new Worker("./worker");
       `,
@@ -214,7 +229,7 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperclover)
     compile: true,
     files: {
       "/entry.ts": `
@@ -248,17 +263,23 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
     run: { stdout: "ok" },
   });
 
-  for (const additionalOptions of [
+  const additionalOptionsIters: Array<{
+    bytecode?: boolean;
+    minify?: boolean;
+    format: "cjs" | "esm";
+  }> = [
     { bytecode: true, minify: true, format: "cjs" },
     { format: "cjs" },
     { format: "cjs", minify: true },
     { format: "esm" },
     { format: "esm", minify: true },
-  ]) {
+  ];
+
+  for (const additionalOptions of additionalOptionsIters) {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
     itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
-      install: ["react@next", "react-dom@next"],
+      install: ["react@19.2.0-canary-b94603b9-20250513", "react-dom@19.2.0-canary-b94603b9-20250513"],
       format,
       minifySyntax: minify,
       minifyIdentifiers: minify,
@@ -425,6 +446,10 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
         fs.readFileSync(big).toString("hex");
         await Bun.file(big).arrayBuffer();
         fs.readFileSync(small).toString("hex");
+        if ((await fs.promises.readFile(small)).length !== 31) throw "fail readFile";
+        if (fs.statSync(small).size !== 31) throw "fail statSync";
+        if (fs.statSync(big).size !== (4096 + (32 - 2))) throw "fail statSync";
+        if (((await fs.promises.stat(big)).size) !== (4096 + (32 - 2))) throw "fail stat";
         await Bun.file(small).arrayBuffer();
         console.log("PASS");
       `,
@@ -581,5 +606,24 @@ error: Hello World`,
         expect(stderr).toInclude("entry.ts:8:19");
       },
     },
+  });
+  itBundled("compile/BunBeBunEnvVar", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("This is compiled code");
+      `,
+    },
+    run: [
+      {
+        stdout: "This is compiled code",
+      },
+      {
+        env: { BUN_BE_BUN: "1" },
+        validate({ stdout }) {
+          expect(stdout).not.toContain("This is compiled code");
+        },
+      },
+    ],
   });
 });

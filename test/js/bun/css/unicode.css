@@ -1,0 +1,87 @@
+/* Test file for Unicode edge cases - INPUT */
+
+/* Surrogate pairs and combining characters */
+.surrogate-test {
+  /* High surrogate followed by low surrogate */
+  content: "𝌆"; /* U+1D306 */
+
+  /* Unpaired surrogate */
+  content: "\uD800";
+
+  /* Multiple combining characters */
+  content: "a\u0301\u0302\u0303"; /* a + acute + circumflex + tilde */
+
+  /* Bidirectional text with combining marks */
+  content: "Hello\u202E\u0301World";
+}
+
+/* Invalid identifiers and class names */
+.\1234 {
+  color: red;
+}
+
+/* Zero-width characters in identifiers */
+.test​test {
+  /* Contains U+200B zero-width space */
+  color: blue;
+}
+
+/* Right-to-left override in property names */
+.rtl-test {
+  col\u202eor: green; /* RTL override in middle of "color" */
+}
+
+/* Maximum-length Unicode escapes */
+.unicode-max {
+  /* Maximum valid Unicode code point */
+  content: "\U0010FFFF";
+
+  /* Just beyond maximum valid code point */
+  content: "\U00110000";
+}
+
+/* Null bytes and control characters */
+.control-chars {
+  content: "\0";
+  content: "\1";
+  content: "\31";
+  font-family: "\0font";
+}
+
+/* Special whitespace characters */
+.whitespace-test {
+  margin: 1px　2px　3px　4px; /* U+3000 ideographic space */
+  padding: 1px␣2px␣3px␣4px; /* U+2423 open box */
+}
+
+/* Combining characters in custom properties */
+:root {
+  --combining-mark: "n\u0303";
+  --rtl-value: "\u202Evalue\u202C";
+}
+
+/* Unicode variation selectors */
+.variation-test {
+  content: "⌘︎";
+  content: "☺︎";
+}
+
+/* Mixed directional text */
+.bidi-test {
+  content: "Hello \u202B Arabic text \u202C World";
+  content: "Test \u202E reversed text \u202C normal";
+}
+
+/* Invalid UTF-16 sequences */
+.invalid-utf16 {
+  content: "\uD800A";
+  content: "\uDC00";
+  content: "\uD800\uD800";
+}
+
+/* Overlong UTF-8 sequences */
+.overlong-utf8 {
+  content: "\xC1\x81";
+  content: "\xE0\x81\x81";
+  content: "\xF0\x80\x81\x81";
+}

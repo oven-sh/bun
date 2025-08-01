@@ -1,61 +1,47 @@
-Use `bun outdated` to display a table of outdated dependencies with their latest versions for the current workspace:
+Use `bun outdated` to check for outdated dependencies in your project. This command displays a table of dependencies that have newer versions available.
 
-```sh
-$ bun outdated
+{% bunOutdatedTerminal displayGlob="" filter="" glob="" /%}
 
-|--------------------------------------------------------------------|
-| Package                                | Current | Update | Latest |
-|----------------------------------------|---------|--------|--------|
-| @types/bun (dev)                       | 1.1.6   | 1.1.7  | 1.1.7  |
-|----------------------------------------|---------|--------|--------|
-| @types/react (dev)                     | 18.3.3  | 18.3.4 | 18.3.4 |
-|----------------------------------------|---------|--------|--------|
-| @typescript-eslint/eslint-plugin (dev) | 7.16.1  | 7.18.0 | 8.2.0  |
-|----------------------------------------|---------|--------|--------|
-| @typescript-eslint/parser (dev)        | 7.16.1  | 7.18.0 | 8.2.0  |
-|----------------------------------------|---------|--------|--------|
-| esbuild (dev)                          | 0.21.5  | 0.21.5 | 0.23.1 |
-|----------------------------------------|---------|--------|--------|
-| eslint (dev)                           | 9.7.0   | 9.9.1  | 9.9.1  |
-|----------------------------------------|---------|--------|--------|
-| typescript (dev)                       | 5.5.3   | 5.5.4  | 5.5.4  |
-|--------------------------------------------------------------------|
-```
+## Version Information
 
-The `Update` column shows the version that would be installed if you ran `bun update [package]`. This version is the latest version that satisfies the version range specified in your `package.json`.
+The output table shows three version columns:
 
-The `Latest` column shows the latest version available from the registry. `bun update --latest [package]` will update to this version.
+- **Current**: The version currently installed
+- **Update**: The latest version that satisfies your package.json version range
+- **Latest**: The latest version published to the registry
 
-Dependency names can be provided to filter the output (pattern matching is supported):
+### Dependency Filters
 
-```sh
-$ bun outdated "@types/*"
+`bun outdated` supports searching for outdated dependencies by package names and glob patterns.
 
-|------------------------------------------------|
-| Package            | Current | Update | Latest |
-|--------------------|---------|--------|--------|
-| @types/bun (dev)   | 1.1.6   | 1.1.8  | 1.1.8  |
-|--------------------|---------|--------|--------|
-| @types/react (dev) | 18.3.3  | 18.3.4 | 18.3.4 |
-|------------------------------------------------|
-```
+To check if specific dependencies are outdated, pass the package names as positional arguments:
 
-## `--filter`
+{% bunOutdatedTerminal displayGlob="eslint-plugin-security eslint-plugin-sonarjs" glob="eslint-plugin-*"  /%}
 
-The `--filter` flag can be used to select workspaces to include in the output. Workspace names or paths can be used as patterns.
+You can also pass glob patterns to check for outdated packages:
 
-```sh
-$ bun outdated --filter <pattern>
-```
+{% bunOutdatedTerminal displayGlob="'eslint*'" glob="eslint*"  /%}
 
-For example, to only show outdated dependencies for workspaces in the `./apps` directory:
+For example, to check for outdated `@types/*` packages:
 
-```sh
-$ bun outdated --filter './apps/*'
-```
+{% bunOutdatedTerminal displayGlob="'@types/*'" glob="@types/*"  /%}
 
-If you want to do the same, but exclude the `./apps/api` workspace:
+Or to exclude all `@types/*` packages:
 
-```sh
-$ bun outdated --filter './apps/*' --filter '!./apps/api'
-```
+{% bunOutdatedTerminal displayGlob="'!@types/*'" glob="!@types/*"  /%}
+
+### Workspace Filters
+
+Use the `--filter` flag to check for outdated dependencies in a different workspace package:
+
+{% bunOutdatedTerminal  glob="t*" filter="@monorepo/types"  /%}
+
+You can pass multiple `--filter` flags to check multiple workspaces:
+
+{% bunOutdatedTerminal  glob="{e,t}*" displayGlob="--filter @monorepo/types --filter @monorepo/cli" /%}
+
+You can also pass glob patterns to filter by workspace names:
+
+{% bunOutdatedTerminal  glob="{e,t}*" displayGlob="--filter='@monorepo/{types,cli}'" /%}
+
+{% bunCLIUsage command="outdated" /%}

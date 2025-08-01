@@ -58,7 +58,7 @@ enum class CommonAbortReason : uint8_t {
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
+    WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
@@ -106,6 +106,9 @@ public:
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
+    bool isDependent() const { return m_isDependent; }
+
+    size_t memoryCost() const;
 
 private:
     enum class Aborted : bool {
@@ -116,7 +119,6 @@ private:
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
 
-    bool isDependent() const { return m_isDependent; }
     void markAsDependent() { m_isDependent = true; }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);

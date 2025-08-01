@@ -10,7 +10,7 @@ describe("fetch doesn't leak", () => {
     var count = 0;
     using server = Bun.serve({
       port: 0,
-
+      idleTimeout: 0,
       fetch(req) {
         count++;
         return new Response(body);
@@ -20,7 +20,7 @@ describe("fetch doesn't leak", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: `http://${server.hostname}:${server.port}`,
+        SERVER: server.url.href,
         COUNT: "200",
       },
       stderr: "inherit",
@@ -49,6 +49,7 @@ describe("fetch doesn't leak", () => {
 
     const serveOptions = {
       port: 0,
+      idleTimeout: 0,
       fetch(req) {
         return new Response(body, { headers });
       },
@@ -62,8 +63,8 @@ describe("fetch doesn't leak", () => {
 
     const env = {
       ...bunEnv,
-      SERVER: `${tls ? "https" : "http"}://${server.hostname}:${server.port}`,
-      BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
+      SERVER: server.url.href,
+      BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString(10),
       NAME: name,
     };
 
@@ -99,12 +100,13 @@ describe("fetch doesn't leak", () => {
   }
 });
 
-describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams"])("Sending %s", type => {
+describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])("Sending %s", type => {
   test(
     "does not leak",
     async () => {
       using server = Bun.serve({
         port: 0,
+        idleTimeout: 0,
         fetch(req) {
           return new Response();
         },
@@ -151,7 +153,7 @@ test("do not leak", async () => {
 
   let url;
   let isDone = false;
-  server.listen(0, function attack() {
+  server.listen(0, "127.0.0.1", function attack() {
     if (isDone) {
       return;
     }
@@ -165,7 +167,7 @@ test("do not leak", async () => {
 
   let prev = Infinity;
   let count = 0;
-  const interval = setInterval(() => {
+  var interval = setInterval(() => {
     isDone = true;
     gc();
     const next = process.memoryUsage().heapUsed;

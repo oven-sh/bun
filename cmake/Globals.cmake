@@ -187,13 +187,14 @@ endfunction()
 
 # satisfies_range()
 # Description:
-#   Check if a version satisfies a version range
+#   Check if a version satisfies a version range or list of ranges
 # Arguments:
 #   version  string - The version to check (e.g. "1.2.3")
-#   range    string - The range to check against (e.g. ">=1.2.3")
+#   range    string - The range to check against (e.g. ">=1.2.3" or ">=19.1.0 <20.0.0")
+#                     Multiple space-separated ranges may be supplied; in this case they must all be satisfied
 #   variable string - The variable to store the result in
-function(satisfies_range version range variable)
-  if(range STREQUAL "ignore")
+function(satisfies_range version ranges variable)
+  if(ranges STREQUAL "ignore")
     set(${variable} ON PARENT_SCOPE)
     return()
   endif()
@@ -206,26 +207,36 @@ function(satisfies_range version range variable)
   endif()
   set(version ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3})
 
-  string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${range}")
-  if(NOT match)
-    return()
-  endif()
-  set(comparator ${CMAKE_MATCH_1})
-  set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
+  string(REPLACE " " ";" range_list "${ranges}")
+  set(all_satisfied ON)
 
-  if(comparator STREQUAL ">=")
-    set(comparator VERSION_GREATER_EQUAL)
-  elseif(comparator STREQUAL ">")
-    set(comparator VERSION_GREATER)
-  elseif(comparator STREQUAL "<=")
-    set(comparator VERSION_LESS_EQUAL)
-  elseif(comparator STREQUAL "<")
-    set(comparator VERSION_LESS)
-  else()
-    set(comparator VERSION_EQUAL)
-  endif()
+  foreach(current_item ${range_list})
+    string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${current_item}")
+    if(NOT match)
+      return()
+    endif()
+    set(comparator ${CMAKE_MATCH_1})
+    set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
 
-  if(version ${comparator} ${range})
+    if(comparator STREQUAL ">=")
+      set(comparator VERSION_GREATER_EQUAL)
+    elseif(comparator STREQUAL ">")
+      set(comparator VERSION_GREATER)
+    elseif(comparator STREQUAL "<=")
+      set(comparator VERSION_LESS_EQUAL)
+    elseif(comparator STREQUAL "<")
+      set(comparator VERSION_LESS)
+    else()
+      set(comparator VERSION_EQUAL)
+    endif()
+
+    if(NOT version ${comparator} ${range})
+      set(all_satisfied OFF)
+      break()
+    endif()
+  endforeach()
+
+  if(all_satisfied)
     set(${variable} ON PARENT_SCOPE)
   endif()
 endfunction()
@@ -291,7 +302,7 @@ function(find_command)
       set_property(GLOBAL PROPERTY ${FIND_NAME} "${exe}: ${reason}" APPEND)
 
       if(version)
-        satisfies_range(${version} ${${FIND_VERSION_VARIABLE}} ${variable})
+        satisfies_range(${version} ${FIND_VERSION} ${variable})
         set(${variable} ${${variable}} PARENT_SCOPE)
       endif()
     endfunction()
@@ -369,7 +380,7 @@ function(register_command)
   if(CMD_ENVIRONMENT)
     set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
   endif()
-  
+
   if(NOT CMD_COMMENT)
     string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
   endif()
@@ -419,7 +430,20 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
     if(BUILDKITE)
       file(RELATIVE_PATH filename ${BUILD_PATH} ${artifact})
-      list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      if(filename STREQUAL "libbun-profile.a")
+        # libbun-profile.a is now over 5gb in size, compress it first
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-profile.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-profile.a.gz)
+      elseif(filename STREQUAL "libbun-asan.a")
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-asan.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-asan.a.gz)
+      else()
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      endif()
     endif()
   endforeach()
 
@@ -519,7 +543,7 @@ function(parse_package_json)
     set(NPM_NODE_MODULES)
     set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
     set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
-    
+
     foreach(property ${NPM_NODE_MODULES_PROPERTIES})
       string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
       if(error MATCHES "not found")
@@ -625,7 +649,7 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  set(GIT_EFFECTIVE_OUTPUTS)
+  set(GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/.ref)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
   endforeach()
@@ -743,11 +767,17 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
   endif()
 
+  set(MAKE_SOURCES)
+  if(TARGET clone-${MAKE_TARGET})
+    list(APPEND MAKE_SOURCES ${MAKE_CWD}/.ref)
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
@@ -799,6 +829,7 @@ function(register_cmake_command)
     TARGETS configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     ARTIFACTS ${MAKE_ARTIFACTS}
   )
 
@@ -875,7 +906,7 @@ function(register_compiler_flags)
       if(NOT COMPILER_TARGETS)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
-      
+
       foreach(target ${COMPILER_TARGETS})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
@@ -887,7 +918,7 @@ function(register_compiler_flags)
 endfunction()
 
 function(register_compiler_definitions)
-  
+
 endfunction()
 
 # register_linker_flags()

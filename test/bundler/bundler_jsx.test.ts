@@ -204,7 +204,6 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Classic", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'
@@ -226,7 +225,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/ClassicPragma", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         // @jsx fn
@@ -298,7 +296,6 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Factory", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         const h = () => 'hello'
@@ -322,7 +319,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImport", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { h, fragment } from './jsx.ts';
@@ -353,7 +349,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImportExplicitReactDefault", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { print } from 'bun-test-helpers'
@@ -374,7 +369,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImportExplicitReactDefaultExternal", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { print } from 'bun-test-helpers'
@@ -395,6 +389,26 @@ describe("bundler", () => {
       expect(file).toContain("React.createElement");
       expect(file).toContain("React.Fragment");
       expect(file).toContain('import * as React from "react"');
+    },
+  });
+  itBundled("jsx/jsxImportSource pragma works", {
+    files: {
+      "/index.jsx": /* jsx */ `
+      // @jsxImportSource hello
+      console.log(<div>Hello World</div>);
+      `,
+      "/node_modules/hello/jsx-dev-runtime.js": /* js */ `
+        export function jsxDEV(type, props, key) {
+          return {
+            $$typeof: Symbol("hello_jsxDEV"), type, props, key
+          }
+        }
+      `,
+    },
+    outdir: "/out",
+    target: "browser",
+    run: {
+      stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
   });
 });

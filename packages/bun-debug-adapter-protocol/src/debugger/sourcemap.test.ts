@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { SourceMap } from "./sourcemap";
+import { SourceMap } from "./sourcemap.js";
 
 test("works without source map", () => {
   const sourceMap = getSourceMap("without-sourcemap.js");

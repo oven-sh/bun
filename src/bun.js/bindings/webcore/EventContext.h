@@ -35,7 +35,7 @@
 namespace WebCore {
 
 class EventContext {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventContext);
 
 public:
     using EventInvokePhase = EventTarget::EventInvokePhase;
@@ -98,9 +98,9 @@ private:
     RefPtr<TouchList> m_targetTouches;
     RefPtr<TouchList> m_changedTouches;
 #endif
-    int m_closedShadowDepth { 0 };
-    bool m_currentTargetIsInShadowTree { false };
-    bool m_contextNodeIsFormElement { false };
+    [[maybe_unused]] int m_closedShadowDepth { 0 };
+    [[maybe_unused]] bool m_currentTargetIsInShadowTree { false };
+    [[maybe_unused]] bool m_contextNodeIsFormElement { false };
     Type m_type { Type::Normal };
 };
 

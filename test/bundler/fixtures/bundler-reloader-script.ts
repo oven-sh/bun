@@ -20,9 +20,13 @@ await Bun.write(input, "import value from './mutate.js';\n" + `export default va
 
 await Bun.sleep(1000);
 
-await Bun.build({
-  entrypoints: [input],
-});
+try {
+  await Bun.build({
+    entrypoints: [input],
+  });
+  // If the build succeeded something is very wrong
+  process.exit(1);
+} catch {}
 await Bun.write(mutate, "export default 1;\n");
 
 await Bun.sleep(1000);

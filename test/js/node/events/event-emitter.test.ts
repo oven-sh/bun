@@ -565,7 +565,7 @@ describe("EventEmitter.on", () => {
             2,
             {
               code: "ABORT_ERR",
-              message: "The operation was aborted",
+              message: "The operation was aborted.",
             },
           ],
         ]);

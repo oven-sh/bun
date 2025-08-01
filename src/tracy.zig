@@ -6,15 +6,10 @@
 /// Thank you to the Zig team
 ///
 const std = @import("std");
-const builtin = @import("builtin");
-const build_options = @import("build_options");
-const bun = @import("root").bun;
 
 pub const enable_allocation = false;
 pub const enable_callstack = false;
 pub var enable = false;
-
-const callstack_depth = build_options.tracy_callstack_depth;
 
 const ___tracy_c_zone_context = extern struct {
     id: u32 = 0,
@@ -531,20 +526,17 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
                 "tracy.dll",
             } else .{};
 
-            const RLTD = if (bun.Environment.isMac)
-                -2
-            else
-                0;
+            const RLTD: std.c.RTLD = if (bun.Environment.isMac) @bitCast(@as(i32, -2)) else if (bun.Environment.isLinux) .{} else {};
 
             if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
-                const handle = bun.C.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
+                const handle = bun.sys.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break :get;
                 }
             }
             inline for (comptime paths_to_try) |path| {
-                const handle = bun.C.dlopen(path, RLTD);
+                const handle = bun.sys.dlopen(path, RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break;
@@ -558,3 +550,9 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
 
     return bun.C.dlsymWithHandle(Type, symbol, Handle.getter);
 }
+
+const builtin = @import("builtin");
+const bun = @import("bun");
+
+const build_options = @import("build_options");
+const callstack_depth = build_options.tracy_callstack_depth;

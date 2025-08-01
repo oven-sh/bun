@@ -1,5 +1,5 @@
-import { bench, run } from "mitata";
 import { copyFileSync, statSync, writeFileSync } from "node:fs";
+import { bench, run } from "../runner.mjs";
 
 function runner(ready) {
   for (let size of [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000]) {

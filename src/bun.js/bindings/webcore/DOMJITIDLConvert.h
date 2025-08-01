@@ -45,7 +45,7 @@ template<>
 struct DirectConverter<IDLAtomStringAdaptor<IDLDOMString>> {
     static AtomString directConvert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSString* string)
     {
-        return string->toAtomString(&lexicalGlobalObject);
+        return string->toAtomString(&lexicalGlobalObject).data;
     }
 };
 
@@ -53,7 +53,7 @@ template<>
 struct DirectConverter<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> {
     static AtomString directConvert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSString* string)
     {
-        return string->toExistingAtomString(&lexicalGlobalObject);
+        return string->toExistingAtomString(&lexicalGlobalObject).data;
     }
 };
 

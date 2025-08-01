@@ -1,17 +1,3 @@
-const builtin = @import("builtin");
-const clap = @import("../clap.zig");
-const std = @import("std");
-const bun = @import("root").bun;
-const Output = bun.Output;
-
-const args = clap.args;
-const debug = std.debug;
-const heap = std.heap;
-const io = std.io;
-const mem = std.mem;
-const os = std.os;
-const testing = std.testing;
-
 // Disabled because not all CLI arguments are parsed with Clap.
 pub var warn_on_unrecognized_flag = false;
 
@@ -452,3 +438,14 @@ test "errors" {
     testErr(&params, &[_][]const u8{"-c"}, "The argument '-c' requires a value but none was supplied\n");
     testErr(&params, &[_][]const u8{"--cc"}, "The argument '--cc' requires a value but none was supplied\n");
 }
+
+const clap = @import("../clap.zig");
+const args = clap.args;
+
+const bun = @import("bun");
+const Output = bun.Output;
+
+const std = @import("std");
+const io = std.io;
+const mem = std.mem;
+const testing = std.testing;

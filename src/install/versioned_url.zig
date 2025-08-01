@@ -1,6 +1,3 @@
-const Semver = @import("./semver.zig");
-const String = @import("./semver.zig").String;
-
 pub const VersionedURL = extern struct {
     url: String,
     version: Semver.Version,
@@ -11,10 +8,6 @@ pub const VersionedURL = extern struct {
 
     pub fn order(this: VersionedURL, other: VersionedURL, lhs_buf: []const u8, rhs_buf: []const u8) @import("std").math.Order {
         return this.version.order(other.version, lhs_buf, rhs_buf);
-    }
-
-    pub fn fmt(this: VersionedURL, buf: []const u8) Semver.Version.Formatter {
-        return this.version.fmt(buf);
     }
 
     pub fn count(this: VersionedURL, buf: []const u8, comptime Builder: type, builder: Builder) void {
@@ -29,3 +22,8 @@ pub const VersionedURL = extern struct {
         };
     }
 };
+
+const bun = @import("bun");
+
+const Semver = bun.Semver;
+const String = Semver.String;

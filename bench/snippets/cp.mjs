@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { cp } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 import { fileURLToPath } from "url";
 const hugeDirectory = (() => {

@@ -16,8 +16,8 @@
  */
 
 import * as duration from "@grpc/grpc-js/build/src/duration";
+import { describe, it } from "bun:test";
 import assert from "node:assert";
-import { afterAll, beforeAll, describe, it, afterEach } from "bun:test";
 
 describe("Duration", () => {
   describe("parseDuration", () => {

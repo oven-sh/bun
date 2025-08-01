@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 import { join } from "path";
 
 const db = Database.open(join(import.meta.dir, "src", "northwind.sqlite"));

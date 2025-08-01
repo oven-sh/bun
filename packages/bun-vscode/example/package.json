@@ -2,10 +2,16 @@
   "private": true,
   "name": "example",
   "dependencies": {
+    "axios": "^1.7.7",
     "elysia": "^0.6.3",
     "express": "^4.18.2",
     "mime": "^3.0.0",
-    "mime-db": "^1.52.0"
+    "mime-db": "^1.52.0",
+    "react": "^0.0.0-experimental-380f5d67-20241113",
+    "react-dom": "^0.0.0-experimental-380f5d67-20241113",
+    "react-refresh": "^0.0.0-experimental-380f5d67-20241113",
+    "react-server-dom-bun": "^0.0.0-experimental-603e6108-20241029",
+    "react-server-dom-webpack": "^0.0.0-experimental-380f5d67-20241113"
   },
   "scripts": {
     "run": "node hello.js",

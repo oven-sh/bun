@@ -10,7 +10,7 @@ const ContextProvider = ({ children }) => {
   return <Context.Provider value={cb}>{children(foo)}</Context.Provider>;
 };
 
-const ContextValue = ({}) => (
+const ContextValue = () => (
   <Context.Consumer>
     {foo => {
       if (foo) {

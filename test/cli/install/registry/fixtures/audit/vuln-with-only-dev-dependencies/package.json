@@ -1,0 +1,6 @@
+{
+  "name": "vuln-with-only-dev-dependencies",
+  "devDependencies": {
+    "ms": "0.7.0"
+  }
+}

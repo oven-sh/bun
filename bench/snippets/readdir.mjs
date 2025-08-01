@@ -4,7 +4,7 @@ import { readdir } from "fs/promises";
 import { relative, resolve } from "path";
 import { argv } from "process";
 import { fileURLToPath } from "url";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 let dir = resolve(argv.length > 2 ? argv[2] : fileURLToPath(new URL("../../node_modules", import.meta.url)));
 if (dir.includes(process.cwd())) {
@@ -43,8 +43,11 @@ bench(`await readdir("${dir}", {recursive: false})`, async () => {
 });
 
 await run();
-console.log("\n", count, "files/dirs in", dir, "\n", "SHA256:", hash, "\n");
 
-if (count !== syncCount) {
-  throw new Error(`Mismatched file counts: ${count} async !== ${syncCount} sync`);
+if (!process?.env?.BENCHMARK_RUNNER) {
+  console.log("\n", count, "files/dirs in", dir, "\n", "SHA256:", hash, "\n");
+
+  if (count !== syncCount) {
+    throw new Error(`Mismatched file counts: ${count} async !== ${syncCount} sync`);
+  }
 }

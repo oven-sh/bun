@@ -73,7 +73,7 @@ Bun.serve({
             }, 8);
         </script>
         <div id="app">
-            <img src="https://bun.sh/logo.svg" alt="Bun" id='bun'  />
+            <img src="https://bun.com/logo.svg" alt="Bun" id='bun'  />
             <h1>bun --hot websockets</h1>
         </div>
     </body>

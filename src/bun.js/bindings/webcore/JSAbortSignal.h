@@ -33,7 +33,7 @@ public:
     using DOMWrapped = AbortSignal;
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTFMove(impl));
         ptr->finishCreation(vm);
         return ptr;
@@ -42,6 +42,8 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static AbortSignal* toWrapped(JSC::VM&, JSC::JSValue);
+
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
     DECLARE_INFO;
 

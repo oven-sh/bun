@@ -1,13 +1,6 @@
-const bun = @import("root").bun;
-const std = @import("std");
-pub const c = struct {
-    pub usingnamespace @import("./deps/brotli_decoder.zig");
-    pub usingnamespace @import("./deps/brotli_encoder.zig");
-};
+pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
-
-const mimalloc = bun.Mimalloc;
 
 pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
@@ -59,7 +52,7 @@ pub const BrotliReaderArrayList = struct {
     finishFlushOp: BrotliEncoder.Operation,
     fullFlushOp: BrotliEncoder.Operation,
 
-    pub usingnamespace bun.New(BrotliReaderArrayList);
+    pub const new = bun.TrivialNew(BrotliReaderArrayList);
 
     pub fn newWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !*BrotliReaderArrayList {
         return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options, .process, .finish, .flush));
@@ -180,7 +173,7 @@ pub const BrotliReaderArrayList = struct {
 
     pub fn deinit(this: *BrotliReaderArrayList) void {
         this.brotli.destroyInstance();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -285,3 +278,8 @@ pub const BrotliCompressionStream = struct {
         return this.writerContext(writable).writer();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;

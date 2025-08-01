@@ -1,15 +1,24 @@
 #pragma once
 
 #include "root.h"
+#include <stdint.h>
+#include <stdio.h>
 
 #if OS(LINUX) || OS(DARWIN)
 
-typedef int uv_pid_t;
+// These functions are called by the stubs to crash with a nice error message
+// when accessing a libuv functin which we do not support on posix
+void CrashHandler__unsupportedUVFunction(const char* function_name);
+void __bun_throw_not_implemented(const char* symbol_name);
 
-// Returns the current process ID.
-extern "C" BUN_EXPORT uv_pid_t uv_os_getpid();
+// libuv headers will use UV_EXTERN
+#define UV_EXTERN __attribute__((visibility("default"))) __attribute__((used))
 
-// Returns the parent process ID.
-extern "C" BUN_EXPORT uv_pid_t uv_os_getppid();
+#include <uv.h>
+
+typedef enum {
+    UV_CLOCK_PRECISE = 0, /* Use the highest resolution clock available. */
+    UV_CLOCK_FAST = 1 /* Use the fastest clock with <= 1ms granularity. */
+} uv_clocktype_t;
 
 #endif

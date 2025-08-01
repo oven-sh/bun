@@ -1,5 +1,5 @@
-import { bench, run } from "mitata";
 import { posix } from "path";
+import { bench, run } from "../runner.mjs";
 
 const pathConfigurations = [
   "",

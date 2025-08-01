@@ -1,0 +1,9 @@
+{
+  "name": "react-spa",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "bun './**/*.html'",
+    "build": "bun build --target=browser REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html --outdir dist"
+  }
+}

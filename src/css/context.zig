@@ -1,20 +1,10 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
-
 pub const css = @import("./css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
 
 const MediaRule = css.css_rules.media.MediaRule;
 const MediaQuery = css.media_query.MediaQuery;
 const MediaCondition = css.media_query.MediaCondition;
 const MediaList = css.media_query.MediaList;
 const MediaFeature = css.media_query.MediaFeature;
-const MediaFeatureName = css.media_query.MediaFeatureName;
-const MediaFeatureValue = css.media_query.MediaFeatureValue;
 const MediaFeatureId = css.media_query.MediaFeatureId;
 
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -25,9 +15,9 @@ pub const SupportsEntry = struct {
     important_declarations: ArrayList(css.Property),
 
     pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
-        _ = this; // autofix
-        _ = allocator; // autofix
-        @panic(css.todo_stuff.depth);
+        this.condition.deinit(allocator);
+        css.deepDeinit(css.Property, allocator, &this.declarations);
+        css.deepDeinit(css.Property, allocator, &this.important_declarations);
     }
 };
 
@@ -79,6 +69,10 @@ pub const PropertyHandlerContext = struct {
             .context = context,
             .unused_symbols = this.unused_symbols,
         };
+    }
+
+    pub fn addDarkRule(this: *@This(), allocator: Allocator, property: css.Property) void {
+        this.dark.append(allocator, property) catch bun.outOfMemory();
     }
 
     pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
@@ -171,7 +165,7 @@ pub const PropertyHandlerContext = struct {
                                     .feature = MediaFeature{
                                         .plain = .{
                                             .name = .{ .standard = MediaFeatureId.@"prefers-color-scheme" },
-                                            .value = .{ .ident = .{ .v = "dark " } },
+                                            .value = .{ .ident = .{ .v = "dark" } },
                                         },
                                     },
                                 },
@@ -305,3 +299,9 @@ pub const PropertyHandlerContext = struct {
         }
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

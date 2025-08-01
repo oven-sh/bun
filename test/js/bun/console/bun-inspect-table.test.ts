@@ -1,5 +1,5 @@
 import { inspect } from "bun";
-import { test, expect, describe } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 const inputs = [
   { a: 1, b: 2 },
@@ -25,6 +25,26 @@ describe("inspect.table", () => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
       expect(inspect.table(input, { colors: false, sorted: true })).toMatchSnapshot();
     });
+  });
+
+  it.each([
+    null,
+    undefined,
+    true,
+    false,
+    Symbol(), //
+    "",
+    "foobar",
+  ])("returns an empty string for bad inputs (%p)", (input: any) => {
+    expect(inspect.table(input)).toBe("");
+  });
+  it("returns an empty string when called with no arguments", () => {
+    // @ts-expect-error
+    expect(inspect.table()).toBe("");
+  });
+
+  it("works on functions", () => {
+    expect(inspect.table(function () {})).not.toBeEmpty();
   });
 });
 

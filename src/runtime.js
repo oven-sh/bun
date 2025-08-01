@@ -160,7 +160,7 @@ export var __legacyDecorateClassTS = function (decorators, target, key, desc) {
   else
     for (var i = decorators.length - 1; i >= 0; i--)
       if ((d = decorators[i])) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-  return c > 3 && r && Object.defineProperty(target, key, r), r;
+  return (c > 3 && r && Object.defineProperty(target, key, r), r);
 };
 
 export var __legacyDecorateParamTS = (index, decorator) => (target, key) => decorator(target, key, index);
@@ -173,3 +173,5 @@ export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
+
+export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);

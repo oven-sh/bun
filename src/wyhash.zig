@@ -1,10 +1,7 @@
 //
 // this file is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
 //
-const assert = if (@hasDecl(@import("root"), "bun")) (@import("root").bun).assert else @import("std").debug.assert;
-
-const std = @import("std");
-const mem = std.mem;
+const assert = if (@hasDecl(@import("root"), "bun")) @import("root").bun.assert else @import("std").debug.assert;
 
 const primes = [_]u64{
     0xa0761d6478bd642f,
@@ -178,3 +175,6 @@ pub const Wyhash11 = struct {
         return WyhashStateless.hash(seed, input);
     }
 };
+
+const std = @import("std");
+const mem = std.mem;

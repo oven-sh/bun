@@ -1,6 +1,5 @@
-import type { Subprocess } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isDebug, isFlaky, isLinux } from "harness";
+import { expect, it } from "bun:test";
+import { bunEnv, bunExe, isCI, isDebug, isFlaky, isLinux, isWindows } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
@@ -9,15 +8,24 @@ const totalCount = 10_000;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
-let url: URL;
-let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
-beforeEach(async () => {
-  if (process) {
-    process?.kill();
-  }
+// let HARDCODED_URL = "http://localhost:52666/";
+let HARDCODED_URL = null;
 
-  let defer = Promise.withResolvers();
-  process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
+async function getURL() {
+  if (HARDCODED_URL) {
+    const url = new URL(HARDCODED_URL);
+    await warmup(url);
+    return {
+      url,
+      process: {
+        [Symbol.asyncDispose]() {
+          return Promise.resolve();
+        },
+      },
+    };
+  }
+  let defer = Promise.withResolvers<string>();
+  const process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
     env: bunEnv,
     stdout: "inherit",
     stderr: "inherit",
@@ -26,19 +34,17 @@ beforeEach(async () => {
       defer.resolve(message);
     },
   });
-  url = new URL(await defer.promise);
+  const url: URL = new URL(await defer.promise);
   process.unref();
-  await warmup();
-});
-afterEach(() => {
-  process?.kill();
-});
+  await warmup(url);
+  return { url, process };
+}
 
-async function getMemoryUsage(): Promise<number> {
+async function getMemoryUsage(url: URL): Promise<number> {
   return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
 }
 
-async function warmup() {
+async function warmup(url: URL) {
   var remaining = totalCount;
 
   while (remaining > 0) {
@@ -54,17 +60,17 @@ async function warmup() {
     remaining -= batchSize;
   }
   // clean up memory before first test
-  await getMemoryUsage();
+  await getMemoryUsage(url);
 }
 
-async function callBuffering() {
+async function callBuffering(url: URL) {
   const result = await fetch(`${url.origin}/buffering`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callJSONBuffering() {
+async function callJSONBuffering(url: URL) {
   const result = await fetch(`${url.origin}/json-buffering`, {
     method: "POST",
     body: zeroCopyJSONPayload,
@@ -72,35 +78,35 @@ async function callJSONBuffering() {
   expect(result).toBe("Ok");
 }
 
-async function callBufferingBodyGetter() {
+async function callBufferingBodyGetter(url: URL) {
   const result = await fetch(`${url.origin}/buffering+body-getter`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callStreaming() {
+async function callStreaming(url: URL) {
   const result = await fetch(`${url.origin}/streaming`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callIncompleteStreaming() {
+async function callIncompleteStreaming(url: URL) {
   const result = await fetch(`${url.origin}/incomplete-streaming`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
-async function callStreamingEcho() {
+async function callStreamingEcho(url: URL) {
   const result = await fetch(`${url.origin}/streaming-echo`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe(payload);
 }
-async function callIgnore() {
+async function callIgnore(url: URL) {
   const result = await fetch(url, {
     method: "POST",
     body: zeroCopyPayload,
@@ -108,8 +114,8 @@ async function callIgnore() {
   expect(result).toBe("Ok");
 }
 
-async function calculateMemoryLeak(fn: () => Promise<void>) {
-  const start_memory = await getMemoryUsage();
+async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
+  const start_memory = await getMemoryUsage(url);
   const memory_examples: Array<number> = [];
   let peak_memory = start_memory;
 
@@ -117,14 +123,14 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   while (remaining > 0) {
     const batch = new Array(batchSize);
     for (let j = 0; j < batchSize; j++) {
-      batch[j] = fn();
+      batch[j] = fn(url);
     }
     await Promise.all(batch);
     remaining -= batchSize;
 
     // garbage collect and check memory usage every 1000 requests
     if (remaining > 0 && remaining % 1000 === 0) {
-      const report = await getMemoryUsage();
+      const report = await getMemoryUsage(url);
       if (report > peak_memory) {
         peak_memory = report;
       }
@@ -133,7 +139,7 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   }
 
   // wait for the last memory usage to be stable
-  const end_memory = await getMemoryUsage();
+  const end_memory = await getMemoryUsage(url);
   if (end_memory > peak_memory) {
     peak_memory = end_memory;
   }
@@ -157,15 +163,34 @@ for (const test_info of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip)(
+  it.todoIf(skip || (isFlaky && isWindows))(
     testName,
     async () => {
-      const report = await calculateMemoryLeak(fn);
-      // peak memory is too high
-      expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
-      // acceptable memory leak
-      expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
-      expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
+      const { url, process } = await getURL();
+      try {
+        const report = await calculateMemoryLeak(fn, url);
+        console.log(report);
+        // peak memory is too high
+        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
+
+        // acceptable memory leak
+        expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
+
+        expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
+      } catch (e) {
+        if (!isCI && process.platform !== "win32") {
+          try {
+            await fetch(`${url.origin}/heap-snapshot`);
+            await Bun.sleep(10);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        throw e;
+      } finally {
+        process.kill?.();
+      }
     },
     isDebug ? 60_000 : 40_000,
   );

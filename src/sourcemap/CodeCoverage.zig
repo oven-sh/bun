@@ -1,11 +1,4 @@
-const bun = @import("root").bun;
-const std = @import("std");
-const LineOffsetTable = bun.sourcemap.LineOffsetTable;
-const SourceMap = bun.sourcemap;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const LinesHits = @import("../baby_list.zig").BabyList(u32);
-const Output = bun.Output;
-const prettyFmt = Output.prettyFmt;
+const LinesHits = bun.collections.BabyList(u32);
 
 /// Our code coverage currently only deals with lines of code, not statements or branches.
 /// JSC doesn't expose function names in their coverage data, so we don't include that either :(.
@@ -21,8 +14,8 @@ const prettyFmt = Output.prettyFmt;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 ///
-pub const CodeCoverageReport = struct {
-    source_url: bun.JSC.ZigString.Slice,
+pub const Report = struct {
+    source_url: bun.jsc.ZigString.Slice,
     executable_lines: Bitset,
     lines_which_have_executed: Bitset,
     line_hits: LinesHits = .{},
@@ -32,7 +25,7 @@ pub const CodeCoverageReport = struct {
     stmts: std.ArrayListUnmanaged(Block),
     total_lines: u32 = 0,
 
-    pub fn linesCoverageFraction(this: *const CodeCoverageReport) f64 {
+    pub fn linesCoverageFraction(this: *const Report) f64 {
         var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
         defer intersected.deinit(bun.default_allocator);
         intersected.setIntersection(this.lines_which_have_executed);
@@ -47,7 +40,7 @@ pub const CodeCoverageReport = struct {
         return (intersected_count / total_count);
     }
 
-    pub fn stmtsCoverageFraction(this: *const CodeCoverageReport) f64 {
+    pub fn stmtsCoverageFraction(this: *const Report) f64 {
         const total_count: f64 = @floatFromInt(this.stmts.items.len);
 
         if (total_count == 0) {
@@ -57,7 +50,7 @@ pub const CodeCoverageReport = struct {
         return ((@as(f64, @floatFromInt(this.stmts_which_have_executed.count()))) / (total_count));
     }
 
-    pub fn functionCoverageFraction(this: *const CodeCoverageReport) f64 {
+    pub fn functionCoverageFraction(this: *const Report) f64 {
         const total_count: f64 = @floatFromInt(this.functions.items.len);
         if (total_count == 0) {
             return 1.0;
@@ -69,8 +62,8 @@ pub const CodeCoverageReport = struct {
         pub fn writeFormatWithValues(
             filename: []const u8,
             max_filename_length: usize,
-            vals: CoverageFraction,
-            failing: CoverageFraction,
+            vals: Fraction,
+            failing: Fraction,
             failed: bool,
             writer: anytype,
             indent_name: bool,
@@ -124,9 +117,9 @@ pub const CodeCoverageReport = struct {
         }
 
         pub fn writeFormat(
-            report: *const CodeCoverageReport,
+            report: *const Report,
             max_filename_length: usize,
-            fraction: *CoverageFraction,
+            fraction: *Fraction,
             base_path: []const u8,
             writer: anytype,
             comptime enable_colors: bool,
@@ -216,7 +209,7 @@ pub const CodeCoverageReport = struct {
 
     pub const Lcov = struct {
         pub fn writeFormat(
-            report: *const CodeCoverageReport,
+            report: *const Report,
             base_path: []const u8,
             writer: anytype,
         ) !void {
@@ -268,7 +261,7 @@ pub const CodeCoverageReport = struct {
         }
     };
 
-    pub fn deinit(this: *CodeCoverageReport, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);
         this.line_hits.deinitWithAllocator(allocator);
@@ -279,7 +272,7 @@ pub const CodeCoverageReport = struct {
     }
 
     extern fn CodeCoverage__withBlocksAndFunctions(
-        *bun.JSC.VM,
+        *bun.jsc.VM,
         i32,
         *anyopaque,
         bool,
@@ -295,7 +288,7 @@ pub const CodeCoverageReport = struct {
     const Generator = struct {
         allocator: std.mem.Allocator,
         byte_range_mapping: *ByteRangeMapping,
-        result: *?CodeCoverageReport,
+        result: *?Report,
 
         pub fn do(
             this: *@This(),
@@ -325,15 +318,15 @@ pub const CodeCoverageReport = struct {
     };
 
     pub fn generate(
-        globalThis: *bun.JSC.JSGlobalObject,
+        globalThis: *bun.jsc.JSGlobalObject,
         allocator: std.mem.Allocator,
         byte_range_mapping: *ByteRangeMapping,
         ignore_sourcemap_: bool,
-    ) ?CodeCoverageReport {
-        bun.JSC.markBinding(@src());
+    ) ?Report {
+        bun.jsc.markBinding(@src());
         const vm = globalThis.vm();
 
-        var result: ?CodeCoverageReport = null;
+        var result: ?Report = null;
 
         var generator = Generator{
             .result = &result,
@@ -365,7 +358,7 @@ const BasicBlockRange = extern struct {
 pub const ByteRangeMapping = struct {
     line_offset_table: LineOffsetTable.List = .{},
     source_id: i32,
-    source_url: bun.JSC.ZigString.Slice,
+    source_url: bun.jsc.ZigString.Slice,
 
     pub fn isLessThan(_: void, a: ByteRangeMapping, b: ByteRangeMapping) bool {
         return bun.strings.order(a.source_url.slice(), b.source_url.slice()) == .lt;
@@ -380,8 +373,8 @@ pub const ByteRangeMapping = struct {
     pub threadlocal var map: ?*HashMap = null;
     pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
         var _map = map orelse brk: {
-            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch bun.outOfMemory();
-            map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
+            map = bun.jsc.VirtualMachine.get().allocator.create(HashMap) catch bun.outOfMemory();
+            map.?.* = HashMap.init(bun.jsc.VirtualMachine.get().allocator);
             break :brk map.?;
         };
         var slice = str.toUTF8(bun.default_allocator);
@@ -414,16 +407,17 @@ pub const ByteRangeMapping = struct {
     pub fn generateReportFromBlocks(
         this: *ByteRangeMapping,
         allocator: std.mem.Allocator,
-        source_url: bun.JSC.ZigString.Slice,
+        source_url: bun.jsc.ZigString.Slice,
         blocks: []const BasicBlockRange,
         function_blocks: []const BasicBlockRange,
         ignore_sourcemap: bool,
-    ) !CodeCoverageReport {
+    ) !Report {
         const line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
+        const parsed_mappings_ = bun.jsc.VirtualMachine.get().source_mappings.get(source_url.slice());
+        defer if (parsed_mappings_) |parsed_mapping| parsed_mapping.deref();
         var line_hits = LinesHits{};
 
         var functions = std.ArrayListUnmanaged(Block){};
@@ -560,7 +554,7 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (SourceMap.Mapping.find(parsed_mapping.mappings, @intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |*point| {
                         if (point.original.lines < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines));
@@ -604,7 +598,7 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (SourceMap.Mapping.find(parsed_mapping.mappings, @intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |point| {
                         if (point.original.lines < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines));
@@ -656,14 +650,14 @@ pub const ByteRangeMapping = struct {
     }
 
     pub fn findExecutedLines(
-        globalThis: *bun.JSC.JSGlobalObject,
+        globalThis: *bun.jsc.JSGlobalObject,
         source_url: bun.String,
         blocks_ptr: [*]const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
-    ) callconv(.C) bun.JSC.JSValue {
-        var this = ByteRangeMapping.find(source_url) orelse return bun.JSC.JSValue.null;
+    ) callconv(.C) bun.jsc.JSValue {
+        var this = ByteRangeMapping.find(source_url) orelse return bun.jsc.JSValue.null;
 
         const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];
         var function_blocks: []const BasicBlockRange = blocks_ptr[function_start_offset..blocks_len];
@@ -673,36 +667,31 @@ pub const ByteRangeMapping = struct {
         var url_slice = source_url.toUTF8(bun.default_allocator);
         defer url_slice.deinit();
         var report = this.generateReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         defer report.deinit(bun.default_allocator);
 
-        var coverage_fraction = CoverageFraction{};
+        var coverage_fraction = Fraction{};
 
         var mutable_str = bun.MutableString.initEmpty(bun.default_allocator);
         defer mutable_str.deinit();
         var buffered_writer = mutable_str.bufferedWriter();
         var writer = buffered_writer.writer();
 
-        CodeCoverageReport.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+        Report.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
+            return globalThis.throwOutOfMemoryValue();
         };
 
         buffered_writer.flush() catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
-        var str = bun.String.createUTF8(mutable_str.slice());
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice()) catch return .zero;
     }
 
-    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.JSC.ZigString.Slice) ByteRangeMapping {
+    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {
         return ByteRangeMapping{
-            .line_offset_table = LineOffsetTable.generate(bun.JSC.VirtualMachine.get().allocator, source_contents, 0),
+            .line_offset_table = LineOffsetTable.generate(bun.jsc.VirtualMachine.get().allocator, source_contents, 0),
             .source_id = source_id,
             .source_url = source_url,
         };
@@ -711,14 +700,14 @@ pub const ByteRangeMapping = struct {
 
 comptime {
     if (bun.Environment.isNative) {
-        @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-        @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-        @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-        @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+        @export(&ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+        @export(&ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
+        @export(&ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+        @export(&ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
     }
 }
 
-pub const CoverageFraction = struct {
+pub const Fraction = struct {
     functions: f64 = 0.9,
     lines: f64 = 0.9,
 
@@ -732,3 +721,12 @@ pub const Block = struct {
     start_line: u32 = 0,
     end_line: u32 = 0,
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const LineOffsetTable = bun.sourcemap.LineOffsetTable;
+
+const Output = bun.Output;
+const prettyFmt = Output.prettyFmt;

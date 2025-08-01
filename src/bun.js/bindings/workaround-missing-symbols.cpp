@@ -1,5 +1,3 @@
-
-
 #if defined(WIN32)
 
 #include <cstdint>
@@ -53,6 +51,8 @@ extern "C" int kill(int pid, int sig)
 
 // if linux
 #if defined(__linux__)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -63,6 +63,12 @@ extern "C" int kill(int pid, int sig)
 #include <stdarg.h>
 #include <errno.h>
 #include <math.h>
+#include <mutex>
+#include <semaphore.h>
+#include <stdio.h>
+#include <signal.h>
+#include <sys/random.h>
+#include <dlfcn.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -75,38 +81,25 @@ extern "C" int kill(int pid, int sig)
 #endif
 
 #if defined(__x86_64__)
-__asm__(".symver cosf,cosf@GLIBC_2.2.5");
 __asm__(".symver exp,exp@GLIBC_2.2.5");
+__asm__(".symver exp2,exp2@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
-__asm__(".symver fcntl,fcntl@GLIBC_2.2.5");
-__asm__(".symver fmod,fmod@GLIBC_2.2.5");
-__asm__(".symver fmodf,fmodf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
-__asm__(".symver log10f,log10f@GLIBC_2.2.5");
 __asm__(".symver log2,log2@GLIBC_2.2.5");
 __asm__(".symver log2f,log2f@GLIBC_2.2.5");
 __asm__(".symver logf,logf@GLIBC_2.2.5");
 __asm__(".symver pow,pow@GLIBC_2.2.5");
 __asm__(".symver powf,powf@GLIBC_2.2.5");
-__asm__(".symver sincosf,sincosf@GLIBC_2.2.5");
-__asm__(".symver sinf,sinf@GLIBC_2.2.5");
-__asm__(".symver tanf,tanf@GLIBC_2.2.5");
 #elif defined(__aarch64__)
-__asm__(".symver cosf,cosf@GLIBC_2.17");
-__asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
-__asm__(".symver fmod,fmod@GLIBC_2.17");
-__asm__(".symver fmodf,fmodf@GLIBC_2.17");
+__asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver exp2,exp2@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
-__asm__(".symver log10f,log10f@GLIBC_2.17");
 __asm__(".symver log2,log2@GLIBC_2.17");
 __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
-__asm__(".symver sincosf,sincosf@GLIBC_2.17");
-__asm__(".symver sinf,sinf@GLIBC_2.17");
-__asm__(".symver tanf,tanf@GLIBC_2.17");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)
@@ -116,50 +109,31 @@ __asm__(".symver tanf,tanf@GLIBC_2.17");
 #endif
 
 extern "C" {
+
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
-double BUN_WRAP_GLIBC_SYMBOL(fmod)(double, double);
-double BUN_WRAP_GLIBC_SYMBOL(log)(double);
-double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
-double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
-float BUN_WRAP_GLIBC_SYMBOL(cosf)(float);
+double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
-float BUN_WRAP_GLIBC_SYMBOL(fmodf)(float, float);
-float BUN_WRAP_GLIBC_SYMBOL(log10f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
-float BUN_WRAP_GLIBC_SYMBOL(sinf)(float);
-float BUN_WRAP_GLIBC_SYMBOL(tanf)(float);
-int BUN_WRAP_GLIBC_SYMBOL(fcntl)(int, int, ...);
+float BUN_WRAP_GLIBC_SYMBOL(powf)(float, float);
+double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
+double BUN_WRAP_GLIBC_SYMBOL(log)(double);
+double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
-void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
-}
 
-extern "C" {
+float __wrap_expf(float x) { return expf(x); }
+float __wrap_powf(float x, float y) { return powf(x, y); }
+float __wrap_logf(float x) { return logf(x); }
+float __wrap_log2f(float x) { return log2f(x); }
+double __wrap_exp(double x) { return exp(x); }
+double __wrap_exp2(double x) { return exp2(x); }
+double __wrap_pow(double x, double y) { return pow(x, y); }
+double __wrap_log(double x) { return log(x); }
+double __wrap_log2(double x) { return log2(x); }
 
-#if defined(__x86_64__) || defined(__aarch64__)
-
-int __wrap_fcntl(int fd, int cmd, ...)
-{
-    va_list args;
-    va_start(args, cmd);
-    void* arg = va_arg(args, void*);
-    va_end(args);
-    return fcntl(fd, cmd, arg);
-}
+} // extern "C"
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
-static fcntl64_func real_fcntl64 = NULL;
-
-static void init_real_fcntl64()
-{
-    if (!real_fcntl64) {
-        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
-
-        if (!real_fcntl64) {
-            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
-        }
-    }
-}
 
 enum arg_type {
     NO_ARG,
@@ -215,7 +189,14 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     va_list ap;
     enum arg_type type = get_arg_type(cmd);
 
-    init_real_fcntl64();
+    static fcntl64_func real_fcntl64;
+    static std::once_flag real_fcntl64_initialized;
+    std::call_once(real_fcntl64_initialized, []() {
+        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+        if (!real_fcntl64) {
+            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        }
+    });
 
     switch (type) {
     case NO_ARG:
@@ -242,105 +223,14 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     }
 }
 
-#endif
+extern "C" __attribute__((used)) char _libc_single_threaded = 0;
+extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 
-#if defined(__x86_64__)
+#endif // glibc
 
-#ifndef _MKNOD_VER
-#define _MKNOD_VER 1
-#endif
+// musl
 
-extern "C" int __lxstat(int ver, const char* filename, struct stat* stat);
-extern "C" int __wrap_lstat(const char* filename, struct stat* stat)
-{
-    return __lxstat(_STAT_VER, filename, stat);
-}
-
-extern "C" int __xstat(int ver, const char* filename, struct stat* stat);
-extern "C" int __wrap_stat(const char* filename, struct stat* stat)
-{
-    return __xstat(_STAT_VER, filename, stat);
-}
-
-extern "C" int __fxstat(int ver, int fd, struct stat* stat);
-extern "C" int __wrap_fstat(int fd, struct stat* stat)
-{
-    return __fxstat(_STAT_VER, fd, stat);
-}
-
-extern "C" int __fxstatat(int ver, int dirfd, const char* path, struct stat* stat, int flags);
-extern "C" int __wrap_fstatat(int dirfd, const char* path, struct stat* stat, int flags)
-{
-    return __fxstatat(_STAT_VER, dirfd, path, stat, flags);
-}
-
-extern "C" int __lxstat64(int ver, const char* filename, struct stat64* stat);
-extern "C" int __wrap_lstat64(const char* filename, struct stat64* stat)
-{
-    return __lxstat64(_STAT_VER, filename, stat);
-}
-
-extern "C" int __xstat64(int ver, const char* filename, struct stat64* stat);
-extern "C" int __wrap_stat64(const char* filename, struct stat64* stat)
-{
-    return __xstat64(_STAT_VER, filename, stat);
-}
-
-extern "C" int __fxstat64(int ver, int fd, struct stat64* stat);
-extern "C" int __wrap_fstat64(int fd, struct stat64* stat)
-{
-    return __fxstat64(_STAT_VER, fd, stat);
-}
-
-extern "C" int __fxstatat64(int ver, int dirfd, const char* path, struct stat64* stat, int flags);
-extern "C" int __wrap_fstatat64(int dirfd, const char* path, struct stat64* stat, int flags)
-{
-    return __fxstatat64(_STAT_VER, dirfd, path, stat, flags);
-}
-
-extern "C" int __xmknod(int ver, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknod(const char* path, __mode_t mode, __dev_t dev)
-{
-    return __xmknod(_MKNOD_VER, path, mode, dev);
-}
-
-extern "C" int __xmknodat(int ver, int dirfd, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_t dev)
-{
-    return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
-}
-
-#endif
-
-double __wrap_exp(double x) { return exp(x); }
-double __wrap_fmod(double x, double y) { return fmod(x, y); }
-double __wrap_log(double x) { return log(x); }
-double __wrap_log2(double x) { return log2(x); }
-double __wrap_pow(double x, double y) { return pow(x, y); }
-float __wrap_powf(float x, float y) { return powf(x, y); }
-float __wrap_cosf(float x) { return cosf(x); }
-float __wrap_expf(float x) { return expf(x); }
-float __wrap_fmodf(float x, float y) { return fmodf(x, y); }
-float __wrap_log10f(float x) { return log10f(x); }
-float __wrap_log2f(float x) { return log2f(x); }
-float __wrap_logf(float x) { return logf(x); }
-float __wrap_sinf(float x) { return sinf(x); }
-float __wrap_tanf(float x) { return tanf(x); }
-void __wrap_sincosf(float x, float* sin_x, float* cos_x) { sincosf(x, sin_x, cos_x); }
-}
-
-// ban statx, for now
-extern "C" int __wrap_statx(int fd, const char* path, int flags,
-    unsigned int mask, struct statx* buf)
-{
-    errno = ENOSYS;
-#ifdef BUN_DEBUG
-    abort();
-#endif
-    return -1;
-}
-
-#endif
+#endif // linux
 
 // macOS
 #if defined(__APPLE__)
@@ -352,7 +242,39 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 #include <cstdio>
 #include "headers.h"
 
-void std::__libcpp_verbose_abort(char const* format, ...)
+// Check if the stdlib declaration already has noexcept by looking at the header
+#ifdef _LIBCPP___VERBOSE_ABORT
+#if __has_include(<__verbose_abort>)
+#include <__verbose_abort>
+#endif
+#endif
+
+#ifdef _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+// Workaround for this error:
+// workaround-missing-symbols.cpp:245:11: error: '__libcpp_verbose_abort' is missing exception specification 'noexcept'
+// 2025-07-10 15:59:47 PDT
+//   245 | void std::__libcpp_verbose_abort(char const* format, ...)
+// 2025-07-10 15:59:47 PDT
+//       |           ^
+// 2025-07-10 15:59:47 PDT
+//       |                                                           noexcept
+// 2025-07-10 15:59:47 PDT
+// /opt/homebrew/Cellar/llvm/20.1.7/bin/../include/c++/v1/__verbose_abort:30:28: note: previous declaration is here
+// 2025-07-10 15:59:47 PDT
+//    30 |     __printf__, 1, 2) void __libcpp_verbose_abort(const char* __format, ...) _LIBCPP_VERBOSE_ABORT_NOEXCEPT;
+// 2025-07-10 15:59:47 PDT
+//       |                            ^
+// 2025-07-10 15:59:47 PDT
+// 1 error generated.
+// 2025-07-10 15:59:47 PDT
+// [515/540] Building CXX
+#define BUN_VERBOSE_ABORT_NOEXCEPT _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#else
+#define BUN_VERBOSE_ABORT_NOEXCEPT
+#endif
+
+// Provide our implementation
+void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEXCEPT
 {
     va_list list;
     va_start(list, format);
@@ -362,6 +284,8 @@ void std::__libcpp_verbose_abort(char const* format, ...)
 
     Bun__panic(buffer, len);
 }
+
+#undef BUN_VERBOSE_ABORT_NOEXCEPT
 
 #endif
 
@@ -375,3 +299,5 @@ extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 {
     return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
 }
+
+extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}

@@ -38,7 +38,7 @@ template<> struct Converter<IDLObject> : DefaultConverter<IDLObject> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
     static JSC::Strong<JSC::JSObject> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (!value.isObject()) {

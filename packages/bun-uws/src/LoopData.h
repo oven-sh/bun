@@ -63,6 +63,7 @@ public:
         }
         delete [] corkBuffer;
     }
+
     void* getCorkedSocket() {
         return this->corkedSocket;
     }
@@ -96,11 +97,11 @@ public:
         this->corkedSocket = nullptr;
         this->corkOffset = 0;
     }
-        
+
     unsigned int getCorkOffset() {
         return this->corkOffset;
     }
-    
+
     void setCorkOffset(unsigned int offset) {
         this->corkOffset = offset;
     }
@@ -108,7 +109,7 @@ public:
     void incrementCorkedOffset(unsigned int offset) {
         this->corkOffset += offset;
     }
-    
+
     char* getCorkBuffer() {
         return this->corkBuffer;
     }
@@ -117,7 +118,6 @@ public:
         time_t now = time(0);
         struct tm tstruct = {};
 #ifdef _WIN32
-        /* Micro, fucking soft never follows spec. */
         gmtime_s(&tstruct, &now);
 #else
         gmtime_r(&now, &tstruct);

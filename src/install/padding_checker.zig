@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// In some parts of lockfile serialization, Bun will use `std.mem.sliceAsBytes` to convert a struct into raw
 /// bytes to write. This makes lockfile serialization/deserialization much simpler/faster, at the cost of not
 /// having any pointers within these structs.
@@ -33,17 +31,17 @@ const std = @import("std");
 pub fn assertNoUninitializedPadding(comptime T: type) void {
     const info_ = @typeInfo(T);
     const info = switch (info_) {
-        .Struct => info_.Struct,
-        .Union => info_.Union,
-        .Array => |a| {
+        .@"struct" => info_.@"struct",
+        .@"union" => info_.@"union",
+        .array => |a| {
             assertNoUninitializedPadding(a.child);
             return;
         },
-        .Optional => |a| {
+        .optional => |a| {
             assertNoUninitializedPadding(a.child);
             return;
         },
-        .Pointer => |ptr| {
+        .pointer => |ptr| {
             // Pointers aren't allowed, but this just makes the assertion easier to invoke.
             assertNoUninitializedPadding(ptr.child);
             return;
@@ -58,18 +56,18 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
     for (info.fields) |field| {
         const fieldInfo = @typeInfo(field.type);
         switch (fieldInfo) {
-            .Struct => assertNoUninitializedPadding(field.type),
-            .Union => assertNoUninitializedPadding(field.type),
-            .Array => |a| assertNoUninitializedPadding(a.child),
-            .Optional => |a| assertNoUninitializedPadding(a.child),
-            .Pointer => {
+            .@"struct" => assertNoUninitializedPadding(field.type),
+            .@"union" => assertNoUninitializedPadding(field.type),
+            .array => |a| assertNoUninitializedPadding(a.child),
+            .optional => |a| assertNoUninitializedPadding(a.child),
+            .pointer => {
                 @compileError("Expected no pointer types in " ++ @typeName(T) ++ ", found field '" ++ field.name ++ "' of type '" ++ @typeName(field.type) ++ "'");
             },
             else => {},
         }
     }
 
-    if (info_ == .Union) {
+    if (info_ == .@"union") {
         return;
     }
 
@@ -106,3 +104,5 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
         ));
     }
 }
+
+const std = @import("std");

@@ -1,4 +1,6 @@
 // Hardcoded module "node:path"
+const { validateString } = require("internal/validators");
+
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
@@ -40,4 +42,40 @@ const win32 = {
 };
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
-export default process.platform === "win32" ? win32 : posix;
+
+type Glob = import("bun").Glob;
+
+// the most-recently used glob is memoized in case `matchesGlob` is called in a
+// loop with the same pattern
+let prevGlob: Glob | undefined;
+let prevPattern: string | undefined;
+function matchesGlob(isWindows, path, pattern) {
+  let glob: Glob;
+
+  validateString(path, "path");
+  if (isWindows) path = path.replaceAll("\\", "/");
+
+  if (prevGlob) {
+    $assert(prevPattern !== undefined);
+    if (prevPattern === pattern) {
+      glob = prevGlob;
+    } else {
+      validateString(pattern, "pattern");
+      if (isWindows) pattern = pattern.replaceAll("\\", "/");
+      glob = prevGlob = new Bun.Glob(pattern);
+      prevPattern = pattern;
+    }
+  } else {
+    validateString(pattern, "pattern");
+    if (isWindows) pattern = pattern.replaceAll("\\", "/");
+    glob = prevGlob = new Bun.Glob(pattern);
+    prevPattern = pattern;
+  }
+
+  return glob.match(path);
+}
+
+posix.matchesGlob = matchesGlob.bind(null, false);
+win32.matchesGlob = matchesGlob.bind(null, true);
+
+export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");

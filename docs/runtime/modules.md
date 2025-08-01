@@ -181,7 +181,6 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
   "name": "foo",
   "exports": {
     "bun": "./index.js",
-    "worker": "./index.js",
     "node": "./index.js",
     "require": "./index.js", // if importer is CommonJS
     "import": "./index.mjs", // if importer is ES module

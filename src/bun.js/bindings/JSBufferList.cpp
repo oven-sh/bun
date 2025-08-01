@@ -14,7 +14,7 @@ using namespace JSC;
 static JSC_DECLARE_CUSTOM_GETTER(JSBufferList_getLength);
 static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSBufferList* bufferList = JSC::jsDynamicCast<JSBufferList*>(JSValue::decode(thisValue));
@@ -41,10 +41,10 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto iter = m_deque.begin();
     if (len == 1) {
         auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
-        if (UNLIKELY(!array)) {
+        if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
-        if (UNLIKELY(array->byteLength() > n)) {
+        if (array->byteLength() > n) [[unlikely]] {
             throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
             return {};
         }
@@ -52,7 +52,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     }
     // Buffer.allocUnsafe(n >>> 0)
     JSC::JSUint8Array* uint8Array = createUninitializedBuffer(lexicalGlobalObject, n);
-    if (UNLIKELY(!uint8Array)) {
+    if (!uint8Array) [[unlikely]] {
         ASSERT(throwScope.exception());
         return {};
     }
@@ -60,15 +60,15 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     size_t i = 0;
     for (const auto end = m_deque.end(); iter != end; ++iter) {
         auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
-        if (UNLIKELY(!array)) {
+        if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
         const size_t length = array->byteLength();
-        if (UNLIKELY(i + length > n)) {
+        if (i + length > n) [[unlikely]] {
             throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
             return {};
         }
-        if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable))) {
+        if (!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable)) [[unlikely]] {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
         i += length;
@@ -117,7 +117,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
 
     JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(m_deque.first().get());
-    if (UNLIKELY(!str)) {
+    if (!str) [[unlikely]] {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
     }
     const size_t len = str->length();
@@ -137,7 +137,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     while (m_deque.size() > 0) {
         auto& element = m_deque.first();
         JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(element.get());
-        if (UNLIKELY(!str)) {
+        if (!str) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
         }
         const size_t len = str->length();
@@ -169,7 +169,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
 
     JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(m_deque.first().get());
-    if (UNLIKELY(!array)) {
+    if (!array) [[unlikely]] {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
     }
     const size_t len = array->byteLength();
@@ -183,14 +183,16 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         auto buffer = array->possiblySharedBuffer();
         auto off = array->byteOffset();
         JSC::JSUint8Array* retArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off, n);
+        RETURN_IF_EXCEPTION(throwScope, {});
         JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
+        RETURN_IF_EXCEPTION(throwScope, {});
         m_deque.first().set(vm, this, newArray);
         RELEASE_AND_RETURN(throwScope, retArray);
     }
 
     // Buffer.allocUnsafe(n >>> 0)
     JSC::JSUint8Array* uint8Array = createUninitializedBuffer(lexicalGlobalObject, n);
-    if (UNLIKELY(!uint8Array)) {
+    if (!uint8Array) [[unlikely]] {
         ASSERT(throwScope.exception());
         return {};
     }
@@ -199,22 +201,23 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     while (m_deque.size() > 0) {
         auto& element = m_deque.first();
         JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(element.get());
-        if (UNLIKELY(!array)) {
+        if (!array) [[unlikely]] {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
         }
         const size_t len = array->byteLength();
         if (n < len) {
-            if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, n, JSC::CopyType::Unobservable))) {
+            if (!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, n, JSC::CopyType::Unobservable)) [[unlikely]] {
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
             }
             auto buffer = array->possiblySharedBuffer();
             auto off = array->byteOffset();
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
+            RETURN_IF_EXCEPTION(throwScope, {});
             element.set(vm, this, newArray);
             offset += n;
             break;
         }
-        if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable))) {
+        if (!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable)) [[unlikely]] {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
         this->removeFirst();
@@ -313,7 +316,7 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_concatBody(JSC::
     }
 
     int32_t n = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (UNLIKELY(n < 0)) {
+    if (n < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "n should be larger than or equal to 0"_s));
         return {};
     }
@@ -342,7 +345,7 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_consumeBody(JSC:
     }
 
     int32_t n = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (UNLIKELY(n < 0)) {
+    if (n < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "n should be larger than or equal to 0"_s));
         return {};
     }
@@ -437,7 +440,7 @@ JSBufferListConstructor* JSBufferListConstructor::create(JSC::VM& vm, JSC::JSGlo
 
 JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSBufferList* bufferList = JSBufferList::create(
         vm, lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
     return JSC::JSValue::encode(bufferList);

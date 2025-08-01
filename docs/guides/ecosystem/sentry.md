@@ -10,8 +10,8 @@ Don't already have an account and Sentry project established? Head over to [sent
 
 To start using Sentry with Bun, first install the Sentry Bun SDK.
 
-```bash
-bun add @sentry/bun
+```sh
+$ bun add @sentry/bun
 ```
 
 ---

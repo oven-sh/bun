@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const assert = bun.assert;
-
 /// An intrusive heap implementation backed by a pairing heap[1] implementation.
 ///
 /// Why? Intrusive data structures require the element type to hold the metadata
@@ -174,3 +170,6 @@ pub fn IntrusiveField(comptime T: type) type {
         next: ?*T = null,
     };
 }
+
+const bun = @import("bun");
+const assert = bun.assert;

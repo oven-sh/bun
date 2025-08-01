@@ -3,6 +3,41 @@ import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // https://github.com/oven-sh/bun/issues/18899
+  itBundled("bun/import-bun-format-cjs", {
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import {RedisClient} from 'bun';
+        import * as BunStar from 'bun';
+        const bunRequire = require("bun");
+        if (RedisClient.name !== "RedisClient") {
+          throw new Error("RedisClient.name is not RedisClient");
+        }
+        if (BunStar.RedisClient.name !== "RedisClient") {
+          throw new Error("BunStar.RedisClient.name is not RedisClient");
+        }
+        if (bunRequire.RedisClient.name !== "RedisClient") {
+          throw new Error("bunRequire.RedisClient.name is not RedisClient");
+        }
+
+        console.log(RedisClient.name);
+        console.log(BunStar.RedisClient.name);
+        console.log(bunRequire.RedisClient.name);
+
+        export class RedisCache {
+          constructor(config: any) {
+            this.connectServer(config);
+          }
+          
+        }
+      `,
+    },
+    run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",
@@ -93,4 +128,59 @@ error: Hello World`,
       },
     },
   });
+  itBundled("bun/unicode comment", {
+    target: "bun",
+    files: {
+      "/a.ts": /* js */ `
+        /* æ */
+      `,
+    },
+    run: { stdout: "" },
+  });
+  if (Bun.version.startsWith("1.2")) {
+    for (const backend of ["api", "cli"] as const) {
+      itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {
+        files: {
+          "src/entry.js": `import 'pkg1'`,
+          "node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "development": "./custom1.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+          "node_modules/pkg1/custom1.js": `console.log('SUCCESS')`,
+          "node_modules/pkg1/default.js": `console.log('FAIL')`,
+        },
+        backend,
+        outfile: "out.js",
+        define: { "process.env.NODE_ENV": '"development"' },
+        run: {
+          stdout: "SUCCESS",
+        },
+      });
+      itBundled("bun/ExportsConditionsDevelopmentInProduction" + backend.toUpperCase(), {
+        files: {
+          "src/entry.js": `import 'pkg1'`,
+          "node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "development": "./custom1.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+          "node_modules/pkg1/custom1.js": `console.log('FAIL')`,
+          "node_modules/pkg1/default.js": `console.log('SUCCESS')`,
+        },
+        backend,
+        outfile: "/Users/user/project/out.js",
+        define: { "process.env.NODE_ENV": '"production"' },
+        run: {
+          stdout: "SUCCESS",
+        },
+      });
+    }
+  }
 });

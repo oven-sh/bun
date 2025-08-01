@@ -655,7 +655,7 @@ HTTPHeaderNamesHash::findHeaderNameImpl(const char* str, size_t len)
 }
 #line 253 "HTTPHeaderNames.gperf"
 
-bool findHTTPHeaderName(StringView stringView, HTTPHeaderName& headerName)
+bool findHTTPHeaderName(const StringView stringView, HTTPHeaderName& headerName)
 {
     unsigned length = stringView.length();
     if (length > maxHTTPHeaderNameLength || length < minHTTPHeaderNameLength)
@@ -670,7 +670,7 @@ bool findHTTPHeaderName(StringView stringView, HTTPHeaderName& headerName)
         LChar characters[maxHTTPHeaderNameLength];
         const auto span = stringView.span16();
         for (unsigned i = 0; i < length; ++i) {
-            UChar character = span.data()[i];
+            char16_t character = span.data()[i];
             if (!isASCII(character))
                 return false;
 

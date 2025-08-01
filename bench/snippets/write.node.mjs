@@ -2,7 +2,7 @@
 import { Buffer } from "node:buffer";
 import { openSync, writeSync as write } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("writeFile(/tmp/foo.txt, short string)", async () => {
   await writeFile("/tmp/foo.txt", "short string", "utf8");

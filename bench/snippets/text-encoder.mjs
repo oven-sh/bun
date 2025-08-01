@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var short = "Hello World!";
 var shortUTF16 = "Hello World 💕💕💕";

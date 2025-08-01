@@ -29,14 +29,15 @@ execute_process(
 )
 
 if(NOT GIT_DIFF_RESULT EQUAL 0)
-  message(${WARNING} "Command failed: ${GIT_DIFF_COMMAND} ${GIT_DIFF_ERROR}")
+  message(WARNING "Command failed: ${GIT_DIFF_COMMAND} ${GIT_DIFF_ERROR}")
   return()
 endif()
 
 string(REPLACE "\n" ";" GIT_CHANGED_SOURCES "${GIT_DIFF}")
 
 if(CI)
-  setx(GIT_CHANGED_SOURCES ${GIT_CHANGED_SOURCES})
+  set(GIT_CHANGED_SOURCES "${GIT_CHANGED_SOURCES}")
+  message(STATUS "Set GIT_CHANGED_SOURCES: ${GIT_CHANGED_SOURCES}")
 endif()
 
 list(TRANSFORM GIT_CHANGED_SOURCES PREPEND ${CWD}/)

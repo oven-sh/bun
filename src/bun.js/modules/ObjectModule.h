@@ -16,4 +16,8 @@ JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSValue value);
 
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value);
+
 } // namespace Zig

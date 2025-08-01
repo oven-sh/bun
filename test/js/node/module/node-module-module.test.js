@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
-import Module, { _nodeModulePaths, builtinModules, isBuiltin, wrap, createRequire } from "module";
+import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
-  expect(builtinModules).toHaveLength(77);
+  expect(builtinModules).toHaveLength(76);
 });
 
 test("isBuiltin() works", () => {
@@ -17,6 +17,8 @@ test("isBuiltin() works", () => {
   expect(isBuiltin("events")).toBe(true);
   expect(isBuiltin("node:events")).toBe(true);
   expect(isBuiltin("node:bacon")).toBe(false);
+  expect(isBuiltin("node:test")).toBe(true);
+  expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
 });
 
 test("module.globalPaths exists", () => {
@@ -134,4 +136,105 @@ test("Module._resolveLookupPaths", () => {
   expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
   expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
   expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
+});
+
+test("Module.findSourceMap doesn't throw", () => {
+  expect(Module.findSourceMap("foo")).toEqual(undefined);
+});
+
+test("require cache relative specifier", () => {
+  require.cache["./bar.cjs"] = { exports: { default: "bar" } };
+  expect(() => require("./bar.cjs")).toThrow("Cannot find module");
+});
+test("builtin resolution", () => {
+  expect(require.resolve("fs")).toBe("fs");
+  expect(require.resolve("node:fs")).toBe("node:fs");
+});
+test("require cache node builtins specifier", () => {
+  // as js builtin
+  try {
+    const fake = { default: "bar" };
+    const real = require("fs");
+    expect(require.cache["fs"]).toBe(undefined);
+    require.cache["fs"] = { exports: fake };
+    expect(require("fs")).toBe(fake);
+    expect(require("node:fs")).toBe(real);
+  } finally {
+    delete require.cache["fs"];
+  }
+
+  // as native module
+  try {
+    const fake = { default: "bar" };
+    const real = require("util/types");
+    expect(require.cache["util/types"]).toBe(undefined);
+    require.cache["util/types"] = { exports: fake };
+    expect(require("util/types")).toBe(fake);
+    expect(require("node:util/types")).toBe(real);
+  } finally {
+    delete require.cache["util/types"];
+  }
+});
+test("require a cjs file uses the 'module.exports' export", () => {
+  expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
+});
+
+test("Module.runMain", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "--require",
+      path.join(import.meta.dir, "overwrite-module-run-main-1.cjs"),
+      path.join(import.meta.dir, "overwrite-module-run-main-2.cjs"),
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim()).toBe("pass");
+  expect(exitCode).toBe(0);
+});
+test("Module.runMain 2", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "--require",
+      path.join(import.meta.dir, "overwrite-module-run-main-3.cjs"),
+      path.join(import.meta.dir, "overwrite-module-run-main-2.cjs"),
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim()).toBe("pass");
+  expect(exitCode).toBe(0);
+});
+test.each(["no args", "--access-early"])("children, %s", arg => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(stdout.toString().trim()).toBe(`. (./a.cjs)
+ ./b.cjs
+  . (./a.cjs) (seen)
+  ./b.cjs (seen)
+  ./c.cjs
+   ./d.cjs
+    ./d.cjs (seen)
+ ./d.cjs (seen)
+ ./f.cjs
+  ./d.cjs (seen)
+ ./g.cjs
+  ./b.cjs (seen)
+  . (./a.cjs) (seen)
+  ./h.cjs
+   ./i.cjs
+    ./j.cjs
+     ./i.cjs (seen)
+     ./j.cjs (seen)
+     ./k.cjs
+      ./j.cjs (seen)
+   ./j.cjs (seen)
+   ./k.cjs (seen)`);
 });

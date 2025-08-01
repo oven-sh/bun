@@ -6,38 +6,43 @@
 
 namespace Bake {
 
-struct LoadServerCodeResult {
-  JSC::JSInternalPromise* promise;
-  JSC::JSString* key;
-};
+class SourceProvider;
 
-class DevSourceProvider final : public JSC::StringSourceProvider {
+extern "C" void Bun__addBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
+
+class SourceProvider final : public JSC::StringSourceProvider {
 public:
-    static Ref<DevSourceProvider> create(
-      const String& source,
-      const JSC::SourceOrigin& sourceOrigin,
-      String&& sourceURL,
-      const TextPosition& startPosition,
-      JSC::SourceProviderSourceType sourceType
-    ) {
-        return adoptRef(*new DevSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
+    static Ref<SourceProvider> create(
+        JSC::JSGlobalObject* globalObject,
+        const String& source,
+        const JSC::SourceOrigin& sourceOrigin,
+        String&& sourceURL,
+        const TextPosition& startPosition,
+        JSC::SourceProviderSourceType sourceType)
+    {
+        auto provider = adoptRef(*new SourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
+        auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+        auto specifier = Bun::toString(provider->sourceURL());
+        Bun__addBakeSourceProviderSourceMap(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
+        return provider;
     }
 
 private:
-  DevSourceProvider(
-    const String& source,
-    const JSC::SourceOrigin& sourceOrigin,
-    String&& sourceURL,
-    const TextPosition& startPosition,
-    JSC::SourceProviderSourceType sourceType
-  ) : StringSourceProvider(
-    source, 
-    sourceOrigin, 
-    JSC::SourceTaintedOrigin::Untainted,
-    WTFMove(sourceURL),
-    startPosition,
-    sourceType
-  ) {}
+    SourceProvider(
+        const String& source,
+        const JSC::SourceOrigin& sourceOrigin,
+        String&& sourceURL,
+        const TextPosition& startPosition,
+        JSC::SourceProviderSourceType sourceType)
+        : StringSourceProvider(
+              source,
+              sourceOrigin,
+              JSC::SourceTaintedOrigin::Untainted,
+              WTFMove(sourceURL),
+              startPosition,
+              sourceType)
+    {
+    }
 };
 
 } // namespace Bake

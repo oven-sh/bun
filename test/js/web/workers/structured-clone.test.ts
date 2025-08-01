@@ -205,6 +205,20 @@ describe("structured clone", () => {
     });
   });
 
+  describe("net.BlockList works", () => {
+    test("simple", () => {
+      const net = require("node:net");
+      const blocklist = new net.BlockList();
+      blocklist.addAddress("123.123.123.123");
+      const newlist = structuredClone(blocklist);
+      expect(newlist.check("123.123.123.123")).toBeTrue();
+      expect(!newlist.check("123.123.123.124")).toBeTrue();
+      newlist.addAddress("123.123.123.124");
+      expect(blocklist.check("123.123.123.124")).toBeTrue();
+      expect(newlist.check("123.123.123.124")).toBeTrue();
+    });
+  });
+
   describe("transferables", () => {
     test("ArrayBuffer", () => {
       const buffer = Uint8Array.from([1]).buffer;

@@ -1,5 +1,10 @@
 var slice = Array.prototype.slice;
-class Denqueue {
+class Dequeue<T> {
+  _head: number;
+  _tail: number;
+  _capacityMask: number;
+  _list: (T | undefined)[];
+
   constructor() {
     this._head = 0;
     this._tail = 0;
@@ -8,26 +13,21 @@ class Denqueue {
     this._list = $newArrayWithSize(4);
   }
 
-  _head;
-  _tail;
-  _capacityMask;
-  _list;
-
-  size() {
+  size(): number {
     if (this._head === this._tail) return 0;
     if (this._head < this._tail) return this._tail - this._head;
     else return this._capacityMask + 1 - (this._head - this._tail);
   }
 
-  isEmpty() {
+  isEmpty(): boolean {
     return this.size() == 0;
   }
 
-  isNotEmpty() {
+  isNotEmpty(): boolean {
     return this.size() > 0;
   }
 
-  shift() {
+  shift(): T | undefined {
     var { _head: head, _tail, _list, _capacityMask } = this;
     if (head === _tail) return undefined;
     var item = _list[head];
@@ -37,24 +37,21 @@ class Denqueue {
     return item;
   }
 
-  peek() {
+  peek(): T | undefined {
     if (this._head === this._tail) return undefined;
     return this._list[this._head];
   }
 
-  push(item) {
+  push(item: T): void {
     var tail = this._tail;
     $putByValDirect(this._list, tail, item);
     this._tail = (tail + 1) & this._capacityMask;
     if (this._tail === this._head) {
       this._growArray();
     }
-    // if (this._capacity && this.size() > this._capacity) {
-    // this.shift();
-    // }
   }
 
-  toArray(fullCopy) {
+  toArray(fullCopy: boolean): T[] {
     var list = this._list;
     var len = $toLength(list.length);
 
@@ -66,19 +63,19 @@ class Denqueue {
       var j = 0;
       for (var i = _head; i < len; i++) $putByValDirect(array, j++, list[i]);
       for (var i = 0; i < _tail; i++) $putByValDirect(array, j++, list[i]);
-      return array;
+      return array as T[];
     } else {
       return slice.$call(list, this._head, this._tail);
     }
   }
 
-  clear() {
+  clear(): void {
     this._head = 0;
     this._tail = 0;
     this._list.fill(undefined);
   }
 
-  _growArray() {
+  private _growArray(): void {
     if (this._head) {
       // copy existing data, head to end, then beginning to tail.
       this._list = this.toArray(true);
@@ -92,10 +89,10 @@ class Denqueue {
     this._capacityMask = (this._capacityMask << 1) | 1;
   }
 
-  _shrinkArray() {
+  private _shrinkArray(): void {
     this._list.length >>>= 1;
     this._capacityMask >>>= 1;
   }
 }
 
-export default Denqueue;
+export default Dequeue;

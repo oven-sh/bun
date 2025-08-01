@@ -57,7 +57,7 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     // if (value.inherits<JSDOMWindow>())
     //     return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
     if (value.inherits<JSDOMGlobalObject>())
-        return &jsCast<JSDOMGlobalObject*>(asObject(value))->globalEventScope;
+        return jsCast<JSDOMGlobalObject*>(asObject(value))->globalEventScope.ptr();
     if (value.inherits<JSEventTarget>())
         return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
     return nullptr;

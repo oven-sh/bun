@@ -1,5 +1,5 @@
 // so it can run in environments without node module resolution
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../runner.mjs";
 
 const blob = new Blob(["foo", "bar", "baz"]);
 bench("FormData.append", () => {

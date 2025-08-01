@@ -1,20 +1,10 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
-const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
 const Url = css.css_values.url.Url;
 const Size2D = css.css_values.size.Size2D;
 const fontprops = css.css_properties.font;
-const LayerName = css.css_rules.layer.LayerName;
-const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
 const Angle = css.css_values.angle.Angle;
 const FontStyleProperty = css.css_properties.font.FontStyle;
@@ -196,13 +186,13 @@ pub const UnicodeRange = struct {
                     .result => |vv| vv,
                     .err => {
                         input.reset(&after_number);
-                        return .{ .result = {} };
+                        return .success;
                     },
                 };
 
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
-                if (token.* == .delim or token.* == .number) return .{ .result = {} };
-                return .{ .result = {} };
+                if (token.* == .delim or token.* == .number) return .success;
+                return .success;
             },
             .delim => |c| {
                 if (c == '+') {
@@ -227,7 +217,7 @@ pub const UnicodeRange = struct {
             const start = input.state();
             if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
-            return .{ .result = {} };
+            return .success;
         }
     }
 
@@ -591,7 +581,7 @@ pub const UrlSource = struct {
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, &this.tech, W, dest);
+            try css.to_css.fromList(FontTechnology, this.tech.items, W, dest);
             try dest.writeChar(')');
         }
     }
@@ -741,3 +731,8 @@ pub const FontFaceDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

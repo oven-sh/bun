@@ -1,15 +1,15 @@
+const CompileTarget = @This();
+
 /// Used for `bun build --compile`
 ///
 /// This downloads and extracts the bun binary for the target platform
 /// It uses npm to download the bun binary from the npm registry
 /// It stores the downloaded binary into the bun install cache.
 ///
-const bun = @import("root").bun;
-const std = @import("std");
+const bun = @import("bun");
 const Environment = bun.Environment;
 const strings = bun.strings;
 const Output = bun.Output;
-const CompileTarget = @This();
 
 os: Environment.OperatingSystem = Environment.os,
 arch: Environment.Architecture = Environment.arch,
@@ -19,7 +19,7 @@ version: bun.Semver.Version = .{
     .minor = @truncate(Environment.version.minor),
     .patch = @truncate(Environment.version.patch),
 },
-libc: Libc = .default,
+libc: Libc = if (!Environment.isMusl) .default else .musl,
 
 const Libc = enum {
     /// The default libc for the target
@@ -27,6 +27,14 @@ const Libc = enum {
     default,
     /// musl libc
     musl,
+
+    /// npm package name, `@oven-sh/bun-{os}-{arch}`
+    pub fn npmName(this: Libc) []const u8 {
+        return switch (this) {
+            .default => "",
+            .musl => "-musl",
+        };
+    }
 
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self == .musl) {
@@ -64,21 +72,25 @@ pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
 pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_url: []const u8) ![]const u8 {
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
-            inline else => |arch| switch (this.baseline) {
-                // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "/-/bun-" ++
-                    os.npmName() ++ "-" ++ arch.npmName() ++
-                    (if (is_baseline) "-baseline" else "") ++
-                    "-" ++
-                    "{d}.{d}.{d}.tgz", .{
-                    registry_url,
-                    this.version.major,
-                    this.version.minor,
-                    this.version.patch,
-                }),
+            inline else => |arch| switch (this.libc) {
+                inline else => |libc| switch (this.baseline) {
+                    // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
+                    inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "/-/bun-" ++
+                        os.npmName() ++ "-" ++ arch.npmName() ++
+                        libc.npmName() ++
+                        (if (is_baseline) "-baseline" else "") ++
+                        "-" ++
+                        "{d}.{d}.{d}.tgz", .{
+                        registry_url,
+                        this.version.major,
+                        this.version.minor,
+                        this.version.patch,
+                    }),
+                },
             },
         },
     };
@@ -111,7 +123,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         return buf[0..self_exe_path.len :0];
     }
 
-    if (bun.sys.existsAt(bun.toFD(std.fs.cwd()), version_str)) {
+    if (bun.FD.cwd().existsAt(version_str)) {
         needs_download.* = false;
         return version_str;
     }
@@ -120,13 +132,13 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
         bun.fs.FileSystem.instance.top_level_dir,
         buf,
         &.{
-            bun.install.PackageManager.fetchCacheDirectoryPath(env).path,
+            bun.install.PackageManager.fetchCacheDirectoryPath(env, null).path,
             version_str,
         },
         .auto,
     );
 
-    if (bun.sys.existsAt(bun.toFD(std.fs.cwd()), dest)) {
+    if (bun.FD.cwd().existsAt(dest)) {
         needs_download.* = false;
     }
 
@@ -153,7 +165,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         {
             var progress = refresher.start("Downloading", 0);
             defer progress.end();
-            const http_proxy: ?bun.URL = env.getHttpProxy(url);
+            const http_proxy: ?bun.URL = env.getHttpProxyFor(url);
 
             async_http.* = HTTP.AsyncHTTP.initSync(
                 allocator,
@@ -285,7 +297,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
                 var did_retry = false;
                 while (true) {
-                    bun.C.moveFileZ(bun.toFD(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
+                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
                         if (!did_retry) {
                             did_retry = true;
                             const dirname = bun.path.dirname(dest_z, .loose);
@@ -311,8 +323,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 pub fn isSupported(this: *const CompileTarget) bool {
     return switch (this.os) {
         .windows => this.arch == .x64,
+
         .mac => true,
-        .linux => this.libc == .default,
+        .linux => true,
+
         .wasm => false,
     };
 }
@@ -379,7 +393,7 @@ pub fn from(input_: []const u8) CompileTarget {
             Output.errGeneric(
                 \\Unsupported target {} in "bun{s}"
                 \\To see the supported targets:
-                \\  https://bun.sh/docs/bundler/executables
+                \\  https://bun.com/docs/bundler/executables
             ,
                 .{
                     bun.fmt.quote(token),
@@ -429,9 +443,13 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
                         .arm64 => "\"arm64\"",
                         else => @compileError("TODO"),
                     },
+
+                    "\"" ++ Global.package_json_version ++ "\"",
                 };
             }.values,
             else => @panic("TODO"),
         },
     }
 }
+
+const std = @import("std");

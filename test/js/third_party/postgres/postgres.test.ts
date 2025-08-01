@@ -11,7 +11,30 @@ describe.skipIf(!databaseUrl)("postgres", () => {
       const [{ version }] = await sql`SELECT version()`;
       expect(version).toMatch(/PostgreSQL/);
     } finally {
-      sql.end();
+      await sql.end();
+    }
+  });
+
+  test("should be able to resume after backpressure pause on upgraded handler #15438", async () => {
+    const sql = postgres(databaseUrl!);
+    try {
+      const batch = [];
+      for (let i = 0; i < 1000; i++) {
+        batch.push(
+          (async sql => {
+            const [{ version }] = await sql`SELECT version()`;
+            expect(version).toMatch(/PostgreSQL/);
+          })(sql),
+        );
+        if (batch.length === 50) {
+          await Promise.all(batch);
+        }
+      }
+      if (batch.length > 0) {
+        await Promise.all(batch);
+      }
+    } finally {
+      await sql.end();
     }
   });
 

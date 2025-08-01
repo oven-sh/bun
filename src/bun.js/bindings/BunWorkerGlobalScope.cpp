@@ -2,10 +2,11 @@
 
 #include "BunWorkerGlobalScope.h"
 #include "MessagePortChannelProviderImpl.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(WorkerGlobalScope);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerGlobalScope);
 
 MessagePortChannelProvider& WorkerGlobalScope::messagePortChannelProvider()
 {

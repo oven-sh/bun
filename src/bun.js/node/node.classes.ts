@@ -1,6 +1,80 @@
-import { define } from "../../codegen/class-definitions";
+import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
 
 export default [
+  define({
+    name: "DNSResolver",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    proto: {
+      setServers: {
+        fn: "setServers",
+        length: 1,
+      },
+      getServers: {
+        fn: "getServers",
+        length: 0,
+      },
+      resolve: {
+        fn: "resolve",
+        length: 3,
+      },
+      resolveSrv: {
+        fn: "resolveSrv",
+        length: 1,
+      },
+      resolveTxt: {
+        fn: "resolveTxt",
+        length: 1,
+      },
+      resolveSoa: {
+        fn: "resolveSoa",
+        length: 1,
+      },
+      resolveNaptr: {
+        fn: "resolveNaptr",
+        length: 1,
+      },
+      resolveMx: {
+        fn: "resolveMx",
+        length: 1,
+      },
+      resolveCaa: {
+        fn: "resolveCaa",
+        length: 1,
+      },
+      resolveNs: {
+        fn: "resolveNs",
+        length: 1,
+      },
+      resolvePtr: {
+        fn: "resolvePtr",
+        length: 1,
+      },
+      resolveCname: {
+        fn: "resolveCname",
+        length: 1,
+      },
+      resolveAny: {
+        fn: "resolveAny",
+        length: 1,
+      },
+      setLocalAddress: {
+        fn: "setLocalAddress",
+        length: 1,
+      },
+      cancel: {
+        fn: "cancel",
+        length: 0,
+      },
+      reverse: {
+        fn: "reverse",
+        length: 1,
+      },
+    },
+  }),
   define({
     name: "FSWatcher",
     construct: false,
@@ -36,7 +110,6 @@ export default [
     noConstructor: true,
     finalize: true,
     configurable: false,
-    hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -57,8 +130,7 @@ export default [
   }),
   define({
     name: "Timeout",
-    construct: false,
-    noConstructor: true,
+    construct: true,
     finalize: true,
     configurable: false,
     klass: {},
@@ -67,378 +139,97 @@ export default [
       ref: {
         fn: "doRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       refresh: {
         fn: "doRefresh",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       unref: {
         fn: "doUnref",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       hasRef: {
         fn: "hasRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _destroyed: {
+        getter: "getDestroyed",
+      },
+      close: {
+        fn: "close",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _onTimeout: {
+        getter: "get_onTimeout",
+        setter: "set_onTimeout",
+        this: true,
+      },
+      _idleTimeout: {
+        getter: "get_idleTimeout",
+        setter: "set_idleTimeout",
+        this: true,
+      },
+      _repeat: {
+        getter: "get_repeat",
+        setter: "set_repeat",
+        this: true,
+      },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+    },
+    values: ["arguments", "callback", "idleTimeout", "repeat"],
+  }),
+  define({
+    name: "Immediate",
+    construct: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      ["@@toPrimitive"]: {
+        fn: "toPrimitive",
+        length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _destroyed: {
+        getter: "getDestroyed",
+      },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
     values: ["arguments", "callback"],
-  }),
-  define({
-    name: "Stats",
-    construct: true,
-    finalize: true,
-    klass: {},
-    JSType: "0b11101110",
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isDirectory: {
-        fn: "isDirectory_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFIFO: {
-        fn: "isFIFO_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFile: {
-        fn: "isFile_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSocket: {
-        fn: "isSocket_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
-    },
-  }),
-  define({
-    name: "BigIntStats",
-    construct: true,
-    finalize: true,
-    klass: {},
-    JSType: "0b11101110",
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isDirectory: {
-        fn: "isDirectory_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFIFO: {
-        fn: "isFIFO_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isFile: {
-        fn: "isFile_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSocket: {
-        fn: "isSocket_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink_",
-        length: 0,
-        enumerable: false,
-        DOMJIT: {
-          returns: "bool",
-          args: [],
-          pure: true,
-        },
-      },
-      dev: {
-        getter: "dev",
-      },
-      ino: {
-        getter: "ino",
-      },
-      mode: {
-        getter: "mode",
-      },
-      nlink: {
-        getter: "nlink",
-      },
-      uid: {
-        getter: "uid",
-      },
-      gid: {
-        getter: "gid",
-      },
-      rdev: {
-        getter: "rdev",
-      },
-      size: {
-        getter: "size",
-      },
-      blksize: {
-        getter: "blksize",
-      },
-      blocks: {
-        getter: "blocks",
-      },
-      atime: {
-        getter: "atime",
-        cache: true,
-      },
-      mtime: {
-        getter: "mtime",
-        cache: true,
-      },
-      ctime: {
-        getter: "ctime",
-        cache: true,
-      },
-      birthtime: {
-        getter: "birthtime",
-        cache: true,
-      },
-      atimeMs: {
-        getter: "atimeMs",
-      },
-      mtimeMs: {
-        getter: "mtimeMs",
-      },
-      ctimeMs: {
-        getter: "ctimeMs",
-      },
-      birthtimeMs: {
-        getter: "birthtimeMs",
-      },
-      atimeNs: {
-        getter: "atimeNs",
-      },
-      mtimeNs: {
-        getter: "mtimeNs",
-      },
-      ctimeNs: {
-        getter: "ctimeNs",
-      },
-      birthtimeNs: {
-        getter: "birthtimeNs",
-      },
-    },
-  }),
-  define({
-    name: "Dirent",
-    construct: true,
-    finalize: true,
-
-    klass: {},
-
-    // TODO: generate-classes needs to handle Object.create properly when
-    // functions are used. The functions need a fallback implementation to use
-    // getters.
-    supportsObjectCreate: true,
-
-    proto: {
-      isBlockDevice: {
-        fn: "isBlockDevice",
-        length: 0,
-      },
-      isCharacterDevice: {
-        fn: "isCharacterDevice",
-        length: 0,
-      },
-      isDirectory: {
-        fn: "isDirectory",
-        length: 0,
-      },
-      isFIFO: {
-        fn: "isFIFO",
-        length: 0,
-      },
-      isFile: {
-        fn: "isFile",
-        length: 0,
-      },
-      isSocket: {
-        fn: "isSocket",
-        length: 0,
-      },
-      isSymbolicLink: {
-        fn: "isSymbolicLink",
-        length: 0,
-      },
-      name: {
-        getter: "getName",
-        cache: true,
-      },
-      path: {
-        getter: "getPath",
-        cache: true,
-      },
-      parentPath: {
-        // @since node v20.12.x
-        getter: "getPath",
-        cache: true,
-      },
-    },
   }),
   define({
     name: "NodeJSFS",
@@ -448,105 +239,98 @@ export default [
 
     klass: {},
     proto: {
-      appendFile: { fn: "appendFile", length: 4 },
-      appendFileSync: { fn: "appendFileSync", length: 3 },
-      access: { fn: "access", length: 3 },
-      accessSync: { fn: "accessSync", length: 2 },
-      chown: { fn: "chown", length: 4 },
-      chownSync: { fn: "chownSync", length: 3 },
-      chmod: { fn: "chmod", length: 3 },
-      chmodSync: { fn: "chmodSync", length: 2 },
-      close: { fn: "close", length: 1 },
-      closeSync: { fn: "closeSync", length: 1 },
-      copyFile: { fn: "copyFile", length: 4 },
-      copyFileSync: { fn: "copyFileSync", length: 3 },
+      appendFile: { async: true, fn: "appendFile", length: 4 },
+      appendFileSync: { async: false, fn: "appendFileSync", length: 3 },
+      access: { async: true, fn: "access", length: 3 },
+      accessSync: { async: false, fn: "accessSync", length: 2 },
+      chown: { async: true, fn: "chown", length: 4 },
+      chownSync: { async: false, fn: "chownSync", length: 3 },
+      chmod: { async: true, fn: "chmod", length: 3 },
+      chmodSync: { async: false, fn: "chmodSync", length: 2 },
+      close: { async: true, fn: "close", length: 1 },
+      closeSync: { async: false, fn: "closeSync", length: 1 },
+      copyFile: { async: true, fn: "copyFile", length: 4 },
+      copyFileSync: { async: false, fn: "copyFileSync", length: 3 },
 
       // TODO:
-      cp: { fn: "cp", length: 2 },
-      cpSync: { fn: "cpSync", length: 2 },
+      cp: { async: true, fn: "cp", length: 2 },
+      cpSync: { async: false, fn: "cpSync", length: 2 },
 
-      exists: { fn: "exists", length: 2 },
-      existsSync: { fn: "existsSync", length: 1 },
-      fchown: { fn: "fchown", length: 4 },
-      fchownSync: { fn: "fchownSync", length: 3 },
-      fchmod: { fn: "fchmod", length: 3 },
-      fchmodSync: { fn: "fchmodSync", length: 2 },
-      fdatasync: { fn: "fdatasync", length: 2 },
-      fdatasyncSync: { fn: "fdatasyncSync", length: 1 },
-      fstat: { fn: "fstat", length: 1 },
-      fstatSync: { fn: "fstatSync", length: 1 },
-      fsync: { fn: "fsync", length: 2 },
-      fsyncSync: { fn: "fsyncSync", length: 1 },
-      ftruncate: { fn: "ftruncate", length: 1 },
-      ftruncateSync: { fn: "ftruncateSync", length: 1 },
-      futimes: { fn: "futimes", length: 4 },
-      futimesSync: { fn: "futimesSync", length: 3 },
-      lchown: { fn: "lchown", length: 4 },
-      lchownSync: { fn: "lchownSync", length: 3 },
-      lchmod: { fn: "lchmod", length: 3 },
-      lchmodSync: { fn: "lchmodSync", length: 2 },
-      link: { fn: "link", length: 3 },
-      linkSync: { fn: "linkSync", length: 2 },
-      lstat: { fn: "lstat", length: 1 },
-      lstatSync: { fn: "lstatSync", length: 1 },
-      lutimes: { fn: "lutimes", length: 4 },
-      lutimesSync: { fn: "lutimesSync", length: 3 },
-      mkdir: { fn: "mkdir", length: 3 },
-      mkdirSync: { fn: "mkdirSync", length: 2 },
-      mkdtemp: { fn: "mkdtemp", length: 3 },
-      mkdtempSync: { fn: "mkdtempSync", length: 2 },
-      open: { fn: "open", length: 4 },
-      openSync: { fn: "openSync", length: 3 },
-      opendir: { fn: "opendir", length: 3 },
-      opendirSync: { fn: "opendirSync", length: 2 },
-      readdir: { fn: "readdir", length: 3 },
-      readdirSync: { fn: "readdirSync", length: 2 },
-      read: { fn: "read", length: 6 },
-      readSync: { fn: "readSync", length: 5 },
-      readv: { fn: "readv", length: 4 },
-      readvSync: { fn: "readvSync", length: 3 },
-      readFile: { fn: "readFile", length: 3 },
-      readFileSync: { fn: "readFileSync", length: 2 },
-      readlink: { fn: "readlink", length: 3 },
-      readlinkSync: { fn: "readlinkSync", length: 2 },
-      realpath: { fn: "realpath", length: 3 },
-      realpathSync: { fn: "realpathSync", length: 2 },
-      rename: { fn: "rename", length: 3 },
-      renameSync: { fn: "renameSync", length: 2 },
-      rm: { fn: "rm", length: 3 },
-      rmSync: { fn: "rmSync", length: 2 },
-      rmdir: { fn: "rmdir", length: 3 },
-      rmdirSync: { fn: "rmdirSync", length: 2 },
-      stat: { fn: "stat", length: 1 },
-      statSync: { fn: "statSync", length: 1 },
-      symlink: { fn: "symlink", length: 4 },
-      symlinkSync: { fn: "symlinkSync", length: 3 },
-      truncate: { fn: "truncate", length: 3 },
-      truncateSync: { fn: "truncateSync", length: 2 },
-      unwatchFile: { fn: "unwatchFile", length: 2 },
-      unlink: { fn: "unlink", length: 2 },
-      unlinkSync: { fn: "unlinkSync", length: 1 },
-      utimes: { fn: "utimes", length: 4 },
-      utimesSync: { fn: "utimesSync", length: 3 },
-      watch: { fn: "watch", length: 3 },
-      watchFile: { fn: "watchFile", length: 3 },
-      writeFile: { fn: "writeFile", length: 4 },
-      writeFileSync: { fn: "writeFileSync", length: 3 },
-      write: { fn: "write", length: 6 },
-      writeSync: { fn: "writeSync", length: 5 },
-      writev: { fn: "writev", length: 4 },
-      writevSync: { fn: "writevSync", length: 3 },
-      // TODO:
-      // Dir: { fn: 'Dir', length: 3 },
+      exists: { async: true, fn: "exists", length: 2 },
+      existsSync: { async: false, fn: "existsSync", length: 1 },
+      fchown: { async: true, fn: "fchown", length: 4 },
+      fchownSync: { async: false, fn: "fchownSync", length: 3 },
+      fchmod: { async: true, fn: "fchmod", length: 3 },
+      fchmodSync: { async: false, fn: "fchmodSync", length: 2 },
+      fdatasync: { async: false, fn: "fdatasync", length: 2 },
+      fdatasyncSync: { async: false, fn: "fdatasyncSync", length: 1 },
+      fstat: { async: true, fn: "fstat", length: 1 },
+      fstatSync: { async: false, fn: "fstatSync", length: 1 },
+      fsync: { async: false, fn: "fsync", length: 2 },
+      fsyncSync: { async: false, fn: "fsyncSync", length: 1 },
+      ftruncate: { async: true, fn: "ftruncate", length: 1 },
+      ftruncateSync: { async: false, fn: "ftruncateSync", length: 1 },
+      futimes: { async: true, fn: "futimes", length: 4 },
+      futimesSync: { async: false, fn: "futimesSync", length: 3 },
+      lchown: { async: true, fn: "lchown", length: 4 },
+      lchownSync: { async: false, fn: "lchownSync", length: 3 },
+      lchmod: { async: true, fn: "lchmod", length: 3 },
+      lchmodSync: { async: false, fn: "lchmodSync", length: 2 },
+      link: { async: true, fn: "link", length: 3 },
+      linkSync: { async: false, fn: "linkSync", length: 2 },
+      lstat: { async: true, fn: "lstat", length: 1 },
+      lstatSync: { async: false, fn: "lstatSync", length: 1 },
+      lutimes: { async: true, fn: "lutimes", length: 4 },
+      lutimesSync: { async: false, fn: "lutimesSync", length: 3 },
+      mkdir: { async: true, fn: "mkdir", length: 3 },
+      mkdirSync: { async: false, fn: "mkdirSync", length: 2 },
+      mkdtemp: { async: true, fn: "mkdtemp", length: 3 },
+      mkdtempSync: { async: false, fn: "mkdtempSync", length: 2 },
+      open: { async: true, fn: "open", length: 4 },
+      openSync: { async: false, fn: "openSync", length: 3 },
+      readdir: { async: true, fn: "readdir", length: 3 },
+      readdirSync: { async: false, fn: "readdirSync", length: 2 },
+      read: { async: true, fn: "read", length: 6 },
+      readSync: { async: false, fn: "readSync", length: 5 },
+      readv: { async: true, fn: "readv", length: 4 },
+      readvSync: { async: false, fn: "readvSync", length: 3 },
+      readFile: { async: true, fn: "readFile", length: 3 },
+      readFileSync: { async: false, fn: "readFileSync", length: 2 },
+      readlink: { async: true, fn: "readlink", length: 3 },
+      readlinkSync: { async: false, fn: "readlinkSync", length: 2 },
+      realpath: { async: true, fn: "realpath", length: 3 },
+      realpathSync: { async: false, fn: "realpathSync", length: 2 },
+      rename: { async: true, fn: "rename", length: 3 },
+      renameSync: { async: false, fn: "renameSync", length: 2 },
+      rm: { async: true, fn: "rm", length: 3 },
+      rmSync: { async: false, fn: "rmSync", length: 2 },
+      rmdir: { async: true, fn: "rmdir", length: 3 },
+      rmdirSync: { async: false, fn: "rmdirSync", length: 2 },
+      stat: { async: true, fn: "stat", length: 1 },
+      statfs: { async: true, fn: "statfs", length: 2 },
+      statSync: { async: false, fn: "statSync", length: 1 },
+      statfsSync: { async: false, fn: "statfsSync", length: 2 },
+      symlink: { async: true, fn: "symlink", length: 4 },
+      symlinkSync: { async: false, fn: "symlinkSync", length: 3 },
+      truncate: { async: true, fn: "truncate", length: 3 },
+      truncateSync: { async: false, fn: "truncateSync", length: 2 },
+      unwatchFile: { async: true, fn: "unwatchFile", length: 2 },
+      unlink: { async: true, fn: "unlink", length: 2 },
+      unlinkSync: { async: false, fn: "unlinkSync", length: 1 },
+      utimes: { async: true, fn: "utimes", length: 4 },
+      utimesSync: { async: false, fn: "utimesSync", length: 3 },
+      watch: { async: true, fn: "watch", length: 3 },
+      watchFile: { async: true, fn: "watchFile", length: 3 },
+      writeFile: { async: true, fn: "writeFile", length: 4 },
+      writeFileSync: { async: false, fn: "writeFileSync", length: 3 },
+      write: { async: true, fn: "write", length: 6 },
+      writeSync: { async: false, fn: "writeSync", length: 5 },
+      writev: { async: true, fn: "writev", length: 4 },
+      writevSync: { async: false, fn: "writevSync", length: 3 },
+      realpathNative: { async: true, fn: "realpathNative", length: 3 },
+      realpathNativeSync: { async: false, fn: "realpathNativeSync", length: 3 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
-      // ReadStream: { fn: 'ReadStream', length: 2 },
-      // WriteStream: { fn: 'WriteStream', length: 2 },
-      // FileReadStream: { fn: 'FileReadStream', length: 2 },
-      // FileWriteStream: { fn: 'FileWriteStream', length: 2 },
-      // _toUnixTimestamp: { fn: '_toUnixTimestamp', length: 1 }
-      // createReadStream: { fn: "createReadStream", length: 2 },
-      // createWriteStream: { fn: "createWriteStream", length: 2 },
     },
   }),
 ];

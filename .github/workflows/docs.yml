@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "docs/**"
+      - "packages/bun-types/**.d.ts"
       - "CONTRIBUTING.md"
     branches:
       - main

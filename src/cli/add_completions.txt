@@ -2218,6 +2218,7 @@ elm-hot
 elm-hot-webpack-loader
 elm-test
 elm-webpack-loader
+elysia
 email-validator
 emailjs-base64
 emailjs-imap-client
@@ -3700,6 +3701,7 @@ homebridge-config-ui-x
 homedir
 homedir-polyfill
 honeybadger-js
+hono
 hook-std
 hookable
 hooks

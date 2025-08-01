@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -325,7 +320,7 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const Api = struct {
+pub const api = struct {
     pub const Loader = enum(u8) {
         _none,
         jsx,
@@ -342,7 +337,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -426,7 +421,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
+    pub const StackFramePosition = bun.jsc.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line
@@ -800,9 +795,6 @@ pub const Api = struct {
         /// import_source
         import_source: []const u8,
 
-        /// react_fast_refresh
-        react_fast_refresh: bool = false,
-
         pub fn decode(reader: anytype) anyerror!Jsx {
             var this = std.mem.zeroes(Jsx);
 
@@ -811,7 +803,6 @@ pub const Api = struct {
             this.fragment = try reader.readValue([]const u8);
             this.development = try reader.readValue(bool);
             this.import_source = try reader.readValue([]const u8);
-            this.react_fast_refresh = try reader.readValue(bool);
             return this;
         }
 
@@ -821,7 +812,6 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
             try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
-            try writer.writeInt(@as(u8, @intFromBool(this.react_fast_refresh)));
         }
     };
 
@@ -1617,6 +1607,23 @@ pub const Api = struct {
         }
     };
 
+    pub const UnhandledRejections = enum(u8) {
+        strict = 0,
+        throw = 1,
+        warn = 2,
+        none = 3,
+        warn_with_error_code = 4,
+        bun = 5,
+
+        pub const map = bun.ComptimeStringMap(UnhandledRejections, .{
+            .{ "strict", .strict },
+            .{ "throw", .throw },
+            .{ "warn", .warn },
+            .{ "none", .none },
+            .{ "warn-with-error-code", .warn_with_error_code },
+        });
+    };
+
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -1631,7 +1638,7 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,
@@ -1678,7 +1685,7 @@ pub const Api = struct {
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: ?bool = null,
+        disable_hmr: bool = false,
 
         /// port
         port: ?u16 = null,
@@ -1697,6 +1704,27 @@ pub const Api = struct {
 
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
+
+        /// e.g.:
+        /// [serve.static]
+        /// plugins = ["tailwindcss"]
+        serve_plugins: ?[]const []const u8 = null,
+        serve_minify_syntax: ?bool = null,
+        serve_minify_whitespace: ?bool = null,
+        serve_minify_identifiers: ?bool = null,
+        serve_env_behavior: DotEnvBehavior = ._none,
+        serve_env_prefix: ?[]const u8 = null,
+        serve_splitting: bool = false,
+        serve_public_path: ?[]const u8 = null,
+        serve_hmr: ?bool = null,
+        serve_define: ?StringMap = null,
+
+        // from --no-addons. null == true
+        allow_addons: ?bool = null,
+        /// from --unhandled-rejections, default is 'bun'
+        unhandled_rejections: ?UnhandledRejections = null,
+
+        bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
@@ -1922,6 +1950,27 @@ pub const Api = struct {
         linked,
 
         _,
+
+        pub fn fromJS(global: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!?SourceMapMode {
+            if (value.isString()) {
+                const str = try value.toSliceOrNull(global);
+                defer str.deinit();
+                const utf8 = str.slice();
+                if (bun.strings.eqlComptime(utf8, "none")) {
+                    return .none;
+                }
+                if (bun.strings.eqlComptime(utf8, "inline")) {
+                    return .@"inline";
+                }
+                if (bun.strings.eqlComptime(utf8, "external")) {
+                    return .external;
+                }
+                if (bun.strings.eqlComptime(utf8, "linked")) {
+                    return .linked;
+                }
+            }
+            return null;
+        }
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
@@ -2816,7 +2865,7 @@ pub const Api = struct {
 
             fn expectString(this: *Parser, expr: js_ast.Expr) !void {
                 switch (expr.data) {
-                    .e_string, .e_utf8_string => {},
+                    .e_string => {},
                     else => {
                         this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                             @as(js_ast.Expr.Tag, expr.data),
@@ -2826,13 +2875,13 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!api.NpmRegistry {
                 const url = bun.URL.parse(str);
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
@@ -2851,8 +2900,8 @@ pub const Api = struct {
                 return registry;
             }
 
-            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !api.NpmRegistry {
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 if (obj.get("url")) |url| {
                     try this.expectString(url);
@@ -2879,7 +2928,7 @@ pub const Api = struct {
                 return registry;
             }
 
-            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !api.NpmRegistry {
                 switch (expr.data) {
                     .e_string => |str| {
                         return this.parseRegistryURLString(str);
@@ -2889,7 +2938,7 @@ pub const Api = struct {
                     },
                     else => {
                         try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                        return std.mem.zeroes(Api.NpmRegistry);
+                        return std.mem.zeroes(api.NpmRegistry);
                     },
                 }
             }
@@ -2979,10 +3028,18 @@ pub const Api = struct {
 
         cafile: ?[]const u8 = null,
 
+        save_text_lockfile: ?bool = null,
+
         ca: ?union(enum) {
             str: []const u8,
             list: []const []const u8,
         } = null,
+
+        ignore_scripts: ?bool = null,
+
+        link_workspace_packages: ?bool = null,
+
+        node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
@@ -3308,3 +3365,9 @@ pub const Api = struct {
         }
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const js_ast = bun.ast;

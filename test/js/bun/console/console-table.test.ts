@@ -137,9 +137,7 @@ describe("console.table", () => {
     [
       "number keys",
       {
-        args: () => [
-          {test: {"10": 123, "100": 154}},
-        ],
+        args: () => [{ test: { "10": 123, "100": 154 } }],
       },
     ],
   ])("expected output for: %s", (label, { args }) => {

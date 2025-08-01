@@ -231,7 +231,7 @@ declare module "bun:test" {
     ): (label: DescribeLabel, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
-    ): (label: DescribeLabel, options: TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
+    ): (label: DescribeLabel, options: number | TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
     each<T extends any[]>(
       table: readonly T[],
     ): (
@@ -241,13 +241,17 @@ declare module "bun:test" {
     ) => void;
     each<T extends any[]>(
       table: readonly T[],
-    ): (label: DescribeLabel, options: TestOptions, fn: (...args: Readonly<T>) => void | Promise<unknown>) => void;
+    ): (
+      label: DescribeLabel,
+      options: number | TestOptions,
+      fn: (...args: Readonly<T>) => void | Promise<unknown>,
+    ) => void;
     each<T>(
       table: T[],
     ): (label: DescribeLabel, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T>(
       table: T[],
-    ): (label: DescribeLabel, options: TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
+    ): (label: DescribeLabel, options: number | TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
   }
   /**
    * Describes a group of related tests.
@@ -397,7 +401,7 @@ declare module "bun:test" {
        *   - `retry` sets the number of times to retry the test if it fails.
        *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
        */
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
@@ -414,7 +418,7 @@ declare module "bun:test" {
     ): void;
     only(
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
@@ -431,7 +435,7 @@ declare module "bun:test" {
     ): void;
     skip(
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
@@ -453,7 +457,7 @@ declare module "bun:test" {
     ): void;
     todo(
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
@@ -478,7 +482,7 @@ declare module "bun:test" {
     ): void;
     failing(
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
@@ -499,7 +503,7 @@ declare module "bun:test" {
       condition: boolean,
     ): (
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ) => void;
     /**
@@ -518,7 +522,7 @@ declare module "bun:test" {
       condition: boolean,
     ): (
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ) => void;
     /**
@@ -537,7 +541,7 @@ declare module "bun:test" {
       condition: boolean,
     ): (
       label: string,
-      options: TestOptions,
+      options: number | TestOptions,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ) => void;
     /**
@@ -550,17 +554,19 @@ declare module "bun:test" {
     ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
-    ): (label: string, options: TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
+    ): (label: string, options: number | TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
     each<T extends any[]>(
       table: readonly T[],
     ): (label: string, fn: (...args: Readonly<T>) => void | Promise<unknown>, options?: number | TestOptions) => void;
     each<T extends any[]>(
       table: readonly T[],
-    ): (label: string, options: TestOptions, fn: (...args: Readonly<T>) => void | Promise<unknown>) => void;
+    ): (label: string, options: number | TestOptions, fn: (...args: Readonly<T>) => void | Promise<unknown>) => void;
     each<T>(
       table: T[],
     ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
-    each<T>(table: T[]): (label: string, options: TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
+    each<T>(
+      table: T[],
+    ): (label: string, options: number | TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
   }
   /**
    * Runs a test.

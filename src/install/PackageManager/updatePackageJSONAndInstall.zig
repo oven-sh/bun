@@ -54,6 +54,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         original_cwd,
     );
 }
+
 fn updatePackageJSONAndInstallWithManagerWithUpdates(
     manager: *PackageManager,
     ctx: Command.Context,

@@ -659,7 +659,7 @@ Buffer.prototype.equals = function equals(b) {
 
 Buffer.prototype.inspect = function inspect() {
   let str = "";
-  const max = exports.INSPECT_MAX_BYTES;
+  const max = INSPECT_MAX_BYTES;
   str = this.toString("hex", 0, max)
     .replace(/(.{2})/g, "$1 ")
     .trim();

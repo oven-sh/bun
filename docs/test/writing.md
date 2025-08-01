@@ -677,17 +677,17 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveReturnedWith()`](https://jestjs.io/docs/expect#tohavereturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveLastReturnedWith()`](https://jestjs.io/docs/expect#tohavelastreturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveNthReturnedWith()`](https://jestjs.io/docs/expect#tohaventhreturnedwithnthcall-value)
 
 ---

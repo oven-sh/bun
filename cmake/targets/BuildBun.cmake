@@ -45,6 +45,7 @@ endif()
 # --- Dependencies ---
 
 set(BUN_DEPENDENCIES
+  Mimalloc # must be first
   BoringSSL
   Brotli
   Cares
@@ -52,7 +53,6 @@ set(BUN_DEPENDENCIES
   LibDeflate
   LolHtml
   Lshpack
-  Mimalloc
   TinyCC
   Zlib
   LibArchive # must be loaded after zlib

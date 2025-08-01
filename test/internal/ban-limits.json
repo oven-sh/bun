@@ -3,7 +3,7 @@
   " == undefined": 0,
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
-  ".arguments_old(": 280,
+  ".arguments_old(": 279,
   ".stdDir()": 40,
   ".stdFile()": 18,
   "// autofix": 168,

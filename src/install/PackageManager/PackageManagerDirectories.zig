@@ -23,7 +23,23 @@ pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
 noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
     loop: while (true) {
         if (this.options.enable.cache) {
-            const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
+            // Get the install directory (node_modules location)
+            const install_dir = brk: {
+                if (this.options.global) {
+                    break :brk this.globalLinkDirPath();
+                } else {
+                    var node_modules_path_buf: bun.PathBuffer = undefined;
+                    const node_modules = Path.joinAbsStringBuf(
+                        Fs.FileSystem.instance.top_level_dir,
+                        &node_modules_path_buf,
+                        &[_][]const u8{"node_modules"},
+                        .auto,
+                    );
+                    break :brk node_modules;
+                }
+            };
+            
+            const cache_dir = fetchCacheDirectoryPathWithInstallDir(this.env, &this.options, install_dir);
             this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
             return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
@@ -136,35 +152,70 @@ noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
     return tempdir;
 }
 
-const CacheDir = struct { path: string, is_node_modules: bool };
+const filesystem_utils = @import("../filesystem_utils.zig");
+
+const CacheDir = struct { path: string, is_node_modules: bool, is_same_filesystem: bool = true };
 pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
+    return fetchCacheDirectoryPathWithInstallDir(env, options, null);
+}
+
+pub fn fetchCacheDirectoryPathWithInstallDir(env: *DotEnv.Loader, options: ?*const Options, install_dir: ?[]const u8) CacheDir {
     if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        const cache_path = Fs.FileSystem.instance.abs(&[_]string{dir});
+        const is_same_fs = if (install_dir) |install| filesystem_utils.isSameFilesystem(cache_path, install) catch true else true;
+        return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = is_same_fs };
     }
 
     if (options) |opts| {
         if (opts.cache_directory.len > 0) {
-            return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory}), .is_node_modules = false };
+            const cache_path = Fs.FileSystem.instance.abs(&[_]string{opts.cache_directory});
+            const is_same_fs = if (install_dir) |install| filesystem_utils.isSameFilesystem(cache_path, install) catch true else true;
+            return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = is_same_fs };
         }
     }
 
-    if (env.get("BUN_INSTALL")) |dir| {
-        var parts = [_]string{ dir, "install/", "cache/" };
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
-    }
+    const default_cache = brk: {
+        if (env.get("BUN_INSTALL")) |dir| {
+            var parts = [_]string{ dir, "install/", "cache/" };
+            break :brk Fs.FileSystem.instance.abs(&parts);
+        }
+        
+        if (env.get("XDG_CACHE_HOME")) |dir| {
+            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            break :brk Fs.FileSystem.instance.abs(&parts);
+        }
+        
+        if (env.get(bun.DotEnv.home_env)) |dir| {
+            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            break :brk Fs.FileSystem.instance.abs(&parts);
+        }
+        
+        break :brk null;
+    };
 
-    if (env.get("XDG_CACHE_HOME")) |dir| {
-        var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+    // If install_dir is provided and we have a default cache, check if they're on the same filesystem
+    if (install_dir) |install| {
+        if (default_cache) |cache_path| {
+            const is_same_fs = filesystem_utils.isSameFilesystem(cache_path, install) catch false;
+            if (is_same_fs) {
+                return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = true };
+            }
+            
+            // Different filesystem - find optimal cache location
+            const optimal_cache = findOptimalCacheDir(install) catch null;
+            if (optimal_cache) |opt_cache| {
+                return CacheDir{ .path = opt_cache, .is_node_modules = false, .is_same_filesystem = true };
+            }
+        }
     }
-
-    if (env.get(bun.DotEnv.home_env)) |dir| {
-        var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+    
+    // Fallback to default cache or node_modules/.bun-cache
+    if (default_cache) |cache_path| {
+        return CacheDir{ .path = cache_path, .is_node_modules = false, .is_same_filesystem = false };
     }
-
+    
     var fallback_parts = [_]string{"node_modules/.bun-cache"};
-    return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
+    return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts), .is_same_filesystem = true };
 }
 
 pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
@@ -739,6 +790,55 @@ const PatchHashFmt = struct {
 
 var using_fallback_temp_dir: bool = false;
 
+fn findOptimalCacheDir(install_dir: []const u8) ![]const u8 {
+    // Get the mount point of the install directory
+    const mount_point = try filesystem_utils.getMountPoint(install_dir);
+    
+    // Get absolute path of install directory
+    var install_abs_buf: bun.PathBuffer = undefined;
+    const install_abs = try std.fs.cwd().realpath(install_dir, &install_abs_buf);
+    
+    // Start from mount point and walk down toward the project
+    var current_path_buf: bun.PathBuffer = undefined;
+    @memcpy(current_path_buf[0..mount_point.len], mount_point);
+    current_path_buf[mount_point.len] = 0;
+    var current_path = current_path_buf[0..mount_point.len :0];
+    
+    const install_parent = std.fs.path.dirname(install_abs) orelse install_abs;
+    
+    while (true) {
+        var cache_path_buf: bun.PathBuffer = undefined;
+        const cache_dir_name = ".bun-cache";
+        const cache_path = Path.joinZBuf(&cache_path_buf, &[_][]const u8{ current_path, cache_dir_name }, .auto);
+        
+        // Try to create cache directory at this level
+        if (filesystem_utils.canCreateDir(cache_path)) {
+            return bun.default_allocator.dupeZ(u8, cache_path) catch bun.outOfMemory();
+        }
+        
+        // Stop if we've reached the install directory's parent
+        if (strings.eql(current_path, install_parent)) {
+            break;
+        }
+        
+        // Move down one level toward the project
+        const next_component = filesystem_utils.getNextPathComponent(current_path, install_abs) orelse break;
+        
+        const new_len = current_path.len + 1 + next_component.len;
+        if (new_len >= bun.MAX_PATH_BYTES) break;
+        
+        current_path_buf[current_path.len] = std.fs.path.sep;
+        @memcpy(current_path_buf[current_path.len + 1 .. new_len], next_component);
+        current_path_buf[new_len] = 0;
+        current_path = current_path_buf[0..new_len :0];
+    }
+    
+    // Last resort: project-local cache
+    var final_cache_buf: bun.PathBuffer = undefined;
+    const project_cache = Path.joinZBuf(&final_cache_buf, &[_][]const u8{ install_parent, ".bun-cache" }, .auto);
+    return bun.default_allocator.dupeZ(u8, project_cache) catch bun.outOfMemory();
+}
+
 const string = []const u8;
 const stringZ = [:0]const u8;
 
@@ -756,6 +856,7 @@ const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
+const strings = bun.strings;
 
 const Semver = bun.Semver;
 const String = Semver.String;

@@ -1008,7 +1008,7 @@ interface ArrayBuffer {
    * Returns a section of an ArrayBuffer.
    */
   slice(begin: number, end?: number): ArrayBuffer;
-  readonly [Symbol.toStringTag]: string;
+  readonly [Symbol.toStringTag]: "ArrayBuffer";
 }
 
 interface SharedArrayBuffer {

@@ -156,11 +156,11 @@ async function diagnose(
 
   return {
     diagnostics,
-    emptyInterfaces: checkForEmptyInterfaces(program, fixtureDir),
+    emptyInterfaces: checkForEmptyInterfaces(program),
   };
 }
 
-function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
+function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
 
   const checker = program.getTypeChecker();
@@ -179,7 +179,6 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
     const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
 
     if (!concernsBun) {
-      // the lion is not concerned by symbols outside of bun
       continue;
     }
 

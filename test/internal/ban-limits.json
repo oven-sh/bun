@@ -4,7 +4,7 @@
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
   ".arguments_old(": 280,
-  ".stdDir()": 40,
+  ".stdDir()": 39,
   ".stdFile()": 18,
   "// autofix": 168,
   ": [a-zA-Z0-9_\\.\\*\\?\\[\\]\\(\\)]+ = undefined,": 230,

@@ -1037,7 +1037,8 @@ const Template = enum {
                 // appear prominently in repos) doesn't show a file path.
                 if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
                     @"create CLAUDE.md" = false;
-                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
+                    bun.sys.mkdirat(bun.FD.cwd(), ".cursor", 0o755).unwrap() catch {};
+                    bun.sys.mkdirat(bun.FD.cwd(), ".cursor/rules", 0o755).unwrap() catch {};
                     bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
                     Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
                     Output.flush();
@@ -1148,7 +1149,7 @@ const Template = enum {
         // Only create if VS Code or Cursor is installed
         if (isVSCodeInstalled() or isCursorInstalled()) {
             // Create .vscode directory if it doesn't exist
-            bun.makePath(bun.FD.cwd().stdDir(), ".vscode") catch {};
+            bun.sys.mkdirat(bun.FD.cwd(), ".vscode", 0o755).unwrap() catch {};
 
             // Create extensions.json if it doesn't exist
             if (!bun.sys.exists(".vscode/extensions.json")) {
@@ -1169,7 +1170,7 @@ const Template = enum {
         // Only create if VS Code or Cursor is installed and launch.json doesn't exist
         if ((isVSCodeInstalled() or isCursorInstalled()) and !bun.sys.exists(".vscode/launch.json")) {
             // Create .vscode directory if it doesn't exist
-            bun.makePath(bun.FD.cwd().stdDir(), ".vscode") catch {};
+            bun.sys.mkdirat(bun.FD.cwd(), ".vscode", 0o755).unwrap() catch {};
 
             if (template.isReact()) {
                 const react_launch_json =

@@ -999,6 +999,7 @@ interface ArrayBuffer {
    * Read-only. The length of the ArrayBuffer (in bytes).
    */
   readonly byteLength: number;
+
   /**
    * Resize an ArrayBuffer in-place.
    */
@@ -1008,7 +1009,6 @@ interface ArrayBuffer {
    * Returns a section of an ArrayBuffer.
    */
   slice(begin: number, end?: number): ArrayBuffer;
-  readonly [Symbol.toStringTag]: "ArrayBuffer";
 }
 
 interface SharedArrayBuffer {

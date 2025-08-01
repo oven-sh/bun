@@ -285,6 +285,17 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  test("checks with no lib at all", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+      options: {
+        lib: [],
+      },
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([]);
+  });
+
   test("checks with lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
       options: {

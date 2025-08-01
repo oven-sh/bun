@@ -2455,12 +2455,16 @@ pub const Expect = struct {
         var return_value_from_function: JSValue = .zero;
 
         if (!value.jsType().isFunction()) {
-            if (this.flags.promise != .none) {
-                if (value.isAnyError()) {
-                    return .{ value, return_value_from_function };
-                } else {
-                    return .{ null, return_value_from_function };
-                }
+            switch (this.flags.promise) {
+                .none => {},
+                .rejects => return .{ value, return_value_from_function },
+                .resolves => {
+                    if (value.isAnyError()) {
+                        return .{ value, return_value_from_function };
+                    } else {
+                        return .{ null, return_value_from_function };
+                    }
+                },
             }
 
             return globalThis.throw("Expected value must be a function", .{});

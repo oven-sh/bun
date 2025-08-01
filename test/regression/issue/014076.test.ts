@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("resolves not toThrow", async () => {
   await expect(Promise.resolve("hello, world")).resolves.not.toThrow();

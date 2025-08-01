@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/9687
 describe("issue #9687 - expect().resolves.not.toThrow() fails incorrectly", () => {

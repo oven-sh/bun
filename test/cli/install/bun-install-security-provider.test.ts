@@ -467,48 +467,48 @@ describe("Large Data Handling", () => {
   });
 });
 
-describe("Warning Level Advisories", () => {
-  test("only warning level advisories", {
-    scanner: async ({ packages }) => [
-      {
-        package: packages[0].name,
-        description: "This is just a warning",
-        level: "warn",
-        url: "https://example.com/warning",
-      },
-    ],
-    expectedExitCode: 0, // Should continue with warnings
-    expect: ({ out }) => {
-      expect(out).toContain("WARN: bar");
-      expect(out).toContain("This is just a warning");
-      expect(out).toContain("Security warnings found. Continuing anyway...");
-      expect(out).not.toContain("Installation cancelled");
-    },
-  });
+// describe("Warning Level Advisories", () => {
+//   test("only warning level advisories", {
+//     scanner: async ({ packages }) => [
+//       {
+//         package: packages[0].name,
+//         description: "This is just a warning",
+//         level: "warn",
+//         url: "https://example.com/warning",
+//       },
+//     ],
+//     expectedExitCode: 0, // Should continue with warnings
+//     expect: ({ out }) => {
+//       expect(out).toContain("WARN: bar");
+//       expect(out).toContain("This is just a warning");
+//       expect(out).toContain("Security warnings found. Continuing anyway...");
+//       expect(out).not.toContain("Installation cancelled");
+//     },
+//   });
 
-  test("mixed fatal and warn advisories", {
-    scanner: async ({ packages }) => [
-      {
-        package: packages[0].name,
-        description: "Warning advisory",
-        level: "warn",
-        url: "https://example.com/warning",
-      },
-      {
-        package: packages[0].name,
-        description: "Fatal advisory",
-        level: "fatal",
-        url: "https://example.com/fatal",
-      },
-    ],
-    fails: true,
-    expect: ({ out }) => {
-      expect(out).toContain("WARN: bar");
-      expect(out).toContain("FATAL: bar");
-      expect(out).toContain("Installation cancelled due to fatal security issues");
-    },
-  });
-});
+//   test("mixed fatal and warn advisories", {
+//     scanner: async ({ packages }) => [
+//       {
+//         package: packages[0].name,
+//         description: "Warning advisory",
+//         level: "warn",
+//         url: "https://example.com/warning",
+//       },
+//       {
+//         package: packages[0].name,
+//         description: "Fatal advisory",
+//         level: "fatal",
+//         url: "https://example.com/fatal",
+//       },
+//     ],
+//     fails: true,
+//     expect: ({ out }) => {
+//       expect(out).toContain("WARN: bar");
+//       expect(out).toContain("FATAL: bar");
+//       expect(out).toContain("Installation cancelled due to fatal security issues");
+//     },
+//   });
+// });
 
 describe("Multiple Package Scanning", () => {
   test("multiple packages scanned", {

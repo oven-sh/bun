@@ -1827,9 +1827,15 @@ inline fn createScope(
             return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
         }
 
+        // Handle the case where options are the second parameter and function is the third
+        if (args.len >= 3 and !function.isFunction() and function.isObject() and args[2].isFunction()) {
+            options = function;
+            function = args[2];
+        }
+
         if (!function.isFunction()) {
             if (tag != .todo and tag != .skip) {
-                return globalThis.throwPretty("{s} expects second argument to be a function", .{signature});
+                return globalThis.throwPretty("{s} expects second argument to be a function or object, and third argument to be a function", .{signature});
             }
         }
     }

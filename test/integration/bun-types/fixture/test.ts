@@ -1,4 +1,18 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  jest,
+  type Mock,
+  spyOn,
+  test,
+  xdescribe,
+  xit,
+  xtest,
+} from "bun:test";
 import { expectType } from "./utilities";
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
@@ -144,3 +158,7 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+xtest("", () => {});
+xdescribe("", () => {});
+xit("", () => {});

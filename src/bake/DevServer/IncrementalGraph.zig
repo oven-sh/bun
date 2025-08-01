@@ -698,6 +698,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
+        /// When we delete an edge, we need to delete it by connecting the
+        /// previous dependency (importer) edge to the next depedenency
+        /// (importer) edge.
+        ///
+        /// DO NOT ONLY CALL THIS FUNCTION TO TRY TO DELETE AN EDGE, YOU MUST DELETE
+        /// THE IMPORTS TOO!
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
             const imported = edge.imported.get();
@@ -1802,6 +1808,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
         fn freeEdge(g: *@This(), edge_index: EdgeIndex) void {
+            igLog("IncrementalGraph(0x{x}, {s}).freeEdge({d})", .{ @intFromPtr(g), @tagName(side), edge_index.get() });
+            defer g.checkEdgeRemoval(edge_index);
             if (Environment.isDebug) {
                 g.edges.items[edge_index.get()] = undefined;
             }
@@ -1813,6 +1821,46 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     // Leak an edge object; Ok since it may get cleaned up by
                     // the next incremental graph garbage-collection cycle.
                 };
+            }
+        }
+
+        /// It is very easy to call `g.freeEdge(idx)` but still keep references
+        /// to the idx around, basically causing use-after-free with more steps
+        /// and no asan to check it since we are dealing with indices and not
+        /// pointers to memory.
+        ///
+        /// So we'll check it manually by making sure there are no references to
+        /// `edge_index` in the graph.
+        fn checkEdgeRemoval(g: *@This(), edge_index: EdgeIndex) void {
+            if (comptime !Environment.isDebug) return;
+
+            for (g.first_dep.items) |maybe_first_dep| {
+                if (maybe_first_dep.unwrap()) |first_dep| {
+                    bun.assert_neql(first_dep.get(), edge_index.get());
+                }
+            }
+
+            for (g.first_import.items) |maybe_first_import| {
+                if (maybe_first_import.unwrap()) |first_import| {
+                    bun.assert_neql(first_import.get(), edge_index.get());
+                }
+            }
+
+            for (g.edges.items) |edge| {
+                const in_free_list = in_free_list: {
+                    for (g.edges_free_list.items) |free_edge_index| {
+                        if (free_edge_index.get() == edge_index.get()) {
+                            break :in_free_list true;
+                        }
+                    }
+                    break :in_free_list false;
+                };
+
+                if (in_free_list) continue;
+
+                bun.assert_neql(edge.prev_dependency.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_import.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_dependency.unwrapGet(), edge_index.get());
             }
         }
 

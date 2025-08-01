@@ -1007,11 +1007,11 @@ pub const PipeReader = struct {
         written: usize = 0,
         err: ?jsc.SystemError = null,
 
-        pub fn doWrite(this: *CapturedWriter, chunk: []const u8) void {
+        pub fn doWrite(this: *CapturedWriter, chunk: []const u8) bun.JSExecutionTerminated!void {
             if (this.dead or this.err != null) return;
 
             log("CapturedWriter(0x{x}, {s}) doWrite len={d} parent_amount={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len, this.parent().buffered_output.len() });
-            this.writer.enqueue(this, null, chunk).run();
+            return this.writer.enqueue(this, null, chunk).run();
         }
 
         pub fn getBuffer(this: *CapturedWriter) []const u8 {
@@ -1151,12 +1151,13 @@ pub const PipeReader = struct {
 
     pub const toJS = toReadableStream;
 
+    // TODO: properly propagate exception upwards
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
 
-        this.captured_writer.doWrite(chunk);
+        this.captured_writer.doWrite(chunk) catch return false;
 
         const should_continue = has_more != .eof;
 
@@ -1180,13 +1181,9 @@ pub const PipeReader = struct {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
+        defer if (this.process) |_| this.deref();
+        defer if (this.process) |p| p.onCloseIO(this.kind(p));
         this.trySignalDoneToCmd().run();
-
-        if (this.process) |process| {
-            // this.process = null;
-            process.onCloseIO(this.kind(process));
-            this.deref();
-        }
     }
 
     pub fn trySignalDoneToCmd(
@@ -1303,12 +1300,9 @@ pub const PipeReader = struct {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         this.ref();
         defer this.deref();
+        defer if (this.process) |_| this.deref();
+        defer if (this.process) |p| p.onCloseIO(this.kind(p));
         this.trySignalDoneToCmd().run();
-        if (this.process) |process| {
-            // this.process = null;
-            process.onCloseIO(this.kind(process));
-            this.deref();
-        }
     }
 
     pub fn close(this: *PipeReader) void {

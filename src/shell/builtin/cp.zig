@@ -204,7 +204,7 @@ pub inline fn bltn(this: *@This()) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
+pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) bun.JSExecutionTerminated!void {
     assert(this.state == .exec);
     log("task done: 0x{x} {d}", .{ @intFromPtr(task), this.state.exec.tasks_count });
     this.state.exec.tasks_count -= 1;
@@ -220,8 +220,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-                this.next().run();
-                return;
+                return this.next().run();
             }
         } else {
             const tgt_absolute = task.tgt_absolute;
@@ -233,7 +232,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
         }
     }
 
-    this.printShellCpTask(task).run();
+    return this.printShellCpTask(task).run();
 }
 
 pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
@@ -409,13 +408,13 @@ pub const ShellCpTask = struct {
         }
     }
 
-    pub fn runFromMainThread(this: *ShellCpTask) void {
+    pub fn runFromMainThread(this: *ShellCpTask) bun.JSExecutionTerminated!void {
         debug("runFromMainThread", .{});
-        this.cp.onShellCpTaskDone(this);
+        return this.cp.onShellCpTaskDone(this);
     }
 
-    pub fn runFromMainThreadMini(this: *ShellCpTask, _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *ShellCpTask, _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     pub fn runFromThreadPool(task: *WorkPoolTask) void {

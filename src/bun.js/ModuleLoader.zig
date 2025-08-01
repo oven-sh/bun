@@ -607,7 +607,7 @@ pub const AsyncModule = struct {
         promise_value.ensureStillAlive();
         this.poll_ref.unref(vm);
         this.deinit();
-        promise.rejectAsHandled(globalThis, error_instance);
+        try promise.rejectAsHandled(globalThis, error_instance);
     }
     pub fn downloadError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
         const globalThis = this.globalThis;
@@ -701,7 +701,7 @@ pub const AsyncModule = struct {
         promise_value.ensureStillAlive();
         this.poll_ref.unref(vm);
         this.deinit();
-        promise.rejectAsHandled(globalThis, error_instance);
+        try promise.rejectAsHandled(globalThis, error_instance);
     }
 
     pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) !ResolvedSource {
@@ -2142,20 +2142,20 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *jsc.EventLoop, global: *jsc.JSGlobalObject, vm: *jsc.VirtualMachine) void {
+    pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *jsc.EventLoop, global: *jsc.JSGlobalObject, vm: *jsc.VirtualMachine) bun.JSError!void {
         var batch = this.queue.popBatch();
         const jsc_vm = vm.jsc_vm;
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
+            try job.runFromJSThread();
         } else {
             return;
         }
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            event_loop.drainMicrotasksWithGlobal(global, jsc_vm) catch return;
-            job.runFromJSThread() catch |err| global.reportUncaughtExceptionFromError(err);
+            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            try job.runFromJSThread();
         }
 
         // immediately after this is called, the microtasks will be drained again.

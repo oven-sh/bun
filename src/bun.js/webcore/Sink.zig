@@ -264,7 +264,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn onClose(ptr: JSValue, reason: JSValue) void {
             jsc.markBinding(@src());
-            const globalThis = bun.jsc.VirtualMachine.get().global; // TODO: this should be got from a parameter
+            const globalThis = bun.jsc.VirtualMachine.get().global; //
+
             return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), onCloseExtern, .{ ptr, reason }) catch return; // TODO: properly propagate exception upwards
         }
 
@@ -401,10 +402,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 return globalThis.throwValue(globalThis.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
             }
 
-            const str = arg.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
+            const str = try arg.toString(globalThis);
 
             const view = str.view(globalThis);
 

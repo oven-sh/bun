@@ -144,7 +144,7 @@ pub const SplitBundlerOptions = struct {
                 promise.setHandled(global.vm());
                 // TODO: remove this call, replace with a promise list that must
                 // be resolved before the first bundle task can begin.
-                global.bunVM().waitForPromise(promise);
+                try global.bunVM().waitForPromise(promise);
                 switch (promise.unwrap(global.vm(), .mark_handled)) {
                     .pending => unreachable,
                     .fulfilled => |val| {

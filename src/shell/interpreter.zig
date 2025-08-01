@@ -926,6 +926,7 @@ pub const Interpreter = struct {
             },
             .result => |i| i,
         };
+        defer interp.deinitEverything();
 
         const exit_code: ExitCode = 1;
 
@@ -941,18 +942,16 @@ pub const Interpreter = struct {
             .interp = interp,
         };
         interp.exit_code = exit_code;
-        switch (try interp.run()) {
+        switch (interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
             },
             else => {},
         }
-        mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        try mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
         return code;
     }
 
@@ -1008,7 +1007,7 @@ pub const Interpreter = struct {
         };
         const exit_code: ExitCode = 1;
         interp.exit_code = exit_code;
-        switch (try interp.run()) {
+        switch (interp.run()) {
             .err => |e| {
                 interp.deinitEverything();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
@@ -1017,7 +1016,7 @@ pub const Interpreter = struct {
             },
             else => {},
         }
-        mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        try mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
         interp.deinitEverything();
         return code;
@@ -1073,7 +1072,7 @@ pub const Interpreter = struct {
         return .success;
     }
 
-    pub fn run(this: *ThisInterpreter) !Maybe(void) {
+    pub fn run(this: *ThisInterpreter) Maybe(void) {
         log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
@@ -1150,14 +1149,12 @@ pub const Interpreter = struct {
                     this.this_jsvalue = .zero;
                     this.keep_alive.disable();
                     loop.enter();
-                    _ = resolve.call(globalThis, .js_undefined, &.{
-                        JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    defer loop.exit();
+                    const stdout_js = this.getBufferedStdout(globalThis);
+                    const stderr_js = this.getBufferedStderr(globalThis);
+                    resolve.callMaybeEmitUncaught(globalThis, .js_undefined, &.{ .jsNumberFromU16(exit_code), stdout_js, stderr_js }) catch {};
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-                    loop.exit();
                 }
             }
         } else {
@@ -1561,7 +1558,7 @@ pub fn ShellTask(
     comptime runFromThreadPool_: fn (*Ctx) void,
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
-    comptime runFromMainThread_: fn (*Ctx) void,
+    comptime runFromMainThread_: fn (*Ctx) bun.JSExecutionTerminated!void,
     comptime debug: bun.Output.LogFunction,
 ) type {
     return struct {
@@ -1599,15 +1596,15 @@ pub fn ShellTask(
             this.onFinish();
         }
 
-        pub fn runFromMainThread(this: *@This()) void {
+        pub fn runFromMainThread(this: *@This()) bun.JSExecutionTerminated!void {
             debug("runFromJS", .{});
             const ctx: *Ctx = @fieldParentPtr("task", this);
             this.ref.unref(this.event_loop);
-            runFromMainThread_(ctx);
+            return runFromMainThread_(ctx);
         }
 
-        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-            this.runFromMainThread();
+        pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+            return this.runFromMainThread();
         }
     };
 }

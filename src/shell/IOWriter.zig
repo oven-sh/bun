@@ -366,8 +366,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
             // So for a quick hack we're just going to have all writes return an error.
             bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data", .{ @intFromPtr(this), this.fd });
             this.flags.broken_pipe = true;
-            this.brokenPipeForWriters();
-            return;
+            return this.brokenPipeForWriters();
         }
 
         if (child.written >= child.len) {

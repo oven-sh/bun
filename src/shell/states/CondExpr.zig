@@ -33,15 +33,15 @@ pub const ShellCondExprStatTask = struct {
         this.result = ShellSyscall.statat(this.cwdfd, this.path);
     }
 
-    pub fn runFromMainThread(this: *ShellCondExprStatTask) void {
+    pub fn runFromMainThread(this: *ShellCondExprStatTask) bun.JSExecutionTerminated!void {
         defer this.deinit();
         const ret = this.result.?;
         this.result = null;
-        this.condexpr.onStatTaskComplete(ret);
+        return this.condexpr.onStatTaskComplete(ret);
     }
 
-    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-        this.runFromMainThread();
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) bun.JSExecutionTerminated!void {
+        return this.runFromMainThread();
     }
 
     pub fn deinit(this: *ShellCondExprStatTask) void {
@@ -235,13 +235,13 @@ pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {
     @panic("Invalid child to cond expression, this indicates a bug in Bun. Please file a report on Github.");
 }
 
-pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) void {
+pub fn onStatTaskComplete(this: *CondExpr, result: Maybe(bun.Stat)) bun.JSExecutionTerminated!void {
     if (bun.Environment.allow_assert) assert(this.state == .waiting_stat);
 
     this.state = .{
         .stat_complete = .{ .stat = result },
     };
-    this.next().run();
+    return this.next().run();
 }
 
 pub fn writeFailingError(this: *CondExpr, comptime fmt: []const u8, args: anytype) Yield {

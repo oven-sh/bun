@@ -147,12 +147,12 @@ pub fn actuallyDeinit(this: *Async) void {
     bun.destroy(this);
 }
 
-pub fn runFromMainThread(this: *Async) void {
-    this.next().run();
+pub fn runFromMainThread(this: *Async) bun.JSExecutionTerminated!void {
+    return this.next().run();
 }
 
-pub fn runFromMainThreadMini(this: *Async, _: *void) void {
-    this.runFromMainThread();
+pub fn runFromMainThreadMini(this: *Async, _: *void) bun.JSExecutionTerminated!void {
+    return this.runFromMainThread();
 }
 
 const std = @import("std");

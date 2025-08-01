@@ -349,14 +349,14 @@ pub const Result = union(Tag) {
                 }
             };
 
-            pub fn run(this: *Writable.Pending) void {
+            pub fn run(this: *Writable.Pending) bun.JSError!void {
                 if (this.state != .pending) return;
                 this.state = .used;
                 switch (this.future) {
                     .promise => {
                         var p = this.future.promise;
                         this.future = .none;
-                        Writable.fulfillPromise(this.result, p.strong.swap(), p.global);
+                        try Writable.fulfillPromise(this.result, p.strong.swap(), p.global);
                     },
                     .handler => |h| {
                         h.handler(h.ctx, this.result);
@@ -377,19 +377,20 @@ pub const Result = union(Tag) {
             result: Writable,
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
-        ) void {
+        ) bun.JSExecutionTerminated!void {
             defer promise.toJS().unprotect();
-            switch (result) {
-                .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis));
-                },
-                .done => {
-                    promise.resolve(globalThis, JSValue.jsBoolean(false));
-                },
-                else => {
-                    promise.resolve(globalThis, result.toJS(globalThis));
-                },
-            }
+            return switch (result) {
+                .err => |err| promise.reject(globalThis, err.toJS(globalThis)),
+                .done => promise.resolve(globalThis, JSValue.jsBoolean(false)),
+
+                .pending => promise.resolve(globalThis, result.toJS(globalThis)),
+                .owned => promise.resolve(globalThis, result.toJS(globalThis)),
+                .owned_and_done => promise.resolve(globalThis, result.toJS(globalThis)),
+                .temporary_and_done => promise.resolve(globalThis, result.toJS(globalThis)),
+                .temporary => promise.resolve(globalThis, result.toJS(globalThis)),
+                .into_array => promise.resolve(globalThis, result.toJS(globalThis)),
+                .into_array_and_done => promise.resolve(globalThis, result.toJS(globalThis)),
+            };
         }
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
@@ -452,10 +453,9 @@ pub const Result = union(Tag) {
             vm.eventLoop().enqueueTask(jsc.Task.init(clone));
         }
 
-        pub fn runFromJSThread(this: *Pending) void {
-            this.run();
-
-            bun.destroy(this);
+        pub fn runFromJSThread(this: *Pending) bun.JSExecutionTerminated!void {
+            defer bun.destroy(this);
+            try this.run();
         }
 
         pub const Future = union(enum) {
@@ -496,12 +496,12 @@ pub const Result = union(Tag) {
             used,
         };
 
-        pub fn run(this: *Pending) void {
+        pub fn run(this: *Pending) bun.JSExecutionTerminated!void {
             if (this.state != .pending) return;
             this.state = .used;
             switch (this.future) {
                 .promise => |p| {
-                    Result.fulfillPromise(&this.result, p.promise, p.globalThis);
+                    try Result.fulfillPromise(&this.result, p.promise, p.globalThis);
                 },
                 .handler => |h| {
                     h.handler(h.ctx, this.result);
@@ -517,7 +517,7 @@ pub const Result = union(Tag) {
         };
     }
 
-    pub fn fulfillPromise(result: *Result, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
+    pub fn fulfillPromise(result: *Result, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!void {
         const vm = globalThis.bunVM();
         const loop = vm.eventLoop();
         const promise_value = promise.toJS();
@@ -537,21 +537,20 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value);
+                return promise.reject(globalThis, value);
             },
             .done => {
-                promise.resolve(globalThis, JSValue.jsBoolean(false));
+                return promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
                     result.* = .{ .temporary = .{} };
-                    promise.reject(globalThis, err);
-                    return;
+                    return promise.reject(globalThis, err);
                 };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
-                promise.resolve(globalThis, value);
+                return promise.resolve(globalThis, value);
             },
         }
     }
@@ -1325,7 +1324,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
+                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush)) catch return; // TODO: properly propagate exception upwards
                 this.wrote_at_start_of_flush = this.wrote;
             }
         }
@@ -1407,7 +1406,7 @@ pub const NetworkSink = struct {
     pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
+            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed)) catch return; // TODO: properly propagate exception upwards
         }
     }
 
@@ -1558,16 +1557,16 @@ pub const BufferAction = union(enum) {
 
     pub const Tag = @typeInfo(BufferAction).@"union".tag_type.?;
 
-    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) void {
-        blob.wrap(.{ .normal = this.swap() }, global, this.*);
+    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) bun.JSExecutionTerminated!void {
+        return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) void {
-        this.swap().reject(global, err.toJSWeak(global)[0]);
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSExecutionTerminated!void {
+        return this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
-    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) void {
-        this.swap().resolve(global, result);
+    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSExecutionTerminated!void {
+        return this.swap().resolve(global, result);
     }
 
     pub fn value(this: *BufferAction) jsc.JSValue {

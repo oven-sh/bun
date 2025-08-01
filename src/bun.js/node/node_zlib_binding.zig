@@ -125,7 +125,7 @@ pub fn CompressionStream(comptime T: type) type {
             }
         };
 
-        pub fn runFromJSThread(this: *T) void {
+        pub fn runFromJSThread(this: *T) bun.JSError!void {
             const global: *jsc.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
             this.poll_ref.unref(vm);
@@ -141,9 +141,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this_value.ensureStillAlive();
 
-            if (!(checkError(this, global, this_value) catch return global.reportActiveExceptionAsUnhandled(error.JSError))) {
-                return; // TODO: properly propagate exception upwards
-            }
+            if (!(try checkError(this, global, this_value))) return;
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
             this_value.ensureStillAlive();
@@ -249,14 +247,14 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         /// returns true if no error was detected/emitted
-        fn checkError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) !bool {
+        fn checkError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) bun.JSError!bool {
             const err = this.stream.getErrorInfo();
             if (!err.isError()) return true;
             try emitError(this, globalThis, this_value, err);
             return false;
         }
 
-        pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) !void {
+        pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) bun.JSError!void {
             var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
             const msg_value = msg_str.transferToJS(globalThis);
             const err_value: jsc.JSValue = .jsNumber(err_.err);

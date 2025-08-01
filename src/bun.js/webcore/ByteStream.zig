@@ -79,7 +79,7 @@ pub fn onData(
     this: *@This(),
     stream: streams.Result,
     allocator: std.mem.Allocator,
-) void {
+) bun.JSExecutionTerminated!void {
     jsc.markBinding(@src());
     if (this.done) {
         if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
@@ -114,8 +114,7 @@ pub fn onData(
 
             log("ByteStream.onData err  action.reject()", .{});
 
-            action.reject(this.parent().globalThis, stream.err);
-            return;
+            return action.reject(this.parent().globalThis, stream.err);
         }
 
         if (this.has_received_last_chunk) {
@@ -127,16 +126,14 @@ pub fn onData(
                 log("ByteStream.onData done and action.fulfill()", .{});
 
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
-                return;
+                return action.fulfill(this.parent().globalThis, &blob);
             }
             if (this.buffer.capacity == 0 and stream == .owned_and_done) {
                 log("ByteStream.onData owned_and_done and action.fulfill()", .{});
 
                 this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
                 var blob = this.toAnyBlob().?;
-                action.fulfill(this.parent().globalThis, &blob);
-                return;
+                return action.fulfill(this.parent().globalThis, &blob);
             }
             defer {
                 if (stream == .owned_and_done or stream == .owned) {
@@ -147,9 +144,7 @@ pub fn onData(
 
             this.buffer.appendSlice(chunk) catch bun.outOfMemory();
             var blob = this.toAnyBlob().?;
-            action.fulfill(this.parent().globalThis, &blob);
-
-            return;
+            return action.fulfill(this.parent().globalThis, &blob);
         } else {
             this.buffer.appendSlice(chunk) catch bun.outOfMemory();
 
@@ -207,7 +202,7 @@ pub fn onData(
 
         log("ByteStream.onData pending.run()", .{});
 
-        this.pending.run();
+        try this.pending.run();
 
         return;
     }
@@ -349,12 +344,12 @@ pub fn onCancel(this: *@This()) void {
         this.pending_buffer = &.{};
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };
-        this.pending.run();
+        this.pending.run() catch return; // TODO: properly propagate exception upwards
     }
 
     if (this.buffer_action) |*action| {
         const global = this.parent().globalThis;
-        action.reject(global, .{ .AbortReason = .UserAbort });
+        action.reject(global, .{ .AbortReason = .UserAbort }) catch return; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
 }
@@ -379,7 +374,7 @@ pub fn deinit(this: *@This()) void {
             // We must never run JavaScript inside of a GC finalizer.
             this.pending.runOnNextTick();
         } else {
-            this.pending.run();
+            this.pending.run() catch {}; // TODO: properly propagate exception upwards
         }
     }
     if (this.buffer_action) |*action| {

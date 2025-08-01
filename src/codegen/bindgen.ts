@@ -1436,6 +1436,7 @@ for (const [filename, { functions, typedefs }] of files) {
           zigInternal.line(`)) catch |err| switch (err) {`);
           zigInternal.line(`    error.JSError => return false,`);
           zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
+          zigInternal.line(`    error.JSExecutionTerminated => return false,`);
           zigInternal.line(`};`);
           zigInternal.line(`return true;`);
           break;

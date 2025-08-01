@@ -9,8 +9,8 @@ export async function build(dir: string) {
   const child = spawn({
     cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose"],
     cwd: dir,
-    stderr: "pipe",
-    stdout: "ignore",
+    stderr: "ignore",
+    stdout: "inherit",
     stdin: "inherit",
     env: {
       ...bunEnv,
@@ -42,8 +42,8 @@ export function run(dir: string, test: string) {
   const result = spawnSync({
     cmd: [bunExe(), "run", test],
     cwd: dir,
-    stderr: "inherit",
-    stdout: "ignore",
+    stderr: "ignore",
+    stdout: "inherit",
     stdin: "inherit",
     env,
   });

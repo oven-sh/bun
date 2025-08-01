@@ -785,6 +785,7 @@ pub const H2FrameParser = struct {
             signal: *jsc.WebCore.AbortSignal,
             parser: *H2FrameParser,
             stream_id: u32,
+            globalThis: *jsc.JSGlobalObject,
 
             pub const new = bun.TrivialNew(SignalRef);
 
@@ -792,7 +793,7 @@ pub const H2FrameParser = struct {
                 return this.signal.aborted();
             }
 
-            pub fn abortListener(this: *SignalRef, reason: JSValue) void {
+            pub fn abortListener(this: *SignalRef, reason: JSValue) bun.JSExecutionTerminated!void {
                 log("abortListener", .{});
                 reason.ensureStillAlive();
                 const stream = this.parser.streams.getEntry(this.stream_id) orelse return;
@@ -1154,6 +1155,7 @@ pub const H2FrameParser = struct {
                 .signal = signal,
                 .parser = parser,
                 .stream_id = this.id,
+                .globalThis = parser.globalThis, // TODO: remove this when `AbortSignal` + `voidFromJSError` no longer needs it
             });
             signal_ref.signal = signal.ref().listen(SignalRef, signal_ref, SignalRef.abortListener);
             //TODO: We should not need this ref counting here, since Parser owns Stream
@@ -2442,7 +2444,7 @@ pub const H2FrameParser = struct {
     }
 
     /// We need to be very carefull because this is not a stable ptr
-    fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) ?*Stream {
+    fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) bun.JSExecutionTerminated!?*Stream {
         // connection stream
         if (streamIdentifier == 0) {
             return null;
@@ -2470,8 +2472,7 @@ pub const H2FrameParser = struct {
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
             // we assume that onStreamStart will never mutate the stream hash map
-            _ = callback.call(this.handlers.globalObject, ctx_value, &[_]jsc.JSValue{ ctx_value, jsc.JSValue.jsNumber(streamIdentifier) }) catch |err|
-                this.handlers.globalObject.reportActiveExceptionAsUnhandled(err);
+            try callback.callMaybeEmitUncaught(this.handlers.globalObject, ctx_value, &[_]jsc.JSValue{ ctx_value, jsc.JSValue.jsNumber(streamIdentifier) });
         }
         return entry.value_ptr;
     }
@@ -2494,7 +2495,7 @@ pub const H2FrameParser = struct {
         if (this.currentFrame) |header| {
             log("current frame {s} {} {} {} {}", .{ if (this.isServer) "server" else "client", header.type, header.length, header.flags, header.streamIdentifier });
 
-            const stream = this.handleReceivedStreamID(header.streamIdentifier);
+            const stream = try this.handleReceivedStreamID(header.streamIdentifier);
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes),
                 @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes, stream),
@@ -2542,8 +2543,7 @@ pub const H2FrameParser = struct {
             this.currentFrame = header;
             this.remainingLength = header.length;
             log("new frame {} {} {} {}", .{ header.type, header.length, header.flags, header.streamIdentifier });
-            const stream = this.handleReceivedStreamID(header.streamIdentifier);
-
+            const stream = try this.handleReceivedStreamID(header.streamIdentifier);
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[needed..]) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[needed..], stream) + needed,
@@ -2576,7 +2576,7 @@ pub const H2FrameParser = struct {
         log("new frame {s} {} {} {} {}", .{ if (this.isServer) "server" else "client", header.type, header.length, header.flags, header.streamIdentifier });
         this.currentFrame = header;
         this.remainingLength = header.length;
-        const stream = this.handleReceivedStreamID(header.streamIdentifier);
+        const stream = try this.handleReceivedStreamID(header.streamIdentifier);
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
@@ -3671,7 +3671,7 @@ pub const H2FrameParser = struct {
         if (id > MAX_STREAM_ID) {
             return jsc.JSValue.jsNumber(-1);
         }
-        _ = this.handleReceivedStreamID(id) orelse {
+        _ = try this.handleReceivedStreamID(id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
 
@@ -3848,7 +3848,7 @@ pub const H2FrameParser = struct {
                 defer header_count += 1;
                 if (this.maxHeaderListPairs < header_count) {
                     this.rejectedStreams += 1;
-                    const stream = this.handleReceivedStreamID(stream_id) orelse {
+                    const stream = try this.handleReceivedStreamID(stream_id) orelse {
                         return jsc.JSValue.jsNumber(-1);
                     };
                     if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -3932,7 +3932,7 @@ pub const H2FrameParser = struct {
                         log("encode header {s} {s}", .{ validated_name, value });
 
                         encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
-                            const stream = this.handleReceivedStreamID(stream_id) orelse {
+                            const stream = try this.handleReceivedStreamID(stream_id) orelse {
                                 return jsc.JSValue.jsNumber(-1);
                             };
                             if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -3966,7 +3966,7 @@ pub const H2FrameParser = struct {
                     log("encode header {s} {s}", .{ validated_name, value });
 
                     encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
-                        const stream = this.handleReceivedStreamID(stream_id) orelse {
+                        const stream = try this.handleReceivedStreamID(stream_id) orelse {
                             return jsc.JSValue.jsNumber(-1);
                         };
                         stream.state = .CLOSED;
@@ -3980,7 +3980,7 @@ pub const H2FrameParser = struct {
                 }
             }
         }
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
+        const stream = try this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {

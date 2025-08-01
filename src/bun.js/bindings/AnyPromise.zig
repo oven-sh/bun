@@ -28,22 +28,22 @@ pub const AnyPromise = union(enum) {
         }
     }
 
-    pub fn resolve(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        switch (this) {
+    pub fn resolve(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return switch (this) {
             inline else => |promise| promise.resolve(globalThis, value),
-        }
+        };
     }
 
-    pub fn reject(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        switch (this) {
+    pub fn reject(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return switch (this) {
             inline else => |promise| promise.reject(globalThis, value),
-        }
+        };
     }
 
-    pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        switch (this) {
+    pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSExecutionTerminated!void {
+        return switch (this) {
             inline else => |promise| promise.rejectAsHandled(globalThis, value),
-        }
+        };
     }
 
     pub fn asValue(this: AnyPromise) JSValue {
@@ -60,7 +60,7 @@ pub const AnyPromise = union(enum) {
         globalObject: *JSGlobalObject,
         comptime Function: anytype,
         args: std.meta.ArgsTuple(@TypeOf(Function)),
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         const Args = std.meta.ArgsTuple(@TypeOf(Function));
         const Fn = Function;
         const Wrapper = struct {
@@ -76,7 +76,7 @@ pub const AnyPromise = union(enum) {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         JSC__AnyPromise__wrap(globalObject, this.asValue(), &ctx, @ptrCast(&Wrapper.call));
-        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        if (scope.hasException()) return error.JSExecutionTerminated;
     }
 };
 

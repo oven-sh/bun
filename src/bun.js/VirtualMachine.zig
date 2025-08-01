@@ -754,13 +754,13 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
     loop.run();
 }
 
-pub fn onBeforeExit(this: *VirtualMachine) void {
+pub fn onBeforeExit(this: *VirtualMachine) bun.JSExecutionTerminated!void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
         while (this.isEventLoopAlive()) : (dispatch = true) {
-            this.tick();
-            this.eventLoop().autoTickActive();
+            try this.tick();
+            try this.eventLoop().autoTickActive();
         }
 
         if (dispatch) {
@@ -865,30 +865,30 @@ pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *jsc.Concurrent
     this.eventLoop().enqueueTaskConcurrent(task);
 }
 
-pub fn tick(this: *VirtualMachine) void {
-    this.eventLoop().tick();
+pub fn tick(this: *VirtualMachine) bun.JSExecutionTerminated!void {
+    return this.eventLoop().tick();
 }
 
-pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+pub fn waitFor(this: *VirtualMachine, cond: *bool) bun.JSExecutionTerminated!void {
     while (!cond.*) {
-        this.eventLoop().tick();
+        try this.eventLoop().tick();
 
         if (!cond.*) {
-            this.eventLoop().autoTick();
+            try this.eventLoop().autoTick();
         }
     }
 }
 
-pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) void {
-    this.eventLoop().waitForPromise(promise);
+pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) bun.JSExecutionTerminated!void {
+    return this.eventLoop().waitForPromise(promise);
 }
 
-pub fn waitForTasks(this: *VirtualMachine) void {
+pub fn waitForTasks(this: *VirtualMachine) bun.JSExecutionTerminated!void {
     while (this.isEventLoopAlive()) {
-        this.eventLoop().tick();
+        try this.eventLoop().tick();
 
         if (this.isEventLoopAlive()) {
-            this.eventLoop().autoTick();
+            try this.eventLoop().autoTick();
         }
     }
 }
@@ -1928,7 +1928,7 @@ pub fn printException(
     comptime Writer: type,
     writer: Writer,
     comptime allow_side_effects: bool,
-) void {
+) bun.JSError!void {
     var formatter = ConsoleObject.Formatter{
         .globalThis = this.global,
         .quote_strings = false,
@@ -1937,9 +1937,9 @@ pub fn printException(
     };
     defer formatter.deinit();
     if (Output.enable_ansi_colors) {
-        this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
+        try this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
     } else {
-        this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
+        try this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
     }
 }
 
@@ -1974,7 +1974,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
             @TypeOf(writer),
             writer,
             true,
-        );
+        ) catch return; // TODO: properly propagate exception upwards
     } else {
         var formatter = ConsoleObject.Formatter{
             .globalThis = this.global,
@@ -1985,7 +1985,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
         };
         defer formatter.deinit();
         switch (Output.enable_ansi_colors) {
-            inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
+            inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true) catch return, // TODO: properly propagate exception upwards
         }
     }
 }
@@ -2053,10 +2053,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             switch (this.pending_internal_promise.?.status(this.global.vm())) {
                 .pending => {
                     while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().tick();
+                        try this.eventLoop().tick();
 
                         if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                            this.eventLoop().autoTick();
+                            try this.eventLoop().autoTick();
                         }
                     }
                 },
@@ -2064,7 +2064,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(jsc.AnyPromise{
+            try this.waitForPromise(jsc.AnyPromise{
                 .internal = promise,
             });
         }
@@ -2197,7 +2197,15 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
     this.eventLoop().performGC();
     this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
         .internal = promise,
-    });
+    }) catch |err| switch (err) {
+        error.JSExecutionTerminated => {
+            if (this.worker) |worker| {
+                if (worker.hasRequestedTerminate()) {
+                    return error.WorkerTerminated;
+                }
+            }
+        },
+    };
     if (this.worker) |worker| {
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
@@ -2215,10 +2223,10 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         switch (this.pending_internal_promise.?.status(this.global.vm())) {
             .pending => {
                 while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                    this.eventLoop().tick();
+                    try this.eventLoop().tick();
 
                     if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().autoTick();
+                        try this.eventLoop().autoTick();
                     }
                 }
             },
@@ -2230,10 +2238,10 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        try this.waitForPromise(.{ .internal = promise });
     }
 
-    this.eventLoop().autoTick();
+    try this.eventLoop().autoTick();
 
     return this.pending_internal_promise.?;
 }
@@ -2247,10 +2255,10 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         switch (this.pending_internal_promise.?.status(this.global.vm())) {
             .pending => {
                 while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                    this.eventLoop().tick();
+                    try this.eventLoop().tick();
 
                     if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
-                        this.eventLoop().autoTick();
+                        try this.eventLoop().autoTick();
                     }
                 }
             },
@@ -2262,7 +2270,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        try this.waitForPromise(.{ .internal = promise });
     }
 
     return this.pending_internal_promise.?;
@@ -2322,9 +2330,7 @@ pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*
     var promise: *JSInternalPromise = undefined;
 
     promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
-    this.waitForPromise(jsc.AnyPromise{
-        .internal = promise,
-    });
+    this.waitForPromise(jsc.AnyPromise{ .internal = promise }) catch return null;
 
     return promise;
 }
@@ -2350,7 +2356,7 @@ pub fn printErrorlikeObject(
     writer: Writer,
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
-) void {
+) bun.JSError!void {
     var was_internal = false;
 
     defer {
@@ -2381,22 +2387,22 @@ pub fn printErrorlikeObject(
             current_exception_list: ?*ExceptionList = null,
             formatter: *ConsoleObject.Formatter,
 
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, true);
+            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
+                try iterator(vm, globalObject, nextValue, ctx.?, true);
             }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, false);
+            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) bun.JSError!void {
+                try iterator(vm, globalObject, nextValue, ctx.?, false);
             }
-            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+            fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) bun.JSError!void {
                 const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
+                try globalObject.bunVM().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
             }
         };
         var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
         if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
+            try value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
         } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
+            try value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
         }
         return;
     }
@@ -2769,7 +2775,7 @@ pub fn remapZigException(
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return; // TODO: audit this error set
             must_reset_parser_arena_later.* = true;
             break :code original_source.source_code.toUTF8(bun.default_allocator);
         };
@@ -3489,7 +3495,7 @@ pub const IPCInstance = struct {
         return this.globalThis;
     }
 
-    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) void {
+    pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) bun.JSError!void {
         jsc.markBinding(@src());
         const globalThis = this.globalThis;
         const event_loop = jsc.VirtualMachine.get().eventLoop();
@@ -3510,7 +3516,7 @@ pub const IPCInstance = struct {
                 IPC.log("Received IPC internal message from parent", .{});
                 event_loop.enter();
                 defer event_loop.exit();
-                node_cluster_binding.handleInternalMessageChild(globalThis, data) catch return;
+                try node_cluster_binding.handleInternalMessageChild(globalThis, data);
             },
         }
     }
@@ -3642,7 +3648,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         jsc.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
+        jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return; // TODO: properly propagate exception upwards
     }
 };
 

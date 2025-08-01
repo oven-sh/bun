@@ -46,6 +46,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "EXCEPTION_ASSERT(!scope.exception())": { reason: "Use scope.assertNoException() instead" },
+  "TODO: properly propagate exception upwards": { reason: "Return bun.JSError or bun.JSExecutionTerminated" },
 };
 const words_keys = [...Object.keys(words)];
 

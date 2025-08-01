@@ -187,7 +187,7 @@ pub const Expect = struct {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
 
-                    globalThis.bunVM().waitForPromise(promise);
+                    try globalThis.bunVM().waitForPromise(promise);
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
@@ -652,10 +652,10 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
                     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
+                    if (try item.jestDeepEquals(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -748,9 +748,9 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.isSameValue(entry.expected, entry.globalThis) catch return) {
+                    if (try item.isSameValue(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -1346,9 +1346,9 @@ pub const Expect = struct {
                     _: *JSGlobalObject,
                     entry_: ?*anyopaque,
                     item: JSValue,
-                ) callconv(.C) void {
+                ) bun.JSError!void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
+                    if (try item.jestDeepEquals(entry.expected, entry.globalThis)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -2169,7 +2169,7 @@ pub const Expect = struct {
                 }
             } else if (value.isString()) {
                 // `.toThrow("") behaves the same as `.toThrow()`
-                const s = value.toString(globalThis);
+                const s = try value.toString(globalThis);
                 if (s.length() == 0) break :brk .zero;
             }
             break :brk value;
@@ -2481,7 +2481,7 @@ pub const Expect = struct {
         }
 
         if (return_value.asAnyPromise()) |promise| {
-            vm.waitForPromise(promise);
+            try vm.waitForPromise(promise);
             scope.apply(vm);
             switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
                 .fulfilled => {
@@ -2966,7 +2966,7 @@ pub const Expect = struct {
                             _: *JSGlobalObject,
                             any_: ?*anyopaque,
                             _: JSValue,
-                        ) callconv(.C) void {
+                        ) bun.JSError!void {
                             bun.cast(*bool, any_.?).* = true;
                         }
                     }.anythingInIterator);
@@ -4751,7 +4751,7 @@ pub const Expect = struct {
             const vm = globalThis.vm();
             promise.setHandled(vm);
 
-            globalThis.bunVM().waitForPromise(promise);
+            try globalThis.bunVM().waitForPromise(promise);
 
             result = promise.result(vm);
             result.ensureStillAlive();
@@ -4808,7 +4808,7 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable()); // checked above
 
-            const message_result = try message.callWithGlobalThis(globalThis, &.{});
+            const message_result = try message.call(globalThis, globalThis.toJSValue(), &.{});
             message_text = try bun.String.fromJS(message_result, globalThis);
         }
 

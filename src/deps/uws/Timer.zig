@@ -1,7 +1,7 @@
 /// **DEPRECATED**
 /// **DO NOT USE IN NEW CODE!**
 ///
-/// Use `JSC.EventLoopTimer` instead.
+/// Use `jsc.EventLoopTimer` instead.
 ///
 /// This code will be deleted eventually! It is very inefficient on POSIX. On
 /// Linux, it holds an entire file descriptor for every single timer. On macOS,

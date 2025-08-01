@@ -52,7 +52,7 @@ const LibInfo = struct {
         return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", getHandle);
     }
 
-    pub fn lookup(this: *Resolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn lookup(this: *Resolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) bun.JSExecutionTerminated!jsc.JSValue {
         bun.Environment.onlyMac();
 
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return LibC.lookup(this, query, globalThis);
@@ -95,10 +95,9 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
+            defer this.vm.allocator.destroy(request);
+            try request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
-            this.vm.allocator.destroy(request);
-
             return promise_value;
         }
 
@@ -170,17 +169,18 @@ const LibUVBackend = struct {
 
     fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
         //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         const Holder = struct {
             uv_info: *libuv.uv_getaddrinfo_t,
             task: jsc.AnyTask,
 
             pub fn run(held: *@This()) void {
                 defer bun.default_allocator.destroy(held);
-                GetAddrInfoRequest.onLibUVComplete(held.uv_info);
+                const this: *GetAddrInfoRequest = @alignCast(@ptrCast(held.uv_info.data));
+                GetAddrInfoRequest.onLibUVComplete(held.uv_info) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         };
 
+        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
         holder.* = .{
             .uv_info = uv_info,
@@ -345,11 +345,11 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             }
         };
 
-        pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*cares_type) void {
+        pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*cares_type) bun.JSError!void {
             if (this.resolver_for_caching) |resolver| {
                 defer resolver.requestCompleted();
                 if (this.cache.pending_cache) {
-                    resolver.drainPendingCares(
+                    return resolver.drainPendingCares(
                         this.cache.pos_in_pending,
                         err_,
                         timeout,
@@ -358,14 +358,12 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
                         type_name,
                         result,
                     );
-                    return;
                 }
             }
 
             var head = this.head;
             bun.default_allocator.destroy(this);
-
-            head.processResolve(err_, timeout, result);
+            return head.processResolve(err_, timeout, result);
         }
     };
 }
@@ -451,23 +449,21 @@ pub const GetHostByAddrInfoRequest = struct {
         }
     };
 
-    pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) void {
+    pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) bun.JSError!void {
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingAddrCares(
+                return resolver.drainPendingAddrCares(
                     this.cache.pos_in_pending,
                     err_,
                     timeout,
                     result,
                 );
-                return;
             }
         }
 
         var head = this.head;
         bun.default_allocator.destroy(this);
-
-        head.processResolve(err_, timeout, result);
+        return head.processResolve(err_, timeout, result);
     }
 };
 
@@ -495,7 +491,7 @@ pub const CAresNameInfo = struct {
         return this;
     }
 
-    pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?c_ares.struct_nameinfo) void {
+    pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?c_ares.struct_nameinfo) bun.JSError!void {
         if (err_) |err| {
             err.toDeferred("getnameinfo", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
@@ -507,17 +503,17 @@ pub const CAresNameInfo = struct {
             return;
         }
         var name_info = result.?;
-        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis) catch .zero; // TODO: properly propagate exception upwards
-        this.onComplete(array);
+        const array = try name_info.toJSResponse(this.globalThis.allocator(), this.globalThis);
+        try this.onComplete(array);
         return;
     }
 
-    pub fn onComplete(this: *@This(), result: jsc.JSValue) void {
+    pub fn onComplete(this: *@This(), result: jsc.JSValue) bun.JSExecutionTerminated!void {
         var promise = this.promise;
+        defer this.deinit();
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
-        this.deinit();
+        try promise.resolveTask(globalThis, result);
     }
 
     pub fn deinit(this: *@This()) void {
@@ -604,24 +600,22 @@ pub const GetNameInfoRequest = struct {
         }
     };
 
-    pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) void {
+    pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) bun.JSError!void {
         if (this.resolver_for_caching) |resolver| {
             defer resolver.requestCompleted();
             if (this.cache.pending_cache) {
-                resolver.drainPendingNameInfoCares(
+                return resolver.drainPendingNameInfoCares(
                     this.cache.pos_in_pending,
                     err_,
                     timeout,
                     result,
                 );
-                return;
             }
         }
 
         var head = this.head;
         bun.default_allocator.destroy(this);
-
-        head.processResolve(err_, timeout, result);
+        return head.processResolve(err_, timeout, result);
     }
 };
 
@@ -718,14 +712,13 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, .{ .addrinfo = addr_info });
-                return;
+                return resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, .{ .addrinfo = addr_info }) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
             }
         }
 
         var head = this.head;
         bun.default_allocator.destroy(this);
-        head.processGetAddrInfoNative(status, addr_info);
+        return head.processGetAddrInfoNative(status, addr_info) catch |err| bun.jsc.host_fn.voidFromJSError(err, this.head.globalThis);
     }
 
     pub const Backend = union(enum) {
@@ -809,7 +802,7 @@ pub const GetAddrInfoRequest = struct {
         task.onFinish();
     }
 
-    pub fn then(this: *GetAddrInfoRequest, _: *jsc.JSGlobalObject) void {
+    pub fn then(this: *GetAddrInfoRequest, _: *jsc.JSGlobalObject) bun.JSError!void {
         log("then", .{});
         switch (this.backend.libc) {
             .success => |result| {
@@ -821,13 +814,12 @@ pub const GetAddrInfoRequest = struct {
                     // }
 
                     if (this.cache.pending_cache) {
-                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, any);
-                        return;
+                        return resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, any);
                     }
                 }
                 var head = this.head;
                 bun.default_allocator.destroy(this);
-                head.onCompleteNative(any);
+                try head.onCompleteNative(any);
             },
             .err => |err| {
                 getAddrInfoAsyncCallback(err, null, this);
@@ -836,7 +828,7 @@ pub const GetAddrInfoRequest = struct {
         }
     }
 
-    pub fn onCaresComplete(this: *GetAddrInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+    pub fn onCaresComplete(this: *GetAddrInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) bun.JSError!void {
         log("onCaresComplete", .{});
         if (this.resolver_for_caching) |resolver| {
             // if (this.cache.entry_cache and result != null and result.?.node != null) {
@@ -844,23 +836,22 @@ pub const GetAddrInfoRequest = struct {
             // }
 
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostCares(
+                return resolver.drainPendingHostCares(
                     this.cache.pos_in_pending,
                     err_,
                     timeout,
                     result,
                 );
-                return;
             }
         }
 
         var head = this.head;
         bun.default_allocator.destroy(this);
 
-        head.processGetAddrInfo(err_, timeout, result);
+        return head.processGetAddrInfo(err_, timeout, result);
     }
 
-    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
+    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) bun.JSError!void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         bun.assert(uv_info == &this.backend.libc.uv);
@@ -870,14 +861,14 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
+                try resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, uv_info.retcode.int(), .{ .addrinfo = uv_info.addrinfo });
                 return;
             }
         }
 
         var head = this.head;
-        head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
-        head.globalThis.allocator().destroy(this);
+        defer head.globalThis.allocator().destroy(this);
+        try head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
     }
 };
 
@@ -911,7 +902,7 @@ pub const CAresReverse = struct {
         return this;
     }
 
-    pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) void {
+    pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) bun.JSError!void {
         if (err_) |err| {
             err.toDeferred("getHostByAddr", this.name, &this.promise).rejectLater(this.globalThis);
             this.deinit();
@@ -923,20 +914,20 @@ pub const CAresReverse = struct {
             return;
         }
         var node = result.?;
-        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "") catch .zero; // TODO: properly propagate exception upwards
-        this.onComplete(array);
+        const array = try node.toJSResponse(this.globalThis.allocator(), this.globalThis, "");
+        try this.onComplete(array);
         return;
     }
 
-    pub fn onComplete(this: *@This(), result: jsc.JSValue) void {
+    pub fn onComplete(this: *@This(), result: jsc.JSValue) bun.JSExecutionTerminated!void {
         var promise = this.promise;
+        defer this.deinit();
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        try promise.resolveTask(globalThis, result);
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
-        this.deinit();
     }
 
     pub fn deinit(this: *@This()) void {
@@ -989,7 +980,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             );
         }
 
-        pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
+        pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) bun.JSError!void {
             const syscall = comptime "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..];
 
             if (err_) |err| {
@@ -1004,20 +995,19 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
 
             var node = result.?;
-            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name) catch .zero; // TODO: properly propagate exception upwards
-            this.onComplete(array);
-            return;
+            const array = try node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name);
+            try this.onComplete(array);
         }
 
-        pub fn onComplete(this: *@This(), result: jsc.JSValue) void {
+        pub fn onComplete(this: *@This(), result: jsc.JSValue) bun.JSExecutionTerminated!void {
             var promise = this.promise;
+            defer this.deinit();
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result);
+            try promise.resolveTask(globalThis, result);
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
-            this.deinit();
         }
 
         pub fn deinit(this: *@This()) void {
@@ -1063,23 +1053,23 @@ pub const DNSLookup = struct {
         return this;
     }
 
-    pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
+    pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) bun.JSError!void {
         log("onCompleteNative", .{});
-        const array = (result.toJS(this.globalThis) catch .zero).?; // TODO: properly propagate exception upwards
-        this.onCompleteWithArray(array);
+        const array = (try result.toJS(this.globalThis)).?;
+        return this.onCompleteWithArray(array);
     }
 
-    pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
+    pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) bun.JSError!void {
         log("processGetAddrInfoNative: status={d}", .{status});
         if (c_ares.Error.initEAI(status)) |err| {
             err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
             this.deinit();
             return;
         }
-        onCompleteNative(this, .{ .addrinfo = result });
+        return onCompleteNative(this, .{ .addrinfo = result });
     }
 
-    pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
+    pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) bun.JSError!void {
         log("processGetAddrInfo", .{});
         if (err_) |err| {
             err.toDeferred("getaddrinfo", null, &this.promise).rejectLater(this.globalThis);
@@ -1092,27 +1082,27 @@ pub const DNSLookup = struct {
             this.deinit();
             return;
         }
-        this.onComplete(result.?);
+        try this.onComplete(result.?);
     }
 
-    pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
+    pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) bun.JSError!void {
         log("onComplete", .{});
 
-        const array = result.toJSArray(this.globalThis) catch .zero; // TODO: properly propagate exception upwards
-        this.onCompleteWithArray(array);
+        const array = try result.toJSArray(this.globalThis);
+        try this.onCompleteWithArray(array);
     }
 
-    pub fn onCompleteWithArray(this: *DNSLookup, result: jsc.JSValue) void {
+    pub fn onCompleteWithArray(this: *DNSLookup, result: jsc.JSValue) bun.JSExecutionTerminated!void {
         log("onCompleteWithArray", .{});
 
         var promise = this.promise;
+        defer this.deinit();
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result);
+        try promise.resolveTask(globalThis, result);
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
-        this.deinit();
     }
 
     pub fn deinit(this: *DNSLookup) void {
@@ -2070,77 +2060,74 @@ pub const Resolver = struct {
         return entry;
     }
 
-    pub fn drainPendingCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, comptime request_type: type, comptime cares_type: type, comptime lookup_name: []const u8, result: ?*cares_type) void {
-        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
-
+    pub fn drainPendingCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, comptime request_type: type, comptime cares_type: type, comptime lookup_name: []const u8, result: ?*cares_type) bun.JSError!void {
         this.ref();
         defer this.deref();
 
+        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
         const key = this.getKey(index, cache_name, request_type);
+        defer bun.default_allocator.destroy(key.lookup);
 
         var addr: *cares_type = result orelse {
             var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
-            key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            try key.lookup.head.processResolve(err, timeout, null);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processResolve(err, timeout, null);
+                try value.processResolve(err, timeout, null);
             }
             return;
         };
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
+        var array = try addr.toJSResponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
         array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        try key.lookup.head.onComplete(array);
 
         array.ensureStillAlive();
 
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
+                array = try addr.toJSResponse(this.vm.allocator, new_global, lookup_name);
                 prev_global = new_global;
             }
             pending = value.next;
 
             {
                 array.ensureStillAlive();
-                value.onComplete(array);
+                try value.onComplete(array);
                 array.ensureStillAlive();
             }
         }
     }
 
-    pub fn drainPendingHostCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
-        const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
-
+    pub fn drainPendingHostCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) bun.JSError!void {
         this.ref();
         defer this.deref();
 
+        const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
+
         var addr = result orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
-            key.lookup.head.processGetAddrInfo(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            try key.lookup.head.processGetAddrInfo(err, timeout, null);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processGetAddrInfo(err, timeout, null);
+                try value.processGetAddrInfo(err, timeout, null);
             }
             return;
         };
 
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(prev_global) catch .zero; // TODO: properly propagate exception upwards
+        var array = try addr.toJSArray(prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
-        key.lookup.head.onCompleteWithArray(array);
-        bun.default_allocator.destroy(key.lookup);
+        try key.lookup.head.onCompleteWithArray(array);
 
         array.ensureStillAlive();
         // std.c.addrinfo
@@ -2148,35 +2135,35 @@ pub const Resolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(new_global) catch .zero; // TODO: properly propagate exception upwards
+                array = try addr.toJSArray(new_global);
                 prev_global = new_global;
             }
             pending = value.next;
 
             {
                 array.ensureStillAlive();
-                value.onCompleteWithArray(array);
+                try value.onCompleteWithArray(array);
                 array.ensureStillAlive();
             }
         }
     }
 
-    pub fn drainPendingHostNative(this: *Resolver, index: u8, globalObject: *jsc.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) void {
+    pub fn drainPendingHostNative(this: *Resolver, index: u8, globalObject: *jsc.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) bun.JSError!void {
         log("drainPendingHostNative", .{});
-        const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
-
         this.ref();
         defer this.deref();
 
-        var array = (result.toJS(globalObject) catch .zero) orelse { // TODO: properly propagate exception upwards
+        const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
+
+        var array = try result.toJS(globalObject) orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
             var head = key.lookup.head;
-            head.processGetAddrInfoNative(err, null);
-            bun.default_allocator.destroy(key.lookup);
+            try head.processGetAddrInfoNative(err, null);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processGetAddrInfoNative(err, null);
+                try value.processGetAddrInfoNative(err, null);
             }
 
             return;
@@ -2186,8 +2173,7 @@ pub const Resolver = struct {
 
         {
             array.ensureStillAlive();
-            key.lookup.head.onCompleteWithArray(array);
-            bun.default_allocator.destroy(key.lookup);
+            try key.lookup.head.onCompleteWithArray(array);
             array.ensureStillAlive();
         }
 
@@ -2197,32 +2183,32 @@ pub const Resolver = struct {
             const new_global = value.globalThis;
             pending = value.next;
             if (prev_global != new_global) {
-                array = (result.toJS(new_global) catch .zero).?; // TODO: properly propagate exception upwards
+                array = (try result.toJS(new_global)).?;
                 prev_global = new_global;
             }
 
             {
                 array.ensureStillAlive();
-                value.onCompleteWithArray(array);
+                try value.onCompleteWithArray(array);
                 array.ensureStillAlive();
             }
         }
     }
 
-    pub fn drainPendingAddrCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) void {
-        const key = this.getKey(index, "pending_addr_cache_cares", GetHostByAddrInfoRequest);
-
+    pub fn drainPendingAddrCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_hostent) bun.JSError!void {
         this.ref();
         defer this.deref();
 
+        const key = this.getKey(index, "pending_addr_cache_cares", GetHostByAddrInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
+
         var addr = result orelse {
             var pending: ?*CAresReverse = key.lookup.head.next;
-            key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            try key.lookup.head.processResolve(err, timeout, null);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processResolve(err, timeout, null);
+                try value.processResolve(err, timeout, null);
             }
             return;
         };
@@ -2232,43 +2218,42 @@ pub const Resolver = struct {
         //  The callback need not and should not attempt to free the memory
         //  pointed to by hostent; the ares library will free it when the
         //  callback returns.
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, "") catch .zero; // TODO: properly propagate exception upwards
+        var array = try addr.toJSResponse(this.vm.allocator, prev_global, "");
         array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        try key.lookup.head.onComplete(array);
 
         array.ensureStillAlive();
 
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, "") catch .zero; // TODO: properly propagate exception upwards
+                array = try addr.toJSResponse(this.vm.allocator, new_global, "");
                 prev_global = new_global;
             }
             pending = value.next;
 
             {
                 array.ensureStillAlive();
-                value.onComplete(array);
+                try value.onComplete(array);
                 array.ensureStillAlive();
             }
         }
     }
 
-    pub fn drainPendingNameInfoCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) void {
-        const key = this.getKey(index, "pending_nameinfo_cache_cares", GetNameInfoRequest);
-
+    pub fn drainPendingNameInfoCares(this: *Resolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?c_ares.struct_nameinfo) bun.JSError!void {
         this.ref();
         defer this.deref();
 
+        const key = this.getKey(index, "pending_nameinfo_cache_cares", GetNameInfoRequest);
+        defer bun.default_allocator.destroy(key.lookup);
+
         var name_info = result orelse {
             var pending: ?*CAresNameInfo = key.lookup.head.next;
-            key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            try key.lookup.head.processResolve(err, timeout, null);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processResolve(err, timeout, null);
+                try value.processResolve(err, timeout, null);
             }
             return;
         };
@@ -2276,24 +2261,23 @@ pub const Resolver = struct {
         var pending: ?*CAresNameInfo = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
 
-        var array = name_info.toJSResponse(this.vm.allocator, prev_global) catch .zero; // TODO: properly propagate exception upwards
+        var array = try name_info.toJSResponse(this.vm.allocator, prev_global);
         array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        try key.lookup.head.onComplete(array);
 
         array.ensureStillAlive();
 
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = name_info.toJSResponse(this.vm.allocator, new_global) catch .zero; // TODO: properly propagate exception upwards
+                array = try name_info.toJSResponse(this.vm.allocator, new_global);
                 prev_global = new_global;
             }
             pending = value.next;
 
             {
                 array.ensureStillAlive();
-                value.onComplete(array);
+                try value.onComplete(array);
                 array.ensureStillAlive();
             }
         }
@@ -2746,6 +2730,7 @@ pub const Resolver = struct {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
+                    error.JSExecutionTerminated => |e| e,
 
                     // more information with these errors
                     error.InvalidOptions,

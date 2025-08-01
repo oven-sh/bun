@@ -444,7 +444,7 @@ pub const PackageInstaller = struct {
             // .monotonic is okay because this value isn't modified from any other thread.
             // (Scripts are spawned on this thread.)
             while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
-                this.manager.sleep();
+                this.manager.sleep() catch return; // TODO: properly propagate exception upwards
             }
 
             const optional = entry.optional;
@@ -485,7 +485,7 @@ pub const PackageInstaller = struct {
                 }
             }
 
-            this.manager.sleep();
+            this.manager.sleep() catch return; // TODO: properly propagate exception upwards
         }
     }
 

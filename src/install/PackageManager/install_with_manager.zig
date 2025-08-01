@@ -843,7 +843,7 @@ pub fn installWithManager(
             // thread.
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
-                manager.sleep();
+                try manager.sleep();
             }
         }
     }

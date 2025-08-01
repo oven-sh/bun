@@ -260,7 +260,7 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (data: UserData, socket: *us_socket_t, error_code: u8, rawPacket: []const u8) void,
+            comptime handler: fn (data: UserData, socket: *us_socket_t, error_code: u8, rawPacket: []const u8) bun.JSExecutionTerminated!void,
         ) void {
             const Wrapper = struct {
                 pub fn handle(data: *anyopaque, _: c_int, socket: *us_socket_t, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
@@ -269,7 +269,9 @@ pub fn NewApp(comptime ssl: bool) type {
                         socket,
                         error_code,
                         if (raw_packet) |bytes| bytes[0..(@max(raw_packet_length, 0))] else "",
-                    });
+                    }) catch |err| switch (err) {
+                        error.JSExecutionTerminated => {},
+                    };
                 }
             };
             return c.uws_app_set_on_clienterror(ssl_flag, @ptrCast(app), Wrapper.handle, @ptrCast(user_data));

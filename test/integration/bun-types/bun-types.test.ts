@@ -317,7 +317,7 @@ describe("@types/bun integration test", () => {
       },
       {
         code: 2769,
-        line: "fetch.ts:169:36",
+        line: "fetch.ts:168:34",
         message: "No overload matches this call.",
       },
       {

@@ -231,7 +231,8 @@ afterAll(async () => {
     console.log(TEMP_DIR);
 
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
-      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
+      console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
+      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }

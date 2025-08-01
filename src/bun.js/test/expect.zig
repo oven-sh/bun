@@ -2884,7 +2884,7 @@ pub const Expect = struct {
 
             const prop_matchers = _prop_matchers;
 
-            if (!try value.jestDeepMatch(prop_matchers, globalThis, true)) {
+            if (!try value.jestDeepMatch(prop_matchers, globalThis)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -4285,7 +4285,7 @@ pub const Expect = struct {
 
         const property_matchers = args[0];
 
-        var pass = try received_object.jestDeepMatch(property_matchers, globalThis, true);
+        var pass = try received_object.jestDeepMatch(property_matchers, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .js_undefined;

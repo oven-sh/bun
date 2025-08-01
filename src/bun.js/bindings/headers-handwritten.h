@@ -432,7 +432,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @param globalObject
  * @param Scope
  * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -447,7 +446,6 @@ bool Bun__deepMatch(
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

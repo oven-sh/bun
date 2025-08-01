@@ -306,6 +306,21 @@ describe("@types/bun integration test", () => {
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([
       {
+        code: 2769,
+        line: "fetch.ts:22:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:30:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:166:36",
+        message: "No overload matches this call.",
+      },
+      {
         line: "globals.ts:307:5",
         message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         code: 2353,

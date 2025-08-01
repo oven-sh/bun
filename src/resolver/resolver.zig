@@ -1,44 +1,7 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-const PathString = bun.PathString;
-const default_allocator = bun.default_allocator;
-const FD = bun.FD;
-
-const ast = @import("../import_record.zig");
-const logger = bun.logger;
-const options = @import("../options.zig");
-const Fs = @import("../fs.zig");
-const std = @import("std");
-const cache = @import("../cache.zig");
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
-const ESModule = @import("./package_json.zig").ESModule;
-const BrowserMap = @import("./package_json.zig").BrowserMap;
-const CacheSet = cache.Set;
 pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const ResolvePath = @import("./resolve_path.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const Mutex = bun.Mutex;
-const FileDescriptorType = bun.FileDescriptor;
-const JSC = bun.JSC;
 
-const allocators = @import("../allocators.zig");
-const Msg = logger.Msg;
-const Path = Fs.Path;
 const debuglog = Output.scoped(.Resolver, true);
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Dependency = @import("../install/dependency.zig");
-const Install = @import("../install/install.zig");
-const Package = @import("../install/lockfile.zig").Package;
-const Resolution = @import("../install/resolution.zig").Resolution;
-const Semver = bun.Semver;
-const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
@@ -89,7 +52,7 @@ const bufs = struct {
     pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
 
     pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]std.fs.Dir = undefined;
+    pub threadlocal var open_dirs: [256]FD = undefined;
     pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
     pub threadlocal var index: bun.PathBuffer = undefined;
     pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
@@ -450,8 +413,6 @@ var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
 
-const Timer = @import("../system_timer.zig").Timer;
-
 pub const AnyResolveWatcher = struct {
     context: *anyopaque,
     callback: *const (fn (*anyopaque, dir_path: string, dir_fd: FD) void) = undefined,
@@ -676,7 +637,7 @@ pub const Resolver = struct {
             bun.crash_handler.current_action = prev_action;
         };
 
-        if (Environment.show_crash_trace and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
+        if (Environment.show_crash_trace and bun.cli.debug_flags.hasResolveBreakpoint(import_path)) {
             bun.Output.debug("Resolving <green>{s}<r> from <blue>{s}<r>", .{
                 import_path,
                 source_dir,
@@ -1242,7 +1203,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -2216,7 +2177,7 @@ pub const Resolver = struct {
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        const open_dir = bun.openDirForIteration(std.fs.cwd(), dir_path) catch |err| {
+        const open_dir = bun.openDirForIteration(FD.cwd(), dir_path).unwrap() catch |err| {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
@@ -2264,10 +2225,10 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                dir_entries_ptr.fd = .fromStdDir(open_dir);
+                dir_entries_ptr.fd = open_dir;
             }
 
-            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2288,7 +2249,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            .fromStdDir(open_dir),
+            open_dir,
             package_id,
         );
         return dir_info_ptr;
@@ -2783,9 +2744,9 @@ pub const Resolver = struct {
         // When this function halts, any item not processed means it's not found.
         defer {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
-                const open_dirs: []std.fs.Dir = bufs(.open_dirs)[0..open_dir_count];
+                const open_dirs = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |open_dir| {
-                    bun.FD.fromStdDir(open_dir).close();
+                    open_dir.close();
                 }
             }
         }
@@ -2810,8 +2771,8 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            const open_dir: std.fs.Dir = if (queue_top.fd.isValid())
-                queue_top.fd.stdDir()
+            const open_dir: FD = if (queue_top.fd.isValid())
+                queue_top.fd
             else open_dir: {
                 // This saves us N copies of .toPosixPath
                 // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
@@ -2820,19 +2781,20 @@ pub const Resolver = struct {
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 const sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
 
-                const open_req = if (comptime Environment.isPosix)
-                    std.fs.openDirAbsoluteZ(
+                const open_req = if (comptime Environment.isPosix) open_req: {
+                    const dir_result = std.fs.openDirAbsoluteZ(
                         sentinel,
                         .{ .no_follow = !follow_symlinks, .iterate = true },
-                    )
-                else if (comptime Environment.isWindows) open_req: {
+                    ) catch |err| break :open_req err;
+                    break :open_req FD.fromStdDir(dir_result);
+                } else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{
                         .iterable = true,
                         .no_follow = !follow_symlinks,
                         .read_only = true,
                     });
                     if (dirfd_result.unwrap()) |result| {
-                        break :open_req result.stdDir();
+                        break :open_req result;
                     } else |err| {
                         break :open_req err;
                     }
@@ -2879,7 +2841,7 @@ pub const Resolver = struct {
             };
 
             if (!queue_top.fd.isValid()) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
+                Fs.FileSystem.setMaxFd(open_dir.cast());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs(.open_dirs)[open_dir_count] = open_dir;
                 open_dir_count += 1;
@@ -2945,13 +2907,13 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) .fromStdDir(open_dir) else .invalid;
+                new_entry.fd = if (r.store_fd) open_dir else .invalid;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2966,7 +2928,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                .fromStdDir(open_dir),
+                open_dir,
                 null,
             );
 
@@ -3160,7 +3122,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -3421,9 +3383,9 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
-        bun.JSC.markBinding(@src());
-        const argument: bun.JSC.JSValue = callframe.argument(0);
+    pub fn nodeModulePathsForJS(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!jsc.JSValue {
+        bun.jsc.markBinding(@src());
+        const argument: bun.jsc.JSValue = callframe.argument(0);
 
         if (argument == .zero or !argument.isString()) {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
@@ -3434,14 +3396,14 @@ pub const Resolver = struct {
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        bun.JSC.markBinding(@src());
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+        bun.jsc.markBinding(@src());
 
         const in_str = bun.String.init(".");
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.JSC.JSGlobalObject, use_dirname: bool) callconv(.C) bun.JSC.JSValue {
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.C) bun.jsc.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
@@ -3793,7 +3755,6 @@ pub const Resolver = struct {
         }
 
         const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
-        bun.strings.assertIsValidWindowsPath(u8, dir_path);
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
@@ -4262,7 +4223,6 @@ pub const Dirname = struct {
         const root = brk: {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
-                assert(root.len > 0);
 
                 // Preserve the trailing slash for UNC paths.
                 // Going from `\\server\share\folder` should end up
@@ -4350,8 +4310,52 @@ pub const GlobalCache = enum {
 
 comptime {
     _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&JSC.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
+    @export(&jsc.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 
+const string = []const u8;
+
+const Dependency = @import("../install/dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const ResolvePath = @import("./resolve_path.zig");
+const ast = @import("../import_record.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const Package = @import("../install/lockfile.zig").Package;
+const Resolution = @import("../install/resolution.zig").Resolution;
+const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+const Timer = @import("../system_timer.zig").Timer;
+
+const cache = @import("../cache.zig");
+const CacheSet = cache.Set;
+
+const Fs = @import("../fs.zig");
+const Path = Fs.Path;
+
+const Install = @import("../install/install.zig");
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const BrowserMap = @import("./package_json.zig").BrowserMap;
+const ESModule = @import("./package_json.zig").ESModule;
+const PackageJSON = @import("./package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptor;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const Semver = bun.Semver;
+const allocators = bun.allocators;
 const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+
+const logger = bun.logger;
+const Msg = logger.Msg;

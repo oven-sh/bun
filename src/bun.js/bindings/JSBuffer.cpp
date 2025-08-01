@@ -227,7 +227,7 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
     // it should have thrown an exception already
-    ASSERT(!!throwScope.exception() == !uint8Array);
+    EXCEPTION_ASSERT(!!throwScope.exception() == !uint8Array);
 
     return uint8Array;
 }
@@ -241,7 +241,7 @@ static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* result = createUninitializedBuffer(lexicalGlobalObject, byteLength);
 
     // it should have thrown an exception already
-    ASSERT(!!throwScope.exception() == !result);
+    EXCEPTION_ASSERT(!!throwScope.exception() == !result);
 
     return result;
 }

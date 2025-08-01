@@ -2,12 +2,10 @@ pub const PrepareCssAstTask = struct {
     task: ThreadPoolLib.Task,
     chunk: *Chunk,
     linker: *LinkerContext,
-    wg: *sync.WaitGroup,
 };
 
 pub fn prepareCssAstsForChunk(task: *ThreadPoolLib.Task) void {
     const prepare_css_asts: *const PrepareCssAstTask = @fieldParentPtr("task", task);
-    defer prepare_css_asts.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", prepare_css_asts.linker));
     defer worker.unget();
 
@@ -268,21 +266,21 @@ fn wrapRulesWithConditions(
     }
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const DataURL = bun.bundle_v2.DataURL;
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const std = @import("std");
-const sync = bun.ThreadPool;
-const ImportRecord = bun.ImportRecord;
-
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
+const DataURL = bun.bundle_v2.DataURL;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

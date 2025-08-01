@@ -79,8 +79,6 @@ pub const SavedMappings = struct {
     }
 };
 
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -168,7 +166,7 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
+    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -321,16 +319,19 @@ pub fn resolveMapping(
     };
 }
 
-const bun = @import("bun");
-const SourceMap = bun.sourcemap;
-const SourceProviderMap = SourceMap.SourceProviderMap;
-const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const string = []const u8;
-const logger = bun.logger;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
-const js_printer = bun.js_printer;
-const Output = bun.Output;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+
+const SourceMap = bun.sourcemap;
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const SourceProviderMap = SourceMap.SourceProviderMap;

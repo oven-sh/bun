@@ -1,6 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
 
-// TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
 cache_directory_path: stringZ = "",
 temp_dir_: ?std.fs.Dir = null,
 temp_dir_path: stringZ = "",
@@ -58,7 +57,7 @@ manifests: PackageManifestMap = .{},
 folders: FolderResolution.Map = .{},
 git_repositories: RepositoryMap = .{},
 
-network_dedupe_map: NetworkTask.DedupeMap = NetworkTask.DedupeMap.init(bun.default_allocator),
+network_dedupe_map: NetworkTask.DedupeMap = .init(bun.default_allocator),
 async_network_task_queue: AsyncNetworkTaskQueue = .{},
 network_tarball_batch: ThreadPool.Batch = .{},
 network_resolve_batch: ThreadPool.Batch = .{},
@@ -69,8 +68,10 @@ patch_task_fifo: PatchTaskFifo = PatchTaskFifo.init(),
 patch_task_queue: PatchTaskQueue = .{},
 /// We actually need to calculate the patch file hashes
 /// every single time, because someone could edit the patchfile at anytime
-pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+///
+/// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
+pending_pre_calc_hashes: std.atomic.Value(u32) = .init(0),
+pending_tasks: std.atomic.Value(u32) = .init(0),
 total_tasks: u32 = 0,
 preallocated_network_tasks: PreallocatedNetworkTasks,
 preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -78,8 +79,8 @@ preallocated_resolve_tasks: PreallocatedTaskStore,
 /// items are only inserted into this if they took more than 500ms
 lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
 
-pending_lifecycle_script_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-finished_installing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+pending_lifecycle_script_tasks: std.atomic.Value(u32) = .init(0),
+finished_installing: std.atomic.Value(bool) = .init(false),
 total_scripts: usize = 0,
 
 root_lifecycle_scripts: ?Package.Scripts.List = null,
@@ -96,17 +97,16 @@ preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
 global_link_dir_path: string = "",
-wait_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
+peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
 
-event_loop: JSC.AnyEventLoop,
+event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust
 // actually have scripts to run, and we add them to this list
@@ -154,6 +154,7 @@ pub const Subcommand = enum {
     publish,
     audit,
     info,
+    why,
 
     // bin,
     // hash,
@@ -307,59 +308,68 @@ pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
     return false;
 }
 
-pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !*transpiler.Transpiler {
-    if (this.env_configure) |*env_configure| {
-        return &env_configure.transpiler;
-    }
-
-    // We need to figure out the PATH and other environment variables
-    // to do that, we re-use the code from bun run
-    // this is expensive, it traverses the entire directory tree going up to the root
-    // so we really only want to do it when strictly necessary
-    this.env_configure = .{
-        .root_dir_info = undefined,
-        .transpiler = undefined,
-    };
-    const this_transpiler: *transpiler.Transpiler = &this.env_configure.?.transpiler;
-
-    const root_dir_info = try RunCommand.configureEnvForRun(
-        ctx,
-        this_transpiler,
-        this.env,
-        log_level != .silent,
-        false,
-    );
-
-    const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
-    if (!init_cwd_entry.found_existing) {
-        init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
-        init_cwd_entry.value_ptr.* = .{
-            .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
-            .conditional = false,
-        };
-    }
-
-    this.env.loadCCachePath(this_transpiler.fs);
-
-    {
-        var node_path: bun.PathBuffer = undefined;
-        if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
-        } else brk: {
-            const current_path = this.env.get("PATH") orelse "";
-            var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
-            try PATH.appendSlice(current_path);
-            var bun_path: string = "";
-            RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
-            try this.env.map.put("PATH", PATH.items);
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
-        }
-    }
-
-    this.env_configure.?.root_dir_info = root_dir_info;
-
-    return this_transpiler;
+pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+    return configureEnvForScriptsOnce.call(.{ this, ctx, log_level });
 }
+
+pub var configureEnvForScriptsOnce = bun.once(struct {
+    pub fn run(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+
+        // We need to figure out the PATH and other environment variables
+        // to do that, we re-use the code from bun run
+        // this is expensive, it traverses the entire directory tree going up to the root
+        // so we really only want to do it when strictly necessary
+        var this_transpiler: transpiler.Transpiler = undefined;
+        _ = try RunCommand.configureEnvForRun(
+            ctx,
+            &this_transpiler,
+            this.env,
+            log_level != .silent,
+            false,
+        );
+
+        const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
+        if (!init_cwd_entry.found_existing) {
+            init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
+            init_cwd_entry.value_ptr.* = .{
+                .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
+                .conditional = false,
+            };
+        }
+
+        this.env.loadCCachePath(this_transpiler.fs);
+
+        {
+            // Run node-gyp jobs in parallel.
+            // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
+            const thread_count = bun.getThreadCount();
+            if (thread_count > 2) {
+                if (!this_transpiler.env.has("JOBS")) {
+                    var int_buf: [10]u8 = undefined;
+                    const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
+                    this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+                }
+            }
+        }
+
+        {
+            var node_path: bun.PathBuffer = undefined;
+            if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
+            } else brk: {
+                const current_path = this.env.get("PATH") orelse "";
+                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                try PATH.appendSlice(current_path);
+                var bun_path: string = "";
+                RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
+                try this.env.map.put("PATH", PATH.items);
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
+            }
+        }
+
+        return this_transpiler;
+    }
+}.run);
 
 pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
     return this.env.getHttpProxyFor(url);
@@ -409,7 +419,6 @@ pub fn wake(this: *PackageManager) void {
         this.onWake.getHandler()(ctx, this);
     }
 
-    _ = this.wait_count.fetchAdd(1, .monotonic);
     this.event_loop.wakeup();
 }
 
@@ -418,7 +427,7 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
@@ -436,6 +445,96 @@ pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
 pub const debug = Output.scoped(.PackageManager, true);
+
+pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
+    return ensureTempNodeGypScriptOnce.call(.{this});
+}
+
+var ensureTempNodeGypScriptOnce = bun.once(struct {
+    pub fn run(manager: *PackageManager) !void {
+        if (manager.node_gyp_tempdir_name.len > 0) return;
+
+        const tempdir = manager.getTemporaryDirectory();
+        var path_buf: bun.PathBuffer = undefined;
+        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
+
+        // used later for adding to path for scripts
+        manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
+
+        var node_gyp_tempdir = tempdir.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+            if (err == error.EEXIST) {
+                // it should not exist
+                Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
+                Global.crash();
+            }
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_tempdir.close();
+
+        const file_name = switch (Environment.os) {
+            else => "node-gyp",
+            .windows => "node-gyp.cmd",
+        };
+        const mode = switch (Environment.os) {
+            else => 0o755,
+            .windows => 0, // windows does not have an executable bit
+        };
+
+        var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
+            Global.crash();
+        };
+        defer node_gyp_file.close();
+
+        const content = switch (Environment.os) {
+            .windows =>
+            \\if not defined npm_config_node_gyp (
+            \\  bun x --silent node-gyp %*
+            \\) else (
+            \\  node "%npm_config_node_gyp%" %*
+            \\)
+            \\
+            ,
+            else =>
+            \\#!/bin/sh
+            \\if [ "x$npm_config_node_gyp" = "x" ]; then
+            \\  bun x --silent node-gyp $@
+            \\else
+            \\  "$npm_config_node_gyp" $@
+            \\fi
+            \\
+            ,
+        };
+
+        node_gyp_file.writeAll(content) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
+            Global.crash();
+        };
+
+        // Add our node-gyp tempdir to the path
+        const existing_path = manager.env.get("PATH") orelse "";
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + manager.temp_dir_name.len + 1 + manager.node_gyp_tempdir_name.len);
+        try PATH.appendSlice(existing_path);
+        if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
+            try PATH.append(std.fs.path.delimiter);
+        try PATH.appendSlice(strings.withoutTrailingSlash(manager.temp_dir_name));
+        try PATH.append(std.fs.path.sep);
+        try PATH.appendSlice(manager.node_gyp_tempdir_name);
+        try manager.env.map.put("PATH", PATH.items);
+
+        const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
+            strings.withoutTrailingSlash(manager.temp_dir_name),
+            std.fs.path.sep_str,
+            strings.withoutTrailingSlash(manager.node_gyp_tempdir_name),
+            std.fs.path.sep_str,
+            file_name,
+        });
+
+        const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
+        try manager.env.map.putAllocKeyAndValue(manager.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
+    }
+}.run);
 
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
@@ -684,7 +783,7 @@ pub fn init(
         break :brk loader;
     };
 
-    env.loadProcess();
+    try env.loadProcess();
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();
@@ -728,6 +827,10 @@ pub fn init(
         bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
     }
 
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS)) {
+        bun.sys.WindowsSymlinkOptions.has_failed_to_create_symlink = true;
+    }
+
     if (PackageManager.verbose_install) {
         Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
         Output.flush();
@@ -761,7 +864,7 @@ pub fn init(
         .root_package_json_file = root_package_json_file,
         // .progress
         .event_loop = .{
-            .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            .mini = jsc.MiniEventLoop.init(bun.default_allocator),
         },
         .original_package_json_path = original_package_json_path,
         .workspace_package_json_cache = workspace_package_json_cache,
@@ -769,9 +872,9 @@ pub fn init(
         .subcommand = subcommand,
         .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
     };
-    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
+    manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
-    JSC.MiniEventLoop.global = &manager.event_loop.mini;
+    jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
         manager.options.enable.manifest_cache_control = false;
@@ -930,7 +1033,7 @@ pub fn initWithRuntimeOnce(
         .lockfile = undefined,
         .root_package_json_file = undefined,
         .event_loop = .{
-            .js = JSC.VirtualMachine.get().eventLoop(),
+            .js = jsc.VirtualMachine.get().eventLoop(),
         },
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
@@ -1016,31 +1119,29 @@ const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 pub const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
-const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
+const TaskDependencyQueue = std.HashMapUnmanaged(Task.Id, TaskCallbackList, IdentityContext(Task.Id), 80);
 
 const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
 const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
-const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
+const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 
-// @sortImports
+// pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
 pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
-const DirInfo = @import("../resolver/dir_info.zig");
 pub const Options = @import("./PackageManager/PackageManagerOptions.zig");
 pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.zig");
-pub const UpdateRequest = @import("PackageManager/UpdateRequest.zig");
-pub const WorkspacePackageJSONCache = @import("PackageManager/WorkspacePackageJSONCache.zig");
-const std = @import("std");
+pub const UpdateRequest = @import("./PackageManager/UpdateRequest.zig");
+pub const WorkspacePackageJSONCache = @import("./PackageManager/WorkspacePackageJSONCache.zig");
 pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
-pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
+pub const installWithManager = @import("./PackageManager/install_with_manager.zig").installWithManager;
 
-pub const directories = @import("PackageManager/PackageManagerDirectories.zig");
+pub const directories = @import("./PackageManager/PackageManagerDirectories.zig");
 pub const attemptToCreatePackageJSON = directories.attemptToCreatePackageJSON;
 const attemptToCreatePackageJSONAndOpen = directories.attemptToCreatePackageJSONAndOpen;
 pub const cachedGitFolderName = directories.cachedGitFolderName;
@@ -1055,11 +1156,12 @@ pub const cachedNPMPackageFolderPrintBasename = directories.cachedNPMPackageFold
 pub const cachedTarballFolderName = directories.cachedTarballFolderName;
 pub const cachedTarballFolderNamePrint = directories.cachedTarballFolderNamePrint;
 pub const computeCacheDirAndSubpath = directories.computeCacheDirAndSubpath;
-pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 pub const fetchCacheDirectoryPath = directories.fetchCacheDirectoryPath;
 pub const getCacheDirectory = directories.getCacheDirectory;
+pub const getCacheDirectoryAndAbsPath = directories.getCacheDirectoryAndAbsPath;
 pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
+pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
@@ -1069,7 +1171,7 @@ pub const setupGlobalDir = directories.setupGlobalDir;
 pub const updateLockfileIfNeeded = directories.updateLockfileIfNeeded;
 pub const writeYarnLock = directories.writeYarnLock;
 
-pub const enqueue = @import("PackageManager/PackageManagerEnqueue.zig");
+pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.zig");
 pub const enqueueDependencyList = enqueue.enqueueDependencyList;
 pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
@@ -1085,10 +1187,9 @@ pub const enqueuePatchTaskPre = enqueue.enqueuePatchTaskPre;
 pub const enqueueTarballForDownload = enqueue.enqueueTarballForDownload;
 pub const enqueueTarballForReading = enqueue.enqueueTarballForReading;
 
-const lifecycle = @import("PackageManager/PackageManagerLifecycle.zig");
-const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 pub const determinePreinstallState = lifecycle.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = lifecycle.ensurePreinstallStateListCapacity;
+pub const findTrustedDependenciesFromUpdateRequests = lifecycle.findTrustedDependenciesFromUpdateRequests;
 pub const getPreinstallState = lifecycle.getPreinstallState;
 pub const hasNoMorePendingLifecycleScripts = lifecycle.hasNoMorePendingLifecycleScripts;
 pub const loadRootLifecycleScripts = lifecycle.loadRootLifecycleScripts;
@@ -1098,7 +1199,6 @@ pub const sleep = lifecycle.sleep;
 pub const spawnPackageLifecycleScripts = lifecycle.spawnPackageLifecycleScripts;
 pub const tickLifecycleScripts = lifecycle.tickLifecycleScripts;
 
-const resolution = @import("PackageManager/PackageManagerResolution.zig");
 pub const assignResolution = resolution.assignResolution;
 pub const assignRootResolution = resolution.assignRootResolution;
 pub const formatLaterVersionInCache = resolution.formatLaterVersionInCache;
@@ -1107,48 +1207,57 @@ pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
 pub const scopeForPackageName = resolution.scopeForPackageName;
 pub const verifyResolutions = resolution.verifyResolutions;
 
-pub const progress_zig = @import("PackageManager/ProgressStrings.zig");
+pub const progress_zig = @import("./PackageManager/ProgressStrings.zig");
 pub const ProgressStrings = progress_zig.ProgressStrings;
 pub const endProgressBar = progress_zig.endProgressBar;
 pub const setNodeName = progress_zig.setNodeName;
 pub const startProgressBar = progress_zig.startProgressBar;
 pub const startProgressBarIfNone = progress_zig.startProgressBarIfNone;
 
-pub const PatchCommitResult = @import("PackageManager/patchPackage.zig").PatchCommitResult;
-pub const doPatchCommit = @import("PackageManager/patchPackage.zig").doPatchCommit;
-pub const preparePatch = @import("PackageManager/patchPackage.zig").preparePatch;
+pub const PatchCommitResult = @import("./PackageManager/patchPackage.zig").PatchCommitResult;
+pub const doPatchCommit = @import("./PackageManager/patchPackage.zig").doPatchCommit;
+pub const preparePatch = @import("./PackageManager/patchPackage.zig").preparePatch;
 
-pub const GitResolver = @import("PackageManager/processDependencyList.zig").GitResolver;
-pub const processDependencyList = @import("PackageManager/processDependencyList.zig").processDependencyList;
-pub const processDependencyListItem = @import("PackageManager/processDependencyList.zig").processDependencyListItem;
-pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
-pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
+pub const GitResolver = @import("./PackageManager/processDependencyList.zig").GitResolver;
+pub const processDependencyList = @import("./PackageManager/processDependencyList.zig").processDependencyList;
+pub const processDependencyListItem = @import("./PackageManager/processDependencyList.zig").processDependencyListItem;
+pub const processExtractedTarballPackage = @import("./PackageManager/processDependencyList.zig").processExtractedTarballPackage;
+pub const processPeerDependencyList = @import("./PackageManager/processDependencyList.zig").processPeerDependencyList;
 
-pub const allocGitHubURL = @import("PackageManager/runTasks.zig").allocGitHubURL;
-pub const decrementPendingTasks = @import("PackageManager/runTasks.zig").decrementPendingTasks;
-pub const drainDependencyList = @import("PackageManager/runTasks.zig").drainDependencyList;
-pub const flushDependencyQueue = @import("PackageManager/runTasks.zig").flushDependencyQueue;
-pub const flushNetworkQueue = @import("PackageManager/runTasks.zig").flushNetworkQueue;
-pub const flushPatchTaskQueue = @import("PackageManager/runTasks.zig").flushPatchTaskQueue;
-pub const generateNetworkTaskForTarball = @import("PackageManager/runTasks.zig").generateNetworkTaskForTarball;
-pub const getNetworkTask = @import("PackageManager/runTasks.zig").getNetworkTask;
-pub const hasCreatedNetworkTask = @import("PackageManager/runTasks.zig").hasCreatedNetworkTask;
-pub const incrementPendingTasks = @import("PackageManager/runTasks.zig").incrementPendingTasks;
-pub const isNetworkTaskRequired = @import("PackageManager/runTasks.zig").isNetworkTaskRequired;
-pub const pendingTaskCount = @import("PackageManager/runTasks.zig").pendingTaskCount;
-pub const runTasks = @import("PackageManager/runTasks.zig").runTasks;
-pub const scheduleTasks = @import("PackageManager/runTasks.zig").scheduleTasks;
+pub const allocGitHubURL = @import("./PackageManager/runTasks.zig").allocGitHubURL;
+pub const decrementPendingTasks = @import("./PackageManager/runTasks.zig").decrementPendingTasks;
+pub const drainDependencyList = @import("./PackageManager/runTasks.zig").drainDependencyList;
+pub const flushDependencyQueue = @import("./PackageManager/runTasks.zig").flushDependencyQueue;
+pub const flushNetworkQueue = @import("./PackageManager/runTasks.zig").flushNetworkQueue;
+pub const flushPatchTaskQueue = @import("./PackageManager/runTasks.zig").flushPatchTaskQueue;
+pub const generateNetworkTaskForTarball = @import("./PackageManager/runTasks.zig").generateNetworkTaskForTarball;
+pub const getNetworkTask = @import("./PackageManager/runTasks.zig").getNetworkTask;
+pub const hasCreatedNetworkTask = @import("./PackageManager/runTasks.zig").hasCreatedNetworkTask;
+pub const incrementPendingTasks = @import("./PackageManager/runTasks.zig").incrementPendingTasks;
+pub const isNetworkTaskRequired = @import("./PackageManager/runTasks.zig").isNetworkTaskRequired;
+pub const pendingTaskCount = @import("./PackageManager/runTasks.zig").pendingTaskCount;
+pub const runTasks = @import("./PackageManager/runTasks.zig").runTasks;
+pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks;
 
-const updatePackageJSONAndInstall = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
-pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
-pub const updatePackageJSONAndInstallWithManager = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
+pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const DirInfo = @import("../resolver/dir_info.zig");
+const resolution = @import("./PackageManager/PackageManagerResolution.zig");
+const std = @import("std");
+const updatePackageJSONAndInstall = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
+
+const lifecycle = @import("./PackageManager/PackageManagerLifecycle.zig");
+const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
@@ -1157,19 +1266,18 @@ const RunCommand = bun.RunCommand;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
-const Api = bun.Schema.Api;
+const Api = bun.schema.api;
 const File = bun.sys.File;
-
-const BunArguments = bun.CLI.Arguments;
-const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+
+const BunArguments = bun.cli.Arguments;
+const Command = bun.cli.Command;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

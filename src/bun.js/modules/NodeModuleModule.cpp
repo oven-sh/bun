@@ -721,10 +721,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        vm, globalObject, 1, String(), resolverFunctionCallback);
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String(), resolverFunctionCallback);
 
     auto result = promise->then(globalObject, resolverFunction, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
 
     return JSC::JSValue::encode(JSC::jsUndefined());

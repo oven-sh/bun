@@ -2,7 +2,7 @@ The Bun bundler implements a set of default loaders out of the box. As a rule of
 
 `.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.txt` `.wasm` `.node` `.html`
 
-Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.sh/docs/bundler/plugins) that extend Bun with custom loaders.
+Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.com/docs/bundler/plugins) that extend Bun with custom loaders.
 
 You can explicitly specify which loader to use using the 'loader' import attribute.
 
@@ -175,7 +175,7 @@ In the bundler, `.node` files are handled using the [`file`](#file) loader.
 
 **SQLite loader**. `with { "type": "sqlite" }` import attribute
 
-In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](https://bun.sh/docs/api/sqlite).
+In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](https://bun.com/docs/api/sqlite).
 
 ```ts
 import db from "./my.db" with { type: "sqlite" };
@@ -192,7 +192,7 @@ You can change this behavior with the `"embed"` attribute:
 import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
-When using a [standalone executable](https://bun.sh/docs/bundler/executables), the database is embedded into the single-file executable.
+When using a [standalone executable](https://bun.com/docs/bundler/executables), the database is embedded into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
@@ -280,7 +280,7 @@ The `html` loader behaves differently depending on how it's used:
 
 **Bun Shell loader**. Default for `.sh` files
 
-This loader is used to parse [Bun Shell](https://bun.sh/docs/runtime/shell) scripts. It's only supported when starting Bun itself, so it's not available in the bundler or in the runtime.
+This loader is used to parse [Bun Shell](https://bun.com/docs/runtime/shell) scripts. It's only supported when starting Bun itself, so it's not available in the bundler or in the runtime.
 
 ```sh
 $ bun run ./script.sh
@@ -336,7 +336,7 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 {% /table %}
 
 {% callout %}
-The location and file name of the copied file is determined by the value of [`naming.asset`](https://bun.sh/docs/bundler#naming).
+The location and file name of the copied file is determined by the value of [`naming.asset`](https://bun.com/docs/bundler#naming).
 {% /callout %}
 This loader is copied into the `outdir` as-is. The name of the copied file is determined using the value of `naming.asset`.
 

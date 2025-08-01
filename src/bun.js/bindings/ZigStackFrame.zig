@@ -1,13 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const String = bun.String;
-const ZigURL = @import("../../url.zig").URL;
-const ZigStackFrameCode = JSC.ZigStackFrameCode;
-const ZigStackFramePosition = JSC.ZigStackFramePosition;
-const Output = bun.Output;
-const strings = bun.strings;
-const Api = @import("../../api/schema.zig").Api;
 const string = []const u8;
 
 /// Represents a single frame in a stack trace
@@ -25,12 +15,11 @@ pub const ZigStackFrame = extern struct {
         this.source_url.deref();
     }
 
-    pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
-        var frame: Api.StackFrame = comptime std.mem.zeroes(Api.StackFrame);
+    pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !api.StackFrame {
+        var frame: api.StackFrame = comptime std.mem.zeroes(api.StackFrame);
         if (!this.function_name.isEmpty()) {
             var slicer = this.function_name.toUTF8(allocator);
-            defer slicer.deinit();
-            frame.function_name = (try slicer.clone(allocator)).slice();
+            frame.function_name = (try slicer.cloneIfNeeded(allocator)).slice();
         }
 
         if (!this.source_url.isEmpty()) {
@@ -38,7 +27,7 @@ pub const ZigStackFrame = extern struct {
         }
 
         frame.position = this.position;
-        frame.scope = @as(Api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
+        frame.scope = @as(api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
 
         return frame;
     }
@@ -207,3 +196,16 @@ pub const ZigStackFrame = extern struct {
         };
     }
 };
+
+const std = @import("std");
+const ZigURL = @import("../../url.zig").URL;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const String = bun.String;
+const strings = bun.strings;
+const api = bun.schema.api;
+
+const jsc = bun.jsc;
+const ZigStackFrameCode = jsc.ZigStackFrameCode;
+const ZigStackFramePosition = jsc.ZigStackFramePosition;

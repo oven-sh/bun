@@ -44,8 +44,15 @@ test("spawns a Bun process", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+
+    // ReadableStream in Bun supports:
+    //  - `await stream.text()`
+    //  - `await stream.json()`
+    //  - `await stream.bytes()`
+    //  - `await stream.blob()`
+    proc.stdout.text(),
+    proc.stderr.text(),
+
     proc.exitCode,
   ]);
 

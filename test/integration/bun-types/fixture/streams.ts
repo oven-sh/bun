@@ -45,3 +45,16 @@ expectType(stream.json()).is<Promise<any>>();
 expectType(stream.bytes()).is<Promise<Uint8Array>>();
 expectType(stream.text()).is<Promise<string>>();
 expectType(stream.blob()).is<Promise<Blob>>();
+
+Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
+
+Bun.file("./foo.csv")
+  .stream()
+  .pipeThrough(new TextDecoderStream())
+  .pipeTo(
+    new WritableStream({
+      write(chunk) {
+        expectType(chunk).is<string>();
+      },
+    }),
+  );

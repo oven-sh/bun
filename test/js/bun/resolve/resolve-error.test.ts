@@ -22,7 +22,7 @@ describe("ResolveMessage", () => {
     }
   });
 
-  it.only("has code for esm", async () => {
+  it("has code for esm", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");
     } catch (e: any) {
@@ -51,5 +51,12 @@ describe("ResolveMessage", () => {
       // @ts-ignore
       await import("data:Hello%2C%20World!");
     }).toThrow("Cannot resolve invalid data URL");
+  });
+
+  it("doesn't crash", async () => {
+    expect(async () => {
+      // @ts-ignore
+      await import(":://filesystem");
+    }).toThrow("Cannot find module");
   });
 });

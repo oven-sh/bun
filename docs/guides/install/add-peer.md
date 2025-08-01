@@ -40,4 +40,4 @@ Running `bun install` will install peer dependencies by default, unless marked o
 
 ---
 
-See [Docs > Package manager](https://bun.sh/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](https://bun.com/docs/cli/install) for complete documentation of Bun's package manager.

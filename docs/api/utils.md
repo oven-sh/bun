@@ -234,7 +234,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig).
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -704,7 +704,7 @@ Bun.nanoseconds();
 Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.
 
 ```ts
-const stream = (await fetch("https://bun.sh")).body;
+const stream = (await fetch("https://bun.com")).body;
 stream; // => ReadableStream
 
 await Bun.readableStreamToArrayBuffer(stream);
@@ -787,7 +787,7 @@ const buffer = Buffer.alloc(1024 * 1024);
 estimateShallowMemoryUsageOf(buffer);
 // => 1048624
 
-const req = new Request("https://bun.sh");
+const req = new Request("https://bun.com");
 estimateShallowMemoryUsageOf(req);
 // => 167
 

@@ -1,5 +1,5 @@
 import assert from "assert";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
@@ -721,8 +721,8 @@ test("regression/NODE_PATHBuild api", async () => {
   });
 
   await proc.exited;
-  const output = await new Response(proc.stdout).text();
-  const error = await new Response(proc.stderr).text();
+  const output = await proc.stdout.text();
+  const error = await proc.stderr.text();
 
   expect(error).toBe("");
   expect(output.trim()).toBe("MyClass");
@@ -791,4 +791,169 @@ identity(mod23);
   expect(text).not.toContain("process.env.");
   expect(text).not.toContain(" global.");
   expect(text).toContain(" globalThis.");
+});
+
+describe("sourcemap boolean values", () => {
+  test("sourcemap: true should work (boolean)", async () => {
+    const dir = tempDirWithFiles("sourcemap-true-boolean", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      sourcemap: true,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("entry-point");
+
+    const output = await build.outputs[0].text();
+    expect(output).toContain("//# sourceMappingURL=data:application/json;base64,");
+  });
+
+  test("sourcemap: false should work (boolean)", async () => {
+    const dir = tempDirWithFiles("sourcemap-false-boolean", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      sourcemap: false,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("entry-point");
+
+    const output = await build.outputs[0].text();
+    expect(output).not.toContain("//# sourceMappingURL=");
+  });
+
+  test("sourcemap: true with outdir should create linked sourcemap", async () => {
+    const dir = tempDirWithFiles("sourcemap-true-outdir", {
+      "index.js": `console.log("hello");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      outdir: join(dir, "out"),
+      sourcemap: true,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(2);
+
+    const jsOutput = build.outputs.find(o => o.kind === "entry-point");
+    const mapOutput = build.outputs.find(o => o.kind === "sourcemap");
+
+    expect(jsOutput).toBeTruthy();
+    expect(mapOutput).toBeTruthy();
+    expect(jsOutput!.sourcemap).toBe(mapOutput);
+
+    const jsText = await jsOutput!.text();
+    expect(jsText).toContain("//# sourceMappingURL=index.js.map");
+  });
+});
+
+const originalCwd = process.cwd() + "";
+
+describe("tsconfig option", () => {
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  test("should resolve path mappings", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-basic", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "paths": {
+            "@/*": ["./src/*"]
+          }
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should work from nested directories", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-nested", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "paths": {
+            "@/*": ["./src/*"]
+          }
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "src/nested/index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(join(dir, "src/nested"));
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "../../tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should handle relative tsconfig paths", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-relative", {
+      "tsconfig.json": `{
+        "compilerOptions": {
+          "baseUrl": ".",
+          "paths": {
+            "@/*": ["src/*"]
+          }
+        }
+      }`,
+      "configs/build-tsconfig.json": `{
+        "extends": "../tsconfig.json",
+        "compilerOptions": {
+          "baseUrl": ".."
+        }
+      }`,
+      "src/utils.ts": `export const greeting = "Hello World";`,
+      "index.ts": `import { greeting } from "@/utils";
+export { greeting };`,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./configs/build-tsconfig.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("Hello World");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 });

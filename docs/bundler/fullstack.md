@@ -325,7 +325,7 @@ When adding a build step is too complicated, you can set `development: false` in
 
 ## Plugins
 
-Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported when bundling static routes.
+Bun's [bundler plugins](https://bun.com/docs/bundler/plugins) are also supported when bundling static routes.
 
 To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
 
@@ -365,7 +365,7 @@ Or in your CSS:
 
 ### Custom plugins
 
-Any JS file or module which exports a [valid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
+Any JS file or module which exports a [valid bundler plugin object](https://bun.com/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
 
 ```toml#bunfig.toml
 [serve.static]

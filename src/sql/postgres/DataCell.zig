@@ -193,7 +193,7 @@ pub const DataCell = extern struct {
         if (slice.len <= count) return "";
         return slice[count..];
     }
-    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
+    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *jsc.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
         const closing_brace = if (is_json_sub_array) ']' else '}';
         const opening_brace = if (is_json_sub_array) '[' else '{';
         if (bytes.len < 2 or bytes[0] != opening_brace) {
@@ -273,7 +273,7 @@ pub const DataCell = extern struct {
                             const date_str = slice[1..current_idx];
                             var str = bun.String.init(date_str);
                             defer str.deref();
-                            try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+                            try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } });
 
                             slice = trySlice(slice, current_idx + 1);
                             continue;
@@ -286,7 +286,7 @@ pub const DataCell = extern struct {
                             const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                             defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                             const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                            try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.createUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
+                            try array.append(bun.default_allocator, DataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
                             slice = trySlice(slice, current_idx + 1);
                             continue;
                         },
@@ -303,7 +303,7 @@ pub const DataCell = extern struct {
                     const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                     defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                     const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.createUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
 
                     slice = trySlice(slice, current_idx + 1);
                     continue;
@@ -370,13 +370,13 @@ pub const DataCell = extern struct {
                             if (arrayType == .date_array) {
                                 var str = bun.String.init(element);
                                 defer str.deref();
-                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } });
+                                try array.append(bun.default_allocator, DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } });
                             } else {
                                 // the only escape sequency possible here is \b
                                 if (bun.strings.eqlComptime(element, "\\b")) {
-                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
                                 } else {
-                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
+                                    try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
                                 }
                             }
                             slice = trySlice(slice, current_idx);
@@ -536,7 +536,7 @@ pub const DataCell = extern struct {
                                             if (bigint) {
                                                 try array.append(bun.default_allocator, DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                             } else {
-                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.createUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                                try array.append(bun.default_allocator, DataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
                                             }
                                             slice = trySlice(slice, current_idx);
                                             continue;
@@ -587,7 +587,7 @@ pub const DataCell = extern struct {
         return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
     }
 
-    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !DataCell {
         switch (oid) {
             // TODO: .int2_array, .float8_array
             inline .int4_array, .float4_array => |tag| {
@@ -667,7 +667,7 @@ pub const DataCell = extern struct {
                     // .int8 is a 64-bit integer always string
                     return DataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
                 } else {
-                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 }
             },
             .float8 => {
@@ -697,14 +697,14 @@ pub const DataCell = extern struct {
 
                     // if is binary format lets display as a string because JS cant handle it in a safe way
                     const result = parseBinaryNumeric(bytes, &numeric_buffer) catch return error.UnsupportedNumericFormat;
-                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
                 } else {
                     // nice text is actually what we want here
-                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                    return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
                 }
             },
             .jsonb, .json => {
-                return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return DataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .bool => {
                 if (binary) {
@@ -714,6 +714,9 @@ pub const DataCell = extern struct {
                 }
             },
             .date, .timestamp, .timestamptz => |tag| {
+                if (bytes.len == 0) {
+                    return DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                }
                 if (binary and bytes.len == 8) {
                     switch (tag) {
                         .timestamptz => return DataCell{ .tag = .date_with_time_zone, .value = .{ .date_with_time_zone = types.date.fromBinary(bytes) } },
@@ -721,9 +724,12 @@ pub const DataCell = extern struct {
                         else => unreachable,
                     }
                 } else {
+                    if (bun.strings.eqlCaseInsensitiveASCII(bytes, "NULL", true)) {
+                        return DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                    }
                     var str = bun.String.init(bytes);
                     defer str.deref();
-                    return DataCell{ .tag = .date, .value = .{ .date = str.parseDate(globalObject) } };
+                    return DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } };
                 }
             },
 
@@ -790,7 +796,7 @@ pub const DataCell = extern struct {
                 return try parseArray(bytes, bigint, tag, globalObject, null, false);
             },
             else => {
-                return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.createUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return DataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
             },
         }
     }
@@ -1001,22 +1007,22 @@ pub const DataCell = extern struct {
         binary: bool = false,
         bigint: bool = false,
         count: usize = 0,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
 
         extern fn JSC__constructObjectFromDataCell(
-            *JSC.JSGlobalObject,
+            *jsc.JSGlobalObject,
             JSValue,
             JSValue,
             [*]DataCell,
             u32,
             Flags,
             u8, // result_mode
-            ?[*]JSC.JSObject.ExternColumnIdentifier, // names
+            ?[*]jsc.JSObject.ExternColumnIdentifier, // names
             u32, // names count
         ) JSValue;
 
-        pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
-            var names: ?[*]JSC.JSObject.ExternColumnIdentifier = null;
+        pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+            var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
             var names_count: u32 = 0;
             if (cached_structure) |c| {
                 if (c.fields) |f| {
@@ -1039,6 +1045,16 @@ pub const DataCell = extern struct {
         }
 
         fn putImpl(this: *Putter, index: u32, optional_bytes: ?*Data, comptime is_raw: bool) !bool {
+            // Bounds check to prevent crash when fields/list arrays are empty
+            if (index >= this.fields.len) {
+                debug("putImpl: index {d} >= fields.len {d}, ignoring extra field", .{ index, this.fields.len });
+                return false;
+            }
+            if (index >= this.list.len) {
+                debug("putImpl: index {d} >= list.len {d}, ignoring extra field", .{ index, this.list.len });
+                return false;
+            }
+
             const field = &this.fields[index];
             const oid = field.type_oid;
             debug("index: {d}, oid: {d}", .{ index, oid });
@@ -1087,8 +1103,6 @@ pub const DataCell = extern struct {
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
@@ -1103,5 +1117,5 @@ const short = types.short;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

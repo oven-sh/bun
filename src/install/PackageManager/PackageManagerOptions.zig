@@ -64,6 +64,13 @@ preid: string = "",
 message: ?string = null,
 force: bool = false,
 
+// `bun pm why` command options
+top_only: bool = false,
+depth: ?usize = null,
+
+/// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
+node_linker: NodeLinker = .auto,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -101,6 +108,7 @@ pub const LogLevel = enum {
     default,
     verbose,
     silent,
+    quiet,
     default_no_progress,
     verbose_no_progress,
 
@@ -115,6 +123,26 @@ pub const LogLevel = enum {
             .default, .verbose => true,
             else => false,
         };
+    }
+};
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
     }
 };
 
@@ -245,6 +273,10 @@ pub fn load(
                     this.ca = &.{ca_str};
                 },
             }
+        }
+
+        if (config.node_linker) |node_linker| {
+            this.node_linker = node_linker;
         }
 
         if (config.cafile) |cafile| {
@@ -503,6 +535,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.node_linker) |node_linker| {
+            this.node_linker = node_linker;
+        }
+
         const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
 
         if (cli.verbose) {
@@ -510,6 +546,9 @@ pub fn load(
             PackageManager.verbose_install = true;
         } else if (cli.silent) {
             this.log_level = .silent;
+            PackageManager.verbose_install = false;
+        } else if (cli.quiet) {
+            this.log_level = .quiet;
             PackageManager.verbose_install = false;
         } else {
             this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
@@ -598,6 +637,10 @@ pub fn load(
         this.preid = cli.preid;
         this.message = cli.message;
         this.force = cli.force;
+
+        // `bun pm why` command options
+        this.top_only = cli.top_only;
+        this.depth = cli.depth;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;
@@ -644,30 +687,31 @@ pub const Enable = packed struct(u16) {
     _: u7 = 0,
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const CommandLineArguments = @import("./CommandLineArguments.zig");
 const std = @import("std");
-const logger = bun.logger;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
-const Api = bun.Schema.Api;
-const Path = bun.path;
-
+const bun = @import("bun");
 const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
 const URL = bun.URL;
+const logger = bun.logger;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
-const Npm = bun.install.Npm;
-
-const patch = bun.install.patch;
 const Features = bun.install.Features;
-const CommandLineArguments = @import("./CommandLineArguments.zig");
-const Subcommand = bun.install.PackageManager.Subcommand;
-const PackageManager = bun.install.PackageManager;
+const Npm = bun.install.Npm;
 const PackageInstall = bun.install.PackageInstall;
+const patch = bun.install.patch;
+
+const PackageManager = bun.install.PackageManager;
+const Subcommand = bun.install.PackageManager.Subcommand;

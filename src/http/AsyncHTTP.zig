@@ -79,7 +79,7 @@ pub fn clearData(this: *AsyncHTTP) void {
     this.request = null;
     this.response = null;
     this.client.unix_socket_path.deinit();
-    this.client.unix_socket_path = JSC.ZigString.Slice.empty;
+    this.client.unix_socket_path = jsc.ZigString.Slice.empty;
 }
 
 pub const State = enum(u32) {
@@ -95,7 +95,7 @@ pub const Options = struct {
     http_proxy: ?URL = null,
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
-    unix_socket_path: ?JSC.ZigString.Slice = null,
+    unix_socket_path: ?jsc.ZigString.Slice = null,
     disable_timeout: ?bool = null,
     verbose: ?HTTPVerboseLevel = null,
     disable_keepalive: ?bool = null,
@@ -468,39 +468,9 @@ pub fn onStart(this: *AsyncHTTP) void {
     this.client.start(this.request_body, this.response_buffer);
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const assert = bun.assert;
-const picohttp = bun.picohttp;
-const string = bun.string;
-const Environment = bun.Environment;
-const FeatureFlags = bun.FeatureFlags;
-const JSC = bun.JSC;
-const Loc = bun.logger.Loc;
-const Log = bun.logger.Log;
-
-const HTTPClient = bun.http;
-const Method = HTTPClient.Method;
-const HTTPClientResult = HTTPClient.HTTPClientResult;
-const HTTPVerboseLevel = HTTPClient.HTTPVerboseLevel;
-const HTTPRequestBody = HTTPClient.HTTPRequestBody;
-const FetchRedirect = HTTPClient.FetchRedirect;
-const Signals = HTTPClient.Signals;
-const Encoding = @import("./Encoding.zig").Encoding;
-const URL = @import("../url.zig").URL;
-const PercentEncoding = @import("../url.zig").PercentEncoding;
-const MutableString = bun.MutableString;
-const Headers = @import("./Headers.zig");
-const HTTPThread = @import("./HTTPThread.zig");
-const DotEnv = @import("../env_loader.zig");
 const log = bun.Output.scoped(.AsyncHTTP, false);
-const ThreadPool = bun.ThreadPool;
-const Task = ThreadPool.Task;
-const Batch = bun.ThreadPool.Batch;
-const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
-const Channel = @import("../sync.zig").Channel;
 pub const HTTPChannel = Channel(HTTPCallbackPair, .{ .Static = 1000 });
 // 32 pointers much cheaper than 1000 pointers
 const SingleHTTPChannel = struct {
@@ -521,3 +491,39 @@ pub const HTTPChannelContext = struct {
         this.channel.writeItem(data) catch unreachable;
     }
 };
+
+const string = []const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const HTTPThread = @import("./HTTPThread.zig");
+const Headers = @import("./Headers.zig");
+const std = @import("std");
+const Encoding = @import("./Encoding.zig").Encoding;
+
+const PercentEncoding = @import("../url.zig").PercentEncoding;
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const MutableString = bun.MutableString;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const picohttp = bun.picohttp;
+const Channel = bun.threading.Channel;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
+
+const ThreadPool = bun.ThreadPool;
+const Batch = bun.ThreadPool.Batch;
+const Task = ThreadPool.Task;
+
+const HTTPClient = bun.http;
+const FetchRedirect = HTTPClient.FetchRedirect;
+const HTTPClientResult = HTTPClient.HTTPClientResult;
+const HTTPRequestBody = HTTPClient.HTTPRequestBody;
+const HTTPVerboseLevel = HTTPClient.HTTPVerboseLevel;
+const Method = HTTPClient.Method;
+const Signals = HTTPClient.Signals;
+
+const Loc = bun.logger.Loc;
+const Log = bun.logger.Log;

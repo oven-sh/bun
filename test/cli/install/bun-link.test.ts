@@ -74,9 +74,9 @@ it("should link and unlink workspace package", async () => {
     env,
   });
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`Success! Registered "moo"`);
+  expect(await stdout.text()).toContain(`Success! Registered "moo"`);
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
@@ -88,9 +88,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed moo@link:moo`,
@@ -112,9 +112,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`success: unlinked package "moo"`);
+  expect(await stdout.text()).toContain(`success: unlinked package "moo"`);
   expect(await exited).toBe(0);
 
   // link the workspace root package to a workspace package
@@ -127,9 +127,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`Success! Registered "foo"`);
+  expect(await stdout.text()).toContain(`Success! Registered "foo"`);
   expect(await exited).toBe(0);
 
   ({ stdout, stderr, exited } = spawn({
@@ -141,9 +141,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed foo@link:foo`,
@@ -166,9 +166,9 @@ it("should link and unlink workspace package", async () => {
     env,
   }));
 
-  err = stderrForInstall(await new Response(stderr).text());
+  err = stderrForInstall(await stderr.text());
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect(await new Response(stdout).text()).toContain(`success: unlinked package "foo"`);
+  expect(await stdout.text()).toContain(`success: unlinked package "foo"`);
   expect(await exited).toBe(0);
 });
 

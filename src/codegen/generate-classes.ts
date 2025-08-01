@@ -715,11 +715,8 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
         getFunctionRealm(globalObject, newTarget)
       );
       RETURN_IF_EXCEPTION(scope, {});
-      structure = InternalFunction::createSubclassStructure(
-        globalObject,
-        newTarget,
-        functionGlobalObject->${className(typeName)}Structure()
-      );
+      structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
+      RETURN_IF_EXCEPTION(scope, {});
     }
     
 ` +

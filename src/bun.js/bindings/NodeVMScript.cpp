@@ -122,9 +122,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
@@ -332,9 +331,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     if (allowStringInPlaceOfOptions && optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+    } else {
+        auto from = options.fromJS(globalObject, vm, scope, optionsArg);
         RETURN_IF_EXCEPTION(scope, {});
-        options = {};
+        if (!from) {
+            options = {};
+        }
     }
 
     // Set the contextified object before evaluating
@@ -477,11 +479,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    if (auto* buffer = script->getBytecodeBuffer()) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(buffer));
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    scope.assertNoExceptionExceptTermination();
+    auto* buffer = script->getBytecodeBuffer();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!buffer) return JSValue::encode(jsUndefined());
+    return JSValue::encode(buffer);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -494,7 +496,8 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(script->cachedDataProduced())));
+    scope.assertNoExceptionExceptTermination();
+    return JSValue::encode(jsBoolean(script->cachedDataProduced()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))

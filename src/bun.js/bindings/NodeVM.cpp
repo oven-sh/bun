@@ -134,7 +134,6 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
-
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -837,14 +836,10 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
 
     slot.setThisValue(sandbox);
+
     bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
     RETURN_IF_EXCEPTION(scope, false);
-
-    if (!result) {
-        return false;
-    }
-
-    RETURN_IF_EXCEPTION(scope, false);
+    if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
         return true;
@@ -968,9 +963,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         if (!notContextified) {
             bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
-            if (result) {
-                return true;
-            }
+            if (result) return true;
         }
 
     try_from_global:
@@ -1000,7 +993,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (!thisObject->m_sandbox) {
+    if (!thisObject->m_sandbox) [[likely]] {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
@@ -1016,22 +1009,19 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
-    bool result = JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
-
-    if (!result) {
-        return false;
-    }
+    if (!did) return false;
 
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
 }
@@ -1414,12 +1404,11 @@ JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* 
 
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (thisObject->m_sandbox) [[likely]] {
+    if (thisObject->m_sandbox) {
         thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }

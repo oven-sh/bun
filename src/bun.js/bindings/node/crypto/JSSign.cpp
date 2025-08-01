@@ -452,9 +452,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
-    if (!signature) {
-        return {};
-    }
+    EXCEPTION_ASSERT(!!signature == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
 
     // If output encoding is not buffer, convert the signature to the requested encoding
     if (outputEncoding != BufferEncodingType::buffer) {

@@ -22,6 +22,8 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
+    ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
+
     loop: EventLoop,
 
     /// string buffer containing pre-formatted unique keys
@@ -145,25 +147,18 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
+            const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                if (quoted_source_contents.*) |slice| {
-                    bun.default_allocator.free(slice);
-                    quoted_source_contents.* = null;
-                }
+                quoted_source_contents.* = "";
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
-            var mutable = MutableString.initEmpty(bun.default_allocator);
-            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
-            if (quoted_source_contents.*) |slice| {
-                bun.default_allocator.free(slice);
-            }
-            quoted_source_contents.* = mutable.slice();
+            const mutable = MutableString.initEmpty(allocator);
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
         }
     };
 
@@ -213,6 +208,7 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
+        this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
 
@@ -713,8 +709,8 @@ pub const LinkerContext = struct {
                 }
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
-                j.pushStatic(quote_buf.slice()); // freed by arena
+                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                j.pushStatic(quote_buf.list.items); // freed by arena
             }
 
             var next_mapping_source_index: i32 = 1;
@@ -734,8 +730,8 @@ pub const LinkerContext = struct {
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
                 quote_buf.appendAssumeCapacity(", ");
-                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
-                j.pushStatic(quote_buf.slice()); // freed by arena
+                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                j.pushStatic(quote_buf.list.items); // freed by arena
             }
         }
 
@@ -747,11 +743,11 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index] orelse "");
+                j.pushStatic(quoted_source_map_contents[index]);
             }
         }
         j.pushStatic(
@@ -2421,11 +2417,7 @@ pub const LinkerContext = struct {
             // 4. externals
             return .{ .joiner = j.* };
 
-        var pieces = brk: {
-            errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(allocator, count);
-        };
-        errdefer pieces.deinit();
+        var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
         const complete_output = try j.done(allocator);
         var output = complete_output;
 

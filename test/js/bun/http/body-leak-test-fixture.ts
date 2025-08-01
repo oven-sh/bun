@@ -39,7 +39,9 @@ const server = Bun.serve({
       }
     } else if (url.endsWith("/incomplete-streaming")) {
       const reader = req.body?.getReader();
-      await reader?.read();
+      if (!reader) {
+        reader?.read();
+      }
     } else if (url.endsWith("/streaming-echo")) {
       return new Response(req.body, {
         headers: {

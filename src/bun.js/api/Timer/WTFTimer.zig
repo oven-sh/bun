@@ -14,7 +14,6 @@ event_loop_timer: EventLoopTimer,
 imminent: *std.atomic.Value(?*WTFTimer),
 repeat: bool,
 lock: bun.Mutex = .{},
-script_execution_context_id: bun.webcore.ScriptExecutionContext.Identifier,
 
 const new = bun.TrivialNew(WTFTimer);
 
@@ -57,13 +56,9 @@ pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
 pub fn cancel(this: *WTFTimer) void {
     this.lock.lock();
     defer this.lock.unlock();
-
-    if (this.script_execution_context_id.valid()) {
-        this.imminent.store(null, .seq_cst);
-
-        if (this.event_loop_timer.state == .ACTIVE) {
-            this.vm.timer.remove(&this.event_loop_timer);
-        }
+    this.imminent.store(null, .seq_cst);
+    if (this.event_loop_timer.state == .ACTIVE) {
+        this.vm.timer.remove(&this.event_loop_timer);
     }
 }
 
@@ -102,7 +97,6 @@ export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
         },
         .run_loop_timer = run_loop_timer,
         .repeat = false,
-        .script_execution_context_id = @enumFromInt(vm.initial_script_execution_context_identifier),
     });
 
     return this;

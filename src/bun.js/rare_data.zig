@@ -426,8 +426,9 @@ pub export fn Bun__Process__getStdinFdType(vm: *jsc.VirtualMachine, fd: i32) Std
 fn setTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalThis.bunVM();
     const args = callframe.arguments();
-    if (args.len < 1 or !args[0].isString()) return globalThis.throwInvalidArguments("Expected cipher argument to be a string", .{});
-    var sliced = try args[0].toSlice(globalThis, bun.default_allocator);
+    const ciphers = if (args.len > 0) args[0] else .js_undefined;
+    if (!ciphers.isString()) return globalThis.throwInvalidArgumentTypeValue("ciphers", "string", ciphers);
+    var sliced = try ciphers.toSlice(globalThis, bun.default_allocator);
     defer sliced.deinit();
     vm.rareData().setTLSDefaultCiphers(sliced.slice());
     return .js_undefined;
@@ -441,12 +442,10 @@ fn getTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame
 }
 
 comptime {
-    @export(&jsc.toJSHostFn(setTLSDefaultCiphersFromJS), .{
-        .name = "Bun__setTLSDefaultCiphers",
-    });
-    @export(&jsc.toJSHostFn(getTLSDefaultCiphersFromJS), .{
-        .name = "Bun__getTLSDefaultCiphers",
-    });
+    const js_setTLSDefaultCiphers = jsc.toJSHostFn(setTLSDefaultCiphersFromJS);
+    @export(&js_setTLSDefaultCiphers, .{ .name = "Bun__setTLSDefaultCiphers" });
+    const js_getTLSDefaultCiphers = jsc.toJSHostFn(getTLSDefaultCiphersFromJS);
+    @export(&js_getTLSDefaultCiphers, .{ .name = "Bun__getTLSDefaultCiphers" });
 }
 
 pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {

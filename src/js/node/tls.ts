@@ -4,7 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
@@ -12,6 +12,16 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+
+const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "Bun__getTLSDefaultCiphers", 0);
+const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "Bun__setTLSDefaultCiphers", 1);
+
+function validateCiphers(ciphers: string, name: string = "options") {
+  // Set the cipher list and cipher suite before anything else because
+  // @SECLEVEL=<n> changes the security level and that affects subsequent
+  // operations.
+  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, `${name}.ciphers`);
+}
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -790,7 +800,12 @@ export default {
   convertALPNProtocols,
   createSecureContext,
   createServer,
-  DEFAULT_CIPHERS,
+  get DEFAULT_CIPHERS() {
+    return getTLSDefaultCiphers();
+  },
+  set DEFAULT_CIPHERS(value) {
+    setTLSDefaultCiphers(value);
+  },
   DEFAULT_ECDH_CURVE,
   DEFAULT_MAX_VERSION,
   DEFAULT_MIN_VERSION,

@@ -848,10 +848,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
       return NULL;
     }
 
-    if (SSL_CTX_set_cipher_list(
-            ssl_context,DEFAULT_CIPHER_LIST) != 1) {
-
-            
+    if (SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST) != 1) {
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1294,9 +1291,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
       return NULL;
     }
 
-
-    if (SSL_CTX_set_cipher_list(
-              ssl_context,DEFAULT_CIPHER_LIST) != 1) {
+    if (SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST) != 1) {
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1305,7 +1300,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.ssl_ciphers) {
     if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
       unsigned long ssl_err = ERR_get_error(); 
-
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         // TLS1.2 ciphers were deliberately cleared, so don't consider
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()

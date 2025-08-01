@@ -39,6 +39,8 @@ default_csrf_secret: []const u8 = "",
 
 valkey_context: ValkeyContext = .{},
 
+tls_default_ciphers: ?[:0]const u8 = null,
+
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
@@ -421,6 +423,32 @@ pub export fn Bun__Process__getStdinFdType(vm: *jsc.VirtualMachine, fd: i32) Std
     }
 }
 
+fn setTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalThis.bunVM();
+    const args = callframe.arguments();
+    if (args.len < 1 or !args[0].isString()) return globalThis.throwInvalidArguments("Expected cipher argument to be a string", .{});
+    var sliced = try args[0].toSlice(globalThis, bun.default_allocator);
+    defer sliced.deinit();
+    vm.rareData().setTLSDefaultCiphers(sliced.slice());
+    return .js_undefined;
+}
+
+fn getTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalThis.bunVM();
+    const ciphers = vm.rareData().tlsDefaultCiphers() orelse return .js_undefined;
+
+    return try bun.String.createUTF8ForJS(globalThis, ciphers);
+}
+
+comptime {
+    @export(&jsc.toJSHostFn(setTLSDefaultCiphersFromJS), .{
+        .name = "Bun__setTLSDefaultCiphers",
+    });
+    @export(&jsc.toJSHostFn(getTLSDefaultCiphersFromJS), .{
+        .name = "Bun__getTLSDefaultCiphers",
+    });
+}
+
 pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
         return ctx;
@@ -466,6 +494,17 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSV
     };
 }
 
+pub fn tlsDefaultCiphers(this: *RareData) ?[:0]const u8 {
+    return this.tls_default_ciphers orelse null;
+}
+
+pub fn setTLSDefaultCiphers(this: *RareData, ciphers: []const u8) void {
+    if (this.tls_default_ciphers) |old_ciphers| {
+        bun.default_allocator.free(old_ciphers);
+    }
+    this.tls_default_ciphers = bun.default_allocator.dupeZ(u8, ciphers) catch bun.outOfMemory();
+}
+
 pub fn defaultCSRFSecret(this: *RareData) []const u8 {
     if (this.default_csrf_secret.len == 0) {
         const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
@@ -496,6 +535,11 @@ pub fn deinit(this: *RareData) void {
     if (this.websocket_deflate) |deflate| {
         this.websocket_deflate = null;
         deflate.deinit();
+    }
+
+    if (this.tls_default_ciphers) |ciphers| {
+        this.tls_default_ciphers = null;
+        bun.default_allocator.free(ciphers);
     }
 
     this.valkey_context.deinit();

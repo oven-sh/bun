@@ -785,6 +785,8 @@ pub const InitCommand = struct {
         switch (template) {
             .blank, .typescript_library => {
                 Template.createAgentRule();
+                Template.createVSCodeExtensionsJson();
+                Template.createVSCodeLaunchJson(fields.entry_point, template);
 
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
@@ -1035,7 +1037,8 @@ const Template = enum {
                 // appear prominently in repos) doesn't show a file path.
                 if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
                     @"create CLAUDE.md" = false;
-                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
+                    bun.sys.mkdirat(bun.FD.cwd(), ".cursor", 0o755).unwrap() catch {};
+                    bun.sys.mkdirat(bun.FD.cwd(), ".cursor/rules", 0o755).unwrap() catch {};
                     bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
                     Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
                     Output.flush();
@@ -1089,12 +1092,147 @@ const Template = enum {
 
         return false;
     }
+
+    fn isVSCodeInstalled() bool {
+        // Give some way to opt-out.
+        if (bun.getenvTruthy("BUN_VSCODE_EXTENSION_DISABLED")) {
+            return false;
+        }
+
+        // Detect if they're currently using vscode.
+        if (bun.getenvZAnyCase("VSCODE_PID")) |env| {
+            if (env.len > 0) {
+                return true;
+            }
+        }
+
+        if (Environment.isMac) {
+            if (bun.sys.exists("/Applications/Visual Studio Code.app")) {
+                return true;
+            }
+        }
+
+        if (Environment.isWindows) {
+            if (bun.getenvZAnyCase("USER")) |user| {
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
+                const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", .{user}) catch {
+                    return false;
+                };
+
+                if (bun.sys.exists(path)) {
+                    return true;
+                }
+            }
+        }
+
+        if (Environment.isLinux) {
+            const pathbuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(pathbuffer);
+
+            if (bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "code") != null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
     fn getCursorRule() ?*const TemplateFile {
         if (isCursorInstalled()) {
             return &cursor_rule;
         }
 
         return null;
+    }
+
+    fn createVSCodeExtensionsJson() void {
+        // Only create if VS Code or Cursor is installed
+        if (isVSCodeInstalled() or isCursorInstalled()) {
+            // Create .vscode directory if it doesn't exist
+            bun.sys.mkdirat(bun.FD.cwd(), ".vscode", 0o755).unwrap() catch {};
+
+            // Create extensions.json if it doesn't exist
+            if (!bun.sys.exists(".vscode/extensions.json")) {
+                const extensions_json_content =
+                    \\{
+                    \\  "recommendations": [
+                    \\    "oven.bun-vscode"
+                    \\  ]
+                    \\}
+                ;
+
+                InitCommand.Assets.createNew(".vscode/extensions.json", extensions_json_content) catch {};
+            }
+        }
+    }
+
+    fn createVSCodeLaunchJson(entry_point: []const u8, template: Template) void {
+        // Only create if VS Code or Cursor is installed and launch.json doesn't exist
+        if ((isVSCodeInstalled() or isCursorInstalled()) and !bun.sys.exists(".vscode/launch.json")) {
+            // Create .vscode directory if it doesn't exist
+            bun.sys.mkdirat(bun.FD.cwd(), ".vscode", 0o755).unwrap() catch {};
+
+            if (template.isReact()) {
+                const react_launch_json =
+                    \\{
+                    \\  "version": "0.2.0",
+                    \\  "configurations": [
+                    \\    {
+                    \\      "name": "Debug Bun",
+                    \\      "type": "bun",
+                    \\      "request": "launch",
+                    \\      "program": "${workspaceFolder}/src/index.tsx",
+                    \\      "args": [],
+                    \\      "cwd": "${workspaceFolder}",
+                    \\      "env": {},
+                    \\      "strictEnv": false,
+                    \\      "watchMode": false,
+                    \\      "stopOnEntry": false,
+                    \\      "noDebug": false,
+                    \\      "console": "internalConsole",
+                    \\      "internalConsoleOptions": "openOnSessionStart"
+                    \\    },
+                    \\    {
+                    \\      "name": "Launch Chrome",
+                    \\      "type": "chrome",
+                    \\      "request": "launch",
+                    \\      "url": "http://localhost:3000",
+                    \\      "webRoot": "${workspaceFolder}/src",
+                    \\      "sourceMaps": true,
+                    \\      "userDataDir": false
+                    \\    }
+                    \\  ]
+                    \\}
+                ;
+                InitCommand.Assets.createNew(".vscode/launch.json", react_launch_json) catch {};
+            } else if (entry_point.len > 0) {
+                // For non-React templates, create a simple launch configuration
+                // Use a generic entry point that works for most cases
+                const simple_launch_json =
+                    \\{
+                    \\  "version": "0.2.0",
+                    \\  "configurations": [
+                    \\    {
+                    \\      "name": "Debug Bun",
+                    \\      "type": "bun",
+                    \\      "request": "launch",
+                    \\      "program": "${workspaceFolder}/index.ts",
+                    \\      "args": [],
+                    \\      "cwd": "${workspaceFolder}",
+                    \\      "env": {},
+                    \\      "strictEnv": false,
+                    \\      "watchMode": false,
+                    \\      "stopOnEntry": false,
+                    \\      "noDebug": false,
+                    \\      "console": "internalConsole",
+                    \\      "internalConsoleOptions": "openOnSessionStart"
+                    \\    }
+                    \\  ]
+                    \\}
+                ;
+                InitCommand.Assets.createNew(".vscode/launch.json", simple_launch_json) catch {};
+            }
+        }
     }
 
     const ReactBlank = struct {
@@ -1176,6 +1314,8 @@ const Template = enum {
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
         Template.createAgentRule();
+        Template.createVSCodeExtensionsJson();
+        Template.createVSCodeLaunchJson("src/index.tsx", this);
 
         inline for (comptime this.files()) |file| {
             const path = file.path;

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import path from "path";
 import { tempDirWithFiles } from "harness";
+import path from "path";
 
 test("blob.write() throws for data-backed blob", () => {
   const blob = new Blob(["Hello, world!"]);
-  expect(() => blob.write("test.txt")).toThrowErrorMatchingInlineSnapshot(`"Cannot write to a Blob backed by bytes, which are always read-only"`);
+  expect(() => blob.write("test.txt")).toThrowErrorMatchingInlineSnapshot(
+    `"Cannot write to a Blob backed by bytes, which are always read-only"`,
+  );
 });
 
 test("Bun.file(path).write() does not throw", async () => {

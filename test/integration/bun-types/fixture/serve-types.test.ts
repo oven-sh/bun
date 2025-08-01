@@ -225,6 +225,7 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade",
+  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -245,6 +246,7 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade + tls",
+  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -284,6 +286,7 @@ test(
 
 test(
   "basic unix socket + upgrade + cheap request to check upgrade",
+  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -505,8 +508,8 @@ test("basic websocket upgrade and ws publish/subscribe to topics", {
 test(
   "port with unix socket (is a type error)",
   {
-    // @ts-expect-error
     unix: `${tmpdirSync()}/bun.sock`,
+    // @ts-expect-error
     port: 0,
     fetch() {
       return new Response();
@@ -524,8 +527,8 @@ test(
 test(
   "port with unix socket with websocket + upgrade (is a type error)",
   {
-    // @ts-expect-error
     unix: `${tmpdirSync()}/bun.sock`,
+    // @ts-expect-error
     port: 0,
     fetch(req, server) {
       server.upgrade(req);

@@ -85,7 +85,7 @@ declare module "bun" {
   type Errorlike = ErrorLike;
 
   /** @deprecated This is unused in Bun's types and may be removed in the future */
-  type ShellFunction = (input: Uint8Array) => Uint8Array;
+  type ShellFunction = (input: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>;
 
   interface TLSOptions {
     /**

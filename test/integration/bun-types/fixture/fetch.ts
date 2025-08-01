@@ -12,9 +12,11 @@ fetch("https://example.com", { body: new FormData() });
 fetch("https://example.com", { body: new ReadableStream() });
 fetch("https://example.com", { body: Buffer.from("buffer content") });
 fetch("https://example.com", { body: Bun.file("path") });
+fetch("https://example.com", { body: Bun.file("hey").stream() });
 fetch("https://example.com", { body: new Response("bun").body });
 fetch("https://example.com", { body: Bun.s3.file("hey") });
 fetch("https://example.com", { body: Bun.s3.file("hey").stream() });
+fetch("https://example.com", { body: Bun.s3.file("hey").readable });
 
 async function* asyncGenerator() {
   yield "chunk1";

@@ -12,8 +12,9 @@
 declare module "bun" {
   type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
   type BodyInit =
+    | ReadableStream
     | Bun.XMLHttpRequestBodyInit
-    | ReadableStream<Uint8Array<ArrayBuffer>>
+    // Extras that Bun supports:
     | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
     | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);

@@ -21,7 +21,7 @@ declare module "bun" {
     | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = string | Blob | BufferSource | FormData | URLSearchParams;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
     | ReadableStreamDefaultReadValueResult<T>

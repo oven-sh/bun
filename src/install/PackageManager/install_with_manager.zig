@@ -1561,11 +1561,11 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
             switch (advisory.level) {
                 .fatal => {
                     has_fatal = true;
-                    Output.pretty("  <red>fatal<r>: {s}\n", .{advisory.package});
+                    Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
                 },
                 .warn => {
                     has_warn = true;
-                    Output.pretty("  <yellow>warning<r>: {s}\n", .{advisory.package});
+                    Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
                 },
             }
 

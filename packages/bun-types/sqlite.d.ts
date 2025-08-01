@@ -673,7 +673,7 @@ declare module "bun:sqlite" {
     [Symbol.iterator](): IterableIterator<ReturnType>;
 
     /**
-     * Execute the prepared statement. This returns `undefined`.
+     * Execute the prepared statement.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      *

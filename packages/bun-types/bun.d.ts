@@ -3641,7 +3641,7 @@ declare module "bun" {
 
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
+     * (Cannot use unix with port + hostname)
      */
     unix?: never;
 
@@ -3664,9 +3664,21 @@ declare module "bun" {
   interface UnixServeOptions extends GenericServeOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
      */
     unix: string;
+
+    /**
+     * If set, the HTTP server will listen on this port
+     * (Cannot use port with unix)
+     */
+    port?: never;
+
+    /**
+     * If set, the HTTP server will listen on this hostname
+     * (Cannot use hostname with unix)
+     */
+    hostname?: never;
+
     /**
      * Handle HTTP requests
      *
@@ -6788,6 +6800,7 @@ declare module "bun" {
      * The unix socket to listen on or connect to
      */
     unix: string;
+
     /**
      * TLS Configuration with which to create the socket
      */

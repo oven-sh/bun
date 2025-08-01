@@ -56,6 +56,7 @@ beforeAll(async () => {
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun run build
       bun pm pack --destination ${FIXTURE_DIR}
+      rm CLAUDE.md
       exit 0
       mv package.json.backup package.json
 

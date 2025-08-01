@@ -13,7 +13,7 @@ fn mimalloc_free(
     // but its good to have that assertion
     // let's only enable it in debug mode
     if (comptime Environment.isDebug) {
-        if (mimalloc.mustUseAlignedAlloc(alignment))
+        if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
         else
             mimalloc.mi_free_size(buf.ptr, buf.len);
@@ -28,7 +28,7 @@ const MimallocAllocator = struct {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
 
-        const ptr: ?*anyopaque = if (mimalloc.mustUseAlignedAlloc(alignment))
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
             mimalloc.mi_malloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_malloc(len);
@@ -82,7 +82,7 @@ const ZAllocator = struct {
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
-        const ptr = if (mimalloc.mustUseAlignedAlloc(alignment))
+        const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
             mimalloc.mi_zalloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_zalloc(len);

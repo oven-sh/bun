@@ -104,20 +104,6 @@ pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
     return slice;
 }
 
-pub fn deinit(this: *StringJoiner) void {
-    var current: ?*Node = this.head orelse {
-        assert(this.tail == null);
-        assert(this.len == 0);
-        return;
-    };
-
-    while (current) |node| {
-        const prev = node;
-        current = node.next;
-        prev.deinit(this.allocator);
-    }
-}
-
 /// Same as `.done`, but appends extra slice `end`
 pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) ![]u8 {
     var current: ?*Node = this.head orelse {

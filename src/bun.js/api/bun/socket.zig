@@ -60,7 +60,8 @@ pub fn NewSocket(comptime ssl: bool) type {
         flags: Flags = .{},
         ref_count: RefCount,
         wrapped: WrappedType = .none,
-        handlers: ?*Handlers,
+        // TODO: make this optional
+        handlers: *Handlers,
         this_value: jsc.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         ref_pollref_on_connect: bool = true,
@@ -207,7 +208,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleError(this: *This, err_value: jsc.JSValue) void {
             log("handleError", .{});
-            const handlers = this.getHandlers();
+            const handlers = this.handlers;
             var vm = handlers.vm;
             if (vm.isShuttingDown()) {
                 return;
@@ -225,7 +226,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
             if (this.native_callback.onWritable()) return;
-            const handlers = this.getHandlers();
+            const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
 
@@ -255,8 +256,8 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onTimeout(this: *This, _: Socket) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            const handlers = this.getHandlers();
-            log("onTimeout {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onTimeout {s}", .{if (this.handlers.is_server) "S" else "C"});
+            const handlers = this.handlers;
             const callback = handlers.onTimeout;
             if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
@@ -275,13 +276,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getHandlers(this: *const This) *Handlers {
-            return this.handlers orelse @panic("No handlers set on Socket");
-        }
-
         pub fn handleConnectError(this: *This, errno: c_int) void {
-            const handlers = this.getHandlers();
-            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
+            log("onConnectError {s} ({d}, {d})", .{ if (this.handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -292,6 +288,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             defer this.markInactive();
             defer if (needs_deref) this.deref();
 
+            const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
             if (vm.isShuttingDown()) {
@@ -360,7 +357,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn markActive(this: *This) void {
             if (!this.flags.is_active) {
-                this.getHandlers().markActive();
+                this.handlers.markActive();
                 this.flags.is_active = true;
                 this.has_pending_activity.store(true, .release);
             }
@@ -388,20 +385,15 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 this.flags.is_active = false;
-                const handlers = this.getHandlers();
-                const vm = handlers.vm;
-                handlers.markInactive();
+                const vm = this.handlers.vm;
+                this.handlers.markInactive();
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .release);
             }
         }
 
-        pub fn isServer(this: *const This) bool {
-            return this.getHandlers().is_server;
-        }
-
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {*} {} {}", .{ if (this.handlers.is_server) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -433,7 +425,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                             }
                         }
                         if (this.protos) |protos| {
-                            if (this.isServer()) {
+                            if (this.handlers.is_server) {
                                 BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
@@ -449,7 +441,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const handlers = this.getHandlers();
+            const handlers = this.handlers;
             const callback = handlers.onOpen;
             const handshake_callback = handlers.onHandshake;
 
@@ -501,11 +493,12 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onEnd(this: *This, _: Socket) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            const handlers = this.getHandlers();
-            log("onEnd {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onEnd {s}", .{if (this.handlers.is_server) "S" else "C"});
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
+
+            const handlers = this.handlers;
 
             const callback = handlers.onEnd;
             if (callback == .zero or handlers.vm.isShuttingDown()) {
@@ -532,13 +525,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
-            const handlers = this.getHandlers();
-            log("onHandshake {s} ({d})", .{ if (handlers.is_server) "S" else "C", success });
+            log("onHandshake {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", success });
 
             const authorized = if (success == 1) true else false;
 
             this.flags.authorized = authorized;
 
+            const handlers = this.handlers;
             var callback = handlers.onHandshake;
             var is_open = false;
 
@@ -574,8 +567,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                     // clean onOpen callback so only called in the first handshake and not in every renegotiation
                     // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                     // servers don't support renegotiation
-                    this.handlers.?.onOpen.unprotect();
-                    this.handlers.?.onOpen = .zero;
+                    this.handlers.onOpen.unprotect();
+                    this.handlers.onOpen = .zero;
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
@@ -598,8 +591,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             jsc.markBinding(@src());
-            const handlers = this.getHandlers();
-            log("onClose {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onClose {s}", .{if (this.handlers.is_server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -609,6 +601,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return;
             }
 
+            const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
 
@@ -645,10 +638,10 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            const handlers = this.getHandlers();
-            log("onData {s} ({d})", .{ if (handlers.is_server) "S" else "C", data.len });
+            log("onData {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", data.len });
             if (this.native_callback.onData(data)) return;
 
+            const handlers = this.handlers;
             const callback = handlers.onData;
             if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
@@ -687,13 +680,11 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
-            const handlers = this.getHandlers();
-
-            if (!handlers.is_server or this.socket.isDetached()) {
+            if (!this.handlers.is_server or this.socket.isDetached()) {
                 return .js_undefined;
             }
 
-            const l: *Listener = @fieldParentPtr("handlers", handlers);
+            const l: *Listener = @fieldParentPtr("handlers", this.handlers);
             return l.strong_self.get() orelse .js_undefined;
         }
 
@@ -1350,14 +1341,13 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"socket\" option", .{});
             };
 
-            var prev_handlers = this.getHandlers();
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, prev_handlers.is_server);
-
+            var prev_handlers = this.handlers;
             prev_handlers.unprotect();
-            this.handlers.?.* = handlers; // TODO: this is a memory leak
-            this.handlers.?.withAsyncContextIfNeeded(globalObject);
-            this.handlers.?.protect();
+            this.handlers.* = handlers; // TODO: this is a memory leak
+            this.handlers.withAsyncContextIfNeeded(globalObject);
+            this.handlers.protect();
 
             return .js_undefined;
         }
@@ -1399,7 +1389,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.isServer());
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -1529,23 +1519,20 @@ pub fn NewSocket(comptime ssl: bool) type {
             const vm = handlers.vm;
 
             var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
-            raw_handlers_ptr.* = blk: {
-                const this_handlers = this.getHandlers();
-                break :blk .{
-                    .vm = vm,
-                    .globalObject = globalObject,
-                    .onOpen = this_handlers.onOpen,
-                    .onClose = this_handlers.onClose,
-                    .onData = this_handlers.onData,
-                    .onWritable = this_handlers.onWritable,
-                    .onTimeout = this_handlers.onTimeout,
-                    .onConnectError = this_handlers.onConnectError,
-                    .onEnd = this_handlers.onEnd,
-                    .onError = this_handlers.onError,
-                    .onHandshake = this_handlers.onHandshake,
-                    .binary_type = this_handlers.binary_type,
-                    .is_server = this_handlers.is_server,
-                };
+            raw_handlers_ptr.* = .{
+                .vm = vm,
+                .globalObject = globalObject,
+                .onOpen = this.handlers.onOpen,
+                .onClose = this.handlers.onClose,
+                .onData = this.handlers.onData,
+                .onWritable = this.handlers.onWritable,
+                .onTimeout = this.handlers.onTimeout,
+                .onConnectError = this.handlers.onConnectError,
+                .onEnd = this.handlers.onEnd,
+                .onError = this.handlers.onError,
+                .onHandshake = this.handlers.onHandshake,
+                .binary_type = this.handlers.binary_type,
+                .is_server = this.handlers.is_server,
             };
 
             raw_handlers_ptr.protect();
@@ -1575,7 +1562,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.markActive();
 
             // we're unrefing the original instance and refing the TLS instance
-            tls.poll_ref.ref(this.getHandlers().vm);
+            tls.poll_ref.ref(this.handlers.vm);
 
             // mark both instances on socket data
             if (new_socket.ext(WrappedSocket)) |ctx| {
@@ -1587,7 +1574,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 this.flags.is_active = false;
                 // will free handlers when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to guarantee that it will be still alive
-                this.getHandlers().markInactive();
+                this.handlers.markInactive();
 
                 this.has_pending_activity.store(false, .release);
             }

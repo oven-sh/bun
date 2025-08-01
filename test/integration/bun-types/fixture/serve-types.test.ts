@@ -504,6 +504,8 @@ test("basic websocket upgrade and ws publish/subscribe to topics", {
 
 test(
   "port with unix socket (is a type error)",
+  // This prettier-ignore exists because between TypeScript 5.8 and 5.9, the location of the error message changed, so
+  // to satisfy both we can just keep what would have been the two erroring lines on the same line
   // prettier-ignore
   // @ts-expect-error
   { unix: `${tmpdirSync()}/bun.sock`, port: 0,
@@ -522,6 +524,7 @@ test(
 
 test(
   "port with unix socket with websocket + upgrade (is a type error)",
+  // Prettier ignore exists for same reason as above
   // prettier-ignore
   // @ts-expect-error
   { unix: `${tmpdirSync()}/bun.sock`, port: 0,

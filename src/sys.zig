@@ -3661,8 +3661,8 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     }
 
     if (comptime Environment.isWindows) {
-        const offset_high: u64 = @as(u32, @intCast(offset >> 32));
-        const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
+        const offset_high: u64 = @as(u32, @truncate(offset >> 32));
+        const offset_low: u64 = @as(u32, @truncate(offset & 0xFFFFFFFF));
         var plarge_integer: i64 = @bitCast(offset_high);
         const rc = kernel32.SetFilePointerEx(
             fd.cast(),

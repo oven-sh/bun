@@ -320,7 +320,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -596,7 +595,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -617,6 +615,245 @@ describe("bundler", () => {
     dce: true,
     run: {
       stdout: "this should be kept",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobBasicPattern", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { used } from "demo-pkg/lib/used.js";
+        import { unused } from "demo-pkg/lib/unused.js";
+        import { effect } from "demo-pkg/effects/effect.js";
+        console.log(used);
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/used.js": `export const used = "used";`,
+      "/Users/user/project/node_modules/demo-pkg/lib/unused.js": /* js */ `
+        export const unused = "unused";
+        console.log("should be tree-shaken");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/effects/effect.js": /* js */ `
+        console.log("side effect preserved");
+        export const effect = "effect";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./effects/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "side effect preserved\nused",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobQuestionMark", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { file1 } from "demo-pkg/file1.js";
+        import { file2 } from "demo-pkg/file2.js";
+        import { fileAB } from "demo-pkg/fileAB.js";
+        import { other } from "demo-pkg/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/file1.js": /* js */ `
+        console.log("file1 effect");
+        export const file1 = "file1";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/file2.js": /* js */ `
+        console.log("file2 effect");
+        export const file2 = "file2";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/fileAB.js": /* js */ `
+        console.log("fileAB effect");
+        export const fileAB = "fileAB";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/other.js": /* js */ `
+        console.log("other effect");
+        export const other = "other";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./file?.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "file1 effect\nfile2 effect\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobBraceExpansion", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { comp } from "demo-pkg/components/comp.js";
+        import { util } from "demo-pkg/utils/util.js";
+        import { other } from "demo-pkg/other/file.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/components/comp.js": /* js */ `
+        console.log("component effect");
+        export const comp = "comp";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/utils/util.js": /* js */ `
+        console.log("utility effect");
+        export const util = "util";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/other/file.js": /* js */ `
+        console.log("other effect");
+        export const other = "other";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./{components,utils}/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "component effect\nutility effect\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobMixedPatterns", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { used } from "demo-pkg/lib/used.js";
+        import { specific } from "demo-pkg/lib/specific.js";
+        import { glob1 } from "demo-pkg/lib/glob/glob1.js";
+        import { glob2 } from "demo-pkg/lib/glob/glob2.js";
+        import { other } from "demo-pkg/lib/other.js";
+        console.log(used);
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/used.js": `export const used = "used";`,
+      "/Users/user/project/node_modules/demo-pkg/lib/specific.js": /* js */ `
+        console.log("specific side effect");
+        export const specific = "specific";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/glob/glob1.js": /* js */ `
+        console.log("glob1 side effect");
+        export const glob1 = "glob1";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/glob/glob2.js": /* js */ `
+        console.log("glob2 side effect");
+        export const glob2 = "glob2";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": /* js */ `
+        console.log("other side effect");
+        export const other = "other";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./lib/specific.js", "./lib/glob/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "specific side effect\nglob1 side effect\nglob2 side effect\nused",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobDeepPattern", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/shallow.js";
+        import "demo-pkg/components/effects/deep.js";
+        import "demo-pkg/utils/helpers/effects/nested.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/shallow.js": /* js */ `
+        console.log("shallow side effect - should be tree shaken");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/components/effects/deep.js": /* js */ `
+        console.log("deep side effect - should be preserved");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/utils/helpers/effects/nested.js": /* js */ `
+        console.log("nested side effect - should be preserved");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./**/effects/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "deep side effect - should be preserved\nnested side effect - should be preserved\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobExtensionPattern", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/utils/util.js";
+        import "demo-pkg/effects/main.effect.js";
+        import "demo-pkg/effects/secondary.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/utils/util.js": /* js */ `
+        console.log("util side effect - should be tree shaken");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/effects/main.effect.js": /* js */ `
+        console.log("main effect - should be preserved");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/effects/secondary.js": /* js */ `
+        console.log("secondary effect - should be tree shaken");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./**/*.effect.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "main effect - should be preserved\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobInvalidPattern", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { lib } from "demo-pkg/lib/lib.js";
+        console.log(lib);
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/lib.js": /* js */ `
+        console.log("lib side effect");
+        export const lib = "lib";
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./[unclosed.js", "./lib/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "lib side effect\nlib",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobNoMatches", {
+    todo: true,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "./components/comp.js";
+        import "./utils/util.js";
+        import "./root.js";
+        console.log("done");
+      `,
+      "/Users/user/project/src/components/comp.js": /* js */ `
+        console.log("component side effect");
+      `,
+      "/Users/user/project/src/utils/util.js": /* js */ `
+        console.log("utility side effect - should be tree shaken");
+      `,
+      "/Users/user/project/src/root.js": /* js */ `
+        console.log("root side effect - should be tree shaken");
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "sideEffects": ["src/components/*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "component side effect\ndone",
     },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {

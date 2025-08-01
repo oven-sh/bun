@@ -33,7 +33,8 @@
 #include "WebSocket.h"
 #include "WebSocketDeflate.h"
 #include "headers.h"
-// #include "Blob.h"
+#include "blob.h"
+#include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 // #include "ContentSecurityPolicy.h"
 // #include "DOMWindow.h"
@@ -564,22 +565,27 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     return {};
 }
 
-// ExceptionOr<void> WebSocket::send(Blob& binaryData)
-// {
-// LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().data());
-//     if (m_state == CONNECTING)
-//         return Exception { InvalidStateError };
-//     if (m_state == CLOSING || m_state == CLOSED) {
-//         unsigned payloadSize = static_cast<unsigned>(binaryData.size());
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
-//         return {};
-//     }
-//     m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.size());
-//     ASSERT(m_channel);
-//     m_channel->send(binaryData);
-//     return {};
-// }
+WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Binary);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Binary);
+    }
+
+    return {};
+}
 
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const Opcode op)
 {
@@ -957,10 +963,10 @@ String WebSocket::binaryType() const
 
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
-    // if (binaryType == "blob"_s) {
-    //     m_binaryType = BinaryType::Blob;
-    //     return {};
-    // }
+    if (binaryType == "blob"_s) {
+        m_binaryType = BinaryType::Blob;
+        return {};
+    }
     if (binaryType == "arraybuffer"_s) {
         m_binaryType = BinaryType::ArrayBuffer;
         return {};
@@ -1103,10 +1109,26 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
     switch (m_binaryType) {
-    // case BinaryType::Blob:
-    //     // FIXME: We just received the data from NetworkProcess, and are sending it back. This is inefficient.
-    //     dispatchEvent(MessageEvent::create(Blob::create(scriptExecutionContext(), WTFMove(binaryData), emptyString()), SecurityOrigin::create(m_url)->toString()));
-    //     break;
+    case BinaryType::Blob:
+        if (this->hasEventListeners(eventName)) {
+            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            this->incPendingActivityCount();
+            RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
+            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
+            this->decPendingActivityCount();
+            return;
+        }
+
+        if (auto* context = scriptExecutionContext()) {
+            RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
+            context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));
+                protectedThis->decPendingActivityCount();
+            });
+        }
+
+        break;
     case BinaryType::ArrayBuffer: {
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
@@ -1176,9 +1198,6 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         }
 
         break;
-    }
-    case BinaryType::Blob: {
-        // TODO: Blob is not supported currently.
     }
     }
     // });
@@ -1532,4 +1551,48 @@ extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocke
 extern "C" void WebSocket__decrementPendingActivity(WebCore::WebSocket* webSocket)
 {
     webSocket->decPendingActivityCount();
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Ping);
+    }
+
+    return {};
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Pong);
+    }
+
+    return {};
 }

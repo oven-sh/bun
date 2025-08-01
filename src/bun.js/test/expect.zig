@@ -5646,6 +5646,44 @@ pub const ExpectMatcherUtils = struct {
     }
 };
 
+pub const ExpectTypeOf = struct {
+    pub const js = jsc.Codegen.JSExpectTypeOf;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub fn finalize(
+        this: *ExpectTypeOf,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn create(globalThis: *JSGlobalObject) bun.JSError!JSValue {
+        var expect = try globalThis.bunVM().allocator.create(ExpectTypeOf);
+
+        const value = expect.toJS(globalThis);
+        value.ensureStillAlive();
+        return value;
+    }
+
+    pub fn fnOneArgumentReturnsVoid(_: *ExpectTypeOf, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+        return .js_undefined;
+    }
+    pub fn fnOneArgumentReturnsExpectTypeOf(_: *ExpectTypeOf, globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+        return create(globalThis);
+    }
+    pub fn getReturnsExpectTypeOf(_: *ExpectTypeOf, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+        return create(globalThis);
+    }
+
+    pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!*ExpectTypeOf {
+        return globalThis.throw("expectTypeOf() cannot be called with new", .{});
+    }
+    pub fn call(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+        return create(globalThis);
+    }
+};
+
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 inline fn getCustomMatcherFn(thisValue: JSValue, globalThis: *JSGlobalObject) ?JSValue {
     const matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalThis);

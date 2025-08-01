@@ -130,6 +130,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
             next->prev = prev;
         }
     }
+    us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
 void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
@@ -147,6 +148,7 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
             next->prev_pending = prev;
         }
     }
+    us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
 
@@ -172,6 +174,7 @@ void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket
     }
     context->head_connecting_sockets = c;
     us_socket_context_ref(ssl, context);
+    us_internal_enable_sweep_timer(context->loop);
 }
 
 
@@ -185,6 +188,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
     }
     context->head_sockets = s;
     us_socket_context_ref(0, context);
+    us_internal_enable_sweep_timer(context->loop);
 }
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {

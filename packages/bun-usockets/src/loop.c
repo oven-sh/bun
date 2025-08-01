@@ -18,6 +18,7 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
+#include <stdio.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
@@ -29,11 +30,28 @@ extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t l
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
+void sweep_timer_cb(struct us_internal_callback_t *cb);
+
+void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
+    if (loop->data.sweep_timer_count == 0) {
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+    }
+    loop->data.sweep_timer_count++;
+}
+
+void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count--;
+    if (loop->data.sweep_timer_count == 0) {
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+    }
+}
+
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+    loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
     loop->data.pre_cb = pre_cb;
@@ -547,9 +565,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     }
 }
 
-/* Integration only requires the timer to be set up */
+/* Integration only requires the timer to be set up, but not automatically enabled */
 void us_loop_integrate(struct us_loop_t *loop) {
-    us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+    /* Timer is now controlled dynamically by socket count, not enabled automatically */
 }
 
 void *us_loop_ext(struct us_loop_t *loop) {

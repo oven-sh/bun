@@ -4931,7 +4931,7 @@ declare module "bun" {
     | [number, number, number]
     | [number, number, number, number]
     | Uint8Array<ArrayBuffer>
-    | Uint8ClampedArray
+    | Uint8ClampedArray<ArrayBuffer>
     | Float32Array
     | Float64Array
     | string

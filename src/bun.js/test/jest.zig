@@ -385,7 +385,6 @@ pub const Jest = struct {
             test_fn,
         );
 
-        // Jest compatibility aliases for skipped tests
         const xit_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xit"), 2, ThisTestScope.skip, false);
         module.put(
             globalObject,
@@ -428,7 +427,7 @@ pub const Jest = struct {
             describe,
         );
 
-        // Jest compatibility alias for skipped describe blocks  
+        // Jest compatibility alias for skipped describe blocks
         const xdescribe_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xdescribe"), 2, ThisDescribeScope.skip, false);
         module.put(
             globalObject,
@@ -1323,7 +1322,6 @@ pub const WrappedTestScope = struct {
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
-// Jest compatibility aliases
 pub const xit = wrapTestFunction("xit", TestScope.skip);
 pub const xtest = wrapTestFunction("xtest", TestScope.skip);
 

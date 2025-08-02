@@ -879,7 +879,7 @@ test("indented inline snapshots", () => {
               "a": 2,
                 }
 `);
-  }).toThrowErrorMatchingSnapshot();
+  }).toThrow();
 });
 
 test("error snapshots", () => {

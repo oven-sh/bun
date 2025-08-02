@@ -200,6 +200,7 @@ test/cli/install/isolated-install.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/cli/update_interactive_formatting.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js

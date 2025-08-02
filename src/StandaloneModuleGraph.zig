@@ -491,7 +491,7 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool = false,
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) !bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -711,10 +711,35 @@ pub const StandaloneModuleGraph = struct {
                 };
                 defer bun.default_allocator.free(tmp_path);
 
-                // Add .bun section to PE file
-                pe_module.PEFile.addBunSection(bun.default_allocator, path, tmp_path, bytes) catch |err| {
-                    Output.prettyErrorln("Error adding .bun section to PE file: {}", .{err});
-                    std.fs.cwd().deleteFile(path) catch {};
+                // Load the PE file
+                const pe_data = std.fs.cwd().readFileAlloc(bun.default_allocator, path, std.math.maxInt(usize)) catch |err| {
+                    Output.prettyErrorln("Error reading PE file: {}", .{err});
+                    Global.exit(1);
+                };
+                defer bun.default_allocator.free(pe_data);
+                
+                var pe_obj = pe_module.PEFile.init(bun.default_allocator, pe_data) catch |err| {
+                    Output.prettyErrorln("Error parsing PE file: {}", .{err});
+                    Global.exit(1);
+                };
+                defer pe_obj.deinit();
+                
+                // Add .bun section
+                pe_obj.addBunSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error adding .bun section: {}", .{err});
+                    Global.exit(1);
+                };
+                
+                // Write to temporary file
+                const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch |err| {
+                    Output.prettyErrorln("Error creating temporary file: {}", .{err});
+                    Global.exit(1);
+                };
+                defer tmp_file.close();
+                
+                pe_obj.write(tmp_file.writer()) catch |err| {
+                    Output.prettyErrorln("Error writing PE file: {}", .{err});
+                    std.fs.cwd().deleteFile(tmp_path) catch {};
                     Global.exit(1);
                 };
 
@@ -857,7 +882,7 @@ pub const StandaloneModuleGraph = struct {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
 
-        const fd = inject(
+        const fd = try inject(
             bytes,
             if (target.isDefault())
                 bun.selfExePath() catch |err| {
@@ -896,16 +921,70 @@ pub const StandaloneModuleGraph = struct {
                 Global.exit(1);
             };
             // Apply Windows resource edits if needed
-            if (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null) {
-                const windows_resources = @import("./windows_resources.zig");
-                windows_resources.editWindowsResources(allocator, fd, &windows) catch |err| {
-                    if (windows.icon != null and err == error.InvalidIconFile) {
+            if (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console) {
+                const pe_module = @import("./pe.zig");
+                
+                // Get file size
+                const size = if (Environment.isWindows) 
+                    Syscall.setFileOffsetToEndWindows(fd).unwrap() catch |err| {
+                        Output.err(err, "failed to get file size", .{});
+                        Global.exit(1);
+                    }
+                else blk: {
+                    const fstat = Syscall.fstat(fd).unwrap() catch |err| {
+                        Output.err(err, "failed to stat file", .{});
+                        Global.exit(1);
+                    };
+                    break :blk @as(usize, @intCast(fstat.size));
+                };
+                
+                _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
+                    Output.err(err, "failed to seek to start", .{});
+                    Global.exit(1);
+                };
+
+                // Read entire file
+                const pe_data = try allocator.alloc(u8, size);
+                defer allocator.free(pe_data);
+                
+                const read_result = Syscall.readAll(fd, pe_data);
+                _ = read_result.unwrap() catch |err| {
+                    Output.err(err, "failed to read PE file", .{});
+                    Global.exit(1);
+                };
+                
+                var pe_file = try pe_module.PEFile.init(allocator, pe_data);
+                defer pe_file.deinit();
+
+                pe_file.applyWindowsSettings(&windows, allocator) catch |err| {
+                    if (windows.icon != null and (err == error.InvalidIconData or err == error.InvalidIconFormat)) {
                         Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
                         Output.flush();
                         Global.exit(1);
-                    } else {
-                        Output.warn("Failed to set Windows resources: {s}", .{@errorName(err)});
                     }
+                    return err;
+                };
+
+                // Write back modified PE
+                var write_buffer = std.ArrayList(u8).init(allocator);
+                defer write_buffer.deinit();
+                try pe_file.write(write_buffer.writer());
+                
+                // Seek to start and write
+                _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
+                    Output.err(err, "failed to seek to start for write", .{});
+                    Global.exit(1);
+                };
+                
+                _ = Syscall.write(fd, write_buffer.items).unwrap() catch |err| {
+                    Output.err(err, "failed to write modified PE", .{});
+                    Global.exit(1);
+                };
+                
+                // Truncate if new size is smaller
+                _ = Syscall.ftruncate(fd, @intCast(write_buffer.items.len)).unwrap() catch |err| {
+                    Output.err(err, "failed to truncate file", .{});
+                    Global.exit(1);
                 };
             }
 
@@ -938,21 +1017,54 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        // Apply Windows resource edits if needed (cross-platform)
-        if (target.os == .windows and (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null)) {
-            const windows_resources = @import("./windows_resources.zig");
-            // The file was moved to root_dir with just the basename
-            const basename = std.fs.path.basename(outfile);
-            const full_path = try root_dir.realpathAlloc(allocator, basename);
-            defer allocator.free(full_path);
-            windows_resources.editWindowsResourcesByPath(allocator, full_path, &windows) catch |err| {
-                if (windows.icon != null and err == error.InvalidIconFile) {
+        // Apply Windows resource edits if needed
+        if (target.os == .windows and (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console)) {
+            const pe_module = @import("./pe.zig");
+            
+            // Read the PE file
+            const pe_data = std.fs.cwd().readFileAlloc(allocator, outfile, std.math.maxInt(usize)) catch |err| {
+                Output.err(err, "failed to read PE file for resource editing", .{});
+                Global.exit(1);
+            };
+            defer allocator.free(pe_data);
+            
+            // Parse and modify PE
+            var pe_obj = pe_module.PEFile.init(allocator, pe_data) catch |err| {
+                Output.err(err, "failed to parse PE file", .{});
+                Global.exit(1);
+            };
+            defer pe_obj.deinit();
+
+            pe_obj.applyWindowsSettings(&windows, allocator) catch |err| {
+                if (windows.icon != null and (err == error.InvalidIconData or err == error.InvalidIconFormat)) {
                     Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
-                    Output.flush();
-                    Global.exit(1);
                 } else {
-                    Output.warn("Failed to set Windows resources: {s}", .{@errorName(err)});
+                    Output.err(err, "failed to apply Windows settings", .{});
                 }
+                Global.exit(1);
+            };
+
+            // Write to temporary file then rename
+            const tmp_name = try std.fmt.allocPrint(allocator, "{s}.tmp", .{outfile});
+            defer allocator.free(tmp_name);
+            
+            {
+                const tmp_file = std.fs.cwd().createFile(tmp_name, .{}) catch |err| {
+                    Output.err(err, "failed to create temporary file", .{});
+                    Global.exit(1);
+                };
+                defer tmp_file.close();
+                
+                pe_obj.write(tmp_file.writer()) catch |err| {
+                    Output.err(err, "failed to write modified PE", .{});
+                    Global.exit(1);
+                };
+            }
+            
+            std.fs.cwd().rename(tmp_name, outfile) catch |err| {
+                Output.err(err, "failed to replace PE file", .{});
+                std.fs.cwd().deleteFile(tmp_name) catch {};
+                Global.exit(1);
             };
         }
     }

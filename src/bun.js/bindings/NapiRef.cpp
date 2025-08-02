@@ -10,13 +10,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
 // Constructor
 NapiRef::NapiRef(napi_env env, JSC::JSValue value, uint32_t initial_refcount, NapiRefOwnership ownership, Bun::NapiFinalizer finalizer, void* native_object)
-    : ownership(ownership),
-      m_env(env),
-      m_vm(env->vm()),
-      m_finalizer(WTFMove(finalizer)),
-      m_refCount(initial_refcount),
-      m_handleType(HandleType::Empty),
-      m_canBeWeak(value.isCell()) // Primitives cannot be held weakly by JSC's GC.
+    : ownership(ownership)
+    , m_env(env)
+    , m_vm(env->vm())
+    , m_finalizer(WTFMove(finalizer))
+    , m_refCount(initial_refcount)
+    , m_handleType(HandleType::Empty)
+    , m_canBeWeak(value.isCell()) // Primitives cannot be held weakly by JSC's GC.
 {
     this->nativeObject = native_object;
 
@@ -33,30 +33,33 @@ NapiRef::NapiRef(napi_env env, JSC::JSValue value, uint32_t initial_refcount, Na
 }
 
 // Destructor
-NapiRef::~NapiRef() {
+NapiRef::~NapiRef()
+{
     clearHandle();
 }
 
-void NapiRef::clearHandle() {
+void NapiRef::clearHandle()
+{
     switch (m_handleType) {
-        case HandleType::Strong:
-            m_strongHandle.clear();
-            break;
-        case HandleType::Weak:
-            m_weakHandle.clear();
-            break;
-        case HandleType::Empty:
-            break;
+    case HandleType::Strong:
+        m_strongHandle.clear();
+        break;
+    case HandleType::Weak:
+        m_weakHandle.clear();
+        break;
+    case HandleType::Empty:
+        break;
     }
     m_handleType = HandleType::Empty;
 }
 
-void NapiRef::transitionToStrong() {
+void NapiRef::transitionToStrong()
+{
     ASSERT(m_handleType == HandleType::Weak);
 
     // Use JSC::Weak's proper get() method which handles state checking
     JSC::JSCell* cell = m_weakHandle.get();
-    
+
     // If the weak reference died, we can't make it strong.
     if (!cell) {
         m_weakHandle.clear();
@@ -74,7 +77,8 @@ void NapiRef::transitionToStrong() {
     m_handleType = HandleType::Strong;
 }
 
-void NapiRef::transitionToWeak() {
+void NapiRef::transitionToWeak()
+{
     ASSERT(m_handleType == HandleType::Strong);
 
     if (!m_canBeWeak) {
@@ -89,11 +93,12 @@ void NapiRef::transitionToWeak() {
     m_handleType = HandleType::Weak;
 }
 
-uint32_t NapiRef::ref() {
+uint32_t NapiRef::ref()
+{
     if (m_handleType == HandleType::Empty) {
         return 0; // The object was GC'd, cannot be reffed.
     }
-    
+
     uint32_t new_refcount = ++m_refCount;
     if (new_refcount == 1) {
         transitionToStrong();
@@ -106,11 +111,12 @@ uint32_t NapiRef::ref() {
     return m_refCount;
 }
 
-uint32_t NapiRef::unref() {
+uint32_t NapiRef::unref()
+{
     if (m_refCount == 0) {
         return 0;
     }
-    
+
     uint32_t new_refcount = --m_refCount;
     if (new_refcount == 0) {
         transitionToWeak();
@@ -118,23 +124,25 @@ uint32_t NapiRef::unref() {
     return m_refCount;
 }
 
-JSC::JSValue NapiRef::value() const {
+JSC::JSValue NapiRef::value() const
+{
     switch (m_handleType) {
-        case HandleType::Strong: {
-            JSC::JSCell* cell = m_strongHandle.get();
-            return cell ? JSC::JSValue(cell) : JSC::JSValue();
-        }
-        case HandleType::Weak: {
-            JSC::JSCell* cell = m_weakHandle.get();
-            return cell ? JSC::JSValue(cell) : JSC::JSValue();
-        }
-        case HandleType::Empty:
-            return JSC::JSValue(); // Empty JSValue (evaluates to JS undefined)
+    case HandleType::Strong: {
+        JSC::JSCell* cell = m_strongHandle.get();
+        return cell ? JSC::JSValue(cell) : JSC::JSValue();
+    }
+    case HandleType::Weak: {
+        JSC::JSCell* cell = m_weakHandle.get();
+        return cell ? JSC::JSValue(cell) : JSC::JSValue();
+    }
+    case HandleType::Empty:
+        return JSC::JSValue(); // Empty JSValue (evaluates to JS undefined)
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void NapiRef::callFinalizer() {
+void NapiRef::callFinalizer()
+{
     if (m_finalizer.callback()) {
         // Copy finalizer data and then clear it on the object to prevent re-entrancy.
         Bun::NapiFinalizer saved_finalizer = m_finalizer;
@@ -144,7 +152,8 @@ void NapiRef::callFinalizer() {
     }
 }
 
-void NapiRef::finalizeFromGC() {
+void NapiRef::finalizeFromGC()
+{
     // The WeakImpl handle is now dead. We just need to update our state.
     // The WeakSet manages the WeakImpl's memory.
     m_handleType = HandleType::Empty;

@@ -40,7 +40,8 @@ class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 
-    static NapiRefWeakHandleOwner& get() {
+    static NapiRefWeakHandleOwner& get()
+    {
         static NeverDestroyed<NapiRefWeakHandleOwner> owner;
         return owner;
     }
@@ -346,7 +347,7 @@ using namespace JSC;
 
 // Based on v8impl::ReferenceOwnership from Node.js
 enum class NapiRefOwnership : uint8_t {
-    kRuntime,  // The NapiRef C++ object deletes itself when finalized.
+    kRuntime, // The NapiRef C++ object deletes itself when finalized.
     kUserland, // The user is responsible for calling napi_delete_reference.
 };
 
@@ -479,7 +480,9 @@ private:
     void clearHandle();
     void callFinalizer();
 
-    enum class HandleType { Empty, Weak, Strong };
+    enum class HandleType { Empty,
+        Weak,
+        Strong };
 
     napi_env m_env;
     JSC::VM& m_vm;

@@ -811,11 +811,11 @@ extern "C" napi_status napi_wrap(napi_env env,
     // If result is requested, the user is responsible for deletion (Userland).
     // If not, the runtime must delete it upon finalization (Runtime).
     Zig::NapiRefOwnership ownership = (result == nullptr) ? Zig::NapiRefOwnership::kRuntime : Zig::NapiRefOwnership::kUserland;
-    
+
     // Create a weak reference (initial_refcount=0) that holds the native object.
     // The ref count will be incremented if the user asks for a reference.
-    auto* ref = new Zig::NapiRef(env, jsc_object, 0, ownership, {finalize_cb, finalize_hint}, native_object);
-    
+    auto* ref = new Zig::NapiRef(env, jsc_object, 0, ownership, { finalize_cb, finalize_hint }, native_object);
+
     // Store the NapiRef* on the JS object. The existing pattern of using an NapiExternal
     // as a container for the raw pointer is correct and should be kept.
     auto* external = Bun::NapiExternal::create(env->vm(), env->globalObject()->NapiExternalStructure(), ref, nullptr, env, nullptr);
@@ -828,18 +828,19 @@ extern "C" napi_status napi_wrap(napi_env env,
     return napi_set_last_error(env, napi_ok);
 }
 
-extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object, void** result) {
+extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object, void** result)
+{
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, js_object);
-    
+
     JSC::JSObject* jsc_object = toJS(js_object).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
-    
+
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = globalObject->vm();
     Zig::NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
-    
+
     // Remove the private property from the JS object
     const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
     jsc_object->deleteProperty(globalObject, propertyName);
@@ -847,14 +848,14 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object, void
     if (result) {
         *result = ref->nativeObject;
     }
-    
+
     // According to Node-API docs, removing the wrap prevents the finalizer from running.
     ref->clearFinalizer();
     ref->nativeObject = nullptr;
 
     // The NapiRef itself is NOT deleted here. Its lifetime is still governed by its
     // ownership model (either GC'd if runtime, or deleted by user if userland).
-    
+
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1029,7 +1030,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
-    
+
     // Create a userland-owned reference with no finalizer.
     auto* ref = new Zig::NapiRef(env, toJS(value), initial_refcount, Zig::NapiRefOwnership::kUserland, {}, nullptr);
     *result = toNapi(ref);
@@ -1057,7 +1058,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new Zig::NapiRef(env, objectValue, 0, Zig::NapiRefOwnership::kUserland, {finalize_cb, finalize_hint}, native_object);
+        auto* ref = new Zig::NapiRef(env, objectValue, 0, Zig::NapiRefOwnership::kUserland, { finalize_cb, finalize_hint }, native_object);
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
@@ -1131,7 +1132,7 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
-    
+
     // This is now safe. It only deletes the C++ wrapper object.
     delete toJS(ref);
     return napi_set_last_error(env, napi_ok);

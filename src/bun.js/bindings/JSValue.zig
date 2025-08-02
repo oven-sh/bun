@@ -1408,18 +1408,18 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
     /// throw. Null indicates the property does not exist. JavaScript undefined
     /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist).
+    /// `null` (property does not exist), however javascript undefined will return
+    /// zig null.
     ///
-    /// `property` must be either `[]const u8`. A comptime slice may defer to
+    /// `property` must be `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
     ///
     /// Cannot handle property names that are numeric indexes. (For this use `getPropertyValue` instead.)
     ///
-    pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
+    pub inline fn get(target: JSValue, global: *JSGlobalObject, property_slice: []const u8) JSError!?JSValue {
         bun.debugAssert(target.isObject());
-        const property_slice: []const u8 = property; // must be a slice!
 
         // This call requires `get` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
@@ -1428,12 +1428,7 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return switch (try fromJSHostCall(global, @src(), JSC__JSValue__getIfPropertyExistsImpl, .{
-            target,
-            global,
-            property_slice.ptr,
-            @intCast(property_slice.len),
-        })) {
+        return switch (try bun.cpp.JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, property_slice.len)) {
             .zero => unreachable, // handled by fromJSHostCall
             .property_does_not_exist_on_object => null,
 

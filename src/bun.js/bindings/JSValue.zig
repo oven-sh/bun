@@ -25,6 +25,10 @@ pub const JSValue = enum(i64) {
     pub const is_pointer = false;
     pub const JSType = @import("./JSType.zig").JSType;
 
+    pub fn format(_: JSValue, comptime _: []const u8, _: std.fmt.FormatOptions, _: anytype) !void {
+        @compileError("Formatting a JSValue directly is not allowed. Use jsc.ConsoleObject.Formatter");
+    }
+
     pub inline fn cast(ptr: anytype) JSValue {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
@@ -62,8 +66,6 @@ pub const JSValue = enum(i64) {
     ) callconv(.C) void;
 
     extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
 
     pub fn forEachPropertyNonIndexed(
         this: JSValue,
@@ -80,7 +82,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachProperty, .{ this, globalThis, ctx, callback });
+        return bun.cpp.JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
     }
 
     pub fn forEachPropertyOrdered(
@@ -89,7 +91,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyOrdered, .{ this, globalThis, ctx, callback });
+        return bun.cpp.JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
     }
 
     extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject) f64;
@@ -1406,18 +1408,18 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
     /// throw. Null indicates the property does not exist. JavaScript undefined
     /// and JavaScript null can exist as a property and is different than zig
-    /// `null` (property does not exist).
+    /// `null` (property does not exist), however javascript undefined will return
+    /// zig null.
     ///
-    /// `property` must be either `[]const u8`. A comptime slice may defer to
+    /// `property` must be `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
     ///
     /// Cannot handle property names that are numeric indexes. (For this use `getPropertyValue` instead.)
     ///
-    pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
+    pub inline fn get(target: JSValue, global: *JSGlobalObject, property_slice: []const u8) JSError!?JSValue {
         bun.debugAssert(target.isObject());
-        const property_slice: []const u8 = property; // must be a slice!
 
         // This call requires `get` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
@@ -1426,12 +1428,7 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return switch (try fromJSHostCall(global, @src(), JSC__JSValue__getIfPropertyExistsImpl, .{
-            target,
-            global,
-            property_slice.ptr,
-            @intCast(property_slice.len),
-        })) {
+        return switch (try bun.cpp.JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, property_slice.len)) {
             .zero => unreachable, // handled by fromJSHostCall
             .property_does_not_exist_on_object => null,
 

@@ -6,39 +6,54 @@ import { join } from "path";
 // Skip these tests on Windows as they're for verifying cross-compilation
 describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
   const hasObjdump = Bun.which("objdump") !== null;
+  
+  // Common build function
+  async function buildWindowsExecutable(
+    dir: string,
+    outfile: string,
+    windowsOptions: Record<string, string | boolean> = {},
+  ) {
+    const args = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-windows-x64-v1.2.19",
+      ...Object.entries(windowsOptions).flatMap(([key, value]) => 
+        value === true ? [`--${key}`] : [`--${key}`, value as string]
+      ),
+      join(dir, "index.js"),
+      "--outfile",
+      join(dir, outfile),
+    ];
+
+    await using proc = spawn({
+      cmd: args,
+      cwd: dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    
+    return join(dir, outfile);
+  }
 
   test.skipIf(!hasObjdump)("verifies PE checksum is calculated correctly", async () => {
     const dir = tempDirWithFiles("pe-checksum-test", {
       "index.js": `console.log("Testing PE checksum");`,
     });
 
-    // Build executable without any Windows settings
-    await using buildProc = spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "--target=bun-windows-x64",
-        join(dir, "index.js"),
-        "--outfile",
-        join(dir, "test.exe"),
-      ],
-      cwd: dir,
-      env: bunEnv,
-      stderr: "pipe",
-    });
+    const exePath = await buildWindowsExecutable(dir, "test.exe", {});
 
-    const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
-
-    expect(buildExitCode).toBe(0);
-    expect(buildStderr).toBe("");
-
-    // Use objdump to check the PE checksum
-    await using objdumpProc = spawn({
-      cmd: ["objdump", "-p", join(dir, "test.exe")],
-      cwd: dir,
-      stdout: "pipe",
-    });
+    try {
+      // Use objdump to check the PE checksum
+      await using objdumpProc = spawn({
+        cmd: ["objdump", "-p", exePath],
+        cwd: dir,
+        stdout: "pipe",
+      });
 
     const [objdumpStdout, objdumpExitCode] = await Promise.all([
       new Response(objdumpProc.stdout).text(),
@@ -56,6 +71,9 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
 
     // Checksum should not be 0 after our implementation
     expect(checksum).not.toBe("00000000");
+    } finally {
+      await Bun.file(exePath).unlink();
+    }
   });
 
   test.skipIf(!hasObjdump)("verifies PE checksum with Windows resources", async () => {
@@ -64,39 +82,19 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
       "icon.ico": createTestIcon(),
     });
 
-    // Build with Windows resources
-    await using buildProc = spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "--target=bun-windows-x64",
-        "--windows-icon",
-        join(dir, "icon.ico"),
-        "--windows-version",
-        "1.2.3.4",
-        "--windows-description",
-        "Checksum Test App",
-        join(dir, "index.js"),
-        "--outfile",
-        join(dir, "test-resources.exe"),
-      ],
-      cwd: dir,
-      env: bunEnv,
-      stderr: "pipe",
+    const exePath = await buildWindowsExecutable(dir, "test-resources.exe", {
+      "windows-icon": join(dir, "icon.ico"),
+      "windows-version": "1.2.3.4",
+      "windows-description": "Checksum Test App",
     });
 
-    const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
-
-    expect(buildExitCode).toBe(0);
-    expect(buildStderr).toBe("");
-
-    // Check the checksum
-    await using objdumpProc = spawn({
-      cmd: ["objdump", "-p", join(dir, "test-resources.exe")],
-      cwd: dir,
-      stdout: "pipe",
-    });
+    try {
+      // Check the checksum
+      await using objdumpProc = spawn({
+        cmd: ["objdump", "-p", exePath],
+        cwd: dir,
+        stdout: "pipe",
+      });
 
     const [objdumpStdout, objdumpExitCode] = await Promise.all([
       new Response(objdumpProc.stdout).text(),
@@ -113,6 +111,9 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
 
     // Checksum should not be 0
     expect(checksum).not.toBe("00000000");
+    } finally {
+      await Bun.file(exePath).unlink();
+    }
   });
 });
 

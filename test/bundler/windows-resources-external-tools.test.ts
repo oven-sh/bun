@@ -12,6 +12,58 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
   const hasStrings = Bun.which("strings") !== null;
   const hasReadelf = Bun.which("readelf") !== null;
 
+  // Common build function
+  async function buildWindowsExecutable(
+    dir: string,
+    outfile: string,
+    windowsOptions: Record<string, string | boolean> = {},
+  ) {
+    const args = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-windows-x64-v1.2.19",
+      ...Object.entries(windowsOptions).flatMap(([key, value]) => 
+        value === true ? [`--${key}`] : [`--${key}`, value as string]
+      ),
+      join(dir, "index.js"),
+      "--outfile",
+      join(dir, outfile),
+    ];
+
+    await using proc = spawn({
+      cmd: args,
+      cwd: dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    
+    // Return path for cleanup
+    return join(dir, outfile);
+  }
+
+  // Common objdump execution
+  async function runObjdump(exePath: string, args: string[] = ["-p"]) {
+    await using proc = spawn({
+      cmd: ["objdump", ...args, exePath],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    return { stdout, stderr };
+  }
+
   // Test icon data (minimal valid ICO file)
   const createTestIcon = () => {
     // ICO header (6 bytes)
@@ -67,53 +119,17 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         "icon.ico": createTestIcon(),
       });
 
-      // Build executable with resources
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-icon",
-          join(dir, "icon.ico"),
-          "--windows-version",
-          "1.2.3.4",
-          "--windows-description",
-          "Test Application",
-          "--windows-publisher",
-          "Test Company",
-          "--windows-title",
-          "TestApp",
-          "--windows-copyright",
-          "(c) 2024 Test Company",
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "test.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
-        stderr: "pipe",
+      const exePath = await buildWindowsExecutable(dir, "test.exe", {
+        "windows-icon": join(dir, "icon.ico"),
+        "windows-version": "1.2.3.4",
+        "windows-description": "Test Application",
+        "windows-publisher": "Test Company",
+        "windows-title": "TestApp",
+        "windows-copyright": "(c) 2024 Test Company",
       });
 
-      const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
-
-      expect(buildExitCode).toBe(0);
-      expect(buildStderr).toBe("");
-
-      // Use objdump to verify PE headers
-      await using objdumpProc = spawn({
-        cmd: ["objdump", "-p", join(dir, "test.exe")],
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [objdumpStdout, objdumpExitCode] = await Promise.all([
-        new Response(objdumpProc.stdout).text(),
-        objdumpProc.exited,
-      ]);
-
-      expect(objdumpExitCode).toBe(0);
+      try {
+        const { stdout: objdumpStdout } = await runObjdump(exePath);
 
       // Verify resource directory exists
       expect(objdumpStdout).toContain("Resource Directory [.rsrc]");
@@ -125,6 +141,9 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       // Verify the size is non-zero
       const resourceSize = parseInt(resourceMatch![2], 16);
       expect(resourceSize).toBeGreaterThan(0);
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
 
     test.skipIf(!hasObjdump)("verifies PE subsystem with objdump", async () => {
@@ -132,36 +151,18 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         "index.js": `console.log("Testing subsystem");`,
       });
 
-      // Test with --windows-hide-console
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-hide-console",
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "hidden.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
+      const exePath = await buildWindowsExecutable(dir, "hidden.exe", {
+        "windows-hide-console": true,
       });
 
-      expect(await buildProc.exited).toBe(0);
-
-      await using objdumpProc = spawn({
-        cmd: ["objdump", "-p", join(dir, "hidden.exe")],
-        cwd: dir,
-        stdout: "pipe",
-      });
-
-      const [stdout, exitCode] = await Promise.all([new Response(objdumpProc.stdout).text(), objdumpProc.exited]);
-
-      expect(exitCode).toBe(0);
+      try {
+        const { stdout } = await runObjdump(exePath);
 
       // Windows GUI subsystem is 2, console subsystem is 3
       expect(stdout).toMatch(/Subsystem\s+00000002\s+\(Windows GUI\)/);
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
   });
 
@@ -172,39 +173,26 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         "icon.ico": createTestIcon(),
       });
 
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-icon",
-          join(dir, "icon.ico"),
-          "--windows-version",
-          "5.4.3.2",
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "llvm-test.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
+      const exePath = await buildWindowsExecutable(dir, "llvm-test.exe", {
+        "windows-icon": join(dir, "icon.ico"),
+        "windows-version": "5.4.3.2",
       });
 
-      expect(await buildProc.exited).toBe(0);
+      try {
+        await using llvmProc = spawn({
+          cmd: ["llvm-objdump", "--section-headers", exePath],
+          cwd: dir,
+          stdout: "pipe",
+        });
 
-      // List sections
-      await using llvmProc = spawn({
-        cmd: ["llvm-objdump", "--section-headers", join(dir, "llvm-test.exe")],
-        cwd: dir,
-        stdout: "pipe",
-      });
+        const [stdout, exitCode] = await Promise.all([new Response(llvmProc.stdout).text(), llvmProc.exited]);
+        expect(exitCode).toBe(0);
 
-      const [stdout, exitCode] = await Promise.all([new Response(llvmProc.stdout).text(), llvmProc.exited]);
-
-      expect(exitCode).toBe(0);
-
-      // Verify .rsrc section exists
-      expect(stdout).toMatch(/\.rsrc\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+/);
+        // Verify .rsrc section exists
+        expect(stdout).toMatch(/\.rsrc\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+/);
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
   });
 
@@ -214,41 +202,16 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         "index.js": `console.log("Version test");`,
       });
 
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-version",
-          "1.2.3.4",
-          "--windows-description",
-          "My Test App",
-          "--windows-publisher",
-          "Test Publisher",
-          "--windows-title",
-          "Test Product",
-          "--windows-copyright",
-          "Copyright 2024 Test Publisher",
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "version.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
+      const exePath = await buildWindowsExecutable(dir, "version.exe", {
+        "windows-version": "1.2.3.4",
+        "windows-description": "My Test App",
+        "windows-publisher": "Test Publisher",
+        "windows-title": "Test Product",
+        "windows-copyright": "Copyright 2024 Test Publisher",
       });
 
-      expect(await buildProc.exited).toBe(0);
-
-      // First use objdump to find the .rsrc section offset
-      await using objdumpProc = spawn({
-        cmd: ["objdump", "-h", join(dir, "version.exe")],
-        cwd: dir,
-        stdout: "pipe",
-      });
-
-      const objdumpOut = await new Response(objdumpProc.stdout).text();
-      expect(await objdumpProc.exited).toBe(0);
+      try {
+        const { stdout: objdumpOut } = await runObjdump(exePath, ["-h"]);
 
       // Parse .rsrc section info
       const rsrcMatch = objdumpOut.match(/\.rsrc\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)/);
@@ -261,7 +224,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       await using ddProc = spawn({
         cmd: [
           "dd",
-          `if=${join(dir, "version.exe")}`,
+          `if=${exePath}`,
           `bs=1`,
           `skip=${rsrcOffset}`,
           `count=${Math.min(rsrcSize, 4096)}`,
@@ -288,6 +251,9 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       expect(text).toContain("Test Product");
       expect(text).toContain("LegalCopyright");
       expect(text).toContain("Copyright 2024 Test Publisher");
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
   });
 
@@ -302,38 +268,21 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       const testTitle = "Super Test Product";
       const testCopyright = "Copyright (c) 2024 Acme Test Corporation";
 
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-version",
-          "9.8.7.6",
-          "--windows-description",
-          testDescription,
-          "--windows-publisher",
-          testPublisher,
-          "--windows-title",
-          testTitle,
-          "--windows-copyright",
-          testCopyright,
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "strings.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
+      const exePath = await buildWindowsExecutable(dir, "strings.exe", {
+        "windows-version": "9.8.7.6",
+        "windows-description": testDescription,
+        "windows-publisher": testPublisher,
+        "windows-title": testTitle,
+        "windows-copyright": testCopyright,
       });
 
-      expect(await buildProc.exited).toBe(0);
-
-      // Use strings with UTF-16 encoding to find our strings
-      await using stringsProc = spawn({
-        cmd: ["strings", "-e", "l", join(dir, "strings.exe")],
-        cwd: dir,
-        stdout: "pipe",
-      });
+      try {
+        // Use strings with UTF-16 encoding to find our strings
+        await using stringsProc = spawn({
+          cmd: ["strings", "-e", "l", exePath],
+          cwd: dir,
+          stdout: "pipe",
+        });
 
       const [stdout, exitCode] = await Promise.all([new Response(stringsProc.stdout).text(), stringsProc.exited]);
 
@@ -349,6 +298,9 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       expect(stdout).toContain("ProductName");
       expect(stdout).toContain("LegalCopyright");
       expect(stdout).toContain("9.8.7.6"); // Version string
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
   });
 
@@ -358,36 +310,26 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         "index.js": `console.log("PE format test");`,
       });
 
-      await using buildProc = spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--target=bun-windows-x64",
-          "--windows-version",
-          "1.0.0.0",
-          join(dir, "index.js"),
-          "--outfile",
-          join(dir, "pe.exe"),
-        ],
-        cwd: dir,
-        env: bunEnv,
+      const exePath = await buildWindowsExecutable(dir, "pe.exe", {
+        "windows-version": "1.0.0.0",
       });
 
-      expect(await buildProc.exited).toBe(0);
-
-      // readelf can detect PE format even though it's primarily for ELF
-      await using readelfProc = spawn({
-        cmd: ["readelf", "-h", join(dir, "pe.exe")],
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      try {
+        // readelf can detect PE format even though it's primarily for ELF
+        await using readelfProc = spawn({
+          cmd: ["readelf", "-h", exePath],
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
       const stderr = await new Response(readelfProc.stderr).text();
 
       // readelf should fail on PE files with a specific error
       expect(stderr).toContain("Not an ELF file");
+      } finally {
+        await Bun.file(exePath).unlink();
+      }
     });
   });
 
@@ -398,11 +340,12 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
     });
 
     // Build for multiple Windows architectures
-    const targets = ["bun-windows-x64", "bun-windows-x64-modern"];
+    const targets = ["bun-windows-x64-v1.2.19", "bun-windows-x64-modern-v1.2.19"];
 
     for (const target of targets) {
       const outfile = `test-${target.replace(/[^a-z0-9]/gi, "-")}.exe`;
 
+      // Override target for this specific test
       await using proc = spawn({
         cmd: [
           bunExe(),
@@ -425,7 +368,6 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       });
 
       const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
 
@@ -436,6 +378,9 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       // Check magic bytes for PE
       const file = await Bun.file(exePath).slice(0, 2).text();
       expect(file).toBe("MZ"); // DOS header magic
+      
+      // Clean up
+      await Bun.file(exePath).unlink();
     }
   });
 });

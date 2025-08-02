@@ -253,15 +253,8 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 
 void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
-    auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizer();
-}
-
-void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
-{
-    auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizer();
-    delete weakValue;
+    auto* ref = reinterpret_cast<Zig::NapiRef*>(context);
+    ref->finalizeFromGC();
 }
 
 static uint32_t getPropertyAttributes(const napi_property_descriptor& prop)
@@ -777,14 +770,7 @@ extern "C" void napi_module_register(napi_module* mod)
     }
 }
 
-static void wrap_cleanup(napi_env env, void* data, void* hint)
-{
-    auto* ref = reinterpret_cast<NapiRef*>(data);
-    ASSERT(ref->boundCleanup != nullptr);
-    ref->boundCleanup->deactivate(env);
-    ref->boundCleanup = nullptr;
-    ref->callFinalizer();
-}
+// wrap_cleanup function removed as it's no longer needed with the new NapiRef implementation
 
 static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
@@ -805,91 +791,71 @@ extern "C" napi_status napi_wrap(napi_env env,
     napi_value js_object,
     void* native_object,
     napi_finalize finalize_cb,
-
-    // Typically when wrapping a class instance, a finalize callback should be
-    // provided that simply deletes the native instance that is received as the
-    // data argument to the finalize callback.
     void* finalize_hint,
-
     napi_ref* result)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, js_object);
 
-    auto* globalObject = toJS(env);
-    auto& vm = JSC::getVM(globalObject);
-    JSValue jsc_value = toJS(js_object);
-    JSObject* jsc_object = jsc_value.getObject();
+    JSC::JSObject* jsc_object = toJS(js_object).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
 
-    // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
-    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
-
+    auto* globalObject = toJS(env);
+    auto& vm = JSC::getVM(globalObject);
     const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
 
     // if this is nonnull then the object has already been wrapped
     NapiRef* existing_wrap = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_wrap == nullptr, napi_invalid_arg);
 
-    // create a new weak reference (refcount 0)
-    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-    // In case the ref's finalizer is never called, we'll add a finalizer to execute on exit.
-    const auto& bound_cleanup = env->addFinalizer(wrap_cleanup, native_object, ref);
-    ref->boundCleanup = &bound_cleanup;
-    ref->nativeObject = native_object;
-
-    if (napi_instance) {
-        napi_instance->napiRef = ref;
-    } else {
-        // wrap the ref in an external so that it can serve as a JSValue
-        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
-        jsc_object->putDirect(vm, propertyName, JSValue(external));
-    }
+    // If result is requested, the user is responsible for deletion (Userland).
+    // If not, the runtime must delete it upon finalization (Runtime).
+    Zig::NapiRefOwnership ownership = (result == nullptr) ? Zig::NapiRefOwnership::kRuntime : Zig::NapiRefOwnership::kUserland;
+    
+    // Create a weak reference (initial_refcount=0) that holds the native object.
+    // The ref count will be incremented if the user asks for a reference.
+    auto* ref = new Zig::NapiRef(env, jsc_object, 0, ownership, {finalize_cb, finalize_hint}, native_object);
+    
+    // Store the NapiRef* on the JS object. The existing pattern of using an NapiExternal
+    // as a container for the raw pointer is correct and should be kept.
+    auto* external = Bun::NapiExternal::create(env->vm(), env->globalObject()->NapiExternalStructure(), ref, nullptr, env, nullptr);
+    jsc_object->putDirect(vm, propertyName, JSValue(external));
 
     if (result) {
-        ref->weakValueRef.set(jsc_value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
         *result = toNapi(ref);
-    } else {
-        ref->weakValueRef.set(jsc_value, Napi::NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
     }
 
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
-extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
-    void** result)
-{
+extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object, void** result) {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, js_object);
-
-    JSValue jsc_value = toJS(js_object);
-    JSObject* jsc_object = jsc_value.getObject();
+    
+    JSC::JSObject* jsc_object = toJS(js_object).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
-    // may be null
-    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
-
+    
     Zig::GlobalObject* globalObject = toJS(env);
-    auto& vm = JSC::getVM(globalObject);
-    NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
+    auto& vm = globalObject->vm();
+    Zig::NapiRef* ref = getWrapContentsIfExists(vm, globalObject, jsc_object);
     NAPI_RETURN_EARLY_IF_FALSE(env, ref, napi_invalid_arg);
-
-    if (napi_instance) {
-        napi_instance->napiRef = nullptr;
-    } else {
-        const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
-        jsc_object->deleteProperty(globalObject, propertyName);
-    }
+    
+    // Remove the private property from the JS object
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+    jsc_object->deleteProperty(globalObject, propertyName);
 
     if (result) {
         *result = ref->nativeObject;
     }
+    
+    // According to Node-API docs, removing the wrap prevents the finalizer from running.
+    ref->clearFinalizer();
+    ref->nativeObject = nullptr;
 
-    ref->finalizer.clear();
-
-    // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
-    // if strong, native addon needs to clean it up.
-    // the external is garbage collected.
-    NAPI_RETURN_SUCCESS(env);
+    // The NapiRef itself is NOT deleted here. Its lifetime is still governed by its
+    // ownership model (either GC'd if runtime, or deleted by user if userland).
+    
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
@@ -1063,33 +1029,14 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
-
-    JSC::JSValue val = toJS(value);
-
-    bool can_be_weak = true;
-
-    if (!(val.isObject() || val.isCallable() || val.isSymbol())) {
-        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version == NAPI_VERSION_EXPERIMENTAL, napi_invalid_arg);
-        can_be_weak = false;
-    }
-
-    auto* ref = new NapiRef(env, initial_refcount, Bun::NapiFinalizer {});
-    ref->setValueInitial(val, can_be_weak);
-
+    
+    // Create a userland-owned reference with no finalizer.
+    auto* ref = new Zig::NapiRef(env, toJS(value), initial_refcount, Zig::NapiRefOwnership::kUserland, {}, nullptr);
     *result = toNapi(ref);
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
-extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    JSC::JSValue val = JSC::JSValue::decode(val_);
-    if (val) {
-        ref->strongRef.set(JSC::getVM(&*ref->globalObject), val);
-    } else {
-        ref->strongRef.clear();
-    }
-}
+// napi_set_ref function removed as it's no longer needed with the new NapiRef implementation
 
 extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     void* native_object,
@@ -1110,10 +1057,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-        // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
-        ref->setValueInitial(object, true);
-        ref->nativeObject = native_object;
+        auto* ref = new Zig::NapiRef(env, objectValue, 0, Zig::NapiRefOwnership::kUserland, {finalize_cb, finalize_hint}, native_object);
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
@@ -1144,12 +1088,12 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
 
-    NapiRef* napiRef = toJS(ref);
-    napiRef->unref();
+    Zig::NapiRef* napiRef = toJS(ref);
+    uint32_t count = napiRef->unref();
     if (result) [[likely]] {
-        *result = napiRef->refCount;
+        *result = count;
     }
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
 // Attempts to get a referenced value. If the reference is weak,
@@ -1162,10 +1106,10 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
     NAPI_CHECK_ARG(env, result);
-    NapiRef* napiRef = toJS(ref);
+    Zig::NapiRef* napiRef = toJS(ref);
     *result = toNapi(napiRef->value(), toJS(env));
 
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
@@ -1174,12 +1118,12 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
-    NapiRef* napiRef = toJS(ref);
-    napiRef->ref();
+    Zig::NapiRef* napiRef = toJS(ref);
+    uint32_t count = napiRef->ref();
     if (result) [[likely]] {
-        *result = napiRef->refCount;
+        *result = count;
     }
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
@@ -1187,9 +1131,10 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
-    NapiRef* napiRef = toJS(ref);
-    delete napiRef;
-    NAPI_RETURN_SUCCESS(env);
+    
+    // This is now safe. It only deletes the C++ wrapper object.
+    delete toJS(ref);
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,

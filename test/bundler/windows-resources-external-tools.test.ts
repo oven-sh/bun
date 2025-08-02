@@ -93,10 +93,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         stderr: "pipe",
       });
 
-      const [buildStderr, buildExitCode] = await Promise.all([
-        new Response(buildProc.stderr).text(),
-        buildProc.exited,
-      ]);
+      const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
 
       expect(buildExitCode).toBe(0);
       expect(buildStderr).toBe("");
@@ -118,11 +115,11 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
 
       // Verify resource directory exists
       expect(objdumpStdout).toContain("Resource Directory [.rsrc]");
-      
+
       // The output should show the resource directory entry
       const resourceMatch = objdumpStdout.match(/Entry 2\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+Resource Directory/);
       expect(resourceMatch).not.toBeNull();
-      
+
       // Verify the size is non-zero
       const resourceSize = parseInt(resourceMatch![2], 16);
       expect(resourceSize).toBeGreaterThan(0);
@@ -157,13 +154,10 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         stdout: "pipe",
       });
 
-      const [stdout, exitCode] = await Promise.all([
-        new Response(objdumpProc.stdout).text(),
-        objdumpProc.exited,
-      ]);
+      const [stdout, exitCode] = await Promise.all([new Response(objdumpProc.stdout).text(), objdumpProc.exited]);
 
       expect(exitCode).toBe(0);
-      
+
       // Windows GUI subsystem is 2, console subsystem is 3
       expect(stdout).toMatch(/Subsystem\s+00000002\s+\(Windows GUI\)/);
     });
@@ -203,13 +197,10 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         stdout: "pipe",
       });
 
-      const [stdout, exitCode] = await Promise.all([
-        new Response(llvmProc.stdout).text(),
-        llvmProc.exited,
-      ]);
+      const [stdout, exitCode] = await Promise.all([new Response(llvmProc.stdout).text(), llvmProc.exited]);
 
       expect(exitCode).toBe(0);
-      
+
       // Verify .rsrc section exists
       expect(stdout).toMatch(/\.rsrc\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+/);
     });
@@ -258,13 +249,19 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       // Parse .rsrc section info
       const rsrcMatch = objdumpOut.match(/\.rsrc\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)/);
       expect(rsrcMatch).not.toBeNull();
-      
+
       const rsrcSize = parseInt(rsrcMatch![1], 16);
       const rsrcOffset = parseInt(rsrcMatch![2], 16);
-      
+
       // Use dd to extract just the .rsrc section for easier analysis
       await using ddProc = spawn({
-        cmd: ["dd", `if=${join(dir, "version.exe")}`, `bs=1`, `skip=${rsrcOffset}`, `count=${Math.min(rsrcSize, 4096)}`],
+        cmd: [
+          "dd",
+          `if=${join(dir, "version.exe")}`,
+          `bs=1`,
+          `skip=${rsrcOffset}`,
+          `count=${Math.min(rsrcSize, 4096)}`,
+        ],
         cwd: dir,
         stdout: "pipe",
         stderr: "pipe",
@@ -275,9 +272,9 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
 
       // Look for UTF-16LE strings in the resource data
       // Convert to string to search for our version strings
-      const decoder = new TextDecoder('utf-16le', { fatal: false });
+      const decoder = new TextDecoder("utf-16le", { fatal: false });
       const text = decoder.decode(rsrcData);
-      
+
       // Should contain version info strings
       expect(text).toContain("FileDescription");
       expect(text).toContain("My Test App");
@@ -329,13 +326,10 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         stdout: "pipe",
       });
 
-      const [stdout, exitCode] = await Promise.all([
-        new Response(stringsProc.stdout).text(),
-        stringsProc.exited,
-      ]);
+      const [stdout, exitCode] = await Promise.all([new Response(stringsProc.stdout).text(), stringsProc.exited]);
 
       expect(exitCode).toBe(0);
-      
+
       // Our UTF-16LE strings should be found
       expect(stdout).toContain(testDescription);
       expect(stdout).toContain(testPublisher);
@@ -380,7 +374,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       });
 
       const stderr = await new Response(readelfProc.stderr).text();
-      
+
       // readelf should fail on PE files with a specific error
       expect(stderr).toContain("Not an ELF file");
     });
@@ -393,14 +387,11 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
     });
 
     // Build for multiple Windows architectures
-    const targets = [
-      "bun-windows-x64",
-      "bun-windows-x64-modern",
-    ];
+    const targets = ["bun-windows-x64", "bun-windows-x64-modern"];
 
     for (const target of targets) {
       const outfile = `test-${target.replace(/[^a-z0-9]/gi, "-")}.exe`;
-      
+
       await using proc = spawn({
         cmd: [
           bunExe(),
@@ -422,18 +413,15 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
+      const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toBe("");
-      
+
       // Verify file exists and is a PE executable
       const exePath = join(dir, outfile);
       expect(await Bun.file(exePath).exists()).toBe(true);
-      
+
       // Check magic bytes for PE
       const file = await Bun.file(exePath).slice(0, 2).text();
       expect(file).toBe("MZ"); // DOS header magic

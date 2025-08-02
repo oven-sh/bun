@@ -724,7 +724,7 @@ pub const StandaloneModuleGraph = struct {
                     };
                 }
                 if (inject_options) |opts| {
-                    if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null) {
+                    if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null or opts.hide_console) {
                         switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                             .err => |err| {
                                 Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});

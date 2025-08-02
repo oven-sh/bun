@@ -1306,6 +1306,15 @@ pub fn getS3DefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
 }
 
+pub fn getTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return globalThis.bunVM().rareData().tlsDefaultCiphers();
+}
+
+pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, ciphers: jsc.JSValue) jsc.JSValue {
+    globalThis.bunVM().rareData().setTLSDefaultCiphers(ciphers);
+    return .js_undefined;
+}
+
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     const valkey = jsc.API.Valkey.create(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {

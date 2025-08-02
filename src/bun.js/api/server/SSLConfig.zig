@@ -1,6 +1,5 @@
 const SSLConfig = @This();
 
-requires_custom_request_ctx: bool = false,
 server_name: [*c]const u8 = null,
 
 key_file_name: [*c]const u8 = null,
@@ -10,7 +9,6 @@ ca_file_name: [*c]const u8 = null,
 dh_params_file_name: [*c]const u8 = null,
 
 passphrase: [*c]const u8 = null,
-low_memory_mode: bool = false,
 
 key: ?[][*c]const u8 = null,
 key_count: u32 = 0,
@@ -29,6 +27,9 @@ protos: ?[*:0]const u8 = null,
 protos_len: usize = 0,
 client_renegotiation_limit: u32 = 0,
 client_renegotiation_window: u32 = 0,
+requires_custom_request_ctx: bool = false,
+is_using_default_ciphers: bool = true,
+low_memory_mode: bool = false,
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -168,9 +169,17 @@ pub fn deinit(this: *SSLConfig) void {
         "ca_file_name",
         "dh_params_file_name",
         "passphrase",
-        "ssl_ciphers",
         "protos",
     };
+
+    if (!this.is_using_default_ciphers) {
+        if (this.ssl_ciphers) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            if (slice.len > 0) {
+                bun.freeSensitive(bun.default_allocator, slice);
+            }
+        }
+    }
 
     inline for (fields) |field| {
         if (@field(this, field)) |slice_ptr| {
@@ -452,9 +461,13 @@ pub fn fromJS(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, obj: jsc.JSV
         defer sliced.deinit();
         if (sliced.len > 0) {
             result.ssl_ciphers = try bun.default_allocator.dupeZ(u8, sliced.slice());
+            result.is_using_default_ciphers = false;
             any = true;
             result.requires_custom_request_ctx = true;
         }
+    }
+    if (result.is_using_default_ciphers) {
+        result.ssl_ciphers = global.bunVM().rareData().tlsDefaultCiphers() orelse null;
     }
 
     if (try obj.getTruthy(global, "serverName") orelse try obj.getTruthy(global, "servername")) |server_name| {

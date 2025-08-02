@@ -4,7 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
@@ -12,6 +12,16 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+
+const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
+const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+
+function validateCiphers(ciphers: string, name: string = "options") {
+  // Set the cipher list and cipher suite before anything else because
+  // @SECLEVEL=<n> changes the security level and that affects subsequent
+  // operations.
+  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, `${name}.ciphers`);
+}
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -601,7 +611,7 @@ function Server(options, secureConnectionListener): void {
 
         validateCiphers(options.ciphers);
 
-        // TODO: Pass the ciphers
+        this.ciphers = options.ciphers;
       }
     }
   };
@@ -629,6 +639,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        ciphers: this.ciphers,
       },
       TLSSocket,
     ];
@@ -680,7 +691,7 @@ function connect(...args) {
 }
 
 function getCiphers() {
-  return DEFAULT_CIPHERS.split(":");
+  return getDefaultCiphers().split(":");
 }
 
 // Convert protocols array into valid OpenSSL protocols list
@@ -783,6 +794,16 @@ function getCACertificates(type = "default") {
   }
 }
 
+function tlsCipherFilter(a: string) {
+  return !a.startsWith("TLS_");
+}
+
+function getDefaultCiphers() {
+  // TLS_ will always be present until SSL_CTX_set_cipher_list is supported see default_ciphers.h
+  const ciphers = getTLSDefaultCiphers();
+  return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -790,7 +811,18 @@ export default {
   convertALPNProtocols,
   createSecureContext,
   createServer,
-  DEFAULT_CIPHERS,
+  get DEFAULT_CIPHERS() {
+    return getDefaultCiphers();
+  },
+  set DEFAULT_CIPHERS(value) {
+    if (value) {
+      validateCiphers(value, "value");
+      // filter out TLS_ ciphers
+      const ciphers = value.split(":");
+      value = ciphers.filter(tlsCipherFilter).join(":");
+    }
+    setTLSDefaultCiphers(value);
+  },
   DEFAULT_ECDH_CURVE,
   DEFAULT_MAX_VERSION,
   DEFAULT_MIN_VERSION,

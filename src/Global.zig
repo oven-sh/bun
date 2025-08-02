@@ -169,22 +169,22 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // ```
     // ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
     // Started development server: http://localhost:3004
-
+    //
     // Peak memory usage: 52 MB
-
+    //
     // ❯ mimalloc_allow_large_os_pages=1 BUN_PORT=3004 mem bun http-hello.js
     // Started development server: http://localhost:3004
-
+    //
     // Peak memory usage: 74 MB
     // ```
-
+    //
     // ```
     // ❯ mimalloc_allow_large_os_pages=1 mem bun --eval 1
-
+    //
     // Peak memory usage: 52 MB
-
+    //
     // ❯ mimalloc_allow_large_os_pages=0 mem bun --eval 1
-
+    //
     // Peak memory usage: 30 MB
     // ```
     bun.mimalloc.mi_option_set(.allow_large_os_pages, 0);

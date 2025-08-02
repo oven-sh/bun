@@ -1050,11 +1050,16 @@ pub const Command = struct {
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
-                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
+                        \\  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
+                        \\  <cyan>-p, --package <blue>\<package\><r>    Specify package to install when binary name differs from package name
+                        \\  <cyan>--no-install<r>           Skip installation if package is not already installed
+                        \\  <cyan>--verbose<r>              Enable verbose output during installation
+                        \\  <cyan>--silent<r>               Suppress output during installation
                         \\
                         \\Examples<d>:<r>
                         \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
                         \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+                        \\  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
                         \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
                         \\
                     , .{});

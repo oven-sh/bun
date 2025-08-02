@@ -999,6 +999,7 @@ interface ArrayBuffer {
    * Read-only. The length of the ArrayBuffer (in bytes).
    */
   readonly byteLength: number;
+
   /**
    * Resize an ArrayBuffer in-place.
    */
@@ -1008,7 +1009,6 @@ interface ArrayBuffer {
    * Returns a section of an ArrayBuffer.
    */
   slice(begin: number, end?: number): ArrayBuffer;
-  readonly [Symbol.toStringTag]: string;
 }
 
 interface SharedArrayBuffer {
@@ -1496,12 +1496,12 @@ interface Blob {
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
    */
-  bytes(): Promise<Uint8Array>;
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
   /**
    * Returns a readable stream of the blob's contents
    */
-  stream(): ReadableStream<Uint8Array>;
+  stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<
@@ -1576,14 +1576,14 @@ interface Uint8ArrayConstructor {
       alphabet?: "base64" | "base64url";
       lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
     },
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Create a new Uint8Array from a hex encoded string
    * @param hex The hex encoded string to convert to a Uint8Array
    * @returns A new Uint8Array containing the decoded data
    */
-  fromHex(hex: string): Uint8Array;
+  fromHex(hex: string): Uint8Array<ArrayBuffer>;
 }
 
 interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}

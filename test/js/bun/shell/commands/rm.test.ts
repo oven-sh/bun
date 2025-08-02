@@ -117,7 +117,7 @@ foo/
   test("dir", async () => {
     const files = {
       "existent.txt": "",
-      "sub_dir": {},
+      sub_dir: {},
       "sub_dir_files/file.txt": "",
     };
 

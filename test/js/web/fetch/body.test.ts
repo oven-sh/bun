@@ -527,7 +527,7 @@ for (const { body, fn } of bodyTypes) {
     });
     describe("bodyUsed", () => {
       const tests: Record<string, { label?: string; body?: BodyInit | null; bodyUsed: boolean }[]> = {
-        "text": [
+        text: [
           {
             body: undefined,
             bodyUsed: false,
@@ -545,13 +545,13 @@ for (const { body, fn } of bodyTypes) {
             bodyUsed: true,
           },
         ],
-        "json": [
+        json: [
           {
             body: "{}",
             bodyUsed: true,
           },
         ],
-        "arrayBuffer": [
+        arrayBuffer: [
           {
             body: undefined,
             bodyUsed: false,
@@ -566,7 +566,7 @@ for (const { body, fn } of bodyTypes) {
             bodyUsed: true,
           },
         ],
-        "blob": [
+        blob: [
           {
             body: undefined,
             bodyUsed: false,
@@ -581,14 +581,14 @@ for (const { body, fn } of bodyTypes) {
             bodyUsed: true,
           },
         ],
-        "formData": [
+        formData: [
           {
             label: "FormData",
             body: new FormData(),
             bodyUsed: true,
           },
         ],
-        "clone": [
+        clone: [
           {
             body: null,
             bodyUsed: false,

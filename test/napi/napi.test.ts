@@ -297,7 +297,7 @@ describe("napi", () => {
       expect(bunLines).toEqual(expectedLines.sort());
     });
     it("works with cancelation", async () => {
-      const output = await checkSameOutput("test_napi_async_work_cancel", [], { "UV_THREADPOOL_SIZE": "2" });
+      const output = await checkSameOutput("test_napi_async_work_cancel", [], { UV_THREADPOOL_SIZE: "2" });
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
     });

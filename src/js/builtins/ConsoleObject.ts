@@ -352,8 +352,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       // Eager version for the Console constructor
       value: function (stdout, stderr) {
         Object.defineProperties(this, {
-          "_stdout": { ...consolePropAttributes, value: stdout },
-          "_stderr": { ...consolePropAttributes, value: stderr },
+          _stdout: { ...consolePropAttributes, value: stdout },
+          _stderr: { ...consolePropAttributes, value: stderr },
         });
       },
     },
@@ -365,7 +365,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         let stdout;
         let stderr;
         Object.defineProperties(this, {
-          "_stdout": {
+          _stdout: {
             enumerable: false,
             configurable: true,
             get() {
@@ -376,7 +376,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
               stdout = value;
             },
           },
-          "_stderr": {
+          _stderr: {
             enumerable: false,
             configurable: true,
             get() {
@@ -396,19 +396,19 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       ...consolePropAttributes,
       value: function (ignoreErrors, colorMode, groupIndentation = 2) {
         Object.defineProperties(this, {
-          "_stdoutErrorHandler": {
+          _stdoutErrorHandler: {
             ...consolePropAttributes,
             value: createWriteErrorHandler(this, kUseStdout),
           },
-          "_stderrErrorHandler": {
+          _stderrErrorHandler: {
             ...consolePropAttributes,
             value: createWriteErrorHandler(this, kUseStderr),
           },
-          "_ignoreErrors": {
+          _ignoreErrors: {
             ...consolePropAttributes,
             value: Boolean(ignoreErrors),
           },
-          "_times": { ...consolePropAttributes, value: new Map() },
+          _times: { ...consolePropAttributes, value: new Map() },
           // Corresponds to https://console.spec.whatwg.org/#count-map
           [kCounts]: { ...consolePropAttributes, value: new Map() },
           [kColorMode]: { ...consolePropAttributes, value: colorMode },

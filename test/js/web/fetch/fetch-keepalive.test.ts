@@ -27,7 +27,7 @@ test("keepalive", async () => {
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: false,
       headers: {
-        "Connection": "HELLO!",
+        Connection: "HELLO!",
       },
     });
     const headers = await res.json();

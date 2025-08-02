@@ -12,7 +12,7 @@ const files = process.argv.slice(2);
 const outBase = files.pop();
 let externs = "";
 const CommonIdentifiers = {
-  "name": true,
+  name: true,
 };
 function toIdentifier(propertyName) {
   if (CommonIdentifiers[propertyName]) {

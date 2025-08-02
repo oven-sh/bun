@@ -48,10 +48,10 @@ export const tart = {
       throw new Error(`Unsupported platform: ${inspect(platform)}`);
     }
     const distros = {
-      "15": "sequoia",
-      "14": "sonoma",
-      "13": "ventura",
-      "12": "monterey",
+      15: "sequoia",
+      14: "sonoma",
+      13: "ventura",
+      12: "monterey",
     };
     const distro = distros[release];
     if (!distro) {

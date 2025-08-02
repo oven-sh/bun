@@ -541,8 +541,8 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
       env: {
         ...bunEnv,
         // Both flags are necessary to force this condition
-        "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",
+        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
       },
       stderr: "inherit",
       stdout: "inherit",

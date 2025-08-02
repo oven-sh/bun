@@ -34,7 +34,7 @@ registry = "http://${hostname}:${port}/prefixed-route/"
       name: "test",
       version: "0.0.0",
       dependencies: {
-        "react": "my-custom-tag",
+        react: "my-custom-tag",
       },
     }),
   );

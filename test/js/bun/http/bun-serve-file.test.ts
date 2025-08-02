@@ -277,7 +277,7 @@ describe("Bun.file in serve routes", () => {
     it("supports partial content requests", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), {
         headers: {
-          "Range": "bytes=0-4",
+          Range: "bytes=0-4",
         },
       });
 
@@ -295,7 +295,7 @@ describe("Bun.file in serve routes", () => {
     it("handles invalid range requests", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), {
         headers: {
-          "Range": "bytes=20-30", // Beyond file size
+          Range: "bytes=20-30", // Beyond file size
         },
       });
 

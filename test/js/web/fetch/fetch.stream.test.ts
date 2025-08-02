@@ -15,7 +15,7 @@ const files = [
 ];
 
 const fixtures = {
-  "fixture": readFileSync(join(import.meta.dir, "fixture.html")),
+  fixture: readFileSync(join(import.meta.dir, "fixture.html")),
   "fixture.png": readFileSync(join(import.meta.dir, "fixture.png")),
   "fixture.png.gz": readFileSync(join(import.meta.dir, "fixture.png.gz")),
 };

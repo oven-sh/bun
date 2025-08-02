@@ -39,11 +39,11 @@ function createTestPackageJson(overrides = {}) {
       author: "Test Author",
       license: "MIT",
       dependencies: {
-        "lodash": "^4.17.21",
-        "react": "^18.0.0",
+        lodash: "^4.17.21",
+        react: "^18.0.0",
       },
       devDependencies: {
-        "typescript": "^5.0.0",
+        typescript: "^5.0.0",
         "@types/node": "^20.0.0",
       },
       engines: {
@@ -839,13 +839,13 @@ describe("bun pm pkg", () => {
             name: "my-project",
             version: "1.0.0",
             scripts: {
-              "test": "jest",
+              test: "jest",
               "test:watch": "jest --watch",
-              "build": "webpack",
+              build: "webpack",
               "build:prod": "webpack --mode=production",
             },
             dependencies: {
-              "react": "^18.0.0",
+              react: "^18.0.0",
               "@types/node": "^20.0.0",
             },
             workspaces: ["packages/*", "apps/*"],
@@ -893,11 +893,11 @@ describe("bun pm pkg", () => {
             description: "Test package",
             main: "index.js",
             bin: {
-              "mycli": "./bin/nonexistent.js",
-              "othercli": "./bin/also-missing.js",
+              mycli: "./bin/nonexistent.js",
+              othercli: "./bin/also-missing.js",
             },
             dependencies: {
-              "react": "^18.0.0",
+              react: "^18.0.0",
             },
           },
           null,
@@ -961,7 +961,7 @@ describe("bun pm pkg", () => {
             name: "BIN-PACKAGE",
             version: "1.0.0",
             bin: {
-              "actualcli": "./bin/real.js",
+              actualcli: "./bin/real.js",
             },
           },
           null,
@@ -1037,8 +1037,8 @@ describe("bun pm pkg", () => {
             name: "MULTIPLE-ISSUES-PACKAGE",
             version: "1.0.0",
             bin: {
-              "missing1": "./nonexistent1.js",
-              "missing2": "./nonexistent2.js",
+              missing1: "./nonexistent1.js",
+              missing2: "./nonexistent2.js",
             },
           },
           null,

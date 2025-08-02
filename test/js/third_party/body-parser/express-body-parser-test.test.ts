@@ -79,14 +79,14 @@ test("GET with body-parser", async () => {
 
   app.use(express.json());
   app.get("/", (req, res) => {
-    expect(req.body).toEqual({ "name": "John Doe", "email": "john.doe@example.com" });
+    expect(req.body).toEqual({ name: "John Doe", email: "john.doe@example.com" });
     req.res.send("Hello World!");
   });
 
   function doGet(hostname, port) {
     const { promise, resolve, reject } = Promise.withResolvers();
     const socket = net.createConnection(port, hostname);
-    const payload = Buffer.from(JSON.stringify({ "name": "John Doe", "email": "john.doe@example.com" }));
+    const payload = Buffer.from(JSON.stringify({ name: "John Doe", email: "john.doe@example.com" }));
     socket.write(`GET / HTTP/1.1\r\n`);
     socket.write(`Host: ${hostname}\r\n`);
     socket.write(`Content-Length: ${payload.byteLength}\r\n`);

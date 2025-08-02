@@ -230,7 +230,7 @@ describe("certificate authority", () => {
     expect(await exited).toBe(0);
   });
   test(`non-existent --cafile`, async () => {
-    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.1.1" } }));
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--cafile", "does-not-exist"],
@@ -247,7 +247,7 @@ describe("certificate authority", () => {
   });
 
   test("non-existent --cafile (absolute path)", async () => {
-    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.1.1" } }));
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
       cwd: packageDir,
@@ -1219,7 +1219,7 @@ describe("optionalDependencies", () => {
             "missing-tarball": "1.0.0",
             "uses-what-bin": "1.0.0",
           },
-          "trustedDependencies": ["uses-what-bin"],
+          trustedDependencies: ["uses-what-bin"],
         }),
       );
 
@@ -1647,7 +1647,7 @@ test("hardlinks on windows dont fail with long paths", async () => {
       version: "1.2.3",
       dependencies: {
         // 255 characters
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:
           "file:./a-package",
       },
     }),
@@ -2247,7 +2247,7 @@ test("--production excludes devDependencies in workspaces", async () => {
           "no-deps": "1.0.0",
         },
         devDependencies: {
-          "a1": "npm:no-deps@1.0.0",
+          a1: "npm:no-deps@1.0.0",
         },
       }),
     ),
@@ -2259,7 +2259,7 @@ test("--production excludes devDependencies in workspaces", async () => {
           "a-dep": "1.0.2",
         },
         devDependencies: {
-          "a2": "npm:a-dep@1.0.2",
+          a2: "npm:a-dep@1.0.2",
         },
       }),
     ),
@@ -2268,9 +2268,9 @@ test("--production excludes devDependencies in workspaces", async () => {
       JSON.stringify({
         name: "pkg2",
         devDependencies: {
-          "a3": "npm:a-dep@1.0.3",
-          "a4": "npm:a-dep@1.0.4",
-          "a5": "npm:a-dep@1.0.5",
+          a3: "npm:a-dep@1.0.3",
+          a4: "npm:a-dep@1.0.4",
+          a5: "npm:a-dep@1.0.5",
         },
       }),
     ),
@@ -2943,7 +2943,7 @@ describe("binaries", () => {
           name: "fooooo",
           version: "2.2.2",
           dependencies: {
-            "fooooo": ".",
+            fooooo: ".",
             "no-deps": "1.0.0",
           },
           bin: "fooooo.js",
@@ -2953,18 +2953,18 @@ describe("binaries", () => {
       write(
         join(packageDir, "bun.lock"),
         JSON.stringify({
-          "lockfileVersion": 0,
-          "workspaces": {
+          lockfileVersion: 0,
+          workspaces: {
             "": {
-              "name": "fooooo",
-              "dependencies": {
-                "fooooo": ".",
+              name: "fooooo",
+              dependencies: {
+                fooooo: ".",
                 // out of date, no no-deps
               },
             },
           },
-          "packages": {
-            "fooooo": ["fooooo@root:", { bin: "fooooo.js" }],
+          packages: {
+            fooooo: ["fooooo@root:", { bin: "fooooo.js" }],
           },
         }),
       ),
@@ -3199,7 +3199,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
         "one-fixed-dep": "2.0.0",
         "no-deps-bins": "2.0.0",
         "left-pad": "1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "3.0.0",
         "dev-deps": "1.0.0",
@@ -4160,8 +4160,8 @@ describe("hoisting", async () => {
           join(packageDir, "node_modules", "normal-dep-and-dev-dep", "node_modules", "no-deps", "package.json"),
         ).json(),
       ).toEqual({
-        "name": "no-deps",
-        "version": "1.1.0",
+        name: "no-deps",
+        version: "1.1.0",
       });
       expect(
         await file(join(packageDir, "node_modules", "folder-dep", "node_modules", "no-deps", "package.json")).json(),
@@ -4324,9 +4324,9 @@ describe("transitive file dependencies", () => {
       [],
       true,
       {
-        "name": "files",
-        "version": "1.1.1",
-        "dependencies": {
+        name: "files",
+        version: "1.1.1",
+        dependencies: {
           "no-deps": "2.0.0",
         },
       },
@@ -4826,8 +4826,8 @@ describe("transitive file dependencies", () => {
         version: "1.0.0",
         dependencies: {
           // without and without file protocol
-          "pkg0": `file:${resolve(packageDir, "pkg0").replace(/\\/g, "\\\\")}`,
-          "pkg1": `${resolve(packageDir, "pkg1").replace(/\\/g, "\\\\")}`,
+          pkg0: `file:${resolve(packageDir, "pkg0").replace(/\\/g, "\\\\")}`,
+          pkg1: `${resolve(packageDir, "pkg1").replace(/\\/g, "\\\\")}`,
         },
       }),
     );
@@ -5085,21 +5085,21 @@ describe("update", () => {
           JSON.stringify({
             name: "foo",
             dependencies: {
-              "a1": "npm:no-deps@1",
-              "a10": "npm:no-deps@~1.0",
-              "a11": "npm:no-deps@^1.0",
-              "a12": "npm:no-deps@~1.0.1",
-              "a13": "npm:no-deps@^1.0.1",
-              "a14": "npm:no-deps@~1.1.0",
-              "a15": "npm:no-deps@^1.1.0",
-              "a2": "npm:no-deps@1.0",
-              "a3": "npm:no-deps@1.1",
-              "a4": "npm:no-deps@1.0.1",
-              "a5": "npm:no-deps@1.1.0",
-              "a6": "npm:no-deps@~1",
-              "a7": "npm:no-deps@^1",
-              "a8": "npm:no-deps@~1.1",
-              "a9": "npm:no-deps@^1.1",
+              a1: "npm:no-deps@1",
+              a10: "npm:no-deps@~1.0",
+              a11: "npm:no-deps@^1.0",
+              a12: "npm:no-deps@~1.0.1",
+              a13: "npm:no-deps@^1.0.1",
+              a14: "npm:no-deps@~1.1.0",
+              a15: "npm:no-deps@^1.1.0",
+              a2: "npm:no-deps@1.0",
+              a3: "npm:no-deps@1.1",
+              a4: "npm:no-deps@1.0.1",
+              a5: "npm:no-deps@1.1.0",
+              a6: "npm:no-deps@~1",
+              a7: "npm:no-deps@^1",
+              a8: "npm:no-deps@~1.1",
+              a9: "npm:no-deps@^1.1",
             },
           }),
         );
@@ -5111,21 +5111,21 @@ describe("update", () => {
           expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
-              "a1": "npm:no-deps@^2.0.0",
-              "a10": "npm:no-deps@~2.0.0",
-              "a11": "npm:no-deps@^2.0.0",
-              "a12": "npm:no-deps@~2.0.0",
-              "a13": "npm:no-deps@^2.0.0",
-              "a14": "npm:no-deps@~2.0.0",
-              "a15": "npm:no-deps@^2.0.0",
-              "a2": "npm:no-deps@~2.0.0",
-              "a3": "npm:no-deps@~2.0.0",
-              "a4": "npm:no-deps@2.0.0",
-              "a5": "npm:no-deps@2.0.0",
-              "a6": "npm:no-deps@~2.0.0",
-              "a7": "npm:no-deps@^2.0.0",
-              "a8": "npm:no-deps@~2.0.0",
-              "a9": "npm:no-deps@^2.0.0",
+              a1: "npm:no-deps@^2.0.0",
+              a10: "npm:no-deps@~2.0.0",
+              a11: "npm:no-deps@^2.0.0",
+              a12: "npm:no-deps@~2.0.0",
+              a13: "npm:no-deps@^2.0.0",
+              a14: "npm:no-deps@~2.0.0",
+              a15: "npm:no-deps@^2.0.0",
+              a2: "npm:no-deps@~2.0.0",
+              a3: "npm:no-deps@~2.0.0",
+              a4: "npm:no-deps@2.0.0",
+              a5: "npm:no-deps@2.0.0",
+              a6: "npm:no-deps@~2.0.0",
+              a7: "npm:no-deps@^2.0.0",
+              a8: "npm:no-deps@~2.0.0",
+              a9: "npm:no-deps@^2.0.0",
             },
           });
         } else {
@@ -5135,21 +5135,21 @@ describe("update", () => {
           expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
-              "a1": "npm:no-deps@^1.1.0",
-              "a10": "npm:no-deps@~1.0.1",
-              "a11": "npm:no-deps@^1.1.0",
-              "a12": "npm:no-deps@~1.0.1",
-              "a13": "npm:no-deps@^1.1.0",
-              "a14": "npm:no-deps@~1.1.0",
-              "a15": "npm:no-deps@^1.1.0",
-              "a2": "npm:no-deps@~1.0.1",
-              "a3": "npm:no-deps@~1.1.0",
-              "a4": "npm:no-deps@1.0.1",
-              "a5": "npm:no-deps@1.1.0",
-              "a6": "npm:no-deps@~1.1.0",
-              "a7": "npm:no-deps@^1.1.0",
-              "a8": "npm:no-deps@~1.1.0",
-              "a9": "npm:no-deps@^1.1.0",
+              a1: "npm:no-deps@^1.1.0",
+              a10: "npm:no-deps@~1.0.1",
+              a11: "npm:no-deps@^1.1.0",
+              a12: "npm:no-deps@~1.0.1",
+              a13: "npm:no-deps@^1.1.0",
+              a14: "npm:no-deps@~1.1.0",
+              a15: "npm:no-deps@^1.1.0",
+              a2: "npm:no-deps@~1.0.1",
+              a3: "npm:no-deps@~1.1.0",
+              a4: "npm:no-deps@1.0.1",
+              a5: "npm:no-deps@1.1.0",
+              a6: "npm:no-deps@~1.1.0",
+              a7: "npm:no-deps@^1.1.0",
+              a8: "npm:no-deps@~1.1.0",
+              a9: "npm:no-deps@^1.1.0",
             },
           });
         }
@@ -5475,7 +5475,7 @@ describe("update", () => {
           "one-fixed-dep": "^1.0.0",
           "no-deps-bins": "^2.0.0",
           "left-pad": "^1.0.0",
-          "native": "1.0.0",
+          native: "1.0.0",
           "dep-loop-entry": "1.0.0",
           "dep-with-tags": "^2.0.0",
           "dev-deps": "1.0.0",
@@ -5496,7 +5496,7 @@ describe("update", () => {
         "one-fixed-dep": "^1.0.0",
         "no-deps-bins": "^2.0.0",
         "left-pad": "^1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.0",
         "dev-deps": "1.0.0",
@@ -5549,7 +5549,7 @@ describe("update", () => {
         "one-fixed-dep": "^1.0.0",
         "no-deps-bins": "^2.0.0",
         "left-pad": "^1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.1",
         "dev-deps": "1.0.0",
@@ -5589,7 +5589,7 @@ describe("update", () => {
         "one-fixed-dep": "^1.0.0",
         "no-deps-bins": "^2.0.0",
         "left-pad": "^1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.0",
         "dev-deps": "1.0.0",
@@ -5636,7 +5636,7 @@ describe("update", () => {
         "one-fixed-dep": "^1.0.0",
         "no-deps-bins": "^2.0.0",
         "left-pad": "^1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.0",
         "dev-deps": "1.0.0",
@@ -5707,7 +5707,7 @@ describe("update", () => {
       JSON.stringify({
         name: "pkg2",
         dependencies: {
-          "pkg1": "*",
+          pkg1: "*",
           "is-number": "*",
         },
       }),
@@ -6060,7 +6060,7 @@ test("missing package on reinstall, some with binaries", async () => {
         "one-fixed-dep": "2.0.0",
         "no-deps-bins": "2.0.0",
         "left-pad": "1.0.0",
-        "native": "1.0.0",
+        native: "1.0.0",
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "3.0.0",
         "dev-deps": "1.0.0",
@@ -6503,30 +6503,29 @@ describe("semver", () => {
 test("doesn't error when the migration is out of sync", async () => {
   const cwd = tempDirWithFiles("out-of-sync-1", {
     "package.json": JSON.stringify({
-      "devDependencies": {
+      devDependencies: {
         "no-deps": "1.0.0",
       },
     }),
     "package-lock.json": JSON.stringify({
-      "name": "reproo",
-      "lockfileVersion": 3,
-      "requires": true,
-      "packages": {
+      name: "reproo",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
         "": {
-          "name": "reproo",
-          "dependencies": {
+          name: "reproo",
+          dependencies: {
             "no-deps": "2.0.0",
           },
-          "devDependencies": {
+          devDependencies: {
             "no-deps": "1.0.0",
           },
         },
         "node_modules/no-deps": {
-          "version": "1.0.0",
-          "resolved": `http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`,
-          "integrity":
-            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
-          "dev": true,
+          version: "1.0.0",
+          resolved: `http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`,
+          integrity: "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          dev: true,
         },
       },
     }),
@@ -7030,9 +7029,9 @@ describe("yarn tests", () => {
     await writeFile(
       packageJson,
       JSON.stringify({
-        "name": "dragon-test-4",
-        "version": "1.0.0",
-        "workspaces": ["my-workspace"],
+        name: "dragon-test-4",
+        version: "1.0.0",
+        workspaces: ["my-workspace"],
       }),
     );
 
@@ -7040,13 +7039,13 @@ describe("yarn tests", () => {
     await writeFile(
       join(packageDir, "my-workspace", "package.json"),
       JSON.stringify({
-        "name": "my-workspace",
-        "version": "1.0.0",
-        "peerDependencies": {
+        name: "my-workspace",
+        version: "1.0.0",
+        peerDependencies: {
           "no-deps": "*",
           "peer-deps": "*",
         },
-        "devDependencies": {
+        devDependencies: {
           "no-deps": "1.0.0",
           "peer-deps": "1.0.0",
         },
@@ -7092,9 +7091,9 @@ describe("yarn tests", () => {
     await writeFile(
       packageJson,
       JSON.stringify({
-        "name": "dragon-test-5",
-        "version": "1.0.0",
-        "workspaces": ["packages/*"],
+        name: "dragon-test-5",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
       }),
     );
 
@@ -7104,11 +7103,11 @@ describe("yarn tests", () => {
     await writeFile(
       join(packageDir, "packages", "a", "package.json"),
       JSON.stringify({
-        "name": "a",
-        "peerDependencies": {
+        name: "a",
+        peerDependencies: {
           "various-requires": "*",
         },
-        "devDependencies": {
+        devDependencies: {
           "no-deps": "1.0.0",
           "peer-deps": "1.0.0",
         },
@@ -7118,9 +7117,9 @@ describe("yarn tests", () => {
     await writeFile(
       join(packageDir, "packages", "b", "package.json"),
       JSON.stringify({
-        "name": "b",
-        "devDependencies": {
-          "a": "workspace:*",
+        name: "b",
+        devDependencies: {
+          a: "workspace:*",
           "various-requires": "1.0.0",
         },
       }),
@@ -7175,9 +7174,9 @@ describe("yarn tests", () => {
     await writeFile(
       packageJson,
       JSON.stringify({
-        "name": "dragon-test-6",
-        "version": "1.0.0",
-        "workspaces": ["packages/*"],
+        name: "dragon-test-6",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
       }),
     );
 
@@ -7292,9 +7291,9 @@ describe("yarn tests", () => {
     await writeFile(
       packageJson,
       JSON.stringify({
-        "name": "dragon-test-7",
-        "version": "1.0.0",
-        "dependencies": {
+        name: "dragon-test-7",
+        version: "1.0.0",
+        dependencies: {
           "dragon-test-7-a": "1.0.0",
           "dragon-test-7-d": "1.0.0",
           "dragon-test-7-b": "2.0.0",
@@ -7375,7 +7374,7 @@ describe("yarn tests", () => {
     await writeFile(
       packageJson,
       JSON.stringify({
-        "name": "dragon-test-8",
+        name: "dragon-test-8",
         version: "1.0.0",
         dependencies: {
           "dragon-test-8-a": "1.0.0",
@@ -8108,8 +8107,8 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
     "ooooops",
     "oooooops",
     {
-      "name": "tarball-without-package-prefix",
-      "version": "2.0.0",
+      name: "tarball-without-package-prefix",
+      version: "2.0.0",
     },
     false,
     false,

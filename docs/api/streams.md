@@ -208,8 +208,8 @@ export class ArrayBufferSink {
    *
    * This API might change later to separate Uint8ArraySink and ArrayBufferSink
    */
-  flush(): number | Uint8Array | ArrayBuffer;
-  end(): ArrayBuffer | Uint8Array;
+  flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
+  end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
 }
 ```
 

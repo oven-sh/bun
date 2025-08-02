@@ -25,6 +25,10 @@ pub const JSValue = enum(i64) {
     pub const is_pointer = false;
     pub const JSType = @import("./JSType.zig").JSType;
 
+    pub fn format(_: JSValue, comptime _: []const u8, _: std.fmt.FormatOptions, _: anytype) !void {
+        @compileError("Formatting a JSValue directly is not allowed. Use jsc.ConsoleObject.Formatter");
+    }
+
     pub inline fn cast(ptr: anytype) JSValue {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
@@ -62,8 +66,6 @@ pub const JSValue = enum(i64) {
     ) callconv(.C) void;
 
     extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
 
     pub fn forEachPropertyNonIndexed(
         this: JSValue,
@@ -80,7 +82,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachProperty, .{ this, globalThis, ctx, callback });
+        return bun.cpp.JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
     }
 
     pub fn forEachPropertyOrdered(
@@ -89,7 +91,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyOrdered, .{ this, globalThis, ctx, callback });
+        return bun.cpp.JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
     }
 
     extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject) f64;

@@ -40,6 +40,8 @@ pub const RuntimeFeatureFlag = enum {
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
     NODE_NO_WARNINGS,
+
+    BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW,
 };
 
 /// Enable breaking changes for the next major release of Bun

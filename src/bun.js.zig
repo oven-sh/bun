@@ -141,6 +141,35 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
+    fn resolveStdinEntryPath(ctx: Command.Context) !string {
+        const trigger = bun.pathLiteral("/[stdin]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+        passthrough_list.appendAssumeCapacity("-");
+        passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+        ctx.passthrough = passthrough_list.items;
+
+        return try bun.default_allocator.dupe(u8, entry_path);
+    }
+
+    pub fn bootFromStdin(ctx: Command.Context) !void {
+        var stdin_allocator = std.heap.stackFallback(2048, bun.default_allocator);
+        var script = std.ArrayList(u8).init(stdin_allocator.get());
+        _ = try bun.sys.File.readToEndWithArrayList(
+            .{ .handle = bun.FD.stdin() },
+            &script,
+            .{ .probably_small = false, .allow_pread = false },
+        ).unwrap();
+
+        ctx.runtime_options.eval.script = script.items;
+
+        try Run.boot(ctx, try resolveStdinEntryPath(ctx), null);
+    }
+
     pub fn boot(ctx: Command.Context, entry_path: string, loader: ?bun.options.Loader) !void {
         jsc.markBinding(@src());
 

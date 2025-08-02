@@ -162,25 +162,16 @@ pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
     }
 
     if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-        var buf: bun.PathBuffer = undefined;
-        var parts = [_]string{ "install", "global" };
-        const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-        return try std.fs.cwd().makeOpenPath(path, .{});
+        return try bun.path.makeOpen(home_dir, &.{ "install", "global" });
     }
 
     if (!Environment.isWindows) {
         if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
+            return try bun.path.makeOpen(home_dir, &.{ ".bun", "install", "global" });
         }
     } else {
         if (bun.getenvZ("USERPROFILE")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
+            return try bun.path.makeOpen(home_dir, &.{ ".bun", "install", "global" });
         }
     }
 
@@ -201,22 +192,11 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
     }
 
     if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-        var buf: bun.PathBuffer = undefined;
-        var parts = [_]string{
-            "bin",
-        };
-        const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-        return try std.fs.cwd().makeOpenPath(path, .{});
+        return try bun.path.makeOpen(home_dir, &.{"bin"});
     }
 
     if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-        var buf: bun.PathBuffer = undefined;
-        var parts = [_]string{
-            ".bun",
-            "bin",
-        };
-        const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-        return try std.fs.cwd().makeOpenPath(path, .{});
+        return try bun.path.makeOpen(home_dir, &.{ ".bun", "bin" });
     }
 
     return error.@"Missing global bin directory: try setting $BUN_INSTALL";
@@ -699,7 +679,6 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const Path = bun.path;
 const URL = bun.URL;
 const logger = bun.logger;
 const strings = bun.strings;

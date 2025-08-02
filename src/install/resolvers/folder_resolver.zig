@@ -194,7 +194,7 @@ pub const FolderResolution = union(Tag) {
                     body.data.reset();
                     var man = body.data.list.toManaged(manager.allocator);
                     defer body.data.list = man.moveToUnmanaged();
-                    _ = try file.readToEndWithArrayList(&man, true).unwrap();
+                    _ = try file.readToEndWithArrayList(&man, .{ .probably_small = true }).unwrap();
                 }
 
                 break :brk logger.Source.initPathString(abs, body.data.list.items);

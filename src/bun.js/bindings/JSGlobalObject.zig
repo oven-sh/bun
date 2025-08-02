@@ -4,6 +4,12 @@ pub const JSGlobalObject = opaque {
     }
     extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
     pub fn throwStackOverflow(this: *JSGlobalObject) void {
+        if (comptime bun.Environment.is_canary) {
+            if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_CRASH_ON_STACK_OVERFLOW)) {
+                @panic("Stack overflow. If this was intentional, update test/stackoverflow-tests.txt");
+            }
+        }
+
         JSGlobalObject__throwStackOverflow(this);
     }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;

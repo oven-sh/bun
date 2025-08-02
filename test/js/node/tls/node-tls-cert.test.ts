@@ -1,11 +1,11 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, invalidTls, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
-import { once } from "events";
 const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),

@@ -358,7 +358,7 @@ describe("bun update --interactive formatting", () => {
     expect(stderr).not.toContain("overflow");
   });
 
-  it.skipIf(process.platform === "win32")("should update packages when 'a' (select all) is used", async () => {
+  it("should update packages when 'a' (select all) is used", async () => {
     const dir = tempDirWithFiles("update-interactive-select-all", {
       "bunfig.toml": `[install]
 cache = false
@@ -410,7 +410,7 @@ registry = "${registryUrl}"
     expect(packageJson.dependencies["no-deps"]).toBe("2.0.0");
   });
 
-  it.skipIf(process.platform === "win32")("should handle workspace updates with recursive flag", async () => {
+  it("should handle workspace updates with recursive flag", async () => {
     const dir = tempDirWithFiles("update-interactive-workspace-recursive", {
       "bunfig.toml": `[install]
 cache = false
@@ -466,7 +466,7 @@ registry = "${registryUrl}"
     expect(appPackageJson.dependencies["no-deps"]).toBe("2.0.0");
   });
 
-  it.skipIf(process.platform === "win32")("should handle catalog updates correctly", async () => {
+  it("should handle catalog updates correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-catalog-actual", {
       "bunfig.toml": `[install]
 cache = false
@@ -499,24 +499,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create a script that runs the interactive update and selects all
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const stdout = await new Response(update.stdout).text();
@@ -535,7 +530,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(appPackageJson.dependencies["no-deps"]).toBe("catalog:");
   });
 
-  it.skipIf(process.platform === "win32")(
+  it(
     "should work correctly when run from inside a workspace directory",
     async () => {
       const dir = tempDirWithFiles("update-interactive-from-workspace", {
@@ -574,26 +569,20 @@ registry = "${registryUrl}"
       });
       expect(await install.exited).toBe(0);
 
-      // Create a script that runs from inside workspace
-      const scriptPath = join(dir, "update-from-workspace.sh");
+      // Run interactive update from inside workspace
       const workspaceDir = join(dir, "packages/app1");
-      await Bun.write(
-        scriptPath,
-        `#!/bin/bash
-cd "${workspaceDir}"
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-      );
-      await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-      // Run through script command to get a PTY
       await using update = Bun.spawn({
-        cmd: ["script", "-q", "/dev/null", scriptPath],
-        cwd: dir,
+        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
+        cwd: workspaceDir,
         env: bunEnv,
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
+
+      // Send 'a' to select all, then newline to confirm
+      update.stdin.write("a\n");
+      update.stdin.end();
 
       const exitCode = await update.exited;
       const output = await new Response(update.stdout).text();
@@ -614,7 +603,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     },
   );
 
-  it.skipIf(process.platform === "win32")("should handle basic interactive update with select all", async () => {
+  it("should handle basic interactive update with select all", async () => {
     const dir = tempDirWithFiles("update-interactive-basic", {
       "bunfig.toml": `[install]
 cache = false
@@ -639,52 +628,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Alternative approach: use expect or unbuffer if available
-    let ptyCmd: string[];
-
-    // Try different PTY allocation methods
-    const hasExpect = (await Bun.spawn(["which", "expect"]).exited) === 0;
-    const hasUnbuffer = (await Bun.spawn(["which", "unbuffer"]).exited) === 0;
-
-    if (hasExpect) {
-      // Use expect to handle interactive session
-      const expectScript = `
-spawn ${bunExe()} update -i --latest
-expect "Select packages to update"
-send "a\\r"
-expect eof
-`;
-      await Bun.write(join(dir, "expect-script"), expectScript);
-      ptyCmd = ["expect", join(dir, "expect-script")];
-    } else if (hasUnbuffer) {
-      // Use unbuffer
-      ptyCmd = ["unbuffer", "-p", bunExe(), "update", "-i", "--latest"];
-    } else {
-      // Fall back to script
-      const scriptPath = join(dir, "update-script.sh");
-      await Bun.write(
-        scriptPath,
-        `#!/bin/bash
-echo "a" | ${bunExe()} update -i --latest
-`,
-      );
-      await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-      ptyCmd = ["script", "-q", "/dev/null", scriptPath];
-    }
-
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ptyCmd,
+      cmd: [bunExe(), "update", "-i", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      stdin: hasUnbuffer ? "pipe" : "inherit",
     });
 
-    if (hasUnbuffer) {
-      update.stdin?.write("a\n");
-      update.stdin?.end();
-    }
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -694,7 +650,7 @@ echo "a" | ${bunExe()} update -i --latest
     expect(packageJson.dependencies["no-deps"]).toBe("2.0.0");
   });
 
-  it.skipIf(process.platform === "win32")(
+  it(
     "should preserve version prefixes for all semver range types in catalogs",
     async () => {
       const dir = tempDirWithFiles("update-interactive-semver-prefixes", {
@@ -732,24 +688,19 @@ registry = "${registryUrl}"
       });
       expect(await install.exited).toBe(0);
 
-      // Create update script
-      const scriptPath = join(dir, "update-script.sh");
-      await Bun.write(
-        scriptPath,
-        `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-      );
-      await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-      // Run through script command to get a PTY
+      // Run interactive update with piped input
       await using update = Bun.spawn({
-        cmd: ["script", "-q", "/dev/null", scriptPath],
+        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
         cwd: dir,
         env: bunEnv,
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
+
+      // Send 'a' to select all, then newline to confirm
+      update.stdin.write("a\n");
+      update.stdin.end();
 
       const exitCode = await update.exited;
       expect(exitCode).toBe(0);
@@ -764,7 +715,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     },
   );
 
-  it.skipIf(process.platform === "win32")("should handle catalog updates in workspaces.catalogs object", async () => {
+  it("should handle catalog updates in workspaces.catalogs object", async () => {
     const dir = tempDirWithFiles("update-interactive-workspaces-catalogs", {
       "bunfig.toml": `[install]
 cache = false
@@ -806,24 +757,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();
@@ -839,7 +785,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(packageJson.workspaces.catalogs.tools["dep-with-tags"]).toMatch(/^~/);
   });
 
-  it.skipIf(process.platform === "win32")("should handle mixed workspace and catalog dependencies", async () => {
+  it("should handle mixed workspace and catalog dependencies", async () => {
     const dir = tempDirWithFiles("update-interactive-mixed-deps", {
       "bunfig.toml": `[install]
 cache = false
@@ -880,24 +826,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -914,7 +855,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(libJson.dependencies["a-dep"]).toMatch(/^\^/);
   });
 
-  it.skipIf(process.platform === "win32")("should handle selecting specific packages in interactive mode", async () => {
+  it("should handle selecting specific packages in interactive mode", async () => {
     const dir = tempDirWithFiles("update-interactive-selective", {
       "bunfig.toml": `[install]
 cache = false
@@ -941,24 +882,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script that selects only first package (space toggles, arrow down, enter)
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-printf " \\033[B\\n" | ${bunExe()} update -i --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update that selects only first package (space toggles, arrow down, enter)
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send keyboard navigation: space to toggle, arrow down, enter to confirm
+    update.stdin.write(" \u001b[B\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();
@@ -978,7 +914,7 @@ printf " \\033[B\\n" | ${bunExe()} update -i --latest
     expect(updatedCount).toBe(1);
   });
 
-  it.skipIf(process.platform === "win32")("should handle empty catalog definitions gracefully", async () => {
+  it("should handle empty catalog definitions gracefully", async () => {
     const dir = tempDirWithFiles("update-interactive-empty-catalog", {
       "bunfig.toml": `[install]
 cache = false
@@ -1008,24 +944,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -1039,7 +970,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(Object.keys(rootJson.catalog)).toHaveLength(0);
   });
 
-  it.skipIf(process.platform === "win32")("should handle cancellation (Ctrl+C) gracefully", async () => {
+  it("should handle cancellation (Ctrl+C) gracefully", async () => {
     const dir = tempDirWithFiles("update-interactive-cancel", {
       "bunfig.toml": `[install]
 cache = false
@@ -1064,24 +995,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script that sends Ctrl+C
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-printf "\\003" | ${bunExe()} update -i --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update and send Ctrl+C
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send Ctrl+C to cancel
+    update.stdin.write("\u0003");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();
@@ -1094,7 +1020,7 @@ printf "\\003" | ${bunExe()} update -i --latest
     expect(packageJson.dependencies["no-deps"]).toBe("1.0.0");
   });
 
-  it.skipIf(process.platform === "win32")("should handle packages with pre-release versions correctly", async () => {
+  it("should handle packages with pre-release versions correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-prerelease", {
       "bunfig.toml": `[install]
 cache = false
@@ -1121,24 +1047,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -1151,7 +1072,7 @@ echo "a" | ${bunExe()} update -i --latest
     expect(packageJson.dependencies["a-dep"]).toMatch(/^~/);
   });
 
-  it.skipIf(process.platform === "win32")(
+  it(
     "should update catalog in workspaces object (not workspaces.catalogs)",
     async () => {
       const dir = tempDirWithFiles("update-interactive-workspaces-catalog", {
@@ -1189,24 +1110,19 @@ registry = "${registryUrl}"
       });
       expect(await install.exited).toBe(0);
 
-      // Create update script
-      const scriptPath = join(dir, "update-script.sh");
-      await Bun.write(
-        scriptPath,
-        `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-      );
-      await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-      // Run through script command to get a PTY
+      // Run interactive update with piped input
       await using update = Bun.spawn({
-        cmd: ["script", "-q", "/dev/null", scriptPath],
+        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
         cwd: dir,
         env: bunEnv,
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
+
+      // Send 'a' to select all, then newline to confirm
+      update.stdin.write("a\n");
+      update.stdin.end();
 
       const exitCode = await update.exited;
       const output = await new Response(update.stdout).text();
@@ -1221,7 +1137,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     },
   );
 
-  it.skipIf(process.platform === "win32")("should handle scoped packages in catalogs correctly", async () => {
+  it("should handle scoped packages in catalogs correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-scoped-catalog", {
       "bunfig.toml": `[install]
 cache = false
@@ -1257,24 +1173,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -1286,7 +1197,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(packageJson.catalog["dep-with-tags"]).toMatch(/^>=/);
   });
 
-  it.skipIf(process.platform === "win32")(
+  it(
     "should handle catalog updates when running from root with filter",
     async () => {
       const dir = tempDirWithFiles("update-interactive-filter-catalog", {
@@ -1327,24 +1238,19 @@ registry = "${registryUrl}"
       });
       expect(await install.exited).toBe(0);
 
-      // Create update script with filter
-      const scriptPath = join(dir, "update-script.sh");
-      await Bun.write(
-        scriptPath,
-        `#!/bin/bash
-echo "a" | ${bunExe()} update -i --filter="@test/app2" --latest
-`,
-      );
-      await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-      // Run through script command to get a PTY
+      // Run interactive update with filter
       await using update = Bun.spawn({
-        cmd: ["script", "-q", "/dev/null", scriptPath],
+        cmd: [bunExe(), "update", "-i", "--filter=@test/app2", "--latest"],
         cwd: dir,
         env: bunEnv,
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
+
+      // Send 'a' to select all, then newline to confirm
+      update.stdin.write("a\n");
+      update.stdin.end();
 
       const exitCode = await update.exited;
       const output = await new Response(update.stdout).text();
@@ -1359,7 +1265,7 @@ echo "a" | ${bunExe()} update -i --filter="@test/app2" --latest
     },
   );
 
-  it.skipIf(process.platform === "win32")("should handle multiple catalog definitions with same package", async () => {
+  it("should handle multiple catalog definitions with same package", async () => {
     const dir = tempDirWithFiles("update-interactive-multi-catalog", {
       "bunfig.toml": `[install]
 cache = false
@@ -1401,24 +1307,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();
@@ -1432,7 +1333,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(packageJson.workspaces.catalogs.prod["no-deps"]).toMatch(/^~/);
   });
 
-  it.skipIf(process.platform === "win32")("should handle version ranges with multiple conditions", async () => {
+  it("should handle version ranges with multiple conditions", async () => {
     const dir = tempDirWithFiles("update-interactive-complex-ranges", {
       "bunfig.toml": `[install]
 cache = false
@@ -1466,24 +1367,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i -r --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with piped input
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     expect(exitCode).toBe(0);
@@ -1495,7 +1391,7 @@ echo "a" | ${bunExe()} update -i -r --latest
     expect(packageJson.catalog["dep-with-tags"]).toBeDefined();
   });
 
-  it.skipIf(process.platform === "win32")("should handle dry-run mode correctly", async () => {
+  it("should handle dry-run mode correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-dry-run", {
       "bunfig.toml": `[install]
 cache = false
@@ -1521,24 +1417,19 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script with dry-run
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-echo "a" | ${bunExe()} update -i --latest --dry-run
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
+    // Run interactive update with dry-run
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "--latest", "--dry-run"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();
@@ -1552,7 +1443,7 @@ echo "a" | ${bunExe()} update -i --latest --dry-run
     expect(packageJson.dependencies["dep-with-tags"]).toBe("1.0.0");
   });
 
-  it.skipIf(process.platform === "win32")("should handle keyboard navigation correctly", async () => {
+  it("should handle keyboard navigation correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-navigation", {
       "bunfig.toml": `[install]
 cache = false
@@ -1579,27 +1470,22 @@ registry = "${registryUrl}"
     });
     expect(await install.exited).toBe(0);
 
-    // Create update script that uses:
+    // Run interactive update with keyboard navigation:
     // - n (select none)
     // - i (invert selection)
     // - Enter (confirm)
-    const scriptPath = join(dir, "update-script.sh");
-    await Bun.write(
-      scriptPath,
-      `#!/bin/bash
-printf "ni\\n" | ${bunExe()} update -i --latest
-`,
-    );
-    await Bun.spawn(["chmod", "+x", scriptPath]).exited;
-
-    // Run through script command to get a PTY
     await using update = Bun.spawn({
-      cmd: ["script", "-q", "/dev/null", scriptPath],
+      cmd: [bunExe(), "update", "-i", "--latest"],
       cwd: dir,
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Send keyboard navigation commands
+    update.stdin.write("ni\n");
+    update.stdin.end();
 
     const exitCode = await update.exited;
     const output = await new Response(update.stdout).text();

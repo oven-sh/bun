@@ -171,6 +171,16 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // mimalloc.mi_option_set_enabled(mimalloc.mi_option_verbose, config.verbose);
     // mimalloc.mi_option_set_enabled(mimalloc.mi_option_large_os_pages, config.long_running);
     // if (!config.long_running) mimalloc.mi_option_set(mimalloc.mi_option_reset_delay, 0);
+
+    bun.mimalloc.mi_option_set(.eager_commit, 0); // Don't eagerly commit memory
+    bun.mimalloc.mi_option_set(.arena_eager_commit, 0); // Don't eagerly commit arenas
+    bun.mimalloc.mi_option_set(.arena_reserve, 16 * 1024); // 16MB arena instead of 1GB
+    bun.mimalloc.mi_option_set(.allow_large_os_pages, 1); // Disable large OS pages
+    bun.mimalloc.mi_option_set(.purge_delay, 0); // Immediate memory purging
+    bun.mimalloc.mi_option_set(.page_full_retain, 0); // Don't retain full pages
+    bun.mimalloc.mi_option_set(.page_max_candidates, 1); // Reduce candidate pages
+    bun.mimalloc.mi_option_set(.page_commit_on_demand, 1); // Commit pages only when needed
+    bun.mimalloc.mi_option_set(.retry_on_oom, 1); // Retry on OOM
 }
 
 pub fn notimpl() noreturn {

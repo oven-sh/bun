@@ -165,30 +165,7 @@ pub const versions = @import("./generated_versions_list.zig");
 // Keeping this code for:
 // 1. documentation that an attempt was made
 // 2. if I want to configure allocator later
-pub inline fn configureAllocator(_: AllocatorConfiguration) void {
-    // ```
-    // ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
-    // Started development server: http://localhost:3004
-    //
-    // Peak memory usage: 52 MB
-    //
-    // ❯ mimalloc_allow_large_os_pages=1 BUN_PORT=3004 mem bun http-hello.js
-    // Started development server: http://localhost:3004
-    //
-    // Peak memory usage: 74 MB
-    // ```
-    //
-    // ```
-    // ❯ mimalloc_allow_large_os_pages=1 mem bun --eval 1
-    //
-    // Peak memory usage: 52 MB
-    //
-    // ❯ mimalloc_allow_large_os_pages=0 mem bun --eval 1
-    //
-    // Peak memory usage: 30 MB
-    // ```
-    bun.mimalloc.mi_option_set(.allow_large_os_pages, 0);
-}
+pub inline fn configureAllocator(_: AllocatorConfiguration) void {}
 
 pub fn notimpl() noreturn {
     @branchHint(.cold);

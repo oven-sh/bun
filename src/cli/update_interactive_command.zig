@@ -1520,43 +1520,6 @@ extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
 const string = []const u8;
 
-const std = @import("std");
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const JSPrinter = bun.js_printer;
-const OOM = bun.OOM;
-const Output = bun.Output;
-const PathBuffer = bun.PathBuffer;
-const glob = bun.glob;
-const path = bun.path;
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-const String = Semver.String;
-
-const Command = bun.cli.Command;
-const OutdatedCommand = bun.cli.OutdatedCommand;
-
-const Install = bun.install;
-const DependencyID = Install.DependencyID;
-const PackageID = Install.PackageID;
-const invalid_package_id = Install.invalid_package_id;
-const Behavior = Install.Dependency.Behavior;
-
-const PackageManager = Install.PackageManager;
-const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const UpdateRequest = PackageManager.UpdateRequest;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-
-const JSAst = bun.ast;
-const Expr = JSAst.Expr;
-const E = JSAst.E;
-const logger = bun.logger;
-
 pub const CatalogUpdateRequest = struct {
     package_name: string,
     new_version: string,
@@ -1735,3 +1698,40 @@ fn preserveVersionPrefix(original_version: string, new_version: string, allocato
     }
     return try allocator.dupe(u8, new_version);
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSPrinter = bun.js_printer;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const glob = bun.glob;
+const logger = bun.logger;
+const path = bun.path;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;
+
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;
+
+const JSAst = bun.ast;
+const E = JSAst.E;
+const Expr = JSAst.Expr;
+
+const Command = bun.cli.Command;
+const OutdatedCommand = bun.cli.OutdatedCommand;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const PackageID = Install.PackageID;
+const invalid_package_id = Install.invalid_package_id;
+const Behavior = Install.Dependency.Behavior;
+
+const PackageManager = Install.PackageManager;
+const PackageJSONEditor = PackageManager.PackageJSONEditor;
+const UpdateRequest = PackageManager.UpdateRequest;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

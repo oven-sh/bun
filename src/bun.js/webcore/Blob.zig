@@ -1464,6 +1464,15 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
 }
 
+fn validateWritableBlob(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSError!void {
+    const store = blob.store orelse {
+        return globalThis.throw("Cannot write to a detached Blob", .{});
+    };
+    if (store.data == .bytes) {
+        return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
+    }
+}
+
 /// `Bun.write(destination, input, options?)`
 pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
@@ -1479,12 +1488,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        const store = path_or_blob.blob.store orelse {
-            return globalThis.throw("Cannot write to a detached Blob", .{});
-        };
-        if (store.data == .bytes) {
-            return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
-        }
+        try validateWritableBlob(globalThis, &path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -2224,6 +2228,8 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
+    try validateWritableBlob(globalThis, this);
+
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
@@ -2275,13 +2281,14 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    const store = this.store orelse {
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
-    };
+
+    try validateWritableBlob(globalThis, this);
+
+    const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
         .file => |file| file.unlink(globalThis),
-        else => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
+        else => unreachable, // validateWritableBlob should have caught this
     };
 }
 
@@ -2569,9 +2576,9 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
-    var store = this.store orelse {
-        return globalThis.throwInvalidArguments("Blob is detached", .{});
-    };
+    try validateWritableBlob(globalThis, this);
+
+    var store = this.store.?;
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
@@ -2624,9 +2631,6 @@ pub fn getWriter(
             proxy_url,
             null,
         );
-    }
-    if (store.data != .file) {
-        return globalThis.throwInvalidArguments("Blob is read-only", .{});
     }
 
     if (Environment.isWindows) {

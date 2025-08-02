@@ -6,7 +6,7 @@ import { join } from "path";
 // Skip these tests on Windows as they're for verifying cross-compilation
 describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
   const hasObjdump = Bun.which("objdump") !== null;
-  
+
   // Common build function
   async function buildWindowsExecutable(
     dir: string,
@@ -18,8 +18,8 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
       "build",
       "--compile",
       "--target=bun-windows-x64-v1.2.19",
-      ...Object.entries(windowsOptions).flatMap(([key, value]) => 
-        value === true ? [`--${key}`] : [`--${key}`, value as string]
+      ...Object.entries(windowsOptions).flatMap(([key, value]) =>
+        value === true ? [`--${key}`] : [`--${key}`, value as string],
       ),
       join(dir, "index.js"),
       "--outfile",
@@ -36,7 +36,7 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
     const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     return join(dir, outfile);
   }
 
@@ -55,22 +55,22 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
         stdout: "pipe",
       });
 
-    const [objdumpStdout, objdumpExitCode] = await Promise.all([
-      new Response(objdumpProc.stdout).text(),
-      objdumpProc.exited,
-    ]);
+      const [objdumpStdout, objdumpExitCode] = await Promise.all([
+        new Response(objdumpProc.stdout).text(),
+        objdumpProc.exited,
+      ]);
 
-    expect(objdumpExitCode).toBe(0);
+      expect(objdumpExitCode).toBe(0);
 
-    // Extract checksum from objdump output
-    const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
-    expect(checksumMatch).not.toBeNull();
+      // Extract checksum from objdump output
+      const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
+      expect(checksumMatch).not.toBeNull();
 
-    const checksum = checksumMatch![1];
-    console.log("PE checksum:", checksum);
+      const checksum = checksumMatch![1];
+      console.log("PE checksum:", checksum);
 
-    // Checksum should not be 0 after our implementation
-    expect(checksum).not.toBe("00000000");
+      // Checksum should not be 0 after our implementation
+      expect(checksum).not.toBe("00000000");
     } finally {
       await Bun.file(exePath).unlink();
     }
@@ -96,21 +96,21 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
         stdout: "pipe",
       });
 
-    const [objdumpStdout, objdumpExitCode] = await Promise.all([
-      new Response(objdumpProc.stdout).text(),
-      objdumpProc.exited,
-    ]);
+      const [objdumpStdout, objdumpExitCode] = await Promise.all([
+        new Response(objdumpProc.stdout).text(),
+        objdumpProc.exited,
+      ]);
 
-    expect(objdumpExitCode).toBe(0);
+      expect(objdumpExitCode).toBe(0);
 
-    const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
-    expect(checksumMatch).not.toBeNull();
+      const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
+      expect(checksumMatch).not.toBeNull();
 
-    const checksum = checksumMatch![1];
-    console.log("PE checksum with resources:", checksum);
+      const checksum = checksumMatch![1];
+      console.log("PE checksum with resources:", checksum);
 
-    // Checksum should not be 0
-    expect(checksum).not.toBe("00000000");
+      // Checksum should not be 0
+      expect(checksum).not.toBe("00000000");
     } finally {
       await Bun.file(exePath).unlink();
     }

@@ -23,8 +23,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       "build",
       "--compile",
       "--target=bun-windows-x64-v1.2.19",
-      ...Object.entries(windowsOptions).flatMap(([key, value]) => 
-        value === true ? [`--${key}`] : [`--${key}`, value as string]
+      ...Object.entries(windowsOptions).flatMap(([key, value]) =>
+        value === true ? [`--${key}`] : [`--${key}`, value as string],
       ),
       join(dir, "index.js"),
       "--outfile",
@@ -41,7 +41,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
     const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     // Return path for cleanup
     return join(dir, outfile);
   }
@@ -131,16 +131,16 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       try {
         const { stdout: objdumpStdout } = await runObjdump(exePath);
 
-      // Verify resource directory exists
-      expect(objdumpStdout).toContain("Resource Directory [.rsrc]");
+        // Verify resource directory exists
+        expect(objdumpStdout).toContain("Resource Directory [.rsrc]");
 
-      // The output should show the resource directory entry
-      const resourceMatch = objdumpStdout.match(/Entry 2\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+Resource Directory/);
-      expect(resourceMatch).not.toBeNull();
+        // The output should show the resource directory entry
+        const resourceMatch = objdumpStdout.match(/Entry 2\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+Resource Directory/);
+        expect(resourceMatch).not.toBeNull();
 
-      // Verify the size is non-zero
-      const resourceSize = parseInt(resourceMatch![2], 16);
-      expect(resourceSize).toBeGreaterThan(0);
+        // Verify the size is non-zero
+        const resourceSize = parseInt(resourceMatch![2], 16);
+        expect(resourceSize).toBeGreaterThan(0);
       } finally {
         await Bun.file(exePath).unlink();
       }
@@ -158,8 +158,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       try {
         const { stdout } = await runObjdump(exePath);
 
-      // Windows GUI subsystem is 2, console subsystem is 3
-      expect(stdout).toMatch(/Subsystem\s+00000002\s+\(Windows GUI\)/);
+        // Windows GUI subsystem is 2, console subsystem is 3
+        expect(stdout).toMatch(/Subsystem\s+00000002\s+\(Windows GUI\)/);
       } finally {
         await Bun.file(exePath).unlink();
       }
@@ -213,44 +213,38 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       try {
         const { stdout: objdumpOut } = await runObjdump(exePath, ["-h"]);
 
-      // Parse .rsrc section info
-      const rsrcMatch = objdumpOut.match(/\.rsrc\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)/);
-      expect(rsrcMatch).not.toBeNull();
+        // Parse .rsrc section info
+        const rsrcMatch = objdumpOut.match(/\.rsrc\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)/);
+        expect(rsrcMatch).not.toBeNull();
 
-      const rsrcSize = parseInt(rsrcMatch![1], 16);
-      const rsrcOffset = parseInt(rsrcMatch![2], 16);
+        const rsrcSize = parseInt(rsrcMatch![1], 16);
+        const rsrcOffset = parseInt(rsrcMatch![2], 16);
 
-      // Use dd to extract just the .rsrc section for easier analysis
-      await using ddProc = spawn({
-        cmd: [
-          "dd",
-          `if=${exePath}`,
-          `bs=1`,
-          `skip=${rsrcOffset}`,
-          `count=${Math.min(rsrcSize, 4096)}`,
-        ],
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        // Use dd to extract just the .rsrc section for easier analysis
+        await using ddProc = spawn({
+          cmd: ["dd", `if=${exePath}`, `bs=1`, `skip=${rsrcOffset}`, `count=${Math.min(rsrcSize, 4096)}`],
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const rsrcData = await new Response(ddProc.stdout).bytes();
-      expect(await ddProc.exited).toBe(0);
+        const rsrcData = await new Response(ddProc.stdout).bytes();
+        expect(await ddProc.exited).toBe(0);
 
-      // Look for UTF-16LE strings in the resource data
-      // Convert to string to search for our version strings
-      const decoder = new TextDecoder("utf-16le", { fatal: false });
-      const text = decoder.decode(rsrcData);
+        // Look for UTF-16LE strings in the resource data
+        // Convert to string to search for our version strings
+        const decoder = new TextDecoder("utf-16le", { fatal: false });
+        const text = decoder.decode(rsrcData);
 
-      // Should contain version info strings
-      expect(text).toContain("FileDescription");
-      expect(text).toContain("My Test App");
-      expect(text).toContain("CompanyName");
-      expect(text).toContain("Test Publisher");
-      expect(text).toContain("ProductName");
-      expect(text).toContain("Test Product");
-      expect(text).toContain("LegalCopyright");
-      expect(text).toContain("Copyright 2024 Test Publisher");
+        // Should contain version info strings
+        expect(text).toContain("FileDescription");
+        expect(text).toContain("My Test App");
+        expect(text).toContain("CompanyName");
+        expect(text).toContain("Test Publisher");
+        expect(text).toContain("ProductName");
+        expect(text).toContain("Test Product");
+        expect(text).toContain("LegalCopyright");
+        expect(text).toContain("Copyright 2024 Test Publisher");
       } finally {
         await Bun.file(exePath).unlink();
       }
@@ -284,20 +278,20 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
           stdout: "pipe",
         });
 
-      const [stdout, exitCode] = await Promise.all([new Response(stringsProc.stdout).text(), stringsProc.exited]);
+        const [stdout, exitCode] = await Promise.all([new Response(stringsProc.stdout).text(), stringsProc.exited]);
 
-      expect(exitCode).toBe(0);
+        expect(exitCode).toBe(0);
 
-      // Our UTF-16LE strings should be found
-      expect(stdout).toContain(testDescription);
-      expect(stdout).toContain(testPublisher);
-      expect(stdout).toContain(testTitle);
-      expect(stdout).toContain(testCopyright);
-      expect(stdout).toContain("CompanyName");
-      expect(stdout).toContain("FileDescription");
-      expect(stdout).toContain("ProductName");
-      expect(stdout).toContain("LegalCopyright");
-      expect(stdout).toContain("9.8.7.6"); // Version string
+        // Our UTF-16LE strings should be found
+        expect(stdout).toContain(testDescription);
+        expect(stdout).toContain(testPublisher);
+        expect(stdout).toContain(testTitle);
+        expect(stdout).toContain(testCopyright);
+        expect(stdout).toContain("CompanyName");
+        expect(stdout).toContain("FileDescription");
+        expect(stdout).toContain("ProductName");
+        expect(stdout).toContain("LegalCopyright");
+        expect(stdout).toContain("9.8.7.6"); // Version string
       } finally {
         await Bun.file(exePath).unlink();
       }
@@ -323,10 +317,10 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
           stderr: "pipe",
         });
 
-      const stderr = await new Response(readelfProc.stderr).text();
+        const stderr = await new Response(readelfProc.stderr).text();
 
-      // readelf should fail on PE files with a specific error
-      expect(stderr).toContain("Not an ELF file");
+        // readelf should fail on PE files with a specific error
+        expect(stderr).toContain("Not an ELF file");
       } finally {
         await Bun.file(exePath).unlink();
       }
@@ -378,7 +372,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       // Check magic bytes for PE
       const file = await Bun.file(exePath).slice(0, 2).text();
       expect(file).toBe("MZ"); // DOS header magic
-      
+
       // Clean up
       await Bun.file(exePath).unlink();
     }

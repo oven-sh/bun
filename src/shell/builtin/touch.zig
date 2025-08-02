@@ -11,7 +11,7 @@ state: union(enum) {
         output_waiting: usize = 0,
         started_output_queue: bool = false,
         args: []const [*:0]const u8,
-        err: ?JSC.SystemError = null,
+        err: ?jsc.SystemError = null,
     },
     waiting_write_err,
     done,
@@ -81,7 +81,7 @@ pub fn next(this: *Touch) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?jsc.SystemError) Yield {
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
     }
@@ -173,10 +173,10 @@ pub const ShellTouchTask = struct {
     filepath: [:0]const u8,
     cwd_path: [:0]const u8,
 
-    err: ?JSC.SystemError = null,
-    task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    err: ?jsc.SystemError = null,
+    task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
 
     pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt; // autofix
@@ -199,7 +199,7 @@ pub const ShellTouchTask = struct {
             .cwd_path = cwd_path,
             .filepath = filepath,
             .event_loop = touch.bltn().eventLoop(),
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(touch.bltn().eventLoop()),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(touch.bltn().eventLoop()),
         };
         return task;
     }
@@ -218,7 +218,7 @@ pub const ShellTouchTask = struct {
         this.runFromMainThread();
     }
 
-    fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+    fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellTouchTask = @fieldParentPtr("task", task);
         debug("{} runFromThreadPool", .{this});
 
@@ -232,14 +232,14 @@ pub const ShellTouchTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
-        var node_fs = JSC.Node.fs.NodeFS{};
+        var node_fs = jsc.Node.fs.NodeFS{};
         const milliseconds: f64 = @floatFromInt(std.time.milliTimestamp());
-        const atime: JSC.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else JSC.Node.TimeLike{
+        const atime: jsc.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else jsc.Node.TimeLike{
             .sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
             .nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
         };
         const mtime = atime;
-        const args = JSC.Node.fs.Arguments.Utimes{
+        const args = jsc.Node.fs.Arguments.Utimes{
             .atime = atime,
             .mtime = mtime,
             .path = .{ .string = bun.PathString.init(filepath) },
@@ -408,8 +408,8 @@ const bun = @import("bun");
 const ResolvePath = bun.path;
 const Syscall = bun.sys;
 
-const JSC = bun.JSC;
-const WorkPool = bun.JSC.WorkPool;
+const jsc = bun.jsc;
+const WorkPool = bun.jsc.WorkPool;
 
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;

@@ -13,8 +13,8 @@ pub const Installer = struct {
 
     store: *const Store,
 
-    tasks: bun.UnboundedQueue(Task, .next) = .{},
-    preallocated_tasks: Task.Preallocated,
+    task_queue: bun.UnboundedQueue(Task, .next) = .{},
+    tasks: []Task,
 
     supported_backend: std.atomic.Value(PackageInstall.Method),
 
@@ -24,13 +24,20 @@ pub const Installer = struct {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
+    /// Called from main thread
     pub fn startTask(this: *Installer, entry_id: Store.Entry.Id) void {
-        const task = this.preallocated_tasks.get();
-        task.* = .{
-            .entry_id = entry_id,
-            .installer = this,
-        };
+        const task = &this.tasks[entry_id.get()];
+        bun.debugAssert(switch (task.result) {
+            // first time starting the task
+            .none => true,
+            // the task returned to the main thread because it was blocked
+            .blocked => true,
+            // the task returned to the main thread to spawn some scripts
+            .run_scripts => true,
+            else => false,
+        });
 
+        task.result = .none;
         this.manager.thread_pool.schedule(.from(&task.task));
     }
 
@@ -43,6 +50,7 @@ pub const Installer = struct {
         }
     }
 
+    /// Called from main thread
     pub fn onTaskFail(this: *Installer, entry_id: Store.Entry.Id, err: Task.Error) void {
         const string_buf = this.lockfile.buffers.string_bytes.items;
 
@@ -115,21 +123,20 @@ pub const Installer = struct {
 
         this.summary.fail += 1;
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
     }
 
-    pub fn decrementPendingTasks(this: *Installer, entry_id: Store.Entry.Id) void {
-        _ = entry_id;
+    pub fn decrementPendingTasks(this: *Installer) void {
         this.manager.decrementPendingTasks();
     }
 
+    /// Called from main thread
     pub fn onTaskBlocked(this: *Installer, entry_id: Store.Entry.Id) void {
-
-        // race: task decides it is blocked because one of it's dependencies has not finished.
-        // before the task can mark itself as blocked, the dependency finishes it's install,
-        // causing the task to never finish because resumeUnblockedTasks is called before
-        // it's state is set to blocked.
+        // race condition (fixed now): task decides it is blocked because one of its dependencies
+        // has not finished. before the task can mark itself as blocked, the dependency finishes its
+        // install, causing the task to never finish because resumeUnblockedTasks is called before
+        // its state is set to blocked.
         //
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
@@ -137,41 +144,46 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        if (this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+        if (!this.isTaskBlocked(entry_id, &parent_dedupe)) {
+            // .monotonic is okay because the task isn't running right now.
             this.store.entries.items(.step)[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
             return;
         }
 
+        // .monotonic is okay because the task isn't running right now.
         this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
     }
 
-    fn isTaskUnblocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
+    /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
+    /// task thread (via `run`). `parent_dedupe` should not be shared between threads.
+    fn isTaskBlocked(this: *Installer, entry_id: Store.Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Store.Entry.Id, void)) bool {
         const entries = this.store.entries.slice();
         const entry_deps = entries.items(.dependencies);
         const entry_steps = entries.items(.step);
 
         const deps = entry_deps[entry_id.get()];
         for (deps.slice()) |dep| {
-            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+            if (entry_steps[dep.entry_id.get()].load(.acquire) != .done) {
                 parent_dedupe.clearRetainingCapacity();
                 if (this.store.isCycle(entry_id, dep.entry_id, parent_dedupe)) {
                     continue;
                 }
-
-                return false;
+                return true;
             }
         }
-
-        return true;
+        return false;
     }
 
+    /// Called from main thread
     pub fn onTaskComplete(this: *Installer, entry_id: Store.Entry.Id, state: enum { success, skipped, fail }) void {
         if (comptime Environment.ci_assert) {
+            // .monotonic is okay because we should have already synchronized with the completed
+            // task thread by virtue of popping from the `UnboundedQueue`.
             bun.assertWithLocation(this.store.entries.items(.step)[entry_id.get()].load(.monotonic) == .done, @src());
         }
 
-        this.decrementPendingTasks(entry_id);
+        this.decrementPendingTasks();
         this.resumeUnblockedTasks();
 
         if (this.install_node) |node| {
@@ -237,63 +249,54 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        for (0..this.store.entries.len) |_entry_id| {
-            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+        for (0..this.store.entries.len) |id_int| {
+            const entry_id: Store.Entry.Id = .from(@intCast(id_int));
 
+            // .monotonic is okay because only the main thread sets this to `.blocked`.
             const entry_step = entry_steps[entry_id.get()].load(.monotonic);
             if (entry_step != .blocked) {
                 continue;
             }
 
-            if (!this.isTaskUnblocked(entry_id, &parent_dedupe)) {
+            if (this.isTaskBlocked(entry_id, &parent_dedupe)) {
                 continue;
             }
 
+            // .monotonic is okay because the task isn't running right now.
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);
         }
     }
 
     pub const Task = struct {
-        const Preallocated = bun.HiveArray(Task, 128).Fallback;
-
         entry_id: Store.Entry.Id,
         installer: *Installer,
 
-        task: ThreadPool.Task = .{ .callback = &callback },
-        next: ?*Task = null,
+        task: ThreadPool.Task,
+        next: ?*Task,
 
-        result: Result = .none,
+        result: Result,
 
         const Result = union(enum) {
             none,
             err: Error,
             blocked,
+            run_scripts: *Package.Scripts.List,
             done,
         };
 
-        const Error = union(Step) {
+        const Error = union(enum) {
             link_package: sys.Error,
             symlink_dependencies: sys.Error,
-            check_if_blocked,
-            symlink_dependency_binaries,
-            run_preinstall: anyerror,
+            run_scripts: anyerror,
             binaries: anyerror,
-            @"run (post)install and (pre/post)prepare": anyerror,
-            done,
-            blocked,
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
                     .link_package => |err| .{ .link_package = err.clone(allocator) },
                     .symlink_dependencies => |err| .{ .symlink_dependencies = err.clone(allocator) },
-                    .check_if_blocked => .check_if_blocked,
-                    .symlink_dependency_binaries => .symlink_dependency_binaries,
-                    .run_preinstall => |err| .{ .run_preinstall = err },
                     .binaries => |err| .{ .binaries = err },
-                    .@"run (post)install and (pre/post)prepare" => |err| .{ .@"run (post)install and (pre/post)prepare" = err },
-                    .done => .done,
-                    .blocked => .blocked,
+                    .run_scripts => |err| .{ .run_scripts = err },
                 };
             }
         };
@@ -323,6 +326,7 @@ pub const Installer = struct {
             blocked,
         };
 
+        /// Called from task thread
         fn nextStep(this: *Task, comptime current_step: Step) Step {
             const next_step: Step = switch (comptime current_step) {
                 .link_package => .symlink_dependencies,
@@ -338,22 +342,26 @@ pub const Installer = struct {
                 => @compileError("unexpected step"),
             };
 
-            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .monotonic);
+            this.installer.store.entries.items(.step)[this.entry_id.get()].store(next_step, .release);
 
             return next_step;
         }
 
         const Yield = union(enum) {
             yield,
+            run_scripts: *Package.Scripts.List,
             done,
             blocked,
             fail: Error,
 
             pub fn failure(e: Error) Yield {
-                return .{ .fail = e };
+                // clone here in case a path is kept in a buffer that
+                // will be freed at the end of the current scope.
+                return .{ .fail = e.clone(bun.default_allocator) };
             }
         };
 
+        /// Called from task thread
         fn run(this: *Task) OOM!Yield {
             const installer = this.installer;
             const manager = installer.manager;
@@ -384,7 +392,7 @@ pub const Installer = struct {
             const pkg_name_hash = pkg_name_hashes[pkg_id];
             const pkg_res = pkg_resolutions[pkg_id];
 
-            return next_step: switch (entry_steps[this.entry_id.get()].load(.monotonic)) {
+            return next_step: switch (entry_steps[this.entry_id.get()].load(.acquire)) {
                 inline .link_package => |current_step| {
                     const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -541,6 +549,9 @@ pub const Installer = struct {
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
 
+                    // .monotonic access of `supported_backend` is okay because it's an
+                    // optimization. It's okay if another thread doesn't see an update to this
+                    // value "in time".
                     backend: switch (installer.supported_backend.load(.monotonic)) {
                         .clonefile => {
                             if (comptime !Environment.isMac) {
@@ -757,7 +768,7 @@ pub const Installer = struct {
                     var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
                     defer parent_dedupe.deinit();
 
-                    if (!installer.isTaskUnblocked(this.entry_id, &parent_dedupe)) {
+                    if (installer.isTaskBlocked(this.entry_id, &parent_dedupe)) {
                         return .blocked;
                     }
 
@@ -862,11 +873,12 @@ pub const Installer = struct {
                             dep.name.slice(string_buf),
                             &pkg_res,
                         ) catch |err| {
-                            return .failure(.{ .run_preinstall = err });
+                            return .failure(.{ .run_scripts = err });
                         };
 
                         if (scripts_list) |list| {
-                            entry_scripts[this.entry_id.get()] = bun.create(bun.default_allocator, Package.Scripts.List, list);
+                            const clone = bun.create(bun.default_allocator, Package.Scripts.List, list);
+                            entry_scripts[this.entry_id.get()] = clone;
 
                             if (is_trusted_through_update_request) {
                                 const trusted_dep_to_add = try installer.manager.allocator.dupe(u8, dep.name.slice(string_buf));
@@ -889,20 +901,7 @@ pub const Installer = struct {
                                 continue :next_step this.nextStep(current_step);
                             }
 
-                            installer.manager.spawnPackageLifecycleScripts(
-                                installer.command_ctx,
-                                list,
-                                dep.behavior.optional,
-                                false,
-                                .{
-                                    .entry_id = this.entry_id,
-                                    .installer = installer,
-                                },
-                            ) catch |err| {
-                                return .failure(.{ .run_preinstall = err });
-                            };
-
-                            return .yield;
+                            return .{ .run_scripts = clone };
                         }
                     }
 
@@ -981,26 +980,11 @@ pub const Installer = struct {
                         continue :next_step this.nextStep(current_step);
                     }
 
-                    const dep = installer.lockfile.buffers.dependencies.items[dep_id];
-
-                    installer.manager.spawnPackageLifecycleScripts(
-                        installer.command_ctx,
-                        list.*,
-                        dep.behavior.optional,
-                        false,
-                        .{
-                            .entry_id = this.entry_id,
-                            .installer = installer,
-                        },
-                    ) catch |err| {
-                        return .failure(.{ .@"run (post)install and (pre/post)prepare" = err });
-                    };
-
                     // when these scripts finish the package install will be
                     // complete. the task does not have anymore work to complete
                     // so it does not return to the thread pool.
 
-                    return .yield;
+                    return .{ .run_scripts = list };
                 },
 
                 .done => {
@@ -1014,6 +998,7 @@ pub const Installer = struct {
             };
         }
 
+        /// Called from task thread
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
 
@@ -1023,29 +1008,40 @@ pub const Installer = struct {
 
             switch (res) {
                 .yield => {},
+                .run_scripts => |list| {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(this.installer.store.entries.items(.scripts)[this.entry_id.get()] != null, @src());
+                    }
+                    this.result = .{ .run_scripts = list };
+                    this.installer.task_queue.push(this);
+                    this.installer.manager.wake();
+                },
                 .done => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .done, @src());
                     }
                     this.result = .done;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .blocked => {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) == .check_if_blocked, @src());
                     }
                     this.result = .blocked;
-                    this.installer.tasks.push(this);
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
                 .fail => |err| {
                     if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because this should have been set by this thread.
                         bun.assertWithLocation(this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic) != .done, @src());
                     }
-                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .monotonic);
-                    this.result = .{ .err = err.clone(bun.default_allocator) };
-                    this.installer.tasks.push(this);
+                    this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
+                    this.result = .{ .err = err };
+                    this.installer.task_queue.push(this);
                     this.installer.manager.wake();
                 },
             }
@@ -1271,6 +1267,8 @@ pub const Installer = struct {
     }
 };
 
+const string = []const u8;
+
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
 const FileCopier = @import("./FileCopier.zig").FileCopier;
@@ -1284,11 +1282,10 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const string = bun.string;
 const strings = bun.strings;
 const sys = bun.sys;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const Mutex = bun.threading.Mutex;
 const String = bun.Semver.String;
 

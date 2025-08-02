@@ -193,7 +193,7 @@ pub const DataCell = extern struct {
         if (slice.len <= count) return "";
         return slice[count..];
     }
-    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *JSC.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
+    fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *jsc.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !DataCell {
         const closing_brace = if (is_json_sub_array) ']' else '}';
         const opening_brace = if (is_json_sub_array) '[' else '{';
         if (bytes.len < 2 or bytes[0] != opening_brace) {
@@ -587,7 +587,7 @@ pub const DataCell = extern struct {
         return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
     }
 
-    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+    pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !DataCell {
         switch (oid) {
             // TODO: .int2_array, .float8_array
             inline .int4_array, .float4_array => |tag| {
@@ -714,6 +714,9 @@ pub const DataCell = extern struct {
                 }
             },
             .date, .timestamp, .timestamptz => |tag| {
+                if (bytes.len == 0) {
+                    return DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                }
                 if (binary and bytes.len == 8) {
                     switch (tag) {
                         .timestamptz => return DataCell{ .tag = .date_with_time_zone, .value = .{ .date_with_time_zone = types.date.fromBinary(bytes) } },
@@ -721,6 +724,9 @@ pub const DataCell = extern struct {
                         else => unreachable,
                     }
                 } else {
+                    if (bun.strings.eqlCaseInsensitiveASCII(bytes, "NULL", true)) {
+                        return DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                    }
                     var str = bun.String.init(bytes);
                     defer str.deref();
                     return DataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } };
@@ -1001,22 +1007,22 @@ pub const DataCell = extern struct {
         binary: bool = false,
         bigint: bool = false,
         count: usize = 0,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *jsc.JSGlobalObject,
 
         extern fn JSC__constructObjectFromDataCell(
-            *JSC.JSGlobalObject,
+            *jsc.JSGlobalObject,
             JSValue,
             JSValue,
             [*]DataCell,
             u32,
             Flags,
             u8, // result_mode
-            ?[*]JSC.JSObject.ExternColumnIdentifier, // names
+            ?[*]jsc.JSObject.ExternColumnIdentifier, // names
             u32, // names count
         ) JSValue;
 
-        pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
-            var names: ?[*]JSC.JSObject.ExternColumnIdentifier = null;
+        pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+            var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
             var names_count: u32 = 0;
             if (cached_structure) |c| {
                 if (c.fields) |f| {
@@ -1039,6 +1045,16 @@ pub const DataCell = extern struct {
         }
 
         fn putImpl(this: *Putter, index: u32, optional_bytes: ?*Data, comptime is_raw: bool) !bool {
+            // Bounds check to prevent crash when fields/list arrays are empty
+            if (index >= this.fields.len) {
+                debug("putImpl: index {d} >= fields.len {d}, ignoring extra field", .{ index, this.fields.len });
+                return false;
+            }
+            if (index >= this.list.len) {
+                debug("putImpl: index {d} >= list.len {d}, ignoring extra field", .{ index, this.list.len });
+                return false;
+            }
+
             const field = &this.fields[index];
             const oid = field.type_oid;
             debug("index: {d}, oid: {d}", .{ index, oid });
@@ -1101,5 +1117,5 @@ const short = types.short;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

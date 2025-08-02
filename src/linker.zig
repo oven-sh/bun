@@ -146,7 +146,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -205,11 +205,11 @@ pub const Linker = struct {
                                 linker.log,
                                 import_record.range.loc,
                                 if (is_bun)
-                                    JSC.JSGlobalObject.BunPluginTarget.bun
+                                    jsc.JSGlobalObject.BunPluginTarget.bun
                                 else if (linker.options.target == .browser)
-                                    JSC.JSGlobalObject.BunPluginTarget.browser
+                                    jsc.JSGlobalObject.BunPluginTarget.browser
                                 else
-                                    JSC.JSGlobalObject.BunPluginTarget.node,
+                                    jsc.JSGlobalObject.BunPluginTarget.node,
                             )) |path| {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
@@ -420,9 +420,10 @@ pub const Linker = struct {
     }
 };
 
+const string = []const u8;
+
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
-const allocators = @import("./allocators.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
 
@@ -435,9 +436,9 @@ const ResolverType = Resolver.Resolver;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FileDescriptorType = bun.FileDescriptor;
-const JSC = bun.JSC;
+const allocators = bun.allocators;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const _transpiler = bun.transpiler;

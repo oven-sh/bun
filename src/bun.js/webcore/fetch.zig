@@ -1529,6 +1529,9 @@ pub fn Bun__fetch_(
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
     var signal: ?*jsc.WebCore.AbortSignal = null;
+    // dispatcher: Agent | undefined;
+    var dispatcher: ?JSValue = null;
+    var custom_connect_fn: ?JSValue = null;
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
@@ -1579,6 +1582,14 @@ pub fn Bun__fetch_(
             ssl_config = null;
             conf.deinit();
             bun.default_allocator.destroy(conf);
+        }
+
+        // Clean up dispatcher references
+        if (dispatcher) |_| {
+            dispatcher = null;
+        }
+        if (custom_connect_fn) |_| {
+            custom_connect_fn = null;
         }
     }
 
@@ -1993,6 +2004,94 @@ pub fn Bun__fetch_(
 
         break :extract_proxy url_proxy_buffer;
     };
+
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
+    // dispatcher: Agent | undefined;
+    dispatcher = extract_dispatcher: {
+        const objects_to_try = [_]jsc.JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher_value| {
+                    if (!dispatcher_value.isUndefined()) {
+                        if (dispatcher_value.isObject()) {
+                            // Extract the connect function if it exists
+                            if (try dispatcher_value.get(globalThis, "connect")) |connect_fn| {
+                                if (connect_fn.isCallable()) {
+                                    custom_connect_fn = connect_fn;
+                                    break :extract_dispatcher dispatcher_value;
+                                }
+                            }
+
+                            break :extract_dispatcher dispatcher_value;
+                        }
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+
+        break :extract_dispatcher null;
+    };
+
+    // Custom connect function is provided
+    if (custom_connect_fn) |connect_fn| {
+        const connect_opts = JSValue.createEmptyObject(globalThis, 6);
+        const hostname_str = bun.String.cloneUTF8(url.hostname);
+        defer hostname_str.deref();
+        const port_num = url.getPortAuto();
+        const protocol_str = bun.String.cloneUTF8(url.protocol);
+        defer protocol_str.deref();
+        const path_str = bun.String.cloneUTF8(url.path);
+        defer path_str.deref();
+
+        connect_opts.put(globalThis, ZigString.static("hostname"), hostname_str.toJS(globalThis));
+        connect_opts.put(globalThis, ZigString.static("port"), JSValue.jsNumber(@as(f64, @floatFromInt(port_num))));
+        connect_opts.put(globalThis, ZigString.static("protocol"), protocol_str.toJS(globalThis));
+        connect_opts.put(globalThis, ZigString.static("path"), path_str.toJS(globalThis));
+
+        const method_str = bun.String.cloneUTF8(@tagName(method));
+        defer method_str.deref();
+        connect_opts.put(globalThis, ZigString.static("method"), method_str.toJS(globalThis));
+
+        const callback_fn = JSValue.js_undefined;
+
+        // Call the custom connect function
+        const connect_args = [_]JSValue{ connect_opts, callback_fn };
+        _ = connect_fn.call(globalThis, dispatcher.?, &connect_args) catch {
+            if (globalThis.hasException()) {
+                is_error = true;
+                return .zero;
+            }
+
+            is_error = true;
+            const error_msg = globalThis.createError("Connection failed", .{});
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, error_msg);
+        };
+
+        // Check for any exceptions that occurred during the call
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
+        // If the connect function executed without throwing, we still need to
+        // prevent the default request as this indicates custom connection handling
+        const err = globalThis.createError("fetch failed", .{});
+        is_error = true;
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+    }
 
     if (globalThis.hasException()) {
         is_error = true;

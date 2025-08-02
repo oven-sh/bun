@@ -2406,6 +2406,7 @@ pub const SideEffects = enum(u1) {
                 .module_exports,
                 .resolved_specifier_string,
                 .hot_data,
+                .import_meta_glob,
                 => {},
                 .hot_accept,
                 .hot_accept_visited,
@@ -5134,6 +5135,35 @@ fn NewParser_(
 
                 if (state.import_record_tag) |tag| {
                     p.import_records.items[import_record_index].tag = tag;
+                }
+
+                if (state.import_options.data == .e_object) {
+                    const obj = state.import_options.data.e_object;
+                    for (obj.properties.slice()) |prop| {
+                        if (prop.key != null and prop.value != null and
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_object)
+                        {
+                            const key_str = prop.key.?.data.e_string.slice(p.allocator);
+                            if (strings.eqlComptime(key_str, "with")) {
+                                const with_obj = prop.value.?.data.e_object;
+                                for (with_obj.properties.slice()) |with_prop| {
+                                    if (with_prop.key != null and with_prop.value != null and
+                                        with_prop.key.?.data == .e_string and with_prop.value.?.data == .e_string)
+                                    {
+                                        const with_key = with_prop.key.?.data.e_string.slice(p.allocator);
+                                        if (strings.eqlComptime(with_key, "type")) {
+                                            const type_value = with_prop.value.?.data.e_string.slice(p.allocator);
+                                            if (options.Loader.fromString(type_value)) |loader| {
+                                                p.import_records.items[import_record_index].loader = loader;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
@@ -17444,6 +17474,9 @@ fn NewParser_(
                                 if (!p.options.features.hot_module_reloading)
                                     return .{ .data = .e_undefined, .loc = expr.loc };
                             },
+                            .import_meta_glob => {
+                                return p.handleImportMetaGlobCall(e_, expr.loc);
+                            },
                             else => {},
                         };
 
@@ -18808,6 +18841,12 @@ fn NewParser_(
                     if (strings.eqlComptime(name, "hot")) {
                         return .{ .data = .{
                             .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
+                        }, .loc = loc };
+                    }
+
+                    if (strings.eqlComptime(name, "glob")) {
+                        return .{ .data = .{
+                            .e_special = .import_meta_glob,
                         }, .loc = loc };
                     }
 
@@ -23450,6 +23489,210 @@ fn NewParser_(
             } };
         }
 
+        fn handleImportMetaGlobCall(p: *P, call: *E.Call, loc: logger.Loc) Expr {
+            if (call.args.len == 0) {
+                p.log.addError(p.source, loc, "import.meta.glob() requires at least one argument") catch unreachable;
+                return p.newExpr(E.Object{}, loc);
+            }
+
+            // Parse patterns
+            var patterns = std.ArrayList([]const u8).init(p.allocator);
+            defer patterns.deinit();
+
+            switch (call.args.at(0).data) {
+                .e_string => |str| patterns.append(str.slice(p.allocator)) catch unreachable,
+                .e_array => |arr| {
+                    for (arr.items.slice()) |item| {
+                        if (item.data == .e_string) {
+                            patterns.append(item.data.e_string.slice(p.allocator)) catch unreachable;
+                        } else {
+                            p.log.addError(p.source, item.loc, "import.meta.glob() patterns must be string literals") catch unreachable;
+                            return p.newExpr(E.Object{}, loc);
+                        }
+                    }
+                },
+                else => {
+                    p.log.addError(p.source, call.args.at(0).loc, "import.meta.glob() patterns must be string literals or an array of string literals") catch unreachable;
+                    return p.newExpr(E.Object{}, loc);
+                },
+            }
+
+            // Parse options
+            var query: ?[]const u8 = null;
+            var with_attrs: ?*const E.Object = null;
+            var import_name: ?[]const u8 = null;
+
+            if (call.args.len >= 2 and call.args.at(1).data == .e_object) {
+                for (call.args.at(1).data.e_object.properties.slice()) |prop| {
+                    if (prop.key == null or prop.value == null or prop.key.?.data != .e_string) continue;
+                    const key_str = prop.key.?.data.e_string.slice(p.allocator);
+
+                    if (strings.eqlComptime(key_str, "query") and prop.value.?.data == .e_string) {
+                        query = prop.value.?.data.e_string.slice(p.allocator);
+                    } else if (strings.eqlComptime(key_str, "with") and prop.value.?.data == .e_object) {
+                        with_attrs = prop.value.?.data.e_object;
+                    } else if (strings.eqlComptime(key_str, "import") and prop.value.?.data == .e_string) {
+                        import_name = prop.value.?.data.e_string.slice(p.allocator);
+                    }
+                }
+            }
+
+            // Find matching files
+            const source_dir = p.source.path.sourceDir();
+            var matched_files = bun.StringHashMap(void).init(p.allocator);
+            defer matched_files.deinit();
+
+            var glob_arena = bun.ArenaAllocator.init(p.allocator);
+            defer glob_arena.deinit();
+
+            for (patterns.items) |pattern| {
+                if (!strings.hasPrefix(pattern, "./") and !strings.hasPrefix(pattern, "../")) {
+                    p.log.addErrorFmt(p.source, call.args.at(0).loc, p.allocator, "Glob pattern \"{s}\" must be a relative path starting with ./ or ../", .{pattern}) catch unreachable;
+                    return p.newExpr(E.Object{}, loc);
+                }
+
+                var walker = glob.BunGlobWalker{};
+                defer walker.deinit(false);
+
+                const clean_pattern = if (strings.hasPrefix(pattern, "./")) pattern[2..] else pattern;
+
+                switch (walker.initWithCwd(&glob_arena, clean_pattern, source_dir, true, false, true, false, true) catch unreachable) {
+                    .err => continue,
+                    .result => {},
+                }
+
+                var iter = glob.BunGlobWalker.Iterator{ .walker = &walker };
+                defer iter.deinit();
+                switch (iter.init() catch unreachable) {
+                    .err => continue,
+                    .result => {},
+                }
+
+                while (switch (iter.next() catch unreachable) {
+                    .err => null,
+                    .result => |path| path,
+                }) |path| {
+                    const rel_path = if (strings.hasPrefix(path, source_dir)) path[source_dir.len + @intFromBool(path[source_dir.len] == '/') ..] else path;
+
+                    var path_buf: bun.PathBuffer = undefined;
+                    const slash_normalized = if (bun.Environment.isWindows)
+                        strings.normalizeSlashesOnly(&path_buf, rel_path, '/')
+                    else
+                        rel_path;
+
+                    const normalized = if (strings.hasPrefix(slash_normalized, "./"))
+                        p.allocator.dupe(u8, slash_normalized) catch unreachable
+                    else
+                        std.fmt.allocPrint(p.allocator, "./{s}", .{slash_normalized}) catch unreachable;
+                    matched_files.put(normalized, {}) catch unreachable;
+                }
+            }
+
+            // Sort files
+            var files = std.ArrayList([]const u8).init(p.allocator);
+            defer files.deinit();
+            var iter = matched_files.iterator();
+            while (iter.next()) |entry| {
+                files.append(entry.key_ptr.*) catch unreachable;
+            }
+            std.sort.block([]const u8, files.items, {}, struct {
+                fn lessThan(_: void, a: []const u8, b_path: []const u8) bool {
+                    return strings.order(a, b_path) == .lt;
+                }
+            }.lessThan);
+
+            // Create properties
+            var properties = p.allocator.alloc(G.Property, files.items.len) catch unreachable;
+
+            for (files.items, 0..) |file_path, i| {
+                const import_path = if (query) |q|
+                    std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }) catch unreachable
+                else
+                    file_path;
+
+                const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
+                p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+
+                if (with_attrs) |attrs| {
+                    for (attrs.properties.slice()) |prop| {
+                        if (prop.key != null and prop.value != null and
+                            prop.key.?.data == .e_string and prop.value.?.data == .e_string)
+                        {
+                            const key_str = prop.key.?.data.e_string.slice(p.allocator);
+                            if (strings.eqlComptime(key_str, "type")) {
+                                const value_str = prop.value.?.data.e_string.slice(p.allocator);
+                                if (options.Loader.fromString(value_str)) |loader| {
+                                    p.import_records.items[import_record_index].loader = loader;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                const import_expr = p.newExpr(E.Import{
+                    .expr = p.newExpr(E.String{ .data = import_path }, loc),
+                    .options = if (with_attrs) |attrs| blk: {
+                        var with_props = p.allocator.alloc(G.Property, 1) catch unreachable;
+                        with_props[0] = .{
+                            .key = p.newExpr(E.String{ .data = "with" }, loc),
+                            .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
+                        };
+                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.init(with_props) }, loc);
+                    } else Expr.empty,
+                    .import_record_index = import_record_index,
+                }, loc);
+
+                const return_expr = if (import_name) |name| blk: {
+                    // Create import('./file').then(m => m.name)
+                    const m_ref = p.newSymbol(.other, "m") catch unreachable;
+
+                    var arrow_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                    arrow_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Dot{
+                        .target = p.newExpr(E.Identifier{ .ref = m_ref }, loc),
+                        .name = name,
+                        .name_loc = loc,
+                    }, loc) }, loc);
+
+                    var arrow_args = p.allocator.alloc(G.Arg, 1) catch unreachable;
+                    arrow_args[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = m_ref }, logger.Loc.Empty),
+                    };
+
+                    const arrow_fn = p.newExpr(E.Arrow{
+                        .args = arrow_args,
+                        .body = .{ .loc = loc, .stmts = arrow_stmts },
+                        .prefer_expr = true,
+                    }, loc);
+
+                    break :blk p.newExpr(E.Call{
+                        .target = p.newExpr(E.Dot{
+                            .target = import_expr,
+                            .name = "then",
+                            .name_loc = loc,
+                        }, loc),
+                        .args = ExprNodeList.fromSlice(p.allocator, &.{arrow_fn}) catch unreachable,
+                    }, loc);
+                } else import_expr;
+
+                var outer_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                outer_stmts[0] = p.s(S.Return{ .value = return_expr }, loc);
+
+                properties[i] = .{
+                    .key = p.newExpr(E.String{ .data = file_path }, loc),
+                    .value = p.newExpr(E.Arrow{
+                        .args = &.{},
+                        .body = .{ .loc = loc, .stmts = outer_stmts },
+                        .prefer_expr = true,
+                    }, loc),
+                };
+            }
+
+            return p.newExpr(E.Object{
+                .properties = G.Property.List.init(properties),
+            }, loc);
+        }
+
         const ReactRefreshExportKind = enum { named, default };
 
         pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: ReactRefreshExportKind) !void {
@@ -24909,6 +25152,7 @@ const string = []const u8;
 
 const FeatureFlags = @import("./feature_flags.zig");
 const _runtime = @import("./runtime.zig");
+const glob = @import("./glob.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 
 const Define = @import("./defines.zig").Define;

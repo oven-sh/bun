@@ -1286,6 +1286,76 @@ interface ImportMeta {
    */
   readonly main: boolean;
 
+  /**
+   * Import multiple modules using glob patterns.
+   *
+   * @param pattern - A glob pattern or array of glob patterns to match files
+   * @param options - Options for how imports are handled
+   * @returns An object mapping file paths to import functions or modules
+   *
+   * @example
+   * const modules = import.meta.glob('./modules/*.js')
+   * const module = await modules['./modules/foo.js']()
+   *
+   * // code produced by bun
+   * const modules = {
+   *   './modules/foo.js': () => import('./modules/foo.js'),
+   *   './modules/bar.js': () => import('./modules/bar.js'),
+   * }
+   * const module = await modules['./modules/foo.js']()
+   */
+  glob<Eager extends boolean = false, TModule = unknown>(
+    pattern: string | string[],
+    options?: {
+      // todo:
+      // /**
+      //  * If true, imports all modules eagerly (synchronously).
+      //  * If false (default), returns functions that import modules lazily.
+      //  */
+      // eager?: Eager;
+      eager?: false;
+      /**
+       * Specify a named export to import from matched modules.
+       * If not specified, imports the entire module.
+       *
+       * @example
+       * const modules = import.meta.glob('./dir/*.js', { import: 'setup' })
+       *
+       * // code produced by bun
+       * const modules = {
+       *   './dir/bar.js': () => import('./dir/bar.js').then((m) => m.setup),
+       *   './dir/foo.js': () => import('./dir/foo.js').then((m) => m.setup),
+       * }
+       */
+      import?: string;
+      /**
+       * Add a query string to the end of the "generated" dynamic import.
+       *
+       * @example
+       * const modules = import.meta.glob('./assets/*.txt', { query: '?something' })
+       *
+       * // code produced by bun
+       * const modules = {
+       *   './assets/file.txt': () => import('./assets/file.txt?something'),
+       * }
+       */
+      query?: string;
+      /**
+       * Import attributes to pass to the import statement.
+       * This is the standard way to specify import options.
+       *
+       * @example
+       * const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } })
+       *
+       * // code produced by bun
+       * const modules = {
+       *   './assets/file.txt': () => import('./assets/file.txt', { with: { type: 'text' } }),
+       * }
+       */
+      with?: ImportAttributes;
+    },
+  ): Eager extends true ? Record<string, TModule> : Record<string, () => Promise<TModule>>;
+
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;
 

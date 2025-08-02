@@ -1,7 +1,7 @@
 const PostgresSQLStatement = @This();
-
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 cached_structure: PostgresCachedStructure = .{},
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
 parameters: []const int4 = &[_]int4{},
 signature: Signature,
@@ -9,6 +9,8 @@ status: Status = Status.pending,
 error_response: ?Error = null,
 needs_duplicate_check: bool = true,
 fields_flags: DataCell.Flags = .{},
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub const Error = union(enum) {
     protocol: protocol.ErrorResponse,
@@ -38,19 +40,6 @@ pub const Status = enum {
         return this == .parsing;
     }
 };
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count += 1;
-}
-
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count;
-    this.ref_count -= 1;
-
-    if (ref_count == 1) {
-        this.deinit();
-    }
-}
 
 pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
     if (!this.needs_duplicate_check) return;
@@ -100,7 +89,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
 pub fn deinit(this: *PostgresSQLStatement) void {
     debug("PostgresSQLStatement deinit", .{});
 
-    bun.assert(this.ref_count == 0);
+    this.ref_count.assertNoRefs();
 
     for (this.fields) |*field| {
         field.deinit();

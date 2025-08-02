@@ -325,7 +325,7 @@ fn transformOptionsFromJSC(globalObject: *jsc.JSGlobalObject, temp_allocator: st
                 try external.toZigString(&zig_str, globalThis);
                 if (zig_str.len == 0) break :external;
                 var single_external = allocator.alloc(string, 1) catch unreachable;
-                single_external[0] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
+                single_external[0] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
                 transpiler.transform.external = single_external;
             } else if (toplevel_type.isArray()) {
                 const count = try external.getLength(globalThis);
@@ -342,7 +342,7 @@ fn transformOptionsFromJSC(globalObject: *jsc.JSGlobalObject, temp_allocator: st
                     var zig_str = jsc.ZigString.init("");
                     try entry.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) continue;
-                    externals[i] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
+                    externals[i] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
                     i += 1;
                 }
 

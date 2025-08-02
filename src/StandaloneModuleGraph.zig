@@ -725,7 +725,7 @@ pub const StandaloneModuleGraph = struct {
                         },
                         else => {},
                     }
-                    
+
                     const writer = file.writer();
                     pe_file.write(writer) catch |err| {
                         Output.prettyErrorln("Error writing PE file: {}", .{err});
@@ -767,7 +767,7 @@ pub const StandaloneModuleGraph = struct {
                             cleanup(zname, cloned_executable_fd);
                             Global.exit(1);
                         };
-                        
+
                         // Truncate file to the new size to avoid leaving old data at the end
                         switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
                             .err => |err| {

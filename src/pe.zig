@@ -371,7 +371,7 @@ pub const PEFile = struct {
         const updated_optional_header = self.getOptionalHeader();
         updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
         updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
-        
+
         // Update PE checksum after adding section
         self.updateChecksum();
     }
@@ -432,13 +432,13 @@ pub const PEFile = struct {
     pub fn calculateChecksum(self: *const PEFile) u32 {
         const data = self.data.items;
         const file_size = data.len;
-        
+
         // Find checksum field offset
         const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
-        
+
         var checksum: u64 = 0;
         var i: usize = 0;
-        
+
         // Process file as 16-bit words
         while (i + 1 < file_size) : (i += 2) {
             // Skip the checksum field itself (4 bytes)
@@ -446,17 +446,17 @@ pub const PEFile = struct {
                 i += 2; // Skip 4 bytes total
                 continue;
             }
-            
+
             // Add 16-bit word to checksum
             const word = std.mem.readInt(u16, data[i..][0..2], .little);
             checksum += word;
-            
+
             // Handle overflow - fold back the carry
             if (checksum > 0xFFFF) {
                 checksum = (checksum & 0xFFFF) + (checksum >> 16);
             }
         }
-        
+
         // If file size is odd, last byte is treated as if followed by 0x00
         if (file_size & 1 != 0) {
             checksum += data[file_size - 1];
@@ -464,14 +464,14 @@ pub const PEFile = struct {
                 checksum = (checksum & 0xFFFF) + (checksum >> 16);
             }
         }
-        
+
         // Final fold
         checksum = (checksum & 0xFFFF) + (checksum >> 16);
         checksum = (checksum + (checksum >> 16)) & 0xFFFF;
-        
+
         // Add file size to checksum
         checksum += file_size;
-        
+
         return @intCast(checksum);
     }
 
@@ -651,7 +651,7 @@ pub const PEFile = struct {
 
         // Update the resource section
         try self.updateResourceSection(rsrc_section.?, resource_data);
-        
+
         // Update PE checksum after all modifications
         self.updateChecksum();
     }

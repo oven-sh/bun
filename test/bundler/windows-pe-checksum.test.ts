@@ -28,10 +28,7 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
       stderr: "pipe",
     });
 
-    const [buildStderr, buildExitCode] = await Promise.all([
-      new Response(buildProc.stderr).text(),
-      buildProc.exited,
-    ]);
+    const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
 
     expect(buildExitCode).toBe(0);
     expect(buildStderr).toBe("");
@@ -53,10 +50,10 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
     // Extract checksum from objdump output
     const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
     expect(checksumMatch).not.toBeNull();
-    
+
     const checksum = checksumMatch![1];
     console.log("PE checksum:", checksum);
-    
+
     // Checksum should not be 0 after our implementation
     expect(checksum).not.toBe("00000000");
   });
@@ -89,10 +86,7 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
       stderr: "pipe",
     });
 
-    const [buildStderr, buildExitCode] = await Promise.all([
-      new Response(buildProc.stderr).text(),
-      buildProc.exited,
-    ]);
+    const [buildStderr, buildExitCode] = await Promise.all([new Response(buildProc.stderr).text(), buildProc.exited]);
 
     expect(buildExitCode).toBe(0);
     expect(buildStderr).toBe("");
@@ -113,10 +107,10 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
 
     const checksumMatch = objdumpStdout.match(/CheckSum\s+([0-9a-fA-F]+)/);
     expect(checksumMatch).not.toBeNull();
-    
+
     const checksum = checksumMatch![1];
     console.log("PE checksum with resources:", checksum);
-    
+
     // Checksum should not be 0
     expect(checksum).not.toBe("00000000");
   });
@@ -126,9 +120,12 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
 function createTestIcon() {
   // ICO header (6 bytes)
   const header = Buffer.from([
-    0x00, 0x00, // Reserved
-    0x01, 0x00, // Type (1 = ICO)
-    0x01, 0x00, // Count (1 icon)
+    0x00,
+    0x00, // Reserved
+    0x01,
+    0x00, // Type (1 = ICO)
+    0x01,
+    0x00, // Count (1 icon)
   ]);
 
   // Directory entry (16 bytes)
@@ -137,10 +134,18 @@ function createTestIcon() {
     0x10, // Height (16)
     0x00, // Color count (0 = 256 colors)
     0x00, // Reserved
-    0x01, 0x00, // Planes
-    0x08, 0x00, // Bit count
-    0x28, 0x01, 0x00, 0x00, // Bytes in resource (296)
-    0x16, 0x00, 0x00, 0x00, // Image offset (22)
+    0x01,
+    0x00, // Planes
+    0x08,
+    0x00, // Bit count
+    0x28,
+    0x01,
+    0x00,
+    0x00, // Bytes in resource (296)
+    0x16,
+    0x00,
+    0x00,
+    0x00, // Image offset (22)
   ]);
 
   // Minimal BMP data

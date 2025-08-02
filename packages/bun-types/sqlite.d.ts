@@ -337,6 +337,35 @@ declare module "bun:sqlite" {
     loadExtension(extension: string, entryPoint?: string): void;
 
     /**
+     * Registers a a user-defined function (UDF) so that it can be used by SQL statements
+     *
+     * By default, user-defined functions have a strict number of arguments (determined by function.length).
+     *
+     * You can register multiple functions of the same name, each with a different number of arguments, causing SQLite3 to execute a different function depending on how many arguments were passed to it.
+     * If you register two functions with same name and the same number of arguments, the second registration will erase the first one.
+     *
+     * Internally, this calls `sqlite3_create_function_v2`.
+     * @param name Name of the function
+     * @param cb Function to be called by SQLite
+     */
+    defineFunction(name: string, cb: (...params: unknown[]) => unknown): void;
+
+    /**
+     * Registers a a user-defined function (UDF) so that it can be used by SQL statements
+     *
+     * By default, user-defined functions have a strict number of arguments (determined by function.length).
+     *
+     * You can register multiple functions of the same name, each with a different number of arguments, causing SQLite3 to execute a different function depending on how many arguments were passed to it.
+     * If you register two functions with same name and the same number of arguments, the second registration will erase the first one.
+     *
+     * Internally, this calls `sqlite3_create_function_v2`.
+     * @param name Name of the function
+     * @param options Options for the function
+     * @param cb Function to be called by SQLite
+     */
+    defineFunction(name: string, options: FunctionRegistrationOptions, cb: (...params: unknown[]) => unknown): void;
+
+    /**
      * Change the dynamic library path to SQLite
      *
      * @note macOS-only
@@ -570,6 +599,23 @@ declare module "bun:sqlite" {
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
   }
+
+  export type FunctionRegistrationOptions = {
+    /**
+     * If set to `true`, the registered function can accept any number of arguments.
+     */
+    varargs?: boolean | undefined;
+    /**
+     * If set to `true`, the registered function always returns the same result given the same inputs. Being deterministic enables SQLite to perform additional optimizations.
+     */
+    deterministic?: boolean | undefined;
+    /**
+     * If set to `true`, the registered function can only be invoked from top-level SQL,
+     * and cannot be used in [VIEWs](https://sqlite.org/lang_createview.html), [TRIGGERs](https://sqlite.org/lang_createtrigger.html), or schema structures such as [CHECK constraints](https://www.sqlite.org/lang_createtable.html#ckconst), [DEFAULT clauses](https://www.sqlite.org/lang_createtable.html#dfltval), etc.
+     */
+    directOnly?: boolean | undefined;
+    safeIntegers?: boolean | undefined;
+  };
 
   /**
    * A prepared statement.

@@ -2281,9 +2281,9 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    
+
     try validateWritableBlob(globalThis, this);
-    
+
     const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),

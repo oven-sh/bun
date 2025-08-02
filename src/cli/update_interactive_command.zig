@@ -270,7 +270,7 @@ pub const UpdateInteractiveCommand = struct {
                 // Navigate through the AST to find and update the correct catalog entry
                 if (package_json.root.data == .e_object) {
                     var found_and_updated = false;
-                    
+
                     if (catalog_name.len > 0) {
                         // Looking for catalogs.catalog_name.package_name at top level
                         if (package_json.root.asProperty("catalogs")) |catalogs_query| {
@@ -282,7 +282,7 @@ pub const UpdateInteractiveCommand = struct {
                                             if (version_query.expr.data == .e_string) {
                                                 // Get the original version string to preserve prefix
                                                 const original_version = version_query.expr.data.e_string.data;
-                                                
+
                                                 // Extract prefix (^, ~, etc.) from original version
                                                 var version_with_prefix = new_version;
                                                 if (original_version.len > 0) {
@@ -292,7 +292,7 @@ pub const UpdateInteractiveCommand = struct {
                                                         version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
                                                     }
                                                 }
-                                                
+
                                                 // Update the version in place
                                                 const new_expr = try Expr.init(
                                                     E.String,
@@ -311,7 +311,7 @@ pub const UpdateInteractiveCommand = struct {
                                 }
                             }
                         }
-                        
+
                         // If not found at top level, look inside workspaces object
                         if (!found_and_updated) {
                             if (package_json.root.asProperty("workspaces")) |workspaces_query| {
@@ -325,7 +325,7 @@ pub const UpdateInteractiveCommand = struct {
                                                         if (version_query.expr.data == .e_string) {
                                                             // Get the original version string to preserve prefix
                                                             const original_version = version_query.expr.data.e_string.data;
-                                                            
+
                                                             // Extract prefix (^, ~, etc.) from original version
                                                             var version_with_prefix = new_version;
                                                             if (original_version.len > 0) {
@@ -335,7 +335,7 @@ pub const UpdateInteractiveCommand = struct {
                                                                     version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
                                                                 }
                                                             }
-                                                            
+
                                                             // Update the version in place
                                                             const new_expr = try Expr.init(
                                                                 E.String,
@@ -366,7 +366,7 @@ pub const UpdateInteractiveCommand = struct {
                                     if (version_query.expr.data == .e_string) {
                                         // Get the original version string to preserve prefix
                                         const original_version = version_query.expr.data.e_string.data;
-                                        
+
                                         // Extract prefix (^, ~, etc.) from original version
                                         var version_with_prefix = new_version;
                                         if (original_version.len > 0) {
@@ -376,7 +376,7 @@ pub const UpdateInteractiveCommand = struct {
                                                 version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
                                             }
                                         }
-                                        
+
                                         // Update the version in place
                                         const new_expr = try Expr.init(
                                             E.String,
@@ -393,7 +393,7 @@ pub const UpdateInteractiveCommand = struct {
                                 }
                             }
                         }
-                        
+
                         // If not found at top level, look inside workspaces object
                         if (!found_and_updated) {
                             if (package_json.root.asProperty("workspaces")) |workspaces_query| {
@@ -405,7 +405,7 @@ pub const UpdateInteractiveCommand = struct {
                                                 if (version_query.expr.data == .e_string) {
                                                     // Get the original version string to preserve prefix
                                                     const original_version = version_query.expr.data.e_string.data;
-                                                    
+
                                                     // Extract prefix (^, ~, etc.) from original version
                                                     var version_with_prefix = new_version;
                                                     if (original_version.len > 0) {
@@ -415,7 +415,7 @@ pub const UpdateInteractiveCommand = struct {
                                                             version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
                                                         }
                                                     }
-                                                    
+
                                                     // Update the version in place
                                                     const new_expr = try Expr.init(
                                                         E.String,

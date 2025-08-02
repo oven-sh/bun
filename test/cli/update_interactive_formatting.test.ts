@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles, VerdaccioRegistry } from "harness";
 import { join } from "path";
 

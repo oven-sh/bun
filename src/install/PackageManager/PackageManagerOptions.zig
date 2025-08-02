@@ -74,7 +74,6 @@ node_linker: NodeLinker = .auto,
 target_os: ?Npm.OperatingSystem = null,
 target_cpu: ?Npm.Architecture = null,
 target_libc: ?Npm.Libc = null,
-target_os_is_linux: bool = Environment.isLinux,
 
 pub const PublishConfig = struct {
     access: ?Access = null,

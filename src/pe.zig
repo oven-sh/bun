@@ -554,10 +554,9 @@ pub const PEFile = struct {
         }
 
         // Find or create resource section
-        var rsrc_section = self.getResourceSection();
+        const rsrc_section = self.getResourceSection();
         if (rsrc_section == null) {
-            try self.createResourceSection();
-            rsrc_section = self.getResourceSection() orelse return error.FailedToCreateResourceSection;
+            return error.MissingResourceSection;
         }
 
         // Build new resource directory
@@ -566,6 +565,7 @@ pub const PEFile = struct {
 
         // Load and process icon if provided
         if (settings.icon) |icon_path| {
+
             // Simple approach - just read the file
             const icon_data = std.fs.cwd().readFileAlloc(allocator, icon_path, std.math.maxInt(usize)) catch {
                 return error.FileNotFound;
@@ -594,72 +594,6 @@ pub const PEFile = struct {
 
         // Update the resource section
         try self.updateResourceSection(rsrc_section.?, resource_data);
-    }
-
-    fn createResourceSection(self: *PEFile) !void {
-        const section_name = ".rsrc\x00\x00\x00";
-        const optional_header = self.getOptionalHeader();
-
-        // Check if we can add another section
-        if (self.num_sections >= 95) { // PE limit is 96 sections
-            return error.TooManySections;
-        }
-
-        // Find the last section to determine where to place the new one
-        var last_section_end: u32 = 0;
-        var last_virtual_end: u32 = 0;
-
-        const section_headers = self.getSectionHeaders();
-        for (section_headers) |section| {
-            const section_file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-            const section_virtual_end = section.virtual_address + alignSize(section.virtual_size, optional_header.section_alignment);
-
-            if (section_file_end > last_section_end) {
-                last_section_end = section_file_end;
-            }
-            if (section_virtual_end > last_virtual_end) {
-                last_virtual_end = section_virtual_end;
-            }
-        }
-
-        // Create new section header
-        const new_section = SectionHeader{
-            .name = section_name.*,
-            .virtual_size = 0x1000, // Start with 4KB
-            .virtual_address = alignSize(last_virtual_end, optional_header.section_alignment),
-            .size_of_raw_data = alignSize(0x1000, optional_header.file_alignment),
-            .pointer_to_raw_data = alignSize(last_section_end, optional_header.file_alignment),
-            .pointer_to_relocations = 0,
-            .pointer_to_line_numbers = 0,
-            .number_of_relocations = 0,
-            .number_of_line_numbers = 0,
-            .characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
-        };
-
-        // Resize data to accommodate new section
-        const new_data_size = new_section.pointer_to_raw_data + new_section.size_of_raw_data;
-        try self.data.resize(new_data_size);
-
-        // Zero out the new section data
-        @memset(self.data.items[last_section_end..new_data_size], 0);
-
-        // Write the section header
-        const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
-        const new_section_ptr: *SectionHeader = @ptrCast(@alignCast(self.data.items.ptr + new_section_offset));
-        new_section_ptr.* = new_section;
-
-        // Update PE header
-        const pe_header = self.getPEHeader();
-        pe_header.number_of_sections += 1;
-        self.num_sections += 1;
-
-        // Update optional header
-        const updated_optional_header = self.getOptionalHeader();
-        updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
-
-        // Update resource directory RVA
-        updated_optional_header.data_directories[2].virtual_address = new_section.virtual_address;
-        updated_optional_header.data_directories[2].size = new_section.virtual_size;
     }
 
     fn updateResourceSection(self: *PEFile, section: *SectionHeader, data: []const u8) !void {

@@ -487,11 +487,8 @@ pub const StandaloneModuleGraph = struct {
 
     const page_size = std.heap.page_size_max;
 
-    pub const InjectOptions = struct {
-        windows_hide_console: bool = false,
-    };
-
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) !bun.FileDescriptor {
+    pub const InjectOptions = bun.options.WindowsSettings;
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: ?*const InjectOptions, target: *const CompileTarget) !bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -689,86 +686,94 @@ pub const StandaloneModuleGraph = struct {
                 return cloned_executable_fd;
             },
             .windows => {
-                // Implement .bun section support for Windows executables
-                const pe_module = @import("./pe.zig");
-
-                // Get the path from fd
-                var path_buf: bun.PathBuffer = undefined;
-                const path = cloned_executable_fd.getFdPath(&path_buf) catch |err| {
-                    Output.prettyErrorln("Error getting executable path: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                };
-
-                // We need to close the fd before modifying the file
-                cloned_executable_fd.close();
-
-                // Create temporary path for PE with .bun section
-                const tmp_path = std.fmt.allocPrint(bun.default_allocator, "{s}.bun.tmp", .{path}) catch |err| {
-                    Output.prettyErrorln("Error allocating temporary path: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                };
-                defer bun.default_allocator.free(tmp_path);
-
-                // Load the PE file
-                const pe_data = std.fs.cwd().readFileAlloc(bun.default_allocator, path, std.math.maxInt(usize)) catch |err| {
-                    Output.prettyErrorln("Error reading PE file: {}", .{err});
-                    Global.exit(1);
-                };
-                defer bun.default_allocator.free(pe_data);
-
-                var pe_obj = pe_module.PEFile.init(bun.default_allocator, pe_data) catch |err| {
-                    Output.prettyErrorln("Error parsing PE file: {}", .{err});
-                    Global.exit(1);
-                };
-                defer pe_obj.deinit();
-
-                // Add .bun section
-                pe_obj.addBunSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error adding .bun section: {}", .{err});
-                    Global.exit(1);
-                };
-
-                // Write to temporary file
-                const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch |err| {
-                    Output.prettyErrorln("Error creating temporary file: {}", .{err});
-                    Global.exit(1);
-                };
-                defer tmp_file.close();
-
-                pe_obj.write(tmp_file.writer()) catch |err| {
-                    Output.prettyErrorln("Error writing PE file: {}", .{err});
-                    std.fs.cwd().deleteFile(tmp_path) catch {};
-                    Global.exit(1);
-                };
-
-                // Move temporary file to final location
-                std.fs.cwd().rename(tmp_path, path) catch |err| {
-                    Output.prettyErrorln("Error renaming temporary file: {}", .{err});
-                    std.fs.cwd().deleteFile(tmp_path) catch {};
-                    Global.exit(1);
-                };
-
-                // Reopen the modified file
-                var path_z_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const path_z = std.fmt.bufPrintZ(&path_z_buf, "{s}", .{path}) catch {
-                    Output.prettyErrorln("Error creating null-terminated path", .{});
-                    Global.exit(1);
-                };
-                const modified_fd = switch (Syscall.open(path_z, bun.O.CLOEXEC | bun.O.RDWR, 0)) {
-                    .result => |res| res,
-                    .err => |err| {
-                        Output.prettyErrorln("Error reopening modified executable: {}", .{err});
+                const file = bun.sys.File{ .handle = cloned_executable_fd };
+                {
+                    const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                    if (input_result.err) |err| {
+                        Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
                         Global.exit(1);
-                    },
-                };
+                    }
+                    var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                        Output.prettyErrorln("Error initializing PE file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
+                    defer pe_file.deinit();
+                    pe_file.addBunSection(bytes) catch |err| {
+                        Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
+                    input_result.bytes.deinit();
 
-                // Set executable permissions (not needed on Windows)
-                if (comptime !bun.Environment.isWindows) {
-                    _ = bun.c.fchmod(modified_fd.native(), 0o755);
+                    switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                        .err => |err| {
+                            Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        },
+                        else => {},
+                    }
+
+                    const writer = file.writer();
+                    pe_file.write(writer) catch |err| {
+                        Output.prettyErrorln("Error writing PE file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
                 }
-                return modified_fd;
+                if (inject_options) |opts| {
+                    if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null) {
+                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                            .err => |err| {
+                                Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                                cleanup(zname, cloned_executable_fd);
+                                Global.exit(1);
+                            },
+                            else => {},
+                        }
+                        const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                        if (input_result.err) |err| {
+                            Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        }
+                        const pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                            Output.prettyErrorln("Error initializing PE file: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        };
+                        defer pe_file.deinit();
+                        pe_file.applyWindowsSettings(opts, bun.default_allocator) catch |err| {
+                            Output.prettyErrorln("Error applying Windows settings to PE file: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        };
+                        input_result.bytes.deinit();
+                        const writer = file.writer();
+                        pe_file.write(writer) catch |err| {
+                            Output.prettyErrorln("Error writing PE file: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        };
+
+                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                            .err => |err| {
+                                Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                                cleanup(zname, cloned_executable_fd);
+                                Global.exit(1);
+                            },
+                            else => {},
+                        }
+                    }
+                }
+                // Set executable permissions when running on POSIX hosts, even for Windows targets
+                if (comptime !Environment.isWindows) {
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                }
+
+                return cloned_executable_fd;
             },
             else => {
                 var total_byte_count: usize = undefined;
@@ -841,15 +846,6 @@ pub const StandaloneModuleGraph = struct {
             },
         }
 
-        if (Environment.isWindows and inject_options.windows_hide_console) {
-            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
-                Output.err(err, "failed to disable console on executable", .{});
-                cleanup(zname, cloned_executable_fd);
-
-                Global.exit(1);
-            };
-        }
-
         return cloned_executable_fd;
     }
 
@@ -877,7 +873,7 @@ pub const StandaloneModuleGraph = struct {
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
         output_format: bun.options.Format,
-        windows: bun.options.WindowsSettings,
+        windows: ?*const bun.options.WindowsSettings,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
@@ -894,7 +890,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
-            .{ .windows_hide_console = windows.hide_console },
+            windows,
             target,
         );
         bun.debugAssert(fd.kind == .system);
@@ -920,73 +916,6 @@ pub const StandaloneModuleGraph = struct {
 
                 Global.exit(1);
             };
-            // Apply Windows resource edits if needed
-            if (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console) {
-                const pe_module = @import("./pe.zig");
-
-                // Get file size
-                const size = if (Environment.isWindows)
-                    Syscall.setFileOffsetToEndWindows(fd).unwrap() catch |err| {
-                        Output.err(err, "failed to get file size", .{});
-                        Global.exit(1);
-                    }
-                else blk: {
-                    const fstat = Syscall.fstat(fd).unwrap() catch |err| {
-                        Output.err(err, "failed to stat file", .{});
-                        Global.exit(1);
-                    };
-                    break :blk @as(usize, @intCast(fstat.size));
-                };
-
-                _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
-                    Output.err(err, "failed to seek to start", .{});
-                    Global.exit(1);
-                };
-
-                // Read entire file
-                const pe_data = try allocator.alloc(u8, size);
-                defer allocator.free(pe_data);
-
-                const read_result = Syscall.readAll(fd, pe_data);
-                _ = read_result.unwrap() catch |err| {
-                    Output.err(err, "failed to read PE file", .{});
-                    Global.exit(1);
-                };
-
-                var pe_file = try pe_module.PEFile.init(allocator, pe_data);
-                defer pe_file.deinit();
-
-                pe_file.applyWindowsSettings(&windows, allocator) catch |err| {
-                    if (windows.icon != null and (err == error.InvalidIconData or err == error.InvalidIconFormat)) {
-                        Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
-                        Output.flush();
-                        Global.exit(1);
-                    }
-                    return err;
-                };
-
-                // Write back modified PE
-                var write_buffer = std.ArrayList(u8).init(allocator);
-                defer write_buffer.deinit();
-                try pe_file.write(write_buffer.writer());
-
-                // Seek to start and write
-                _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
-                    Output.err(err, "failed to seek to start for write", .{});
-                    Global.exit(1);
-                };
-
-                _ = Syscall.write(fd, write_buffer.items).unwrap() catch |err| {
-                    Output.err(err, "failed to write modified PE", .{});
-                    Global.exit(1);
-                };
-
-                // Truncate if new size is smaller
-                _ = Syscall.ftruncate(fd, @intCast(write_buffer.items.len)).unwrap() catch |err| {
-                    Output.err(err, "failed to truncate file", .{});
-                    Global.exit(1);
-                };
-            }
 
             fd.close();
             return;
@@ -1016,57 +945,6 @@ pub const StandaloneModuleGraph = struct {
 
             Global.exit(1);
         };
-
-        // Apply Windows resource edits if needed
-        if (target.os == .windows and (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console)) {
-            const pe_module = @import("./pe.zig");
-
-            // Read the PE file
-            const pe_data = std.fs.cwd().readFileAlloc(allocator, outfile, std.math.maxInt(usize)) catch |err| {
-                Output.err(err, "failed to read PE file for resource editing", .{});
-                Global.exit(1);
-            };
-            defer allocator.free(pe_data);
-
-            // Parse and modify PE
-            var pe_obj = pe_module.PEFile.init(allocator, pe_data) catch |err| {
-                Output.err(err, "failed to parse PE file", .{});
-                Global.exit(1);
-            };
-            defer pe_obj.deinit();
-
-            pe_obj.applyWindowsSettings(&windows, allocator) catch |err| {
-                if (windows.icon != null and (err == error.InvalidIconData or err == error.InvalidIconFormat)) {
-                    Output.errGeneric("Invalid icon file: {s}", .{windows.icon.?});
-                } else {
-                    Output.err(err, "failed to apply Windows settings", .{});
-                }
-                Global.exit(1);
-            };
-
-            // Write to temporary file then rename
-            const tmp_name = try std.fmt.allocPrint(allocator, "{s}.tmp", .{outfile});
-            defer allocator.free(tmp_name);
-
-            {
-                const tmp_file = std.fs.cwd().createFile(tmp_name, .{}) catch |err| {
-                    Output.err(err, "failed to create temporary file", .{});
-                    Global.exit(1);
-                };
-                defer tmp_file.close();
-
-                pe_obj.write(tmp_file.writer()) catch |err| {
-                    Output.err(err, "failed to write modified PE", .{});
-                    Global.exit(1);
-                };
-            }
-
-            std.fs.cwd().rename(tmp_name, outfile) catch |err| {
-                Output.err(err, "failed to replace PE file", .{});
-                std.fs.cwd().deleteFile(tmp_name) catch {};
-                Global.exit(1);
-            };
-        }
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {

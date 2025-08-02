@@ -184,6 +184,7 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
     "node": "./index.js",
     "require": "./index.js", // if importer is CommonJS
     "import": "./index.mjs", // if importer is ES module
+    "module-sync": "./index.mjs",
     "default": "./index.js",
   }
 }

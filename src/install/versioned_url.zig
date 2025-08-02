@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const Semver = bun.Semver;
-const String = Semver.String;
-
 pub const VersionedURL = extern struct {
     url: String,
     version: Semver.Version,
@@ -26,3 +22,8 @@ pub const VersionedURL = extern struct {
         };
     }
 };
+
+const bun = @import("bun");
+
+const Semver = bun.Semver;
+const String = Semver.String;

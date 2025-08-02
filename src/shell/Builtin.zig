@@ -20,10 +20,18 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-/// The following are allocated with the above arena
-args: *const std.ArrayList(?[*:0]const u8),
-args_slice: ?[]const [:0]const u8 = null,
 cwd: bun.FileDescriptor,
+
+/// TODO: It would be nice to make this mutable so that certain commands (e.g.
+/// `export`) don't have to duplicate arguments. However, it is tricky because
+/// modifications will invalidate any codepath which previously sliced the array
+/// list (e.g. turned it into a `[]const [:0]const u8`)
+args: *const std.ArrayList(?[*:0]const u8),
+/// Cached slice of `args`.
+///
+/// This caches the result of calling `bun.span(this.args.items[i])` since the
+/// items in `this.args` are sentinel terminated and don't carry their length.
+args_slice: ?[]const [:0]const u8 = null,
 
 impl: Impl,
 
@@ -126,7 +134,6 @@ pub const BuiltinIO = struct {
     /// in the case of blob, we write to the file descriptor
     pub const Output = union(enum) {
         fd: struct { writer: *IOWriter, captured: ?*bun.ByteList = null },
-        /// array list not owned by this type
         buf: std.ArrayList(u8),
         arraybuf: ArrayBuf,
         blob: *Blob,
@@ -156,9 +163,13 @@ pub const BuiltinIO = struct {
                     this.fd.writer.deref();
                 },
                 .blob => this.blob.deref(),
-                // FIXME: should this be here??
                 .arraybuf => this.arraybuf.buf.deinit(),
-                else => {},
+                .buf => {
+                    const alloc = this.buf.allocator;
+                    this.buf.deinit();
+                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                },
+                .ignore => {},
             }
         }
 
@@ -222,7 +233,13 @@ pub const BuiltinIO = struct {
                     this.fd.deref();
                 },
                 .blob => this.blob.deref(),
-                else => {},
+                .buf => {
+                    const alloc = this.buf.allocator;
+                    this.buf.deinit();
+                    this.* = .{ .buf = std.ArrayList(u8).init(alloc) };
+                },
+                .arraybuf => this.arraybuf.buf.deinit(),
+                .ignore => {},
             }
         }
 
@@ -235,7 +252,7 @@ pub const BuiltinIO = struct {
     };
 
     const ArrayBuf = struct {
-        buf: JSC.ArrayBuffer.Strong,
+        buf: jsc.ArrayBuffer.Strong,
         i: u32 = 0,
     };
 
@@ -306,6 +323,7 @@ fn callImplWithType(this: *Builtin, comptime BuiltinImpl: type, comptime Ret: ty
 }
 
 pub inline fn allocator(this: *Builtin) Allocator {
+    // FIXME: This should be `this.parentCmd().base.allocator()`
     return this.parentCmd().base.interpreter.allocator;
 }
 
@@ -327,12 +345,12 @@ pub fn init(
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
         .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
-        .pipe => .{ .buf = std.ArrayList(u8).init(bun.default_allocator) },
+        .pipe => .{ .buf = std.ArrayList(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
 
@@ -364,6 +382,20 @@ pub fn init(
             cmd.exec.bltn.impl = .{
                 .echo = Echo{
                     .output = std.ArrayList(u8).init(arena.allocator()),
+                },
+            };
+        },
+        .ls => {
+            cmd.exec.bltn.impl = .{
+                .ls = Ls{
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
+                },
+            };
+        },
+        .yes => {
+            cmd.exec.bltn.impl = .{
+                .yes = Yes{
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
                 },
             };
         },
@@ -461,7 +493,7 @@ fn initRedirections(
             .jsbuf => |val| {
                 const globalObject = interpreter.event_loop.js.global;
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
-                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
                         .array_buffer = buf,
                         .held = .create(buf.value, globalObject),
                     }, .i = 0 };
@@ -480,7 +512,7 @@ fn initRedirections(
                         cmd.exec.bltn.stderr.deref();
                         cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
                     }
-                } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
+                } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
@@ -509,7 +541,7 @@ fn initRedirections(
                         cmd.exec.bltn.stderr.deref();
                         cmd.exec.bltn.stderr = .{ .blob = blob };
                     }
-                } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Blob)) |blob| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
@@ -553,7 +585,7 @@ fn initRedirections(
     return null;
 }
 
-pub inline fn eventLoop(this: *const Builtin) JSC.EventLoopHandle {
+pub inline fn eventLoop(this: *const Builtin) jsc.EventLoopHandle {
     return this.parentCmd().base.eventLoop();
 }
 
@@ -561,6 +593,7 @@ pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
     this.parentCmd().base.throw(err) catch {};
 }
 
+/// The `Cmd` state node associated with this builtin
 pub inline fn parentCmd(this: *const Builtin) *const Cmd {
     const union_ptr: *const Cmd.Exec = @fieldParentPtr("bltn", this);
     return @fieldParentPtr("exec", union_ptr);
@@ -692,7 +725,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
             }
             return this.fmtErrorArena(kind, "unknown error {d}\n", .{err.errno});
         },
-        JSC.SystemError => {
+        jsc.SystemError => {
             if (err.path.length() == 0) return this.fmtErrorArena(kind, "{s}\n", .{err.message.byteSlice()});
             return this.fmtErrorArena(kind, "{s}: {s}\n", .{ err.message.byteSlice(), err.path });
         },
@@ -735,24 +768,27 @@ pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const jsc = bun.jsc;
 
 const shell = bun.shell;
-const Interpreter = shell.interpret.Interpreter;
-const Builtin = Interpreter.Builtin;
-
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const ExitCode = shell.interpret.ExitCode;
-const EnvMap = shell.interpret.EnvMap;
-const log = shell.interpret.log;
-const Syscall = bun.sys;
-const IOWriter = Interpreter.IOWriter;
-const IOReader = Interpreter.IOReader;
-const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
-const Cmd = Interpreter.Cmd;
-const ShellSyscall = shell.interpret.ShellSyscall;
-const Allocator = std.mem.Allocator;
+const Yield = bun.shell.Yield;
 const ast = shell.AST;
 const IO = shell.Interpreter.IO;
+
+const EnvMap = shell.interpret.EnvMap;
+const ExitCode = shell.interpret.ExitCode;
+const OutputNeedsIOSafeGuard = shell.interpret.OutputNeedsIOSafeGuard;
+const ShellSyscall = shell.interpret.ShellSyscall;
+const log = shell.interpret.log;
+
+const Interpreter = shell.interpret.Interpreter;
+const Builtin = Interpreter.Builtin;
+const Cmd = Interpreter.Cmd;
+const IOReader = Interpreter.IOReader;
+const IOWriter = Interpreter.IOWriter;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

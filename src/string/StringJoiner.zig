@@ -1,11 +1,7 @@
 //! Rope-like data structure for joining many small strings into one big string.
 //! Implemented as a linked list of potentially-owned slices and a length.
+
 const StringJoiner = @This();
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const NullableAllocator = bun.NullableAllocator;
-const assert = bun.assert;
 
 /// Temporary allocator used for nodes and duplicated strings.
 /// It is recommended to use a stack-fallback allocator for this.
@@ -108,6 +104,20 @@ pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
     return slice;
 }
 
+pub fn deinit(this: *StringJoiner) void {
+    var current: ?*Node = this.head orelse {
+        assert(this.tail == null);
+        assert(this.len == 0);
+        return;
+    };
+
+    while (current) |node| {
+        const prev = node;
+        current = node.next;
+        prev.deinit(this.allocator);
+    }
+}
+
 /// Same as `.done`, but appends extra slice `end`
 pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) ![]u8 {
     var current: ?*Node = this.head orelse {
@@ -161,3 +171,10 @@ pub fn contains(this: *const StringJoiner, slice: []const u8) bool {
 
     return false;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const NullableAllocator = bun.NullableAllocator;
+const assert = bun.assert;

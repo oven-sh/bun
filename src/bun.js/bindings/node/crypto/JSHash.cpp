@@ -232,11 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     if (hash->m_zigHasher) {
         if (hash->m_digestBuffer.size() > 0 || len == 0) {
-            return StringBytes::encode(
-                lexicalGlobalObject,
-                scope,
-                hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-                encoding);
+            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
         }
 
         uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
@@ -244,19 +240,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, hash->m_digestBuffer.mutableSpan());
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         hash->m_finalized = finalized;
         hash->m_mdLen = std::min(len, totalDigestLen);
 
-        auto result = StringBytes::encode(
-            lexicalGlobalObject,
-            scope,
-            hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-            encoding);
-
-        return result;
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
     }
 
     // Only compute the digest if it hasn't been cached yet
@@ -272,7 +262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         auto data = hash->m_ctx.digestFinal(bufLen);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
@@ -284,11 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     hash->m_finalized = finalized;
 
     // Return the digest with the requested encoding
-    return StringBytes::encode(
-        lexicalGlobalObject,
-        scope,
-        std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len },
-        encoding);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -309,8 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -365,19 +350,19 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher, xofLen)) {
             throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
-            return JSValue::encode({});
+            return {};
         }
         return JSValue::encode(hash);
     }
 
     if (md == nullptr || !hash->init(globalObject, scope, md, xofLen)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     if (original != nullptr && !original->m_ctx.copyTo(hash->m_ctx)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest copy error"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSC::JSValue::encode(hash);

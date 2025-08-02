@@ -2,8 +2,8 @@
 /// general:
 /// 1. We try to keep everything in the Bun process as much as possible for
 ///    performance reasons and also to leverage Bun's existing IO/FS code
-/// 2. We try to use non-blocking operations as much as possible so the shell
-///    does not interfere with the JS event loop
+/// 2. We try to use non-blocking IO as much as possible so the shell
+///    does not block the main JS thread
 /// 3. Zig does not have coroutines (yet)
 ///
 /// These cause two problems:
@@ -46,7 +46,7 @@ pub const Yield = union(enum) {
     ///       it is only used in 2 places. we might need to implement signals
     ///       first tho.
     on_io_writer_chunk: struct {
-        err: ?JSC.SystemError,
+        err: ?jsc.SystemError,
         written: usize,
         /// This type is actually `IOWriterChildPtr`, but because
         /// of an annoying cyclic Zig compile error we're doing this
@@ -55,7 +55,7 @@ pub const Yield = union(enum) {
     },
 
     suspended,
-    /// Failed and throwed a JS error
+    /// Failed and threw a JS error
     failed,
     done,
 
@@ -141,24 +141,24 @@ pub const Yield = union(enum) {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+const jsc = bun.jsc;
 const shell = bun.shell;
+const log = bun.shell.interpret.log;
 
 const Interpreter = bun.shell.Interpreter;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-const IOWriterChildPtr = IOWriter.IOWriterChildPtr;
-
 const Assigns = bun.shell.Interpreter.Assigns;
-const Script = bun.shell.Interpreter.Script;
-const Subshell = bun.shell.Interpreter.Subshell;
 const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
 const CondExpr = bun.shell.Interpreter.CondExpr;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const IOWriterChildPtr = IOWriter.IOWriterChildPtr;

@@ -189,7 +189,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
         return {};
     }
 
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -215,7 +215,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_countBigInt, (JSG
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "countBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getCount()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getCount())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -251,10 +251,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlo
     // min returns 9223372036854776000 (as double)
     // minBigInt returns 9223372036854775807n (INT64_MAX)
     if (thisObject->getCount() == 0) {
-        return JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX)));
     }
 
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_max, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -280,7 +280,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_maxBigInt, (JSGlo
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "maxBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMax()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMax())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_mean, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -332,7 +332,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt, (J
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "exceedsBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(thisObject->getExceeds())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(thisObject->getExceeds()))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentiles, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

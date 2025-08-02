@@ -739,23 +739,23 @@ pub const Version = extern struct {
         pub fn toComponentsArray(
             self: Tag,
             is_pre: bool,
-            globalThis: *JSC.JSGlobalObject,
+            globalThis: *jsc.JSGlobalObject,
             buf: []const u8,
-        ) bun.JSError!JSC.JSValue {
+        ) bun.JSError!jsc.JSValue {
             const tag_str = if (is_pre) self.pre.slice(buf) else self.build.slice(buf);
             if (tag_str.len == 0) {
-                return JSC.JSValue.null;
+                return jsc.JSValue.jsNull();
             }
 
-            const array = try JSC.JSValue.createEmptyArray(globalThis, 0);
+            const array = try jsc.JSValue.createEmptyArray(globalThis, 0);
 
             var it = strings.split(tag_str, ".");
             var i: u32 = 0;
             while (it.next()) |part| {
                 if (std.fmt.parseUnsigned(u64, part, 10) catch null) |num| {
-                    array.putIndex(globalThis, @intCast(i), JSC.jsNumber(@as(f64, @floatFromInt(num))));
+                    try array.putIndex(globalThis, @intCast(i), jsc.JSValue.jsNumber(@as(f64, @floatFromInt(num))));
                 } else {
-                    array.putIndex(globalThis, @intCast(i), bun.String.createUTF8ForJS(globalThis, part));
+                    try array.putIndex(globalThis, @intCast(i), try bun.String.createUTF8ForJS(globalThis, part));
                 }
                 i += 1;
             }
@@ -1136,17 +1136,18 @@ pub const Version = extern struct {
     }
 };
 
+const string = []const u8;
+
 const std = @import("std");
+
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
 const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
 const strings = bun.strings;
+const jsc = bun.jsc;
 
 const ExternalString = bun.Semver.ExternalString;
+const Query = bun.Semver.Query;
 const SlicedString = bun.Semver.SlicedString;
 const String = bun.Semver.String;
-
-const Query = bun.Semver.Query;
-const assert = bun.assert;
-const JSC = bun.JSC;

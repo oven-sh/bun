@@ -85,11 +85,13 @@ pub const OutKind = union(enum) {
     /// in the Interpreter struct
     fd: struct { writer: *Interpreter.IOWriter, captured: ?*bun.ByteList = null },
     /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
+    ///
+    /// This is set when the shell is called with `.quiet()`
     pipe,
     /// Discards output
     ignore,
 
-    // fn dupeForSubshell(this: *ShellState,
+    // fn dupeForSubshell(this: *ShellExecEnv,
     pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (this) {
             .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
@@ -150,11 +152,12 @@ pub fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio, shellio: *
     stdio[stderr_no] = this.stderr.to_subproc_stdio(&shellio.stderr);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
 
 const shell = bun.shell;
 const Interpreter = bun.shell.Interpreter;
+
 const OutputNeedsIOSafeGuard = bun.shell.interpret.OutputNeedsIOSafeGuard;
-const stdout_no = bun.shell.interpret.stdout_no;
 const stderr_no = bun.shell.interpret.stderr_no;
+const stdout_no = bun.shell.interpret.stdout_no;

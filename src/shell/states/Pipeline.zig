@@ -51,14 +51,14 @@ const CmdOrResult = union(enum) {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Pipeline,
     parent: ParentPtr,
     io: IO,
 ) *Pipeline {
-    const pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
+    const pipeline = parent.create(Pipeline);
     pipeline.* = .{
-        .base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.pipeline, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .exited_count = 0,
@@ -95,9 +95,9 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.interpreter.allocator.alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
     if (this.cmds == null) return null;
-    var pipes = this.base.interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -122,7 +122,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 cmd_io.stdin = stdin;
                 cmd_io.stdout = stdout;
                 _ = cmd_io.stderr.ref();
-                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
+                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), cmd_io, .pipeline)) {
                     .result => |s| s,
                     .err => |err| {
                         const system_err = err.toShellSystemError();
@@ -191,7 +191,7 @@ pub fn next(this: *Pipeline) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_write_err);
     }
@@ -269,13 +269,14 @@ pub fn deinit(this: *Pipeline) void {
         }
     }
     if (this.pipes) |pipes| {
-        this.base.interpreter.allocator.free(pipes);
+        this.base.allocator().free(pipes);
     }
     if (this.cmds) |cmds| {
-        this.base.interpreter.allocator.free(cmds);
+        this.base.allocator().free(cmds);
     }
     this.io.deref();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
@@ -301,10 +302,10 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
         }
         set_count.* += 1;
     }
-    return Maybe(void).success;
+    return .success;
 }
 
-fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.OutKind {
+fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.OutKind {
     // Last command in the pipeline should write to stdout
     if (proc_idx == cmd_count - 1) return io.stdout.ref();
     return .{
@@ -317,43 +318,44 @@ fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop:
     };
 }
 
-fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {
+fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.InKind {
     // First command in the pipeline should read from stdin
     if (proc_idx == 0) return io.stdin.ref();
     return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const Maybe = bun.sys.Maybe;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const Pipe = bun.shell.interpret.Pipe;
-const closefd = bun.shell.interpret.closefd;
-const IOReader = bun.shell.Interpreter.IOReader;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-
 const Assigns = bun.shell.Interpreter.Assigns;
 const Async = bun.shell.Interpreter.Async;
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
 const Binary = bun.shell.Interpreter.Binary;
-const Subshell = bun.shell.Interpreter.Subshell;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const IOReader = bun.shell.Interpreter.IOReader;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const If = bun.shell.Interpreter.If;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const assert = bun.assert;
+const Pipe = bun.shell.interpret.Pipe;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const Syscall = bun.shell.interpret.Syscall;
+const closefd = bun.shell.interpret.closefd;
+const log = bun.shell.interpret.log;
 
 const windows = bun.windows;
 const uv = windows.libuv;

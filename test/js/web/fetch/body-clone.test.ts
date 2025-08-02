@@ -395,7 +395,7 @@ test("ReadableStream with mixed content (starting with string) can be converted 
     },
   });
 
-  const text = await Bun.readableStreamToText(stream);
+  const text = await stream.text();
   expect(typeof text).toBe("string");
   expect(text).toContain("Hello, 世界!");
   expect(text).toContain("🌍");

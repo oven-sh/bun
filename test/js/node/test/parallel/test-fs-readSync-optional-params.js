@@ -12,7 +12,6 @@ function runTest(defaultBuffer, options, errorCode = false) {
   let fd;
   try {
     fd = fs.openSync(filepath, 'r');
-    console.log({ options, errorCode });
     if (errorCode) {
       assert.throws(
         () => fs.readSync(fd, defaultBuffer, options),

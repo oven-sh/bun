@@ -1,12 +1,14 @@
-pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalThis, 13);
+const SemverObject = @This();
+
+pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    const object = jsc.JSValue.createEmptyObject(globalThis, 13);
 
     object.put(
         globalThis,
-        JSC.ZigString.static("satisfies"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("satisfies"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("satisfies"),
+            jsc.ZigString.static("satisfies"),
             2,
             SemverObject.satisfies,
             false,
@@ -15,10 +17,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("order"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("order"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("order"),
+            jsc.ZigString.static("order"),
             2,
             SemverObject.order,
             false,
@@ -27,10 +29,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("major"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("major"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("major"),
+            jsc.ZigString.static("major"),
             1,
             SemverObject.major,
             false,
@@ -39,10 +41,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("minor"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("minor"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("minor"),
+            jsc.ZigString.static("minor"),
             1,
             SemverObject.minor,
             false,
@@ -51,10 +53,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("patch"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("patch"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("patch"),
+            jsc.ZigString.static("patch"),
             1,
             SemverObject.patch,
             false,
@@ -63,10 +65,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("parse"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("parse"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("parse"),
+            jsc.ZigString.static("parse"),
             1,
             SemverObject.parse,
             false,
@@ -75,10 +77,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("prerelease"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("prerelease"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("prerelease"),
+            jsc.ZigString.static("prerelease"),
             1,
             SemverObject.prerelease,
             false,
@@ -87,10 +89,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("bump"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("bump"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("bump"),
+            jsc.ZigString.static("bump"),
             3,
             SemverObject.bump,
             false,
@@ -99,10 +101,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("intersects"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("intersects"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("intersects"),
+            jsc.ZigString.static("intersects"),
             2,
             SemverObject.intersects,
             false,
@@ -111,10 +113,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("maxSatisfying"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("maxSatisfying"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("maxSatisfying"),
+            jsc.ZigString.static("maxSatisfying"),
             2,
             SemverObject.maxSatisfying,
             false,
@@ -123,10 +125,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("minSatisfying"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("minSatisfying"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("minSatisfying"),
+            jsc.ZigString.static("minSatisfying"),
             2,
             SemverObject.minSatisfying,
             false,
@@ -135,10 +137,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("simplifyRange"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("simplifyRange"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("simplifyRange"),
+            jsc.ZigString.static("simplifyRange"),
             2,
             SemverObject.simplifyRange,
             false,
@@ -147,10 +149,10 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 
     object.put(
         globalThis,
-        JSC.ZigString.static("validRange"),
-        JSC.host_fn.NewFunction(
+        jsc.ZigString.static("validRange"),
+        jsc.host_fn.NewFunction(
             globalThis,
-            JSC.ZigString.static("validRange"),
+            jsc.ZigString.static("validRange"),
             1,
             SemverObject.validRange,
             false,
@@ -161,9 +163,9 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn order(
-    globalThis: *JSC.JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+    callFrame: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -185,8 +187,8 @@ pub fn order(
     const right = right_string.toSlice(globalThis, allocator);
     defer right.deinit();
 
-    if (!strings.isAllASCII(left.slice())) return JSC.jsNumber(0);
-    if (!strings.isAllASCII(right.slice())) return JSC.jsNumber(0);
+    if (!strings.isAllASCII(left.slice())) return .jsNumber(0);
+    if (!strings.isAllASCII(right.slice())) return .jsNumber(0);
 
     const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
     const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
@@ -203,13 +205,13 @@ pub fn order(
     const right_version = right_result.version.max();
 
     return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
-        .eq => JSC.jsNumber(0),
-        .gt => JSC.jsNumber(1),
-        .lt => JSC.jsNumber(-1),
+        .eq => .jsNumber(0),
+        .gt => .jsNumber(1),
+        .lt => .jsNumber(-1),
     };
 }
 
-pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn satisfies(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -251,18 +253,18 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
     const right_version = right_group.getExactVersion();
 
     if (right_version != null) {
-        return JSC.jsBoolean(left_version.eql(right_version.?));
+        return .jsBoolean(left_version.eql(right_version.?));
     }
 
-    return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
+    return .jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
 }
 
 // Add a helper to reduce boilerplate for major, minor, patch
 fn getVersionComponent(
-    globalThis: *JSC.JSGlobalObject,
-    callFrame: *JSC.CallFrame,
+    globalThis: *jsc.JSGlobalObject,
+    callFrame: *jsc.CallFrame,
     comptime component: enum { major, minor, patch },
-) bun.JSError!JSC.JSValue {
+) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -270,46 +272,46 @@ fn getVersionComponent(
 
     const arguments = callFrame.arguments();
     if (arguments.len < 1) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     // Check if the argument is a string
     if (!arguments[0].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const arg_string = try arguments[0].toJSString(globalThis);
     const version_slice = arg_string.toSlice(globalThis, allocator);
     defer version_slice.deinit();
 
-    if (!strings.isAllASCII(version_slice.slice())) return JSC.JSValue.null;
+    if (!strings.isAllASCII(version_slice.slice())) return jsc.JSValue.jsNull();
 
     const parse_result = Version.parse(SlicedString.init(version_slice.slice(), version_slice.slice()));
     if (!parse_result.valid) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const version = parse_result.version;
     return switch (component) {
-        .major => JSC.jsNumber(version.major orelse 0),
-        .minor => JSC.jsNumber(version.minor orelse 0),
-        .patch => JSC.jsNumber(version.patch orelse 0),
+        .major => jsc.JSValue.jsNumber(version.major orelse 0),
+        .minor => jsc.JSValue.jsNumber(version.minor orelse 0),
+        .patch => jsc.JSValue.jsNumber(version.patch orelse 0),
     };
 }
 
-pub fn major(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn major(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return getVersionComponent(globalThis, callFrame, .major);
 }
 
-pub fn minor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn minor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return getVersionComponent(globalThis, callFrame, .minor);
 }
 
-pub fn patch(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn patch(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return getVersionComponent(globalThis, callFrame, .patch);
 }
 
-pub fn prerelease(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn prerelease(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -317,34 +319,34 @@ pub fn prerelease(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
 
     const arguments = callFrame.arguments();
     if (arguments.len < 1) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     // Check if the argument is a string
     if (!arguments[0].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const arg_string = try arguments[0].toJSString(globalThis);
     const version_slice = arg_string.toSlice(globalThis, allocator);
     defer version_slice.deinit();
 
-    if (!strings.isAllASCII(version_slice.slice())) return JSC.JSValue.null;
+    if (!strings.isAllASCII(version_slice.slice())) return jsc.JSValue.jsNull();
 
     const parse_result = Version.parse(SlicedString.init(version_slice.slice(), version_slice.slice()));
     if (!parse_result.valid) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const version = parse_result.version;
     if (!version.tag.hasPre()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     return try version.tag.toComponentsArray(true, globalThis, version_slice.slice());
 }
 
-pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn parse(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(1024, arena.allocator());
@@ -352,44 +354,44 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
 
     const arguments = callFrame.arguments();
     if (arguments.len < 1) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     // Check if the argument is a string
     if (!arguments[0].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const arg_string = try arguments[0].toJSString(globalThis);
     const version_slice = arg_string.toSlice(globalThis, allocator);
     defer version_slice.deinit();
 
-    if (!strings.isAllASCII(version_slice.slice())) return JSC.JSValue.null;
+    if (!strings.isAllASCII(version_slice.slice())) return jsc.JSValue.jsNull();
 
     const parse_result = Version.parse(SlicedString.init(version_slice.slice(), version_slice.slice()));
     if (!parse_result.valid) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const version = parse_result.version;
-    const obj = JSC.JSValue.createEmptyObject(globalThis, 7);
+    const obj = jsc.JSValue.createEmptyObject(globalThis, 7);
 
-    obj.put(globalThis, JSC.ZigString.static("major"), JSC.jsNumber(version.major orelse 0));
-    obj.put(globalThis, JSC.ZigString.static("minor"), JSC.jsNumber(version.minor orelse 0));
-    obj.put(globalThis, JSC.ZigString.static("patch"), JSC.jsNumber(version.patch orelse 0));
+    obj.put(globalThis, jsc.ZigString.static("major"), jsc.JSValue.jsNumber(version.major orelse 0));
+    obj.put(globalThis, jsc.ZigString.static("minor"), jsc.JSValue.jsNumber(version.minor orelse 0));
+    obj.put(globalThis, jsc.ZigString.static("patch"), jsc.JSValue.jsNumber(version.patch orelse 0));
 
     // Handle prerelease
     if (version.tag.hasPre()) {
-        obj.put(globalThis, JSC.ZigString.static("prerelease"), try version.tag.toComponentsArray(true, globalThis, version_slice.slice()));
+        obj.put(globalThis, jsc.ZigString.static("prerelease"), try version.tag.toComponentsArray(true, globalThis, version_slice.slice()));
     } else {
-        obj.put(globalThis, JSC.ZigString.static("prerelease"), JSC.JSValue.null);
+        obj.put(globalThis, jsc.ZigString.static("prerelease"), jsc.JSValue.jsNull());
     }
 
     // Handle build
     if (version.tag.hasBuild()) {
-        obj.put(globalThis, JSC.ZigString.static("build"), try version.tag.toComponentsArray(false, globalThis, version_slice.slice()));
+        obj.put(globalThis, jsc.ZigString.static("build"), try version.tag.toComponentsArray(false, globalThis, version_slice.slice()));
     } else {
-        obj.put(globalThis, JSC.ZigString.static("build"), JSC.JSValue.null);
+        obj.put(globalThis, jsc.ZigString.static("build"), jsc.JSValue.jsNull());
     }
 
     // Format version string
@@ -408,31 +410,31 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
         try version_str.appendSlice(version.tag.build.slice(version_slice.slice()));
     }
 
-    obj.put(globalThis, JSC.ZigString.static("version"), bun.String.createUTF8ForJS(globalThis, version_str.items));
+    obj.put(globalThis, jsc.ZigString.static("version"), try bun.String.createUTF8ForJS(globalThis, version_str.items));
 
     // Store raw input
-    obj.put(globalThis, JSC.ZigString.static("raw"), arguments[0]);
+    obj.put(globalThis, jsc.ZigString.static("raw"), arguments[0]);
 
     return obj;
 }
 
-pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn bump(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 2) return JSC.JSValue.null;
+    if (arguments.len < 2) return jsc.JSValue.jsNull();
 
     // Check if the first argument is a string
     if (!arguments[0].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     // Check if the second argument is a string
     if (!arguments[1].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const version_str = try arguments[0].toJSString(globalThis);
@@ -444,11 +446,11 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
     defer release_slice.deinit();
 
     const parse_result = Version.parse(SlicedString.init(version_slice.slice(), version_slice.slice()));
-    if (!parse_result.valid) return JSC.JSValue.null;
+    if (!parse_result.valid) return jsc.JSValue.jsNull();
 
-    const release_type = Version.ReleaseType.fromString(release_slice.slice()) orelse return JSC.JSValue.null;
+    const release_type = Version.ReleaseType.fromString(release_slice.slice()) orelse return jsc.JSValue.jsNull();
 
-    var identifier_slice: JSC.ZigString.Slice = .empty;
+    var identifier_slice: jsc.ZigString.Slice = .empty;
     defer identifier_slice.deinit();
 
     if (arguments.len > 2 and !arguments[2].isUndefinedOrNull()) {
@@ -456,24 +458,24 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
         identifier_slice = id_str.toSlice(globalThis, allocator);
     }
 
-    const new_version_str = parse_result.version.min().bump(allocator, release_type, identifier_slice.slice(), version_slice.slice()) catch return JSC.JSValue.null;
+    const new_version_str = parse_result.version.min().bump(allocator, release_type, identifier_slice.slice(), version_slice.slice()) catch return jsc.JSValue.jsNull();
     defer allocator.free(new_version_str);
 
     return bun.String.createUTF8ForJS(globalThis, new_version_str);
 }
 
-pub fn intersects(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn intersects(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 2) return JSC.jsBoolean(false);
+    if (arguments.len < 2) return jsc.JSValue.jsBoolean(false);
 
     // Check if both arguments are strings
     if (!arguments[0].isString() or !arguments[1].isString()) {
-        return JSC.jsBoolean(false);
+        return jsc.JSValue.jsBoolean(false);
     }
 
     const r1_str = try arguments[0].toJSString(globalThis);
@@ -486,30 +488,30 @@ pub fn intersects(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
 
     // Check for empty strings
     if (r1_slice.slice().len == 0 or r2_slice.slice().len == 0) {
-        return JSC.jsBoolean(false);
+        return jsc.JSValue.jsBoolean(false);
     }
 
-    const g1 = Query.parse(allocator, r1_slice.slice(), SlicedString.init(r1_slice.slice(), r1_slice.slice())) catch return JSC.jsBoolean(false);
+    const g1 = Query.parse(allocator, r1_slice.slice(), SlicedString.init(r1_slice.slice(), r1_slice.slice())) catch return jsc.JSValue.jsBoolean(false);
     defer g1.deinit();
 
-    const g2 = Query.parse(allocator, r2_slice.slice(), SlicedString.init(r2_slice.slice(), r2_slice.slice())) catch return JSC.jsBoolean(false);
+    const g2 = Query.parse(allocator, r2_slice.slice(), SlicedString.init(r2_slice.slice(), r2_slice.slice())) catch return jsc.JSValue.jsBoolean(false);
     defer g2.deinit();
 
-    return JSC.jsBoolean(g1.intersects(&g2, r1_slice.slice(), r2_slice.slice()));
+    return jsc.JSValue.jsBoolean(g1.intersects(&g2, r1_slice.slice(), r2_slice.slice()));
 }
 
 fn findSatisfyingVersion(
-    globalThis: *JSC.JSGlobalObject,
-    versions_array: JSC.JSValue,
+    globalThis: *jsc.JSGlobalObject,
+    versions_array: jsc.JSValue,
     range_str: []const u8,
     allocator: std.mem.Allocator,
     comptime find_max: bool,
-) bun.JSError!JSC.JSValue {
-    const query = (Query.parse(allocator, range_str, SlicedString.init(range_str, range_str)) catch return JSC.JSValue.null);
+) bun.JSError!jsc.JSValue {
+    const query = (Query.parse(allocator, range_str, SlicedString.init(range_str, range_str)) catch return jsc.JSValue.jsNull());
     defer query.deinit();
 
-    const length = versions_array.getLength(globalThis) catch return JSC.JSValue.null;
-    if (length == 0) return JSC.JSValue.null;
+    const length = versions_array.getLength(globalThis) catch return jsc.JSValue.jsNull();
+    if (length == 0) return jsc.JSValue.jsNull();
 
     var best: ?struct { version: Version, str: []const u8, index: u32 } = null;
 
@@ -538,28 +540,28 @@ fn findSatisfyingVersion(
         }
     }
 
-    return if (best) |b| (versions_array.getIndex(globalThis, b.index) catch JSC.JSValue.null) else JSC.JSValue.null;
+    return if (best) |b| (versions_array.getIndex(globalThis, b.index) catch jsc.JSValue.jsNull()) else jsc.JSValue.jsNull();
 }
 
-pub fn maxSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn maxSatisfying(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 1) return JSC.JSValue.null;
+    if (arguments.len < 1) return jsc.JSValue.jsNull();
 
     const versions_array = arguments[0];
     if (!versions_array.isObject() or !(try versions_array.isIterable(globalThis))) {
         return globalThis.throw("First argument must be an array", .{});
     }
 
-    if (arguments.len < 2) return JSC.JSValue.null;
+    if (arguments.len < 2) return jsc.JSValue.jsNull();
 
     // Check if the second argument is a string
     if (!arguments[1].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const range_str = try arguments[1].toJSString(globalThis);
@@ -568,31 +570,31 @@ pub fn maxSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
 
     // Check for empty range
     if (range_slice.slice().len == 0) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     return findSatisfyingVersion(globalThis, versions_array, range_slice.slice(), allocator, true);
 }
 
-pub fn minSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn minSatisfying(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 1) return JSC.JSValue.null;
+    if (arguments.len < 1) return jsc.JSValue.jsNull();
 
     const versions_array = arguments[0];
     if (!versions_array.isObject() or !(try versions_array.isIterable(globalThis))) {
         return globalThis.throw("First argument must be an array", .{});
     }
 
-    if (arguments.len < 2) return JSC.JSValue.null;
+    if (arguments.len < 2) return jsc.JSValue.jsNull();
 
     // Check if the second argument is a string
     if (!arguments[1].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const range_str = try arguments[1].toJSString(globalThis);
@@ -602,14 +604,14 @@ pub fn minSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     return findSatisfyingVersion(globalThis, versions_array, range_slice.slice(), allocator, false);
 }
 
-pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn simplifyRange(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 2) return JSC.JSValue.null;
+    if (arguments.len < 2) return jsc.JSValue.jsNull();
 
     // First argument must be an array
     const versions_array = arguments[0];
@@ -619,7 +621,7 @@ pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
 
     // Second argument must be a string (the range)
     if (!arguments[1].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const range_str = try arguments[1].toJSString(globalThis);
@@ -786,18 +788,18 @@ fn findSimplifiedRange(allocator: std.mem.Allocator, versions: []const Version, 
     return original_range;
 }
 
-pub fn validRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn validRange(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack_fallback.get();
 
     const arguments = callFrame.arguments();
-    if (arguments.len < 1) return JSC.JSValue.null;
+    if (arguments.len < 1) return jsc.JSValue.jsNull();
 
     // Check if the argument is a string
     if (!arguments[0].isString()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     const range_str = try arguments[0].toJSString(globalThis);
@@ -805,13 +807,13 @@ pub fn validRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
     defer range_slice.deinit();
 
     // Try to parse the range
-    const query = Query.parse(allocator, range_slice.slice(), SlicedString.init(range_slice.slice(), range_slice.slice())) catch return JSC.JSValue.null;
+    const query = Query.parse(allocator, range_slice.slice(), SlicedString.init(range_slice.slice(), range_slice.slice())) catch return jsc.JSValue.jsNull();
     defer query.deinit();
 
     // Check if the query has any meaningful content
     // If it's empty or has no valid range, it's invalid
     if (!query.head.head.range.hasLeft() and !query.head.head.range.hasRight()) {
-        return JSC.JSValue.null;
+        return jsc.JSValue.jsNull();
     }
 
     // If it parses successfully and has content, return the normalized range string
@@ -819,13 +821,12 @@ pub fn validRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
-const JSC = bun.JSC;
-const SlicedString = bun.Semver.SlicedString;
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
 
 const Query = bun.Semver.Query;
+const SlicedString = bun.Semver.SlicedString;
 const Version = bun.Semver.Version;
-const SemverObject = @This();

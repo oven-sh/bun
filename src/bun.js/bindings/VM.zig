@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-
 pub const VM = opaque {
     pub const HeapType = enum(u8) {
         SmallHeap = 0,
@@ -24,9 +19,8 @@ pub const VM = opaque {
         return JSC__VM__setControlFlowProfiler(vm, enabled);
     }
 
-    extern fn JSC__VM__isJITEnabled() bool;
     pub fn isJITEnabled() bool {
-        return JSC__VM__isJITEnabled();
+        return bun.cpp.JSC__VM__isJITEnabled();
     }
 
     extern fn JSC__VM__hasExecutionTimeLimit(vm: *VM) bool;
@@ -63,7 +57,7 @@ pub const VM = opaque {
     }
     extern fn JSC__VM__reportExtraMemory(*VM, usize) void;
     pub fn reportExtraMemory(this: *VM, size: usize) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         JSC__VM__reportExtraMemory(this, size);
     }
 
@@ -73,14 +67,6 @@ pub const VM = opaque {
         global_object: *JSGlobalObject,
     ) void {
         return JSC__VM__deleteAllCode(vm, global_object);
-    }
-
-    extern fn JSC__VM__whenIdle(vm: *VM, callback: *const fn (...) callconv(.C) void) void;
-    pub fn whenIdle(
-        vm: *VM,
-        callback: *const fn (...) callconv(.C) void,
-    ) void {
-        return JSC__VM__whenIdle(vm, callback);
     }
 
     extern fn JSC__VM__shrinkFootprint(vm: *VM) void;
@@ -130,28 +116,28 @@ pub const VM = opaque {
 
     extern fn JSC__VM__notifyNeedTermination(vm: *VM) void;
 
-    /// Fires NeedTermination Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedTermination(vm: *VM) void {
         JSC__VM__notifyNeedTermination(vm);
     }
 
     extern fn JSC__VM__notifyNeedWatchdogCheck(vm: *VM) void;
 
-    /// Fires NeedWatchdogCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedWatchdogCheck(vm: *VM) void {
         JSC__VM__notifyNeedWatchdogCheck(vm);
     }
 
     extern fn JSC__VM__notifyNeedDebuggerBreak(vm: *VM) void;
 
-    /// Fires NeedDebuggerBreak Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedDebuggerBreak Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedDebuggerBreak(vm: *VM) void {
         JSC__VM__notifyNeedDebuggerBreak(vm);
     }
 
     extern fn JSC__VM__notifyNeedShellTimeoutCheck(vm: *VM) void;
 
-    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notifyNeedShellTimeoutCheck(vm: *VM) void {
         JSC__VM__notifyNeedShellTimeoutCheck(vm);
     }
@@ -162,8 +148,14 @@ pub const VM = opaque {
     }
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
+    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
+        var scope: bun.jsc.ExceptionValidationScope = undefined;
+        scope.init(global_object, @src());
+        defer scope.deinit();
+        scope.assertNoException();
         JSC__VM__throwError(vm, global_object, value);
+        scope.assertExceptionPresenceMatches(true);
+        return error.JSError;
     }
 
     extern fn JSC__VM__releaseWeakRefs(vm: *VM) void;
@@ -196,3 +188,9 @@ pub const VM = opaque {
         JSC__VM__performOpportunisticallyScheduledTasks(vm, until);
     }
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

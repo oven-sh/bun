@@ -11,8 +11,8 @@ state: union(enum) {
     },
     done: ExitCode,
 } = .idle,
-event_loop: JSC.EventLoopHandle,
-concurrent_task: JSC.EventLoopTask,
+event_loop: jsc.EventLoopHandle,
+concurrent_task: jsc.EventLoopTask,
 
 pub const ParentPtr = StatePtrUnion(.{
     Binary,
@@ -32,20 +32,22 @@ pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptio
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Expr,
     parent: ParentPtr,
     io: IO,
 ) *Async {
     interpreter.async_commands_executing += 1;
-    return bun.new(Async, .{
-        .base = .{ .kind = .@"async", .interpreter = interpreter, .shell = shell_state },
+    const async_cmd = parent.create(Async);
+    async_cmd.* = .{
+        .base = State.initWithNewAllocScope(.@"async", interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
         .event_loop = interpreter.event_loop,
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(interpreter.event_loop),
-    });
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(interpreter.event_loop),
+    };
+    return async_cmd;
 }
 
 pub fn start(this: *Async) Yield {
@@ -154,24 +156,25 @@ pub fn runFromMainThreadMini(this: *Async, _: *void) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const jsc = bun.jsc;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
 const Binary = bun.shell.Interpreter.Binary;
-const Stmt = bun.shell.Interpreter.Stmt;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

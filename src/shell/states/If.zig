@@ -40,17 +40,19 @@ pub fn format(this: *const If, comptime _: []const u8, _: std.fmt.FormatOptions,
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.If,
     parent: ParentPtr,
     io: IO,
 ) *If {
-    return bun.new(If, .{
-        .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
+    const if_stmt = parent.create(If);
+    if_stmt.* = .{
+        .base = State.initWithNewAllocScope(.if_clause, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-    });
+    };
+    return if_stmt;
 }
 
 pub fn start(this: *If) Yield {
@@ -149,7 +151,8 @@ pub fn next(this: *If) Yield {
 pub fn deinit(this: *If) void {
     log("{} deinit", .{this});
     this.io.deref();
-    bun.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
@@ -179,23 +182,23 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
     }
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const std = @import("std");
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const SmolList = bun.shell.SmolList;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
 const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const SmolList = bun.shell.SmolList;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

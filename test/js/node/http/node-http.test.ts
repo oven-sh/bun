@@ -372,7 +372,7 @@ describe("node:http", () => {
       });
     }
 
-    // it.only("check for expected fields", done => {
+    // test("check for expected fields", done => {
     //   runTest((server, port) => {
     //     const req = request({ host: "localhost", port, method: "GET" }, res => {
     //       console.log("called");
@@ -1484,7 +1484,7 @@ it("should emit events in the right order", async () => {
     stderr: "inherit",
     env: bunEnv,
   });
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   // TODO prefinish and socket are not emitted in the right order
   expect(
     out
@@ -2629,6 +2629,35 @@ test("client side flushHeaders should work", async () => {
   const headers = await promise;
   expect(headers).toBeDefined();
   expect(headers.foo).toEqual("bar");
+});
+
+test("flushHeaders should not drop request body", async () => {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      resolve(body);
+      res.end();
+    });
+  });
+
+  await once(server.listen(0), "listening");
+  const address = server.address() as AddressInfo;
+  const req = http.request({
+    method: "POST",
+    host: "127.0.0.1",
+    port: address.port,
+    headers: { "content-type": "text/plain" },
+  });
+
+  req.flushHeaders();
+  req.write("bun");
+  req.end("rocks");
+
+  const body = await promise;
+  expect(body).toBe("bunrocks");
 });
 
 test("server.listening should work", async () => {

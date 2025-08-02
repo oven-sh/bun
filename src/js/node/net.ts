@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -236,8 +236,11 @@ const SocketHandlers: SocketHandler = {
   open(socket) {
     const self = socket.data;
     if (!self) return;
-    socket.timeout(Math.ceil(self.timeout / 1000));
-
+    // make sure to disable timeout on usocket and handle on TS side
+    socket.timeout(0);
+    if (self.timeout) {
+      self.setTimeout(self.timeout);
+    }
     self._handle = socket;
     self.connecting = false;
     const options = self[bunTLSConnectOptions];
@@ -412,7 +415,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
       if (!isTLS) {
-        connectionListener.$call(self, _socket);
+        self.prependOnceListener("connection", connectionListener);
       }
     }
     self.emit("connection", _socket);
@@ -457,7 +460,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
+      server.prependOnceListener("secureConnection", connectionListener);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -625,7 +628,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
@@ -681,14 +683,14 @@ function kConnectPipe(self, req, address) {
 function Socket(options?) {
   if (!(this instanceof Socket)) return new Socket(options);
 
-  const {
+  let {
     socket,
     signal,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
     keepAlive = false,
-    keepAliveInitialDelay = 0,
+    keepAliveInitialDelay,
     ...opts
   } = options || {};
 
@@ -697,6 +699,11 @@ function Socket(options?) {
     throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
+  if (keepAliveInitialDelay !== undefined) {
+    validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
+    if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+  }
 
   if (options?.fd !== undefined) {
     validateInt32(options.fd, "options.fd", 0);
@@ -856,7 +863,11 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
-  socket.timeout(Math.ceil(this.timeout / 1000));
+  if (this.timeout) {
+    this.setTimeout(this.timeout);
+  }
+  // make sure to disable timeout on usocket and handle on TS side
+  socket.timeout(0);
   this._handle = socket;
   this.connecting = false;
 
@@ -1101,6 +1112,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;
@@ -1396,11 +1408,6 @@ Socket.prototype.setTimeout = {
   },
 }.setTimeout;
 
-Socket.prototype._onTimeout = function _onTimeout() {
-  $debug("_onTimeout");
-  this.emit("timeout");
-};
-
 Socket.prototype._unrefTimer = function _unrefTimer() {
   for (let s = this; s !== null; s = s._parent) {
     if (s[kTimeout]) s[kTimeout].refresh();
@@ -1508,6 +1515,8 @@ function lookupAndConnect(self, options) {
   const { localAddress, localPort } = options;
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
+
+  validateString(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);
@@ -1954,7 +1963,9 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  if (!handle) return;
   const self = handle[owner_symbol];
+  if (!self) return;
 
   // Callback may come after call to destroy
   if (self.destroyed) {
@@ -2435,6 +2446,16 @@ Server.prototype[kRealListen] = function (
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
   setTimeout(emitListeningNextTick, 1, this);
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
 };
 
 Server.prototype.getsockname = function getsockname(out) {

@@ -1,3 +1,5 @@
+const TextDecoder = @This();
+
 // used for utf8 decoding
 buffered: struct {
     buf: [3]u8 = .{0} ** 3,
@@ -16,7 +18,7 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub const js = JSC.Codegen.JSTextDecoder;
+pub const js = jsc.Codegen.JSTextDecoder;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -29,22 +31,22 @@ pub fn finalize(this: *TextDecoder) void {
 
 pub fn getIgnoreBOM(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.ignore_bom);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.ignore_bom);
 }
 
 pub fn getFatal(
     this: *TextDecoder,
-    _: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    return JSC.JSValue.jsBoolean(this.fatal);
+    _: *jsc.JSGlobalObject,
+) jsc.JSValue {
+    return jsc.JSValue.jsBoolean(this.fatal);
 }
 
 pub fn getEncoding(
     this: *TextDecoder,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+) jsc.JSValue {
     return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
@@ -153,7 +155,7 @@ pub fn decodeUTF16(
     return .{ output, saw_error };
 }
 
-pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
     const input_slice = input_slice: {
@@ -171,11 +173,7 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     const stream = stream: {
         if (arguments.len > 1 and arguments[1].isObject()) {
             if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
-                const stream_bool = stream_value.coerce(bool, globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
-                break :stream stream_bool;
+                break :stream stream_value.toBoolean();
             }
         }
 
@@ -187,11 +185,11 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     };
 }
 
-pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) bun.JSError!JSValue {
+pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, uint8array: *jsc.JSUint8Array) bun.JSError!JSValue {
     return this.decodeSlice(globalThis, uint8array.slice(), false);
 }
 
-fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
@@ -273,13 +271,13 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                 return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
-            var output = bun.String.fromUTF16(decoded.items);
+            var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
         },
     }
 }
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*TextDecoder {
     const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
@@ -321,15 +319,15 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return TextDecoder.new(decoder);
 }
 
-const TextDecoder = @This();
-
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const strings = bun.strings;
-const ArrayBuffer = JSC.ArrayBuffer;
-const JSUint8Array = JSC.JSUint8Array;
-const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const EncodingLabel = JSC.WebCore.EncodingLabel;
+
+const jsc = bun.jsc;
+const ArrayBuffer = jsc.ArrayBuffer;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSUint8Array = jsc.JSUint8Array;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;
+const EncodingLabel = jsc.WebCore.EncodingLabel;

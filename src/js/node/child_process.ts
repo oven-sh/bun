@@ -272,12 +272,13 @@ function execFile(file, args, options, callback) {
     // merge chunks
     let stdout;
     let stderr;
-    if (child.stdout?.readableEncoding) {
+    if (encoding || child.stdout?.readableEncoding) {
       stdout = ArrayPrototypeJoin.$call(_stdout, "");
     } else {
       stdout = BufferConcat(_stdout);
     }
-    if (child.stderr?.readableEncoding) {
+
+    if (encoding || child.stderr?.readableEncoding) {
       stderr = ArrayPrototypeJoin.$call(_stderr, "");
     } else {
       stderr = BufferConcat(_stderr);

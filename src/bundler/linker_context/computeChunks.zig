@@ -297,12 +297,24 @@ pub noinline fn computeChunks(
     // to look up the path for this chunk to use with the import.
     for (chunks, 0..) |*chunk, chunk_id| {
         if (chunk.entry_point.is_entry_point) {
+            // JS entry points that import CSS files generate two chunks, a JS chunk
+            // and a CSS chunk. Don't link the CSS chunk to the JS file since the CSS
+            // chunk is secondary (the JS chunk is primary).
+            if (chunk.content == .css and css_asts[chunk.entry_point.source_index] == null) {
+                continue;
+            }
             entry_point_chunk_indices[chunk.entry_point.source_index] = @intCast(chunk_id);
         }
     }
 
     // Determine the order of JS files (and parts) within the chunk ahead of time
     try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
+
+    // Handle empty chunks case
+    if (chunks.len == 0) {
+        this.unique_key_buf = "";
+        return chunks;
+    }
 
     const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
     var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
@@ -397,25 +409,25 @@ const JSChunkKeyFormatter = struct {
     }
 };
 
-const bun = @import("bun");
-const resolve_path = bun.bundle_v2.resolve_path;
-const Fs = bun.bundle_v2.Fs;
-const options = bun.options;
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const string = bun.string;
-
-const std = @import("std");
-const sourcemap = bun.sourcemap;
-
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const options = bun.options;
+const sourcemap = bun.sourcemap;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
-const PathTemplate = bundler.PathTemplate;
 const EntryPoint = bundler.EntryPoint;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const PathTemplate = bundler.PathTemplate;
+const resolve_path = bun.bundle_v2.resolve_path;

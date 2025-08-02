@@ -25,7 +25,6 @@ parent: ParentPtr,
 spawn_arena: bun.ArenaAllocator,
 spawn_arena_freed: bool = false,
 
-/// This allocated by the above arena
 args: std.ArrayList(?[*:0]const u8),
 
 /// If the cmd redirects to a file we have to expand that string.
@@ -60,7 +59,7 @@ state: union(enum) {
 /// undefined memory.
 pub const ShellAsyncSubprocessDone = struct {
     cmd: *Cmd,
-    concurrent_task: JSC.EventLoopTask,
+    concurrent_task: jsc.EventLoopTask,
 
     pub fn format(this: *const ShellAsyncSubprocessDone, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt; // autofix
@@ -96,8 +95,6 @@ pub const ShellAsyncSubprocessDone = struct {
     }
 };
 
-const Subprocess = bun.shell.subproc.ShellSubprocess;
-
 pub const Exec = union(enum) {
     none,
     bltn: Builtin,
@@ -122,7 +119,7 @@ const BufferedIoClosed = struct {
         /// BufferedInput/Output uses jsc vm allocator
         pub fn deinit(this: *BufferedIoState, jsc_vm_allocator: Allocator) void {
             if (this.state == .closed and this.owned) {
-                var list = bun.ByteList.listManaged(this.state.closed, jsc_vm_allocator);
+                var list = this.state.closed.listManaged(jsc_vm_allocator);
                 list.deinit();
                 this.state.closed = .{};
             }
@@ -230,18 +227,18 @@ pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) Yi
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Cmd,
     parent: ParentPtr,
     io: IO,
 ) *Cmd {
-    var cmd = interpreter.allocator.create(Cmd) catch bun.outOfMemory();
+    var cmd = parent.create(Cmd);
     cmd.* = .{
-        .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.cmd, interpreter, shell_state),
         .node = node,
         .parent = parent,
 
-        .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
+        .spawn_arena = undefined,
         .args = undefined,
         .redirection_file = undefined,
 
@@ -249,8 +246,8 @@ pub fn init(
         .io = io,
         .state = .idle,
     };
-    cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
-
+    cmd.spawn_arena = bun.ArenaAllocator.init(cmd.base.allocator());
+    cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len) catch bun.outOfMemory();
     cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
 
     return cmd;
@@ -261,7 +258,7 @@ pub fn next(this: *Cmd) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding_assigns = undefined };
-                Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
+                Assigns.initBorrowed(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
                 return this.state.expanding_assigns.start();
             },
             .expanding_assigns => {
@@ -355,7 +352,7 @@ pub fn start(this: *Cmd) Yield {
     return .{ .cmd = this };
 }
 
-pub fn onIOWriterChunk(this: *Cmd, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cmd, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| {
         this.base.throw(&bun.shell.ShellErr.newSys(err));
         return .failed;
@@ -392,7 +389,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
                 .expanding_args => this.state.expanding_args.expansion.state.err,
                 else => @panic("Invalid state"),
             };
-            defer err.deinit(bun.default_allocator);
+            defer err.deinit(this.base.allocator());
             return this.writeFailingError("{}\n", .{err});
         }
         // Handling this case from the shell spec:
@@ -420,14 +417,13 @@ fn initSubproc(this: *Cmd) Yield {
     log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
     var arena = &this.spawn_arena;
-    var arena_allocator = arena.allocator();
-    var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
+    // var arena_allocator = arena.allocator();
+    var spawn_args = Subprocess.SpawnArgs.default(arena, this, this.base.interpreter.event_loop, false);
 
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
     spawn_args.cmd_parent = this;
     spawn_args.cwd = this.base.shell.cwdZ();
 
-    const args = args: {
+    {
         this.args.append(null) catch bun.outOfMemory();
 
         log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
@@ -461,13 +457,7 @@ fn initSubproc(this: *Cmd) Yield {
         };
 
         const first_arg_len = std.mem.len(first_arg);
-        var first_arg_real = first_arg[0..first_arg_len];
-
-        if (bun.Environment.isDebug) {
-            if (bun.strings.eqlComptime(first_arg_real, "bun")) {
-                first_arg_real = "bun-debug";
-            }
-        }
+        const first_arg_real = first_arg[0..first_arg_len];
 
         if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
             const cwd = this.base.shell.cwd_fd;
@@ -494,8 +484,8 @@ fn initSubproc(this: *Cmd) Yield {
             return this.exec.bltn.start();
         }
 
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
             if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                 break :blk bun.selfExePath() catch break :blk2;
@@ -503,12 +493,10 @@ fn initSubproc(this: *Cmd) Yield {
             return this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
         };
 
-        const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
+        this.base.allocator().free(first_arg_real);
+        const duped = this.base.allocator().dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
         this.args.items[0] = duped;
-
-        break :args this.args;
-    };
-    spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+    }
 
     // Fill the env from the export end and cmd local env
     {
@@ -522,7 +510,7 @@ fn initSubproc(this: *Cmd) Yield {
     defer shellio.deref();
     this.io.to_subproc_stdio(&spawn_args.stdio, &shellio);
 
-    if (this.initRedirections(&spawn_args)) |yield| return yield;
+    if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
     log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
@@ -557,7 +545,7 @@ fn initSubproc(this: *Cmd) Yield {
     return .suspended;
 }
 
-fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
+fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?Yield {
     if (this.node.redirect_file) |redirect| {
         const in_cmd_subst = false;
 
@@ -570,44 +558,43 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
                 const global = this.base.eventLoop().js.global;
 
                 if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
-                    const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
+                    const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = jsc.ArrayBuffer.Strong{
                         .array_buffer = buf,
                         .held = .create(buf.value, global),
                     } };
 
                     setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
-                } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
+                } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Blob)) |blob__| {
                     const blob = blob__.dupe();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
                     } else if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
                     } else if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
-                } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;
                     @panic("TODO SHELL READABLE STREAM");
-                } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
+                } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Response)) |req| {
                     req.getBodyValue().toBlobIfPossible();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return .failed;
+                        try spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no);
                     }
                     if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return .failed;
+                        try spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no);
                     }
                     if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return .failed;
+                        try spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no);
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
-                    global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
-                    return .failed;
+                    return global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
                 }
             },
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
+                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
                 }
                 const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                 log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});
@@ -726,20 +713,30 @@ pub fn deinit(this: *Cmd) void {
         this.exec = .none;
     }
 
+    {
+        for (this.args.items) |maybe_arg| {
+            if (maybe_arg) |arg| {
+                this.base.allocator().free(bun.sliceTo(arg, 0));
+            }
+        }
+        this.args.deinit();
+    }
+
     if (!this.spawn_arena_freed) {
         log("Spawn arena free", .{});
         this.spawn_arena.deinit();
     }
 
     this.io.deref();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn bufferedInputClose(this: *Cmd) void {
     this.exec.subproc.buffered_closed.close(this, .stdin);
 }
 
-pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.SystemError) Yield {
+pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?jsc.SystemError) Yield {
     switch (kind) {
         .stdout => this.bufferedOutputCloseStdout(err),
         .stderr => this.bufferedOutputCloseStderr(err),
@@ -748,7 +745,7 @@ pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.Syste
         if (!this.spawn_arena_freed) {
             var async_subprocess_done = bun.new(ShellAsyncSubprocessDone, .{
                 .cmd = this,
-                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.base.eventLoop()),
+                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.base.eventLoop()),
             });
             async_subprocess_done.enqueue();
             return .suspended;
@@ -759,7 +756,7 @@ pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.Syste
     return .suspended;
 }
 
-pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?JSC.SystemError) void {
+pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?jsc.SystemError) void {
     if (comptime bun.Environment.allow_assert) {
         assert(this.exec == .subproc);
     }
@@ -776,7 +773,7 @@ pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?JSC.SystemError) void {
     this.exec.subproc.child.closeIO(.stdout);
 }
 
-pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
+pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?jsc.SystemError) void {
     if (comptime bun.Environment.allow_assert) {
         assert(this.exec == .subproc);
     }
@@ -793,38 +790,37 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
-const shell = bun.shell;
-
 const Allocator = std.mem.Allocator;
 
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const ShellSyscall = bun.shell.interpret.ShellSyscall;
+const bun = @import("bun");
+const assert = bun.assert;
+const jsc = bun.jsc;
+const which = bun.which;
 
+const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
+const Subprocess = bun.shell.subproc.ShellSubprocess;
+
+const Interpreter = bun.shell.Interpreter;
 const Assigns = bun.shell.Interpreter.Assigns;
-const If = bun.shell.Interpreter.If;
 const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
+const Builtin = bun.shell.Interpreter.Builtin;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
-const assert = bun.assert;
 const Arena = bun.shell.interpret.Arena;
 const CowFd = bun.shell.interpret.CowFd;
-const Builtin = bun.shell.Interpreter.Builtin;
-
+const ShellSyscall = bun.shell.interpret.ShellSyscall;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;
+const stderr_no = bun.shell.interpret.stderr_no;
 const stdin_no = bun.shell.interpret.stdin_no;
 const stdout_no = bun.shell.interpret.stdout_no;
-const stderr_no = bun.shell.interpret.stderr_no;
-
-const which = bun.which;

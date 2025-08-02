@@ -26,18 +26,19 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Stmt,
     parent: anytype,
     io: IO,
 ) *Stmt {
-    var script = interpreter.allocator.create(Stmt) catch bun.outOfMemory();
-    script.base = .{ .kind = .stmt, .interpreter = interpreter, .shell = shell_state };
-    script.node = node;
-    script.parent = switch (@TypeOf(parent)) {
+    const parent_ptr = switch (@TypeOf(parent)) {
         ParentPtr => parent,
         else => ParentPtr.init(parent),
     };
+    var script = parent_ptr.create(Stmt);
+    script.base = State.initWithNewAllocScope(.stmt, interpreter, shell_state);
+    script.node = node;
+    script.parent = parent_ptr;
     script.idx = 0;
     script.last_exit_code = null;
     script.currently_executing = null;
@@ -77,21 +78,24 @@ pub fn next(this: *Stmt) Yield {
             return pipeline.start();
         },
         .assign => |assigns| {
-            var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-            assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
+            const assign_machine = Assigns.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
             return assign_machine.start();
         },
         .subshell => {
-            switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
-                .result => |shell_state| {
-                    var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    return script.start();
-                },
+            var script = switch (Subshell.initDupeShellState(
+                this.base.interpreter,
+                this.base.shell,
+                child.subshell,
+                Subshell.ParentPtr.init(this),
+                this.io.copy(),
+            )) {
+                .result => |s| s,
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
                     return .failed;
                 },
-            }
+            };
+            return script.start();
         },
         .@"if" => {
             const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
@@ -126,29 +130,30 @@ pub fn deinit(this: *Stmt) void {
     if (this.currently_executing) |child| {
         child.deinit();
     }
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 const bun = @import("bun");
+const assert = bun.assert;
 
-const Yield = bun.shell.Yield;
-const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
+const Interpreter = bun.shell.Interpreter;
 const Assigns = bun.shell.Interpreter.Assigns;
-const Script = bun.shell.Interpreter.Script;
 const Async = bun.shell.Interpreter.Async;
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
 const Binary = bun.shell.Interpreter.Binary;
+const Cmd = bun.shell.Interpreter.Cmd;
 const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
 const Subshell = bun.shell.Interpreter.Subshell;
 
-const assert = bun.assert;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

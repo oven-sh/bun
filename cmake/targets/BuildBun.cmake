@@ -645,10 +645,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
-if(WIN32)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
-endif()
 
 register_repository(
   NAME

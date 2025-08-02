@@ -2331,9 +2331,25 @@ pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
     unreachable;
 }
 
-pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
+pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: c_int) Maybe(usize) {
+    if (comptime Environment.isWindows) {
+        var new_ptr: std.os.windows.LARGE_INTEGER = undefined;
+        const rc = kernel32.SetFilePointerEx(fd.cast(), @as(windows.LARGE_INTEGER, @bitCast(offset)), &new_ptr, @as(u32, @intCast(whence)));
+        if (rc == windows.FALSE) {
+            return Maybe(usize).errnoSysFd(0, .lseek, fd) orelse Maybe(usize){ .result = 0 };
+        }
+        return Maybe(usize){ .result = @as(usize, @intCast(new_ptr)) };
+    }
+
     while (true) {
-        const rc = syscall.lseek(fd.cast(), offset, whence);
+        const rc = switch (Environment.os) {
+            .linux => syscall.lseek(fd.cast(), offset, @as(usize, @intCast(whence))),
+            .mac => blk: {
+                const result = syscall.lseek(fd.cast(), offset, whence);
+                break :blk @as(usize, @intCast(result));
+            },
+            else => @compileError("not implemented"),
+        };
         if (Maybe(usize).errnoSysFd(rc, .lseek, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;

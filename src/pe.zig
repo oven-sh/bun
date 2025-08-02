@@ -107,6 +107,101 @@ pub const PEFile = struct {
     const IMAGE_SCN_MEM_WRITE = 0x80000000;
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 
+    // Resource types
+    const RT_ICON = 3;
+    const RT_GROUP_ICON = 14;
+    const RT_VERSION = 16;
+
+    // Language and code page IDs
+    const LANGUAGE_ID_EN_US: u16 = 1033; // 0x0409, en-US
+    const CODE_PAGE_ID_EN_US: u16 = 1200; // 0x04B0, UTF-16LE
+
+    // Version info constants
+    const VS_FFI_SIGNATURE: u32 = 0xFEEF04BD;
+    const VS_FFI_STRUCVERSION: u32 = 0x00010000;
+    const VS_FFI_FILEFLAGSMASK: u32 = 0x0000003F;
+    const VOS_NT_WINDOWS32: u32 = 0x00040004;
+    const VFT_APP: u32 = 0x00000001;
+
+    // Resource directory structures
+    const ResourceDirectoryTable = extern struct {
+        characteristics: u32,
+        time_date_stamp: u32,
+        major_version: u16,
+        minor_version: u16,
+        number_of_name_entries: u16,
+        number_of_id_entries: u16,
+    };
+
+    const ResourceDirectoryEntry = extern struct {
+        name_or_id: u32,
+        offset_to_data: u32,
+    };
+
+    const ResourceDataEntry = extern struct {
+        offset_to_data: u32,
+        size: u32,
+        code_page: u32,
+        reserved: u32,
+    };
+
+    // Icon structures
+    const IconDirectory = extern struct {
+        reserved: u16,
+        type: u16,
+        count: u16,
+    };
+
+    const IconDirectoryEntry = extern struct {
+        width: u8,
+        height: u8,
+        color_count: u8,
+        reserved: u8,
+        planes: u16,
+        bit_count: u16,
+        bytes_in_res: u32,
+        image_offset: u32,
+    };
+
+    const GroupIconDirectoryEntry = extern struct {
+        width: u8,
+        height: u8,
+        color_count: u8,
+        reserved: u8,
+        planes: u16,
+        bit_count: u16,
+        bytes_in_res: u32,
+        id: u16,
+    };
+
+    // Version info structures
+    const VS_FIXEDFILEINFO = extern struct {
+        signature: u32,
+        struct_version: u32,
+        file_version_ms: u32,
+        file_version_ls: u32,
+        product_version_ms: u32,
+        product_version_ls: u32,
+        file_flags_mask: u32,
+        file_flags: u32,
+        file_os: u32,
+        file_type: u32,
+        file_subtype: u32,
+        file_date_ms: u32,
+        file_date_ls: u32,
+    };
+
+    const VS_VERSIONINFO = struct {
+        length: u16,
+        value_length: u16,
+        type: u16,
+        key: []const u16, // "VS_VERSION_INFO"
+        padding1: []const u8,
+        fixed_file_info: VS_FIXEDFILEINFO,
+        padding2: []const u8,
+        children: []const u8,
+    };
+
     // Helper methods to safely access headers
     fn getDosHeader(self: *const PEFile) *DOSHeader {
         return @ptrCast(@alignCast(self.data.items.ptr + self.dos_header_offset));
@@ -276,6 +371,9 @@ pub const PEFile = struct {
         const updated_optional_header = self.getOptionalHeader();
         updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
         updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
+
+        // Update PE checksum after adding section
+        self.updateChecksum();
     }
 
     /// Find the .bun section and return its data
@@ -330,6 +428,60 @@ pub const PEFile = struct {
         return error.BunSectionNotFound;
     }
 
+    /// Calculate PE checksum using the standard Windows algorithm
+    pub fn calculateChecksum(self: *const PEFile) u32 {
+        const data = self.data.items;
+        const file_size = data.len;
+
+        // Find checksum field offset
+        const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
+
+        var checksum: u64 = 0;
+        var i: usize = 0;
+
+        // Process file as 16-bit words
+        while (i + 1 < file_size) : (i += 2) {
+            // Skip the checksum field itself (4 bytes)
+            if (i == checksum_offset) {
+                i += 2; // Skip 4 bytes total
+                continue;
+            }
+
+            // Add 16-bit word to checksum
+            const word = std.mem.readInt(u16, data[i..][0..2], .little);
+            checksum += word;
+
+            // Handle overflow - fold back the carry
+            if (checksum > 0xFFFF) {
+                checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            }
+        }
+
+        // If file size is odd, last byte is treated as if followed by 0x00
+        if (file_size & 1 != 0) {
+            checksum += data[file_size - 1];
+            if (checksum > 0xFFFF) {
+                checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            }
+        }
+
+        // Final fold
+        checksum = (checksum & 0xFFFF) + (checksum >> 16);
+        checksum = (checksum + (checksum >> 16)) & 0xFFFF;
+
+        // Add file size to checksum
+        checksum += file_size;
+
+        return @intCast(checksum);
+    }
+
+    /// Update the PE checksum field
+    pub fn updateChecksum(self: *PEFile) void {
+        const checksum = self.calculateChecksum();
+        const optional_header = self.getOptionalHeader();
+        optional_header.checksum = checksum;
+    }
+
     /// Write the modified PE file
     pub fn write(self: *const PEFile, writer: anytype) !void {
         try writer.writeAll(self.data.items);
@@ -361,6 +513,634 @@ pub const PEFile = struct {
             if (section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len) {
                 return error.InvalidSectionData;
             }
+        }
+    }
+
+    // Resource editing functionality
+    fn getResourceSection(self: *const PEFile) ?*SectionHeader {
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |*section| {
+            if (strings.eqlComptime(section.name[0..6], ".rsrc\x00")) {
+                return section;
+            }
+        }
+        return null;
+    }
+
+    fn getResourceDirectory(self: *const PEFile) !?*ResourceDirectoryTable {
+        const rsrc_section = self.getResourceSection() orelse return null;
+
+        if (rsrc_section.pointer_to_raw_data >= self.data.items.len or
+            rsrc_section.pointer_to_raw_data + rsrc_section.size_of_raw_data > self.data.items.len)
+        {
+            return error.InvalidResourceSection;
+        }
+
+        return @ptrCast(@alignCast(self.data.items.ptr + rsrc_section.pointer_to_raw_data));
+    }
+
+    fn findResourceEntry(self: *const PEFile, dir_offset: u32, resource_type: u32, resource_id: u32, language_id: u16) !?*ResourceDataEntry {
+        const rsrc_section = self.getResourceSection() orelse return null;
+        const rsrc_base = rsrc_section.pointer_to_raw_data;
+
+        // Level 1: Type
+        const type_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + dir_offset));
+        const type_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + dir_offset + @sizeOf(ResourceDirectoryTable))));
+
+        const total_entries = type_dir.number_of_name_entries + type_dir.number_of_id_entries;
+        var type_entry: ?*ResourceDirectoryEntry = null;
+
+        for (0..total_entries) |i| {
+            if ((type_entries[i].name_or_id & 0x7FFFFFFF) == resource_type) {
+                type_entry = &type_entries[i];
+                break;
+            }
+        }
+
+        if (type_entry == null) return null;
+        if ((type_entry.?.offset_to_data & 0x80000000) == 0) return null; // Must be directory
+
+        // Level 2: Name/ID
+        const name_dir_offset = type_entry.?.offset_to_data & 0x7FFFFFFF;
+        const name_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset));
+        const name_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset + @sizeOf(ResourceDirectoryTable))));
+
+        var name_entry: ?*ResourceDirectoryEntry = null;
+        for (0..name_dir.number_of_name_entries + name_dir.number_of_id_entries) |i| {
+            if ((name_entries[i].name_or_id & 0x7FFFFFFF) == resource_id) {
+                name_entry = &name_entries[i];
+                break;
+            }
+        }
+
+        if (name_entry == null) return null;
+        if ((name_entry.?.offset_to_data & 0x80000000) == 0) return null; // Must be directory
+
+        // Level 3: Language
+        const lang_dir_offset = name_entry.?.offset_to_data & 0x7FFFFFFF;
+        const lang_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset));
+        const lang_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset + @sizeOf(ResourceDirectoryTable))));
+
+        for (0..lang_dir.number_of_named_entries + lang_dir.number_of_id_entries) |i| {
+            if ((lang_entries[i].name_or_id & 0x7FFFFFFF) == language_id) {
+                if ((lang_entries[i].offset_to_data & 0x80000000) == 0) {
+                    // This is a data entry
+                    return @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_entries[i].offset_to_data));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    pub fn applyWindowsSettings(self: *PEFile, settings: *const bun.options.WindowsSettings, allocator: Allocator) !void {
+        // Handle hide console first (simple modification)
+        if (settings.hide_console) {
+            const optional_header = self.getOptionalHeader();
+            // Change subsystem from IMAGE_SUBSYSTEM_WINDOWS_CUI (3) to IMAGE_SUBSYSTEM_WINDOWS_GUI (2)
+            if (optional_header.subsystem == 3) {
+                optional_header.subsystem = 2;
+            }
+        }
+
+        // If no resource modifications needed, return early
+        if (settings.icon == null and settings.version == null and settings.description == null and
+            settings.publisher == null and settings.title == null and settings.copyright == null)
+        {
+            return;
+        }
+
+        // Find or create resource section
+        const rsrc_section = self.getResourceSection();
+        if (rsrc_section == null) {
+            return error.MissingResourceSection;
+        }
+
+        // Build new resource directory
+        var resource_builder = ResourceBuilder.init(allocator);
+        defer resource_builder.deinit();
+
+        // Load and process icon if provided
+        if (settings.icon) |icon_path| {
+
+            // Simple approach - just read the file
+            const icon_data = std.fs.cwd().readFileAlloc(allocator, icon_path, std.math.maxInt(usize)) catch {
+                return error.FileNotFound;
+            };
+            defer allocator.free(icon_data);
+
+            try resource_builder.setIcon(icon_data);
+        }
+
+        // Build version info if any version fields provided
+        if (settings.version != null or settings.description != null or
+            settings.publisher != null or settings.title != null or settings.copyright != null)
+        {
+            const version_str = if (settings.version) |v| v else "1.0.0.0";
+            try resource_builder.setVersionInfo(
+                version_str,
+                settings.description,
+                settings.publisher,
+                settings.title,
+                settings.copyright,
+            );
+        }
+
+        // Build the resource data
+        const resource_data = try resource_builder.build(rsrc_section.?.virtual_address);
+        defer allocator.free(resource_data);
+
+        // Update the resource section
+        try self.updateResourceSection(rsrc_section.?, resource_data);
+
+        // Update PE checksum after all modifications
+        self.updateChecksum();
+    }
+
+    fn updateResourceSection(self: *PEFile, section: *SectionHeader, data: []const u8) !void {
+        const optional_header = self.getOptionalHeader();
+
+        // Calculate aligned size
+        const aligned_size = alignSize(@intCast(data.len), optional_header.file_alignment);
+
+        // Check if we need to resize the section
+        if (aligned_size > section.size_of_raw_data) {
+            // This is complex - would need to move all following sections
+            // For now, just error if the resource data is too large
+            return error.ResourceDataTooLarge;
+        }
+
+        // Update section data
+        const section_offset = section.pointer_to_raw_data;
+        @memcpy(self.data.items[section_offset..][0..data.len], data);
+
+        // Zero out remaining space
+        if (data.len < section.size_of_raw_data) {
+            @memset(self.data.items[section_offset + data.len .. section_offset + section.size_of_raw_data], 0);
+        }
+
+        // Update section header
+        section.virtual_size = @intCast(data.len);
+
+        // Update data directory
+        optional_header.data_directories[2].size = @intCast(data.len);
+    }
+};
+
+// Resource builder for creating Windows PE resources
+const ResourceBuilder = struct {
+    allocator: Allocator,
+    root: ResourceTable,
+
+    const ResourceTable = struct {
+        entries: std.ArrayList(ResourceTableEntry),
+    };
+
+    const ResourceTableEntry = struct {
+        id: u32,
+        subtable: ?*ResourceTable = null,
+        data: ?[]const u8 = null,
+        data_offset: ?u32 = null,
+        data_size: ?u32 = null,
+        code_page: u32 = PEFile.CODE_PAGE_ID_EN_US,
+    };
+
+    pub fn init(allocator: Allocator) ResourceBuilder {
+        return .{
+            .allocator = allocator,
+            .root = .{
+                .entries = std.ArrayList(ResourceTableEntry).init(allocator),
+            },
+        };
+    }
+
+    pub fn deinit(self: *ResourceBuilder) void {
+        // Recursively free all entries
+        self.freeTable(&self.root);
+    }
+
+    fn freeTable(self: *ResourceBuilder, table: *ResourceTable) void {
+        for (table.entries.items) |*entry| {
+            if (entry.subtable) |subtable| {
+                self.freeTable(subtable);
+                self.allocator.destroy(subtable);
+            }
+            if (entry.data) |data| {
+                self.allocator.free(data);
+            }
+        }
+        table.entries.deinit();
+    }
+
+    pub fn setIcon(self: *ResourceBuilder, icon_data: []const u8) !void {
+        // Parse ICO file header
+        if (icon_data.len < @sizeOf(PEFile.IconDirectory)) {
+            return error.InvalidIconFile;
+        }
+
+        const icon_dir = std.mem.bytesAsValue(PEFile.IconDirectory, icon_data[0..@sizeOf(PEFile.IconDirectory)]).*;
+        if (icon_dir.reserved != 0 or icon_dir.type != 1) {
+            return error.InvalidIconFormat;
+        }
+
+        // Get or create RT_ICON table
+        const icon_table = try self.getOrCreateTable(&self.root, PEFile.RT_ICON);
+
+        // Find first free icon ID
+        var first_free_icon_id: u32 = 1;
+        for (icon_table.entries.items) |entry| {
+            if (entry.id >= first_free_icon_id) {
+                first_free_icon_id = entry.id + 1;
+            }
+        }
+
+        // Read icon entries
+        var offset: usize = @sizeOf(PEFile.IconDirectory);
+        var group_icon_data = std.ArrayList(u8).init(self.allocator);
+        defer group_icon_data.deinit();
+
+        // Write GRPICONDIR header
+        try group_icon_data.appendSlice(std.mem.asBytes(&icon_dir));
+
+        var i: usize = 0;
+        while (i < icon_dir.count) : (i += 1) {
+            if (offset + @sizeOf(PEFile.IconDirectoryEntry) > icon_data.len) {
+                return error.InvalidIconFile;
+            }
+
+            const entry = std.mem.bytesAsValue(PEFile.IconDirectoryEntry, icon_data[offset..][0..@sizeOf(PEFile.IconDirectoryEntry)]).*;
+            offset += @sizeOf(PEFile.IconDirectoryEntry);
+
+            // Read the actual icon image data
+            if (entry.image_offset + entry.bytes_in_res > icon_data.len) {
+                return error.InvalidIconFile;
+            }
+
+            const image_data = icon_data[entry.image_offset..][0..entry.bytes_in_res];
+            const icon_id = first_free_icon_id + @as(u32, @intCast(i));
+
+            // Add individual icon to RT_ICON table
+            const id_table = try self.getOrCreateTable(icon_table, icon_id);
+            const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
+
+            // Add the actual icon data
+            const data_copy = try self.allocator.dupe(u8, image_data);
+            try lang_table.entries.append(.{
+                .id = 0,
+                .data = data_copy,
+                .data_size = @intCast(data_copy.len),
+                .code_page = PEFile.CODE_PAGE_ID_EN_US,
+            });
+
+            // Create GRPICONDIRENTRY for group icon
+            const grp_entry = PEFile.GroupIconDirectoryEntry{
+                .width = entry.width,
+                .height = entry.height,
+                .color_count = entry.color_count,
+                .reserved = entry.reserved,
+                .planes = entry.planes,
+                .bit_count = entry.bit_count,
+                .bytes_in_res = entry.bytes_in_res,
+                .id = @intCast(icon_id),
+            };
+            try group_icon_data.appendSlice(std.mem.asBytes(&grp_entry));
+        }
+
+        // Get or create RT_GROUP_ICON table
+        const group_table = try self.getOrCreateTable(&self.root, PEFile.RT_GROUP_ICON);
+        const name_table = try self.getOrCreateTable(group_table, 1); // MAINICON ID
+        const lang_table = try self.getOrCreateTable(name_table, PEFile.LANGUAGE_ID_EN_US);
+
+        // Add group icon data
+        const group_data_copy = try group_icon_data.toOwnedSlice();
+        try lang_table.entries.append(.{
+            .id = 0,
+            .data = group_data_copy,
+            .data_size = @intCast(group_data_copy.len),
+            .code_page = PEFile.CODE_PAGE_ID_EN_US,
+        });
+    }
+
+    // Helper to write a string as UTF-16LE with null terminator
+    fn writeUtf16String(data: *std.ArrayList(u8), str: []const u8) !void {
+        // Calculate the length first
+        const utf16_len = strings.elementLengthUTF8IntoUTF16([]const u8, str);
+
+        // Ensure we have capacity for the UTF-16 data plus null terminator
+        const start_len = data.items.len;
+        try data.ensureUnusedCapacity((utf16_len + 1) * 2);
+
+        // Resize to make room for UTF-16 data
+        data.items.len = start_len + (utf16_len * 2);
+
+        // Convert UTF-8 to UTF-16LE in place
+        // We need to use a temporary buffer due to alignment requirements
+        var utf16_buf: [1024]u16 = undefined;
+        const utf16_result = strings.convertUTF8toUTF16InBuffer(utf16_buf[0..utf16_len], str);
+
+        // Copy UTF-16 bytes to the output
+        const utf16_bytes = std.mem.sliceAsBytes(utf16_result);
+        @memcpy(data.items[start_len..][0..utf16_bytes.len], utf16_bytes);
+
+        // Add null terminator
+        try data.append(0);
+        try data.append(0);
+    }
+
+    // Helper to align to 32-bit boundary
+    fn alignTo32Bit(data: *std.ArrayList(u8)) !void {
+        while (data.items.len % 4 != 0) {
+            try data.append(0);
+        }
+    }
+
+    const VersionHeader = extern struct {
+        wLength: u16,
+        wValueLength: u16,
+        wType: u16,
+    };
+
+    pub fn setVersionInfo(self: *ResourceBuilder, version: []const u8, description: ?[]const u8, company: ?[]const u8, product: ?[]const u8, copyright: ?[]const u8) !void {
+        // Parse version string
+        var version_parts: [4]u16 = .{ 1, 0, 0, 0 };
+        var iter = std.mem.tokenizeScalar(u8, version, '.');
+        var i: usize = 0;
+        while (iter.next()) |part| : (i += 1) {
+            if (i >= 4) break;
+            version_parts[i] = std.fmt.parseInt(u16, part, 10) catch 0;
+        }
+
+        const file_version_ms = (@as(u32, version_parts[0]) << 16) | version_parts[1];
+        const file_version_ls = (@as(u32, version_parts[2]) << 16) | version_parts[3];
+
+        // Build VS_VERSIONINFO structure
+        var data = std.ArrayList(u8).init(self.allocator);
+        defer data.deinit();
+
+        // VS_VERSIONINFO root structure
+        const vs_version_info_start = data.items.len;
+        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = @sizeOf(PEFile.VS_FIXEDFILEINFO), .wType = 0 }));
+        try writeUtf16String(&data, "VS_VERSION_INFO");
+        try alignTo32Bit(&data);
+
+        // VS_FIXEDFILEINFO
+        const fixed_info = PEFile.VS_FIXEDFILEINFO{
+            .signature = PEFile.VS_FFI_SIGNATURE,
+            .struct_version = PEFile.VS_FFI_STRUCVERSION,
+            .file_version_ms = file_version_ms,
+            .file_version_ls = file_version_ls,
+            .product_version_ms = file_version_ms,
+            .product_version_ls = file_version_ls,
+            .file_flags_mask = PEFile.VS_FFI_FILEFLAGSMASK,
+            .file_flags = 0,
+            .file_os = PEFile.VOS_NT_WINDOWS32,
+            .file_type = PEFile.VFT_APP,
+            .file_subtype = 0,
+            .file_date_ms = 0,
+            .file_date_ls = 0,
+        };
+        try data.appendSlice(std.mem.asBytes(&fixed_info));
+        try alignTo32Bit(&data);
+
+        // StringFileInfo
+        const string_file_info_start = data.items.len;
+        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
+        try writeUtf16String(&data, "StringFileInfo");
+        try alignTo32Bit(&data);
+
+        // StringTable for 040904B0 (US English, Unicode)
+        const string_table_start = data.items.len;
+        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
+        try writeUtf16String(&data, "040904B0");
+        try alignTo32Bit(&data);
+
+        // Add string entries
+        const version_strings = [_]struct { key: []const u8, value: ?[]const u8 }{
+            .{ .key = "CompanyName", .value = company },
+            .{ .key = "FileDescription", .value = description },
+            .{ .key = "FileVersion", .value = version },
+            .{ .key = "LegalCopyright", .value = copyright },
+            .{ .key = "ProductName", .value = product },
+            .{ .key = "ProductVersion", .value = version },
+        };
+
+        for (version_strings) |str| {
+            if (str.value) |value| {
+                const string_start = data.items.len;
+                try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
+                try writeUtf16String(&data, str.key);
+                try alignTo32Bit(&data);
+
+                // Write value and update header
+                const value_start = data.items.len;
+                try writeUtf16String(&data, value);
+                const value_len = @divExact(data.items.len - value_start, 2); // Length in WORDs, including null
+
+                // Update string header
+                const string_len = data.items.len - string_start;
+                if (string_len > std.math.maxInt(u16)) return error.StringTooLong;
+                if (value_len > std.math.maxInt(u16)) return error.ValueTooLong;
+                std.mem.writeInt(u16, data.items[string_start..][0..2], @intCast(string_len), .little);
+                std.mem.writeInt(u16, data.items[string_start + 2 ..][0..2], @intCast(value_len), .little);
+
+                try alignTo32Bit(&data);
+            }
+        }
+
+        // Update StringTable header
+        const string_table_len = data.items.len - string_table_start;
+        if (string_table_len > std.math.maxInt(u16)) return error.StringTableTooLong;
+        std.mem.writeInt(u16, data.items[string_table_start..][0..2], @intCast(string_table_len), .little);
+
+        // Update StringFileInfo header
+        const string_file_info_len = data.items.len - string_file_info_start;
+        if (string_file_info_len > std.math.maxInt(u16)) return error.StringFileInfoTooLong;
+        std.mem.writeInt(u16, data.items[string_file_info_start..][0..2], @intCast(string_file_info_len), .little);
+
+        // VarFileInfo
+        const var_file_info_start = data.items.len;
+        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
+        try writeUtf16String(&data, "VarFileInfo");
+        try alignTo32Bit(&data);
+
+        // Translation
+        const translation_start = data.items.len;
+        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 4, .wType = 0 }));
+        try writeUtf16String(&data, "Translation");
+        try alignTo32Bit(&data);
+
+        // Language and code page
+        try data.appendSlice(&[_]u8{ 0x09, 0x04, 0xB0, 0x04 }); // 0x0409, 0x04B0
+
+        // Update Translation header
+        const translation_len = data.items.len - translation_start;
+        if (translation_len > std.math.maxInt(u16)) return error.TranslationTooLong;
+        std.mem.writeInt(u16, data.items[translation_start..][0..2], @intCast(translation_len), .little);
+
+        // Update VarFileInfo header
+        const var_file_info_len = data.items.len - var_file_info_start;
+        if (var_file_info_len > std.math.maxInt(u16)) return error.VarFileInfoTooLong;
+        std.mem.writeInt(u16, data.items[var_file_info_start..][0..2], @intCast(var_file_info_len), .little);
+
+        // Update VS_VERSIONINFO header
+        const vs_version_info_len = data.items.len - vs_version_info_start;
+        if (vs_version_info_len > std.math.maxInt(u16)) return error.VersionInfoTooLong;
+        std.mem.writeInt(u16, data.items[vs_version_info_start..][0..2], @intCast(vs_version_info_len), .little);
+
+        // Add to resource table
+        const version_table = try self.getOrCreateTable(&self.root, PEFile.RT_VERSION);
+        const id_table = try self.getOrCreateTable(version_table, 1);
+        const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
+
+        const version_bytes = try data.toOwnedSlice();
+        try lang_table.entries.append(.{
+            .id = 0,
+            .data = version_bytes,
+            .data_size = @intCast(version_bytes.len),
+            .code_page = PEFile.CODE_PAGE_ID_EN_US,
+        });
+    }
+
+    fn getOrCreateTable(self: *ResourceBuilder, parent: *ResourceTable, id: u32) !*ResourceTable {
+        // Look for existing entry
+        for (parent.entries.items) |*entry| {
+            if (entry.id == id) {
+                if (entry.subtable) |subtable| {
+                    return subtable;
+                }
+                return error.ExpectedDirectory;
+            }
+        }
+
+        // Create new subtable
+        const new_table = try self.allocator.create(ResourceTable);
+        new_table.* = .{
+            .entries = std.ArrayList(ResourceTableEntry).init(self.allocator),
+        };
+
+        try parent.entries.append(.{
+            .id = id,
+            .subtable = new_table,
+        });
+
+        return new_table;
+    }
+
+    pub fn build(self: *ResourceBuilder, virtual_address: u32) ![]u8 {
+        var tables = std.ArrayList(u8).init(self.allocator);
+        defer tables.deinit();
+        var data_entries = std.ArrayList(u8).init(self.allocator);
+        defer data_entries.deinit();
+        var data_bytes = std.ArrayList(u8).init(self.allocator);
+        defer data_bytes.deinit();
+
+        // Calculate total sizes first
+        var total_table_size: u32 = 0;
+        var total_data_entries: u32 = 0;
+        self.calculateTableSizes(&self.root, &total_table_size, &total_data_entries);
+
+        // Now build with known offsets
+        var tables_offset: u32 = 0;
+        var data_entries_offset = total_table_size;
+        var data_offset = total_table_size + total_data_entries;
+
+        try self.writeTableRecursive(&tables, &data_entries, &data_bytes, virtual_address, &self.root, &tables_offset, &data_entries_offset, &data_offset);
+
+        // Combine all parts
+        var output = std.ArrayList(u8).init(self.allocator);
+        try output.appendSlice(tables.items);
+        try output.appendSlice(data_entries.items);
+        try output.appendSlice(data_bytes.items);
+
+        return output.toOwnedSlice();
+    }
+
+    fn calculateTableSizes(self: *const ResourceBuilder, table: *const ResourceTable, table_size: *u32, data_entries: *u32) void {
+        const entry_count = table.entries.items.len;
+        const size_increase = @sizeOf(PEFile.ResourceDirectoryTable) + entry_count * @sizeOf(PEFile.ResourceDirectoryEntry);
+        table_size.* += @as(u32, @intCast(size_increase));
+
+        for (table.entries.items) |*entry| {
+            if (entry.subtable) |subtable| {
+                self.calculateTableSizes(subtable, table_size, data_entries);
+            } else if (entry.data != null) {
+                data_entries.* += @sizeOf(PEFile.ResourceDataEntry);
+            }
+        }
+    }
+
+    fn writeTableRecursive(
+        self: *ResourceBuilder,
+        tables: *std.ArrayList(u8),
+        data_entries: *std.ArrayList(u8),
+        data_bytes: *std.ArrayList(u8),
+        virtual_address: u32,
+        table: *const ResourceTable,
+        tables_offset: *u32,
+        data_entries_offset: *u32,
+        data_offset: *u32,
+    ) !void {
+        _ = tables.items.len; // dir_start - may be used for debugging
+
+        // Write directory header
+        const dir_header = PEFile.ResourceDirectoryTable{
+            .characteristics = 0,
+            .time_date_stamp = 0,
+            .major_version = 0,
+            .minor_version = 0,
+            .number_of_name_entries = 0,
+            .number_of_id_entries = @intCast(table.entries.items.len),
+        };
+        try tables.appendSlice(std.mem.asBytes(&dir_header));
+
+        // Calculate where subdirectories will be placed
+        var subdirs = std.ArrayList(struct { entry: *const ResourceTableEntry, offset: u32 }).init(self.allocator);
+        defer subdirs.deinit();
+
+        var next_table_offset = tables_offset.* + @as(u32, @intCast(tables.items.len + table.entries.items.len * @sizeOf(PEFile.ResourceDirectoryEntry)));
+
+        // Write directory entries
+        for (table.entries.items) |*entry| {
+            if (entry.subtable) |subtable| {
+                // Calculate subdirectory size
+                var subdir_size: u32 = 0;
+                var subdir_data_entries: u32 = 0;
+                self.calculateTableSizes(subtable, &subdir_size, &subdir_data_entries);
+
+                const dir_entry = PEFile.ResourceDirectoryEntry{
+                    .name_or_id = entry.id,
+                    .offset_to_data = 0x80000000 | (next_table_offset - tables_offset.*),
+                };
+                try tables.appendSlice(std.mem.asBytes(&dir_entry));
+
+                try subdirs.append(.{ .entry = entry, .offset = next_table_offset });
+                next_table_offset += subdir_size;
+            } else if (entry.data) |_| {
+                const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len * @sizeOf(PEFile.ResourceDataEntry)));
+                const dir_entry = PEFile.ResourceDirectoryEntry{
+                    .name_or_id = entry.id,
+                    .offset_to_data = data_entry_offset | 0x80000000, // Set high bit to indicate data entry
+                };
+                try tables.appendSlice(std.mem.asBytes(&dir_entry));
+
+                // Write the data entry
+                const data_byte_offset = data_offset.* + @as(u32, @intCast(data_bytes.items.len));
+                const res_data_entry = PEFile.ResourceDataEntry{
+                    .offset_to_data = virtual_address + data_byte_offset,
+                    .size = entry.data_size.?,
+                    .code_page = entry.code_page,
+                    .reserved = 0,
+                };
+                try data_entries.appendSlice(std.mem.asBytes(&res_data_entry));
+                try data_bytes.appendSlice(entry.data.?);
+            }
+        }
+
+        tables_offset.* = next_table_offset;
+
+        // Write subdirectories
+        for (subdirs.items) |subdir| {
+            try self.writeTableRecursive(tables, data_entries, data_bytes, virtual_address, subdir.entry.subtable.?, tables_offset, data_entries_offset, data_offset);
         }
     }
 };

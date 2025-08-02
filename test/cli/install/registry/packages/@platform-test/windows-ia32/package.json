@@ -1,0 +1,37 @@
+{
+	"name": "@platform-test/windows-ia32",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/windows-ia32",
+			"version": "1.0.0",
+			"description": "Platform test package for windows-ia32",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"win32"
+			],
+			"cpu": [
+				"ia32"
+			],
+			"_id": "@platform-test/windows-ia32@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/windows-ia32/-/platform-test-windows-ia32-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.002Z",
+		"created": "2025-07-18T16:17:21.002Z",
+		"1.0.0": "2025-07-18T16:17:21.002Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/windows-ia32"
+}

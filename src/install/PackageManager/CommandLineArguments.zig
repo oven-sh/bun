@@ -49,19 +49,25 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--os <STR>                            Override OS of native modules to install (e.g., linux, darwin, win32, *)") catch unreachable,
+    clap.parseParam("--cpu <STR>                           Override CPU architecture of native modules to install (e.g., x64, arm64, *)") catch unreachable,
+    clap.parseParam("--libc <STR>                          Override libc of native modules to install (e.g., glibc, musl, *)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
 pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
-    clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+    clap.parseParam("-d, --dev                             Add dependency to \"devDependencies\"") catch unreachable,
     clap.parseParam("-D, --development") catch unreachable,
-    clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-    clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
-    clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
-    clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
-    clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
-    clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
-    clap.parseParam("<POS> ...                         ") catch unreachable,
+    clap.parseParam("-O, --optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+    clap.parseParam("--peer                                Add dependency to \"peerDependencies\"") catch unreachable,
+    clap.parseParam("--save-dev") catch unreachable,
+    clap.parseParam("--save-optional") catch unreachable,
+    clap.parseParam("--save-peer") catch unreachable,
+    clap.parseParam("-E, --exact                           Add the exact version instead of the ^range") catch unreachable,
+    clap.parseParam("--filter <STR>...                     Install packages for the matching workspaces") catch unreachable,
+    clap.parseParam("-a, --analyze                         Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
+    clap.parseParam("--only-missing                        Only add dependencies to package.json if they are not already present") catch unreachable,
+    clap.parseParam("<POS> ...                             ") catch unreachable,
 });
 
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -88,11 +94,14 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
 });
 
 pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
-    clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+    clap.parseParam("-d, --dev                             Add dependency to \"devDependencies\"") catch unreachable,
     clap.parseParam("-D, --development") catch unreachable,
-    clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-    clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
-    clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
+    clap.parseParam("-O, --optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+    clap.parseParam("--peer                                Add dependency to \"peerDependencies\"") catch unreachable,
+    clap.parseParam("--save-dev") catch unreachable,
+    clap.parseParam("--save-optional") catch unreachable,
+    clap.parseParam("--save-peer") catch unreachable,
+    clap.parseParam("-E, --exact                           Add the exact version instead of the ^range") catch unreachable,
     clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
@@ -219,6 +228,10 @@ save_text_lockfile: ?bool = null,
 lockfile_only: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
+
+target_os: ?string = null,
+target_cpu: ?string = null,
+target_libc: ?string = null,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -735,6 +748,18 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.node_linker = .fromStr(linker);
     }
 
+    if (args.option("--os")) |os| {
+        cli.target_os = os;
+    }
+
+    if (args.option("--cpu")) |cpu| {
+        cli.target_cpu = cpu;
+    }
+
+    if (args.option("--libc")) |libc| {
+        cli.target_libc = libc;
+    }
+
     if (args.option("--cache-dir")) |cache_dir| {
         cli.cache_dir = cache_dir;
     }
@@ -862,9 +887,9 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     if (comptime subcommand == .add or subcommand == .install) {
-        cli.development = args.flag("--development") or args.flag("--dev");
-        cli.optional = args.flag("--optional");
-        cli.peer = args.flag("--peer");
+        cli.development = args.flag("--development") or args.flag("--dev") or args.flag("--save-dev");
+        cli.optional = args.flag("--optional") or args.flag("--save-optional");
+        cli.peer = args.flag("--peer") or args.flag("--save-peer");
         cli.exact = args.flag("--exact");
         cli.analyze = args.flag("--analyze");
         cli.only_missing = args.flag("--only-missing");

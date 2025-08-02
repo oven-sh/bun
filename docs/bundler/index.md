@@ -698,17 +698,13 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=linked
 - `"external"`
 - A separate `*.js.map` file is created alongside each `*.js` bundle without inserting a `//# sourceMappingURL` comment.
 
-{% /table %}
+  Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-for-debug-ids) that can be used to associate a bundle with its corresponding sourcemap. This `debugId` is added as a comment at the bottom of the file.
 
-{% callout %}
+  ```ts
+  // <bundled code here>
 
-Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-for-debug-ids) that can be used to associate a bundle with its corresponding sourcemap. This `debugId` is added as a comment at the bottom of the file.
-
-```ts
-// <generated bundle code>
-
-//# debugId=<DEBUG ID>
-```
+  //# debugId=<DEBUG ID>
+  ```
 
 ---
 
@@ -723,7 +719,7 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
 
   The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
 
-{% /callout %}
+{% /table %}
 
 ### `minify`
 

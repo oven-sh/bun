@@ -158,15 +158,23 @@ const releases = versions
   )
   .sort((a, b) => (a > b ? (a == b ? 0 : -1) : 1));
 const latest = releases[0];
+console.log(JSON.stringify(releases, null, 2));
 const release_tag = `FIREFOX_${latest.version.replaceAll(".", "_")}_RELEASE`;
+
 if (values.verbose) {
   console.log(`Fetching NSS release from ${release_tag}`);
 }
 const version = await fetch(
-  `https://hg.mozilla.org/releases/mozilla-release/raw-file/${release_tag}/security/nss/TAG-INFO`,
+  `https://hg.mozilla.org/releases/mozilla-release/raw-file/NSS_3_114_RTM/security/nss/TAG-INFO`,
 )
   .then(res => res.text())
   .then(txt => txt.trim().split("NSS_")[1].split("_RTM").join("").split("_").join(".").trim());
+
+// const version = await fetch(
+//   `https://hg.mozilla.org/releases/mozilla-release/raw-file/${release_tag}/security/nss/TAG-INFO`,
+// )
+//   .then(res => res.text())
+//   .then(txt => txt.trim().split("NSS_")[1].split("_RTM").join("").split("_").join(".").trim());
 
 const release = {
   version: version,

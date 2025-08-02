@@ -56,6 +56,133 @@ pub const UpdateInteractiveCommand = struct {
         catalog_key: []const u8,
         version: []const u8,
     };
+
+    // Common utility functions to reduce duplication
+    fn preserveVersionPrefix(original_version: []const u8, new_version: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+        if (original_version.len > 0) {
+            const first_char = original_version[0];
+            if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
+                return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+            }
+        }
+        return allocator.dupe(u8, new_version);
+    }
+
+    fn buildPackageJsonPath(root_dir: []const u8, workspace_path: []const u8, path_buf: *bun.PathBuffer) []const u8 {
+        if (workspace_path.len > 0) {
+            return bun.path.joinAbsStringBuf(
+                root_dir,
+                path_buf,
+                &[_]string{ workspace_path, "package.json" },
+                .auto,
+            );
+        } else {
+            return bun.path.joinAbsStringBuf(
+                root_dir,
+                path_buf,
+                &[_]string{"package.json"},
+                .auto,
+            );
+        }
+    }
+
+    // Helper to update a catalog entry at a specific path in the package.json AST
+    fn savePackageJson(
+        manager: *PackageManager,
+        package_json: anytype, // MapEntry from WorkspacePackageJSONCache
+        package_json_path: []const u8,
+    ) !void {
+        const preserve_trailing_newline = package_json.*.source.contents.len > 0 and
+            package_json.*.source.contents[package_json.*.source.contents.len - 1] == '\n';
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.*.source.contents.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            package_json.*.root,
+            &package_json.*.source,
+            .{
+                .indent = package_json.*.indentation,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.errGeneric("Failed to serialize package.json: {s}", .{@errorName(err)});
+            return err;
+        };
+
+        const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        defer manager.allocator.free(new_package_json_source);
+
+        // Write the updated package.json
+        const write_file = std.fs.cwd().createFile(package_json_path, .{}) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+            return err;
+        };
+        defer write_file.close();
+
+        write_file.writeAll(new_package_json_source) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+            return err;
+        };
+    }
+
+    fn updateCatalogEntry(
+        manager: *PackageManager,
+        root_expr: *bun.ast.Expr,
+        path_segments: []const []const u8,
+        catalog_name: []const u8,
+        package_name: []const u8,
+        new_version: []const u8,
+        workspace_path: []const u8,
+    ) !bool {
+        const Expr = bun.ast.Expr;
+        const E = bun.ast.E;
+
+        // Navigate through the path
+        var current_expr = root_expr;
+        for (path_segments) |segment| {
+            const prop = current_expr.asProperty(segment) orelse return false;
+            if (prop.expr.data != .e_object) return false;
+            current_expr = @constCast(&prop.expr);
+        }
+
+        // Now we should be at the catalogs object, find the specific catalog
+        const catalog_query = current_expr.asProperty(catalog_name) orelse return false;
+        if (catalog_query.expr.data != .e_object) return false;
+
+        // Find the package in the catalog
+        const catalog_obj = &catalog_query.expr.data.e_object;
+        const version_query = catalog_query.expr.asProperty(package_name) orelse return false;
+        if (version_query.expr.data != .e_string) return false;
+
+        // Get the original version to preserve prefix
+        const original_version = version_query.expr.data.e_string.data;
+        const version_with_prefix = try preserveVersionPrefix(original_version, new_version, manager.allocator);
+
+        // Update the version
+        const new_expr = try Expr.init(
+            E.String,
+            E.String{ .data = version_with_prefix },
+            version_query.expr.loc,
+        ).clone(manager.allocator);
+        try catalog_obj.*.put(manager.allocator, package_name, new_expr);
+
+        const workspace_display = if (workspace_path.len > 0) workspace_path else "root";
+
+        // Format output based on the path we took to find the catalog
+        if (path_segments.len > 0 and std.mem.eql(u8, path_segments[0], "workspaces")) {
+            Output.prettyln("  Updated {s} in workspaces.catalogs.{s} to {s} ({s})", .{ package_name, catalog_name, version_with_prefix, workspace_display });
+        } else {
+            Output.prettyln("  Updated {s} in catalogs.{s} to {s} ({s})", .{ package_name, catalog_name, version_with_prefix, workspace_display });
+        }
+
+        return true;
+    }
+
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
             const catalog_dep = manager.lockfile.catalogs.get(
@@ -171,9 +298,92 @@ pub const UpdateInteractiveCommand = struct {
         try manager.installWithManager(ctx, new_package_json_source, original_cwd);
     }
 
+    fn updatePackageJsonFiles(
+        manager: *PackageManager,
+        workspace_updates: bun.StringHashMap(std.ArrayList([]const u8)),
+    ) !void {
+        // Group packages by workspace and update package.json files directly
+        var it = workspace_updates.iterator();
+        while (it.next()) |entry| {
+            const workspace_path = entry.key_ptr.*;
+            const package_specs = entry.value_ptr.items;
+
+            // Build the package.json path for this workspace
+            const root_dir = FileSystem.instance.top_level_dir;
+            var path_buf: bun.PathBuffer = undefined;
+            const package_json_path = buildPackageJsonPath(root_dir, workspace_path, &path_buf);
+
+            // Load and parse the package.json
+            var package_json = switch (manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                package_json_path,
+                .{ .guess_indentation = true },
+            )) {
+                .parse_err => |err| {
+                    Output.errGeneric("Failed to parse package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .read_err => |err| {
+                    Output.errGeneric("Failed to read package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .entry => |package_entry| package_entry,
+            };
+
+            var modified = false;
+            const Expr = bun.ast.Expr;
+            const E = bun.ast.E;
+
+            // Update each package in this workspace's package.json
+            for (package_specs) |spec| {
+                // Extract package name and version from "express@5.1.0" format
+                const at_index = std.mem.lastIndexOfScalar(u8, spec, '@') orelse continue;
+                const pkg_name = spec[0..at_index];
+                const new_version = spec[at_index + 1 ..];
+
+                // Find the package in dependencies, devDependencies, etc.
+                if (package_json.root.data == .e_object) {
+                    const dep_sections = [_][]const u8{ "dependencies", "devDependencies", "peerDependencies", "optionalDependencies" };
+                    for (dep_sections) |section_name| {
+                        if (package_json.root.asProperty(section_name)) |section_query| {
+                            if (section_query.expr.data == .e_object) {
+                                const dep_obj = &section_query.expr.data.e_object;
+                                if (section_query.expr.asProperty(pkg_name)) |version_query| {
+                                    if (version_query.expr.data == .e_string) {
+                                        // Get the original version to preserve prefix
+                                        const original_version = version_query.expr.data.e_string.data;
+
+                                        // Preserve the version prefix from the original
+                                        const version_with_prefix = try preserveVersionPrefix(original_version, new_version, manager.allocator);
+
+                                        // Update the version using hash map put
+                                        const new_expr = try Expr.init(
+                                            E.String,
+                                            E.String{ .data = version_with_prefix },
+                                            version_query.expr.loc,
+                                        ).clone(manager.allocator);
+                                        try dep_obj.*.put(manager.allocator, pkg_name, new_expr);
+                                        modified = true;
+                                        break; // Found and updated, move to next package
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Write the updated package.json if modified
+            if (modified) {
+                try savePackageJson(manager, &package_json, package_json_path);
+            }
+        }
+    }
+
     fn updateCatalogDefinitions(
         manager: *PackageManager,
-        original_cwd: string,
+        _: string, // original_cwd - no longer needed since we removed the install step
         catalog_updates: bun.StringHashMap(CatalogUpdate),
     ) !void {
         // For catalog updates, we need to update the package.json catalog definitions
@@ -250,9 +460,6 @@ pub const UpdateInteractiveCommand = struct {
                 .entry => |entry| entry,
             };
 
-            const preserve_trailing_newline = package_json.source.contents.len > 0 and
-                package_json.source.contents[package_json.source.contents.len - 1] == '\n';
-
             var modified = false;
             const Expr = bun.ast.Expr;
             const E = bun.ast.E;
@@ -272,89 +479,19 @@ pub const UpdateInteractiveCommand = struct {
                     var found_and_updated = false;
 
                     if (catalog_name.len > 0) {
-                        // Looking for catalogs.catalog_name.package_name at top level
-                        if (package_json.root.asProperty("catalogs")) |catalogs_query| {
-                            if (catalogs_query.expr.data == .e_object) {
-                                if (catalogs_query.expr.asProperty(catalog_name)) |specific_catalog_query| {
-                                    if (specific_catalog_query.expr.data == .e_object) {
-                                        const catalog_obj = &specific_catalog_query.expr.data.e_object;
-                                        if (specific_catalog_query.expr.asProperty(package_name)) |version_query| {
-                                            if (version_query.expr.data == .e_string) {
-                                                // Get the original version string to preserve prefix
-                                                const original_version = version_query.expr.data.e_string.data;
-
-                                                // Extract prefix (^, ~, etc.) from original version
-                                                var version_with_prefix = new_version;
-                                                if (original_version.len > 0) {
-                                                    const first_char = original_version[0];
-                                                    if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
-                                                        // Preserve the prefix
-                                                        version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
-                                                    }
-                                                }
-
-                                                // Update the version in place
-                                                const new_expr = try Expr.init(
-                                                    E.String,
-                                                    E.String{ .data = version_with_prefix },
-                                                    version_query.expr.loc,
-                                                ).clone(manager.allocator);
-                                                try catalog_obj.*.put(manager.allocator, package_name, new_expr);
-                                                modified = true;
-                                                found_and_updated = true;
-
-                                                const workspace_display = if (workspace_path.len > 0) workspace_path else "root";
-                                                Output.prettyln("  Updated {s} in catalogs.{s} to {s} ({s})", .{ package_name, catalog_name, version_with_prefix, workspace_display });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        // Try to update at top level: catalogs.catalog_name.package_name
+                        const top_level_path = &[_][]const u8{"catalogs"};
+                        if (try updateCatalogEntry(manager, &package_json.root, top_level_path, catalog_name, package_name, new_version, workspace_path)) {
+                            modified = true;
+                            found_and_updated = true;
                         }
 
-                        // If not found at top level, look inside workspaces object
+                        // If not found at top level, try workspaces.catalogs.catalog_name.package_name
                         if (!found_and_updated) {
-                            if (package_json.root.asProperty("workspaces")) |workspaces_query| {
-                                if (workspaces_query.expr.data == .e_object) {
-                                    if (workspaces_query.expr.asProperty("catalogs")) |catalogs_query| {
-                                        if (catalogs_query.expr.data == .e_object) {
-                                            if (catalogs_query.expr.asProperty(catalog_name)) |specific_catalog_query| {
-                                                if (specific_catalog_query.expr.data == .e_object) {
-                                                    const catalog_obj = &specific_catalog_query.expr.data.e_object;
-                                                    if (specific_catalog_query.expr.asProperty(package_name)) |version_query| {
-                                                        if (version_query.expr.data == .e_string) {
-                                                            // Get the original version string to preserve prefix
-                                                            const original_version = version_query.expr.data.e_string.data;
-
-                                                            // Extract prefix (^, ~, etc.) from original version
-                                                            var version_with_prefix = new_version;
-                                                            if (original_version.len > 0) {
-                                                                const first_char = original_version[0];
-                                                                if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
-                                                                    // Preserve the prefix
-                                                                    version_with_prefix = try std.fmt.allocPrint(manager.allocator, "{c}{s}", .{ first_char, new_version });
-                                                                }
-                                                            }
-
-                                                            // Update the version in place
-                                                            const new_expr = try Expr.init(
-                                                                E.String,
-                                                                E.String{ .data = version_with_prefix },
-                                                                version_query.expr.loc,
-                                                            ).clone(manager.allocator);
-                                                            try catalog_obj.*.put(manager.allocator, package_name, new_expr);
-                                                            modified = true;
-                                                            found_and_updated = true;
-
-                                                            const workspace_display = if (workspace_path.len > 0) workspace_path else "root";
-                                                            Output.prettyln("  Updated {s} in workspaces.catalogs.{s} to {s} ({s})", .{ package_name, catalog_name, version_with_prefix, workspace_display });
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            const workspaces_path = &[_][]const u8{ "workspaces", "catalogs" };
+                            if (try updateCatalogEntry(manager, &package_json.root, workspaces_path, catalog_name, package_name, new_version, workspace_path)) {
+                                modified = true;
+                                found_and_updated = true;
                             }
                         }
                     } else {
@@ -440,67 +577,12 @@ pub const UpdateInteractiveCommand = struct {
             }
 
             if (modified) {
-                // Serialize the updated package.json
-                var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
-                try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.source.contents.len + 1);
-                buffer_writer.append_newline = preserve_trailing_newline;
-                var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
-
-                _ = JSPrinter.printJSON(
-                    @TypeOf(&package_json_writer),
-                    &package_json_writer,
-                    package_json.root,
-                    &package_json.source,
-                    .{
-                        .indent = package_json.indentation,
-                        .mangled_props = null,
-                    },
-                ) catch |err| {
-                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-                    continue;
-                };
-
-                const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
-                defer manager.allocator.free(new_package_json_source);
-
-                // Write the updated package.json
-                const write_file = try std.fs.openFileAbsolute(package_json_path, .{ .mode = .write_only });
-                defer write_file.close();
-                try write_file.writeAll(new_package_json_source);
+                try savePackageJson(manager, &package_json, package_json_path);
             }
         }
 
         Output.prettyln("", .{});
         Output.prettyln("<r><green>✓<r> Updated catalog definitions", .{});
-
-        // After updating catalogs, we need to reinstall to apply the changes
-        const exe_path = try std.fs.selfExePathAlloc(manager.allocator);
-        defer manager.allocator.free(exe_path);
-
-        const install_args = &[_][]const u8{ exe_path, "install" };
-
-        var env_map = try std.process.getEnvMap(manager.allocator);
-        defer env_map.deinit();
-        try env_map.put("BUN_DEBUG_QUIET_LOGS", "1");
-
-        const result = std.process.Child.run(.{
-            .allocator = manager.allocator,
-            .argv = install_args,
-            .cwd = original_cwd,
-            .env_map = &env_map,
-        }) catch |err| {
-            Output.errGeneric("Failed to run install after catalog update: {s}", .{@errorName(err)});
-            return;
-        };
-        defer manager.allocator.free(result.stdout);
-        defer manager.allocator.free(result.stderr);
-
-        if (result.term != .Exited or result.term.Exited != 0) {
-            Output.errGeneric("Install failed after catalog update", .{});
-            if (result.stderr.len > 0) {
-                Output.errGeneric("{s}", .{result.stderr});
-            }
-        }
     }
 
     fn updateWorkspacePackages(
@@ -663,308 +745,265 @@ pub const UpdateInteractiveCommand = struct {
             .ok => |ok| ok.lockfile,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |_| {
-                const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
-                    const filters = manager.options.filter_patterns;
-                    break :blk findMatchingWorkspaces(
-                        bun.default_allocator,
-                        original_cwd,
-                        manager,
-                        filters,
-                    ) catch bun.outOfMemory();
-                } else if (manager.options.do.recursive) blk: {
-                    break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
-                } else blk: {
-                    const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
-                    if (root_pkg_id == invalid_package_id) return;
+        const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
+            const filters = manager.options.filter_patterns;
+            break :blk findMatchingWorkspaces(
+                bun.default_allocator,
+                original_cwd,
+                manager,
+                filters,
+            ) catch bun.outOfMemory();
+        } else if (manager.options.do.recursive) blk: {
+            break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+        } else blk: {
+            const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+            if (root_pkg_id == invalid_package_id) return;
 
-                    const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
-                    ids[0] = root_pkg_id;
-                    break :blk ids;
-                };
-                defer bun.default_allocator.free(workspace_pkg_ids);
+            const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
+            ids[0] = root_pkg_id;
+            break :blk ids;
+        };
+        defer bun.default_allocator.free(workspace_pkg_ids);
 
-                try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
+        try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
 
-                // Get outdated packages
-                const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
-                defer {
-                    for (outdated_packages) |pkg| {
-                        bun.default_allocator.free(pkg.name);
-                        bun.default_allocator.free(pkg.current_version);
-                        bun.default_allocator.free(pkg.latest_version);
-                        bun.default_allocator.free(pkg.update_version);
-                        bun.default_allocator.free(pkg.workspace_name);
-                    }
-                    bun.default_allocator.free(outdated_packages);
-                }
+        // Get outdated packages
+        const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
+        defer {
+            for (outdated_packages) |pkg| {
+                bun.default_allocator.free(pkg.name);
+                bun.default_allocator.free(pkg.current_version);
+                bun.default_allocator.free(pkg.latest_version);
+                bun.default_allocator.free(pkg.update_version);
+                bun.default_allocator.free(pkg.workspace_name);
+            }
+            bun.default_allocator.free(outdated_packages);
+        }
 
-                if (outdated_packages.len == 0) {
-                    // Check if we're using --latest flag
-                    const is_latest_mode = manager.options.do.update_to_latest;
+        if (outdated_packages.len == 0) {
+            // Check if we're using --latest flag
+            const is_latest_mode = manager.options.do.update_to_latest;
 
-                    if (is_latest_mode) {
-                        Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
-                    } else {
-                        // Count how many packages have newer versions available
-                        var packages_with_newer_versions: usize = 0;
+            if (is_latest_mode) {
+                Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
+            } else {
+                // Count how many packages have newer versions available
+                var packages_with_newer_versions: usize = 0;
 
-                        // We need to check all packages for newer versions
-                        for (workspace_pkg_ids) |workspace_pkg_id| {
-                            const pkg_deps = manager.lockfile.packages.items(.dependencies)[workspace_pkg_id];
-                            for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
-                                const package_id = manager.lockfile.buffers.resolutions.items[dep_id];
-                                if (package_id == invalid_package_id) continue;
-                                const dep = manager.lockfile.buffers.dependencies.items[dep_id];
-                                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
-                                const resolution = manager.lockfile.packages.items(.resolution)[package_id];
-                                if (resolution.tag != .npm) continue;
+                // We need to check all packages for newer versions
+                for (workspace_pkg_ids) |workspace_pkg_id| {
+                    const pkg_deps = manager.lockfile.packages.items(.dependencies)[workspace_pkg_id];
+                    for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
+                        const package_id = manager.lockfile.buffers.resolutions.items[dep_id];
+                        if (package_id == invalid_package_id) continue;
+                        const dep = manager.lockfile.buffers.dependencies.items[dep_id];
+                        const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                        if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
+                        const resolution = manager.lockfile.packages.items(.resolution)[package_id];
+                        if (resolution.tag != .npm) continue;
 
-                                const package_name = manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items);
+                        const package_name = manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items);
 
-                                var expired = false;
-                                const manifest = manager.manifests.byNameAllowExpired(
-                                    manager,
-                                    manager.scopeForPackageName(package_name),
-                                    package_name,
-                                    &expired,
-                                    .load_from_memory_fallback_to_disk,
-                                ) orelse continue;
+                        var expired = false;
+                        const manifest = manager.manifests.byNameAllowExpired(
+                            manager,
+                            manager.scopeForPackageName(package_name),
+                            package_name,
+                            &expired,
+                            .load_from_memory_fallback_to_disk,
+                        ) orelse continue;
 
-                                const latest = manifest.findByDistTag("latest") orelse continue;
+                        const latest = manifest.findByDistTag("latest") orelse continue;
 
-                                // Check if current version is less than latest
-                                if (resolution.value.npm.version.order(latest.version, manager.lockfile.buffers.string_bytes.items, manifest.string_buf) == .lt) {
-                                    packages_with_newer_versions += 1;
-                                }
-                            }
-                        }
-
-                        if (packages_with_newer_versions > 0) {
-                            Output.prettyln("<r><green>✓<r> All packages are up to date!\n", .{});
-                            Output.prettyln("<r><d>Excluded {d} package{s} with potentially breaking changes. Run <cyan>`bun update -i --latest`<r><d> to update<r>", .{ packages_with_newer_versions, if (packages_with_newer_versions == 1) "" else "s" });
-                        } else {
-                            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
+                        // Check if current version is less than latest
+                        if (resolution.value.npm.version.order(latest.version, manager.lockfile.buffers.string_bytes.items, manifest.string_buf) == .lt) {
+                            packages_with_newer_versions += 1;
                         }
                     }
-                    return;
                 }
 
-                // Prompt user to select packages
-                const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
-                defer bun.default_allocator.free(selected);
-
-                // Create package specifier array from selected packages
-                // Group selected packages by workspace
-                var workspace_updates = bun.StringHashMap(std.ArrayList([]const u8)).init(bun.default_allocator);
-                defer {
-                    var it = workspace_updates.iterator();
-                    while (it.next()) |entry| {
-                        entry.value_ptr.deinit();
-                    }
-                    workspace_updates.deinit();
+                if (packages_with_newer_versions > 0) {
+                    Output.prettyln("<r><green>✓<r> All packages are up to date!\n", .{});
+                    Output.prettyln("<r><d>Excluded {d} package{s} with potentially breaking changes. Run <cyan>`bun update -i --latest`<r><d> to update<r>", .{ packages_with_newer_versions, if (packages_with_newer_versions == 1) "" else "s" });
+                } else {
+                    Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
                 }
+            }
+            return;
+        }
 
-                // Track catalog updates separately (catalog_key -> {version, workspace_path})
-                var catalog_updates = bun.StringHashMap(CatalogUpdate).init(bun.default_allocator);
-                defer {
-                    var it = catalog_updates.iterator();
-                    while (it.next()) |entry| {
-                        bun.default_allocator.free(entry.key_ptr.*);
-                        bun.default_allocator.free(entry.value_ptr.*.version);
-                        bun.default_allocator.free(entry.value_ptr.*.workspace_path);
-                    }
-                    catalog_updates.deinit();
-                }
+        // Prompt user to select packages
+        const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
+        defer bun.default_allocator.free(selected);
 
-                // Create a map to track dependency types for packages
-                var dep_types = bun.StringHashMap([]const u8).init(bun.default_allocator);
-                defer dep_types.deinit();
+        // Create package specifier array from selected packages
+        // Group selected packages by workspace
+        var workspace_updates = bun.StringHashMap(std.ArrayList([]const u8)).init(bun.default_allocator);
+        defer {
+            var it = workspace_updates.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            workspace_updates.deinit();
+        }
 
-                // Group updates by workspace
-                for (outdated_packages, selected) |pkg, is_selected| {
-                    if (!is_selected) continue;
+        // Track catalog updates separately (catalog_key -> {version, workspace_path})
+        var catalog_updates = bun.StringHashMap(CatalogUpdate).init(bun.default_allocator);
+        defer {
+            var it = catalog_updates.iterator();
+            while (it.next()) |entry| {
+                bun.default_allocator.free(entry.key_ptr.*);
+                bun.default_allocator.free(entry.value_ptr.*.version);
+                bun.default_allocator.free(entry.value_ptr.*.workspace_path);
+            }
+            catalog_updates.deinit();
+        }
 
-                    try dep_types.put(pkg.name, pkg.dependency_type);
+        // Create a map to track dependency types for packages
+        var dep_types = bun.StringHashMap([]const u8).init(bun.default_allocator);
+        defer dep_types.deinit();
 
-                    // Use latest version if user selected it with 'l' key
-                    const target_version = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
+        // Group updates by workspace
+        for (outdated_packages, selected) |pkg, is_selected| {
+            if (!is_selected) continue;
 
-                    // For catalog dependencies, we need to collect them separately
-                    // to update the catalog definitions in the root or workspace package.json
-                    if (pkg.is_catalog) {
-                        // Store catalog updates for later processing
-                        const catalog_key = if (pkg.catalog_name.len > 0)
-                            try std.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, pkg.catalog_name })
-                        else
-                            pkg.name;
+            try dep_types.put(pkg.name, pkg.dependency_type);
 
-                        // For catalog dependencies, we always update the root package.json
-                        // (or the workspace root where the catalog is defined)
-                        // TODO: In the future, support workspace-specific catalogs
-                        const catalog_workspace_path = try bun.default_allocator.dupe(u8, ""); // Always root for now
+            // Use latest version if user selected it with 'l' key
+            const target_version = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
 
-                        try catalog_updates.put(try bun.default_allocator.dupe(u8, catalog_key), .{
-                            .version = try bun.default_allocator.dupe(u8, target_version),
-                            .workspace_path = catalog_workspace_path,
-                        });
-                        continue;
-                    }
+            // For catalog dependencies, we need to collect them separately
+            // to update the catalog definitions in the root or workspace package.json
+            if (pkg.is_catalog) {
+                // Store catalog updates for later processing
+                const catalog_key = if (pkg.catalog_name.len > 0)
+                    try std.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, pkg.catalog_name })
+                else
+                    pkg.name;
 
-                    // Create package specifier for regular (non-catalog) dependencies only
-                    const package_specifier = try std.fmt.allocPrint(bun.default_allocator, "{s}@{s}", .{ pkg.name, target_version });
+                // For catalog dependencies, we always update the root package.json
+                // (or the workspace root where the catalog is defined)
+                // TODO: In the future, support workspace-specific catalogs
+                const catalog_workspace_path = try bun.default_allocator.dupe(u8, ""); // Always root for now
 
-                    // Get the workspace path for this package
-                    const workspace_resolution = manager.lockfile.packages.items(.resolution)[pkg.workspace_pkg_id];
-                    const workspace_path = if (workspace_resolution.tag == .workspace)
-                        workspace_resolution.value.workspace.slice(manager.lockfile.buffers.string_bytes.items)
-                    else
-                        ""; // Root workspace
+                try catalog_updates.put(try bun.default_allocator.dupe(u8, catalog_key), .{
+                    .version = try bun.default_allocator.dupe(u8, target_version),
+                    .workspace_path = catalog_workspace_path,
+                });
+                continue;
+            }
 
-                    const result = try workspace_updates.getOrPut(workspace_path);
-                    if (!result.found_existing) {
-                        result.value_ptr.* = std.ArrayList([]const u8).init(bun.default_allocator);
-                    }
-                    try result.value_ptr.append(package_specifier);
-                }
+            // Create package specifier for regular (non-catalog) dependencies only
+            const package_specifier = try std.fmt.allocPrint(bun.default_allocator, "{s}@{s}", .{ pkg.name, target_version });
 
-                // Check if we have any updates
-                const has_workspace_updates = workspace_updates.count() > 0;
-                const has_catalog_updates = catalog_updates.count() > 0;
+            // Get the workspace path for this package
+            const workspace_resolution = manager.lockfile.packages.items(.resolution)[pkg.workspace_pkg_id];
+            const workspace_path = if (workspace_resolution.tag == .workspace)
+                workspace_resolution.value.workspace.slice(manager.lockfile.buffers.string_bytes.items)
+            else
+                ""; // Root workspace
 
-                if (!has_workspace_updates and !has_catalog_updates) {
-                    Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
-                    return;
-                }
+            const result = try workspace_updates.getOrPut(workspace_path);
+            if (!result.found_existing) {
+                result.value_ptr.* = std.ArrayList([]const u8).init(bun.default_allocator);
+            }
+            try result.value_ptr.append(package_specifier);
+        }
 
-                // Use the proven standard update mechanism instead of custom broken implementation
-                Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
-                Output.flush();
+        // Check if we have any updates
+        const has_workspace_updates = workspace_updates.count() > 0;
+        const has_catalog_updates = catalog_updates.count() > 0;
 
-                // Collect all package specifiers for the standard update mechanism
-                var all_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
-                defer all_specifiers.deinit();
+        if (!has_workspace_updates and !has_catalog_updates) {
+            Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
+            return;
+        }
 
+        // Collect all package specifiers for the standard update mechanism
+        var all_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
+        defer all_specifiers.deinit();
+
+        if (has_workspace_updates) {
+            var it = workspace_updates.iterator();
+            while (it.next()) |entry| {
+                try all_specifiers.appendSlice(entry.value_ptr.items);
+            }
+        }
+
+        // Actually update the selected packages
+        if (has_workspace_updates or has_catalog_updates) {
+            if (manager.options.dry_run) {
+                Output.prettyln("\n<r><yellow>Dry run mode: showing what would be updated<r>", .{});
+
+                // In dry-run mode, just show what would be updated without modifying files
                 if (has_workspace_updates) {
                     var it = workspace_updates.iterator();
                     while (it.next()) |entry| {
-                        try all_specifiers.appendSlice(entry.value_ptr.items);
+                        const workspace_path = entry.key_ptr.*;
+                        for (entry.value_ptr.items) |spec| {
+                            const at_index = std.mem.lastIndexOfScalar(u8, spec, '@') orelse continue;
+                            const pkg_name = spec[0..at_index];
+                            const new_version = spec[at_index + 1 ..];
+                            Output.prettyln("→ Would update {s} to {s} in {s}", .{ pkg_name, new_version, if (workspace_path.len > 0) workspace_path else "root" });
+                        }
                     }
                 }
+
+                if (has_catalog_updates) {
+                    var it = catalog_updates.iterator();
+                    while (it.next()) |entry| {
+                        const catalog_key = entry.key_ptr.*;
+                        const catalog_update = entry.value_ptr.*;
+                        Output.prettyln("→ Would update catalog {s} to {s}", .{ catalog_key, catalog_update.version });
+                    }
+                }
+
+                Output.prettyln("\n<r><yellow>Dry run complete - no changes made<r>", .{});
+            } else {
+                Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
+                Output.flush();
 
                 // Update catalog definitions first if needed
                 if (has_catalog_updates) {
                     try updateCatalogDefinitions(manager, original_cwd, catalog_updates);
                 }
 
-                // Actually update the selected packages
-                if (has_workspace_updates or has_catalog_updates) {
-                    Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
-                    Output.flush();
-
-                    // Collect all packages with their workspace paths
-                    const PackageWithWorkspace = struct {
-                        name: []const u8,
-                        workspace_path: []const u8,
-                    };
-                    var all_packages = std.ArrayList(PackageWithWorkspace).init(bun.default_allocator);
-                    defer all_packages.deinit();
-
-                    if (has_workspace_updates) {
-                        var it = workspace_updates.iterator();
-                        while (it.next()) |entry| {
-                            const workspace_path = entry.key_ptr.*;
-                            for (entry.value_ptr.items) |spec| {
-                                // Extract package name from "express@5.1.0" format
-                                const at_index = std.mem.lastIndexOfScalar(u8, spec, '@') orelse {
-                                    try all_packages.append(.{
-                                        .name = spec,
-                                        .workspace_path = workspace_path,
-                                    });
-                                    continue;
-                                };
-                                const pkg_name = spec[0..at_index];
-                                try all_packages.append(.{
-                                    .name = pkg_name,
-                                    .workspace_path = workspace_path,
-                                });
-                            }
-                        }
-                    }
-
-                    // For now, just run the regular update commands for selected packages
-                    // This avoids the memory aliasing issue while still providing functionality
-                    for (all_packages.items) |pkg_info| {
-                        Output.prettyln("Updating {s}...", .{pkg_info.name});
-                        Output.flush();
-
-                        // Use spawn to run the regular update command to avoid memory issues
-                        var cmd_args = std.ArrayList([]const u8).init(bun.default_allocator);
-                        defer cmd_args.deinit();
-
-                        // Get the current executable path
-                        const exe_path = std.fs.selfExePathAlloc(bun.default_allocator) catch unreachable;
-                        defer bun.default_allocator.free(exe_path);
-                        try cmd_args.append(exe_path);
-                        try cmd_args.append("update");
-                        try cmd_args.append(pkg_info.name);
-                        if (manager.options.do.update_to_latest) {
-                            try cmd_args.append("--latest");
-                        }
-                        if (manager.options.dry_run) {
-                            try cmd_args.append("--dry-run");
-                        }
-
-                        // Build the workspace directory path
-                        // Use the top-level directory (root of monorepo) as base, not original_cwd
-                        // which might be inside a workspace when using -r or --filter
-                        const root_dir = FileSystem.instance.top_level_dir;
-                        const workspace_cwd = if (pkg_info.workspace_path.len > 0) blk: {
-                            var path_buf: bun.PathBuffer = undefined;
-                            const workspace_full_path = bun.path.joinAbsStringBuf(
-                                root_dir,
-                                &path_buf,
-                                &[_]string{pkg_info.workspace_path},
-                                .auto,
-                            );
-                            break :blk try bun.default_allocator.dupe(u8, workspace_full_path);
-                        } else try bun.default_allocator.dupe(u8, root_dir);
-                        defer bun.default_allocator.free(workspace_cwd);
-
-                        // Run the update command as a subprocess
-                        var env_map = try std.process.getEnvMap(bun.default_allocator);
-                        defer env_map.deinit();
-
-                        // Suppress debug logs in subprocess
-                        try env_map.put("BUN_DEBUG_QUIET_LOGS", "1");
-
-                        const result = std.process.Child.run(.{
-                            .allocator = bun.default_allocator,
-                            .argv = cmd_args.items,
-                            .cwd = workspace_cwd,
-                            .env_map = &env_map,
-                        }) catch |err| {
-                            Output.errGeneric("Failed to update {s}: {s}", .{ pkg_info.name, @errorName(err) });
-                            continue;
-                        };
-                        defer {
-                            bun.default_allocator.free(result.stdout);
-                            bun.default_allocator.free(result.stderr);
-                        }
-
-                        if (result.term.Exited == 0) {
-                            Output.prettyln("✓ Updated {s}", .{pkg_info.name});
-                        } else {
-                            Output.errGeneric("Failed to update {s}", .{pkg_info.name});
-                            if (result.stderr.len > 0) {
-                                Output.errGeneric("Error: {s}", .{result.stderr});
-                            }
-                        }
-                    }
+                // Update all package.json files directly (fast!)
+                if (has_workspace_updates) {
+                    try updatePackageJsonFiles(manager, workspace_updates);
                 }
-            },
+
+                const root_dir = FileSystem.instance.top_level_dir;
+
+                var install_process = std.process.Child.init(
+                    &.{
+                        try bun.selfExePath(),
+                        "install",
+                    },
+                    bun.default_allocator,
+                );
+                install_process.cwd = root_dir;
+                install_process.stdout_behavior = .Inherit;
+                install_process.stderr_behavior = .Inherit;
+
+                const install_term = install_process.spawnAndWait() catch |err| {
+                    Output.errGeneric("Failed to run bun install: {s}", .{@errorName(err)});
+                    return;
+                };
+
+                switch (install_term) {
+                    .Exited => |exit_code| {
+                        if (exit_code == 0) {
+                            // Output.prettyln("<green>✓<r> Installation complete", .{});
+                        } else {
+                            Output.errGeneric("bun install failed with exit code {d}", .{exit_code});
+                        }
+                    },
+                    else => {
+                        Output.errGeneric("bun install failed", .{});
+                    },
+                }
+            }
         }
     }
 

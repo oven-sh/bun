@@ -67,9 +67,9 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
     clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
-    clap.parseParam("--filter <STR>...                 Update packages for the matching workspaces") catch unreachable,
+    clap.parseParam("--filter <STR>...                     Update packages for the matching workspaces") catch unreachable,
     clap.parseParam("-r, --recursive                       Update packages in all workspaces") catch unreachable,
-    clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
+    clap.parseParam("<POS> ...                             \"name\" of packages to update") catch unreachable,
 });
 
 pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -125,8 +125,8 @@ const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
     // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-    clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
-    clap.parseParam("-r, --recursive                              Check outdated packages in all workspaces") catch unreachable,
+    clap.parseParam("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace") catch unreachable,
+    clap.parseParam("-r, --recursive                        Check outdated packages in all workspaces") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });
 

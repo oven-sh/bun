@@ -611,7 +611,7 @@ function Server(options, secureConnectionListener): void {
 
         validateCiphers(options.ciphers);
 
-        // TODO: Pass the ciphers
+        this.ciphers = options.ciphers;
       }
     }
   };
@@ -639,6 +639,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        ciphers: this.ciphers,
       },
       TLSSocket,
     ];
@@ -690,7 +691,7 @@ function connect(...args) {
 }
 
 function getCiphers() {
-  return DEFAULT_CIPHERS.split(":");
+  return getDefaultCiphers().split(":");
 }
 
 // Convert protocols array into valid OpenSSL protocols list
@@ -793,6 +794,16 @@ function getCACertificates(type = "default") {
   }
 }
 
+function tlsCipherFilter(a: string) {
+  return !a.startsWith("TLS_");
+}
+
+function getDefaultCiphers() {
+  // TLS_ will always be present until SSL_CTX_set_cipher_list is supported see default_ciphers.h
+  const ciphers = getTLSDefaultCiphers();
+  return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -801,9 +812,15 @@ export default {
   createSecureContext,
   createServer,
   get DEFAULT_CIPHERS() {
-    return getTLSDefaultCiphers();
+    return getDefaultCiphers();
   },
   set DEFAULT_CIPHERS(value) {
+    if (value) {
+      validateCiphers(value, "value");
+      // filter out TLS_ ciphers
+      const ciphers = value.split(":");
+      value = ciphers.filter(tlsCipherFilter).join(":");
+    }
     setTLSDefaultCiphers(value);
   },
   DEFAULT_ECDH_CURVE,

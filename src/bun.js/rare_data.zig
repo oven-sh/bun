@@ -436,7 +436,7 @@ fn setTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.C
 
 fn getTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalThis.bunVM();
-    const ciphers = vm.rareData().tlsDefaultCiphers() orelse return .js_undefined;
+    const ciphers = vm.rareData().tlsDefaultCiphers() orelse return try bun.String.createUTF8ForJS(globalThis, bun.uws.get_default_ciphers());
 
     return try bun.String.createUTF8ForJS(globalThis, ciphers);
 }

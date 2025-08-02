@@ -146,6 +146,14 @@ pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
     false => i32,
 };
 
+const c = struct {
+    pub extern fn us_get_default_ciphers() [*:0]const u8;
+};
+
+pub fn get_default_ciphers() [:0]const u8 {
+    return c.us_get_default_ciphers()[0..bun.len(c.us_get_default_ciphers()) :0];
+}
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const jsc = bun.jsc;

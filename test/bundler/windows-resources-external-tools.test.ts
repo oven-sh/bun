@@ -84,6 +84,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
           "Test Company",
           "--windows-title",
           "TestApp",
+          "--windows-copyright",
+          "(c) 2024 Test Company",
           join(dir, "index.js"),
           "--outfile",
           join(dir, "test.exe"),
@@ -226,6 +228,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
           "Test Publisher",
           "--windows-title",
           "Test Product",
+          "--windows-copyright",
+          "Copyright 2024 Test Publisher",
           join(dir, "index.js"),
           "--outfile",
           join(dir, "version.exe"),
@@ -282,6 +286,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       expect(text).toContain("Test Publisher");
       expect(text).toContain("ProductName");
       expect(text).toContain("Test Product");
+      expect(text).toContain("LegalCopyright");
+      expect(text).toContain("Copyright 2024 Test Publisher");
     });
   });
 
@@ -294,6 +300,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       const testDescription = "This is my test application description";
       const testPublisher = "Acme Test Corporation";
       const testTitle = "Super Test Product";
+      const testCopyright = "Copyright (c) 2024 Acme Test Corporation";
 
       await using buildProc = spawn({
         cmd: [
@@ -309,6 +316,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
           testPublisher,
           "--windows-title",
           testTitle,
+          "--windows-copyright",
+          testCopyright,
           join(dir, "index.js"),
           "--outfile",
           join(dir, "strings.exe"),
@@ -334,9 +343,11 @@ describe.skipIf(isWindows)("Windows Resource Editing with External Tools", () =>
       expect(stdout).toContain(testDescription);
       expect(stdout).toContain(testPublisher);
       expect(stdout).toContain(testTitle);
+      expect(stdout).toContain(testCopyright);
       expect(stdout).toContain("CompanyName");
       expect(stdout).toContain("FileDescription");
       expect(stdout).toContain("ProductName");
+      expect(stdout).toContain("LegalCopyright");
       expect(stdout).toContain("9.8.7.6"); // Version string
     });
   });

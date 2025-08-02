@@ -175,6 +175,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable publisher") catch unreachable,
     clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
     clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
+    clap.parseParam("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -929,6 +930,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.windows.description = description;
+        }
+        if (args.option("--windows-copyright")) |copyright| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-copyright requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.copyright = copyright;
         }
 
         if (args.option("--outdir")) |outdir| {

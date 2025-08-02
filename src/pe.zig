@@ -605,7 +605,7 @@ pub const PEFile = struct {
 
         // If no resource modifications needed, return early
         if (settings.icon == null and settings.version == null and settings.description == null and
-            settings.publisher == null and settings.title == null)
+            settings.publisher == null and settings.title == null and settings.copyright == null)
         {
             return;
         }
@@ -634,7 +634,7 @@ pub const PEFile = struct {
 
         // Build version info if any version fields provided
         if (settings.version != null or settings.description != null or
-            settings.publisher != null or settings.title != null)
+            settings.publisher != null or settings.title != null or settings.copyright != null)
         {
             const version_str = if (settings.version) |v| v else "1.0.0.0";
             try resource_builder.setVersionInfo(
@@ -642,6 +642,7 @@ pub const PEFile = struct {
                 settings.description,
                 settings.publisher,
                 settings.title,
+                settings.copyright,
             );
         }
 
@@ -859,7 +860,7 @@ const ResourceBuilder = struct {
         wType: u16,
     };
 
-    pub fn setVersionInfo(self: *ResourceBuilder, version: []const u8, description: ?[]const u8, company: ?[]const u8, product: ?[]const u8) !void {
+    pub fn setVersionInfo(self: *ResourceBuilder, version: []const u8, description: ?[]const u8, company: ?[]const u8, product: ?[]const u8, copyright: ?[]const u8) !void {
         // Parse version string
         var version_parts: [4]u16 = .{ 1, 0, 0, 0 };
         var iter = std.mem.tokenizeScalar(u8, version, '.');
@@ -918,6 +919,7 @@ const ResourceBuilder = struct {
             .{ .key = "CompanyName", .value = company },
             .{ .key = "FileDescription", .value = description },
             .{ .key = "FileVersion", .value = version },
+            .{ .key = "LegalCopyright", .value = copyright },
             .{ .key = "ProductName", .value = product },
             .{ .key = "ProductVersion", .value = version },
         };

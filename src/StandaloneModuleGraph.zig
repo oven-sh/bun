@@ -716,6 +716,16 @@ pub const StandaloneModuleGraph = struct {
                         else => {},
                     }
 
+                    // Truncate file to the new size to avoid leaving old data at the end
+                    switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
+                        .err => |err| {
+                            Output.prettyErrorln("Error truncating file: {}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
+                        },
+                        else => {},
+                    }
+                    
                     const writer = file.writer();
                     pe_file.write(writer) catch |err| {
                         Output.prettyErrorln("Error writing PE file: {}", .{err});
@@ -724,7 +734,7 @@ pub const StandaloneModuleGraph = struct {
                     };
                 }
                 if (inject_options) |opts| {
-                    if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null or opts.hide_console) {
+                    if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null or opts.copyright != null or opts.hide_console) {
                         switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                             .err => |err| {
                                 Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
@@ -757,10 +767,11 @@ pub const StandaloneModuleGraph = struct {
                             cleanup(zname, cloned_executable_fd);
                             Global.exit(1);
                         };
-
-                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                        
+                        // Truncate file to the new size to avoid leaving old data at the end
+                        switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
                             .err => |err| {
-                                Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                                Output.prettyErrorln("Error truncating file: {}", .{err});
                                 cleanup(zname, cloned_executable_fd);
                                 Global.exit(1);
                             },

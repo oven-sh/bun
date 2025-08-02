@@ -18,6 +18,7 @@ pub const WindowsSettings = struct {
     publisher: ?[]const u8 = null,
     version: ?[]const u8 = null,
     description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
 };
 
 pub fn validatePath(

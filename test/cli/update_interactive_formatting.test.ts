@@ -530,78 +530,75 @@ registry = "${registryUrl}"
     expect(appPackageJson.dependencies["no-deps"]).toBe("catalog:");
   });
 
-  it(
-    "should work correctly when run from inside a workspace directory",
-    async () => {
-      const dir = tempDirWithFiles("update-interactive-from-workspace", {
-        "bunfig.toml": `[install]
+  it("should work correctly when run from inside a workspace directory", async () => {
+    const dir = tempDirWithFiles("update-interactive-from-workspace", {
+      "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
 `,
-        "package.json": JSON.stringify({
-          name: "root",
-          version: "1.0.0",
-          workspaces: ["packages/*"],
-        }),
-        "packages/app1/package.json": JSON.stringify({
-          name: "@test/app1",
-          version: "1.0.0",
-          dependencies: {
-            "no-deps": "1.0.0",
-          },
-        }),
-        "packages/app2/package.json": JSON.stringify({
-          name: "@test/app2",
-          version: "1.0.0",
-          dependencies: {
-            "dep-with-tags": "1.0.0",
-          },
-        }),
-      });
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/app1/package.json": JSON.stringify({
+        name: "@test/app1",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+      "packages/app2/package.json": JSON.stringify({
+        name: "@test/app2",
+        version: "1.0.0",
+        dependencies: {
+          "dep-with-tags": "1.0.0",
+        },
+      }),
+    });
 
-      // First install from root
-      await using install = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: dir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(await install.exited).toBe(0);
+    // First install from root
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await install.exited).toBe(0);
 
-      // Run interactive update from inside workspace
-      const workspaceDir = join(dir, "packages/app1");
-      await using update = Bun.spawn({
-        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
-        cwd: workspaceDir,
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Run interactive update from inside workspace
+    const workspaceDir = join(dir, "packages/app1");
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
+      cwd: workspaceDir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      // Send 'a' to select all, then newline to confirm
-      update.stdin.write("a\n");
-      update.stdin.end();
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
-      const exitCode = await update.exited;
-      const output = await new Response(update.stdout).text();
-      const stderr = await new Response(update.stderr).text();
-      const combined = output + stderr;
+    const exitCode = await update.exited;
+    const output = await new Response(update.stdout).text();
+    const stderr = await new Response(update.stderr).text();
+    const combined = output + stderr;
 
-      // Should not fail with FileNotFound
-      expect(exitCode).toBe(0);
-      expect(combined).not.toContain("FileNotFound");
-      expect(combined).not.toContain("Failed to update");
+    // Should not fail with FileNotFound
+    expect(exitCode).toBe(0);
+    expect(combined).not.toContain("FileNotFound");
+    expect(combined).not.toContain("Failed to update");
 
-      // Check that both workspace packages were updated
-      const app1Json = await Bun.file(join(dir, "packages/app1/package.json")).json();
-      const app2Json = await Bun.file(join(dir, "packages/app2/package.json")).json();
+    // Check that both workspace packages were updated
+    const app1Json = await Bun.file(join(dir, "packages/app1/package.json")).json();
+    const app2Json = await Bun.file(join(dir, "packages/app2/package.json")).json();
 
-      expect(app1Json.dependencies["no-deps"]).toBe("2.0.0");
-      expect(app2Json.dependencies["dep-with-tags"]).toBe("3.0.0");
-    },
-  );
+    expect(app1Json.dependencies["no-deps"]).toBe("2.0.0");
+    expect(app2Json.dependencies["dep-with-tags"]).toBe("3.0.0");
+  });
 
   it("should handle basic interactive update with select all", async () => {
     const dir = tempDirWithFiles("update-interactive-basic", {
@@ -650,70 +647,67 @@ registry = "${registryUrl}"
     expect(packageJson.dependencies["no-deps"]).toBe("2.0.0");
   });
 
-  it(
-    "should preserve version prefixes for all semver range types in catalogs",
-    async () => {
-      const dir = tempDirWithFiles("update-interactive-semver-prefixes", {
-        "bunfig.toml": `[install]
+  it("should preserve version prefixes for all semver range types in catalogs", async () => {
+    const dir = tempDirWithFiles("update-interactive-semver-prefixes", {
+      "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
 `,
-        "package.json": JSON.stringify({
-          name: "root",
-          version: "1.0.0",
-          workspaces: ["packages/*"],
-          catalog: {
-            "no-deps": "^1.0.0",
-            "dep-with-tags": "~1.0.0",
-            "a-dep": ">=1.0.5",
-          },
-        }),
-        "packages/app/package.json": JSON.stringify({
-          name: "@test/app",
-          dependencies: {
-            "no-deps": "catalog:",
-            "dep-with-tags": "catalog:",
-            "a-dep": "catalog:",
-          },
-        }),
-      });
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: {
+          "no-deps": "^1.0.0",
+          "dep-with-tags": "~1.0.0",
+          "a-dep": ">=1.0.5",
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "@test/app",
+        dependencies: {
+          "no-deps": "catalog:",
+          "dep-with-tags": "catalog:",
+          "a-dep": "catalog:",
+        },
+      }),
+    });
 
-      // Install first
-      await using install = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: dir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(await install.exited).toBe(0);
+    // Install first
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await install.exited).toBe(0);
 
-      // Run interactive update with piped input
-      await using update = Bun.spawn({
-        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
-        cwd: dir,
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Run interactive update with piped input
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      // Send 'a' to select all, then newline to confirm
-      update.stdin.write("a\n");
-      update.stdin.end();
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
-      const exitCode = await update.exited;
-      expect(exitCode).toBe(0);
+    const exitCode = await update.exited;
+    expect(exitCode).toBe(0);
 
-      // Check if prefixes were preserved
-      const packageJson = await Bun.file(join(dir, "package.json")).json();
+    // Check if prefixes were preserved
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
 
-      // All prefixes should be preserved (versions may or may not change)
-      expect(packageJson.catalog["no-deps"]).toMatch(/^\^/);
-      expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
-      expect(packageJson.catalog["a-dep"]).toMatch(/^>=/);
-    },
-  );
+    // All prefixes should be preserved (versions may or may not change)
+    expect(packageJson.catalog["no-deps"]).toMatch(/^\^/);
+    expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
+    expect(packageJson.catalog["a-dep"]).toMatch(/^>=/);
+  });
 
   it("should handle catalog updates in workspaces.catalogs object", async () => {
     const dir = tempDirWithFiles("update-interactive-workspaces-catalogs", {
@@ -1072,70 +1066,67 @@ registry = "${registryUrl}"
     expect(packageJson.dependencies["a-dep"]).toMatch(/^~/);
   });
 
-  it(
-    "should update catalog in workspaces object (not workspaces.catalogs)",
-    async () => {
-      const dir = tempDirWithFiles("update-interactive-workspaces-catalog", {
-        "bunfig.toml": `[install]
+  it("should update catalog in workspaces object (not workspaces.catalogs)", async () => {
+    const dir = tempDirWithFiles("update-interactive-workspaces-catalog", {
+      "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
 `,
-        "package.json": JSON.stringify({
-          name: "root",
-          version: "1.0.0",
-          workspaces: {
-            packages: ["packages/*"],
-            catalog: {
-              "no-deps": "^1.0.0",
-              "dep-with-tags": "~1.0.0",
-            },
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: {
+            "no-deps": "^1.0.0",
+            "dep-with-tags": "~1.0.0",
           },
-        }),
-        "packages/app/package.json": JSON.stringify({
-          name: "@test/app",
-          dependencies: {
-            "no-deps": "catalog:",
-            "dep-with-tags": "catalog:",
-          },
-        }),
-      });
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "@test/app",
+        dependencies: {
+          "no-deps": "catalog:",
+          "dep-with-tags": "catalog:",
+        },
+      }),
+    });
 
-      // Install first
-      await using install = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: dir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(await install.exited).toBe(0);
+    // Install first
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await install.exited).toBe(0);
 
-      // Run interactive update with piped input
-      await using update = Bun.spawn({
-        cmd: [bunExe(), "update", "-i", "-r", "--latest"],
-        cwd: dir,
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Run interactive update with piped input
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "-r", "--latest"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      // Send 'a' to select all, then newline to confirm
-      update.stdin.write("a\n");
-      update.stdin.end();
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
-      const exitCode = await update.exited;
-      const output = await new Response(update.stdout).text();
+    const exitCode = await update.exited;
+    const output = await new Response(update.stdout).text();
 
-      expect(exitCode).toBe(0);
-      expect(output).toContain("Updated dep-with-tags in workspaces.catalog");
+    expect(exitCode).toBe(0);
+    expect(output).toContain("Updated dep-with-tags in workspaces.catalog");
 
-      // Check catalog was updated with preserved prefixes
-      const packageJson = await Bun.file(join(dir, "package.json")).json();
-      expect(packageJson.workspaces.catalog["no-deps"]).toBe("^2.0.0");
-      expect(packageJson.workspaces.catalog["dep-with-tags"]).toMatch(/^~/);
-    },
-  );
+    // Check catalog was updated with preserved prefixes
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.workspaces.catalog["no-deps"]).toBe("^2.0.0");
+    expect(packageJson.workspaces.catalog["dep-with-tags"]).toMatch(/^~/);
+  });
 
   it("should handle scoped packages in catalogs correctly", async () => {
     const dir = tempDirWithFiles("update-interactive-scoped-catalog", {
@@ -1197,73 +1188,70 @@ registry = "${registryUrl}"
     expect(packageJson.catalog["dep-with-tags"]).toMatch(/^>=/);
   });
 
-  it(
-    "should handle catalog updates when running from root with filter",
-    async () => {
-      const dir = tempDirWithFiles("update-interactive-filter-catalog", {
-        "bunfig.toml": `[install]
+  it("should handle catalog updates when running from root with filter", async () => {
+    const dir = tempDirWithFiles("update-interactive-filter-catalog", {
+      "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
 `,
-        "package.json": JSON.stringify({
-          name: "root",
-          version: "1.0.0",
-          workspaces: ["packages/*"],
-          catalog: {
-            "no-deps": "^1.0.0",
-            "dep-with-tags": "~1.0.0",
-          },
-        }),
-        "packages/app1/package.json": JSON.stringify({
-          name: "@test/app1",
-          dependencies: {
-            "no-deps": "catalog:",
-          },
-        }),
-        "packages/app2/package.json": JSON.stringify({
-          name: "@test/app2",
-          dependencies: {
-            "dep-with-tags": "catalog:",
-          },
-        }),
-      });
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: {
+          "no-deps": "^1.0.0",
+          "dep-with-tags": "~1.0.0",
+        },
+      }),
+      "packages/app1/package.json": JSON.stringify({
+        name: "@test/app1",
+        dependencies: {
+          "no-deps": "catalog:",
+        },
+      }),
+      "packages/app2/package.json": JSON.stringify({
+        name: "@test/app2",
+        dependencies: {
+          "dep-with-tags": "catalog:",
+        },
+      }),
+    });
 
-      // Install first
-      await using install = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: dir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(await install.exited).toBe(0);
+    // Install first
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await install.exited).toBe(0);
 
-      // Run interactive update with filter
-      await using update = Bun.spawn({
-        cmd: [bunExe(), "update", "-i", "--filter=@test/app2", "--latest"],
-        cwd: dir,
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Run interactive update with filter
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "--filter=@test/app2", "--latest"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      // Send 'a' to select all, then newline to confirm
-      update.stdin.write("a\n");
-      update.stdin.end();
+    // Send 'a' to select all, then newline to confirm
+    update.stdin.write("a\n");
+    update.stdin.end();
 
-      const exitCode = await update.exited;
-      const output = await new Response(update.stdout).text();
+    const exitCode = await update.exited;
+    const output = await new Response(update.stdout).text();
 
-      expect(exitCode).toBe(0);
-      // Should update catalog even when using filter
-      expect(output).toContain("Updated dep-with-tags in catalog");
+    expect(exitCode).toBe(0);
+    // Should update catalog even when using filter
+    expect(output).toContain("Updated dep-with-tags in catalog");
 
-      // Check catalog was updated
-      const packageJson = await Bun.file(join(dir, "package.json")).json();
-      expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
-    },
-  );
+    // Check catalog was updated
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
+  });
 
   it("should handle multiple catalog definitions with same package", async () => {
     const dir = tempDirWithFiles("update-interactive-multi-catalog", {

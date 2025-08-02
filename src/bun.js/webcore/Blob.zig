@@ -2281,13 +2281,14 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    const store = this.store orelse {
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
-    };
+    
+    try validateWritableBlob(globalThis, this);
+    
+    const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
         .file => |file| file.unlink(globalThis),
-        else => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
+        else => unreachable, // validateWritableBlob should have caught this
     };
 }
 
@@ -2575,9 +2576,9 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
-    var store = this.store orelse {
-        return globalThis.throwInvalidArguments("Blob is detached", .{});
-    };
+    try validateWritableBlob(globalThis, this);
+
+    var store = this.store.?;
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
@@ -2630,9 +2631,6 @@ pub fn getWriter(
             proxy_url,
             null,
         );
-    }
-    if (store.data != .file) {
-        return globalThis.throwInvalidArguments("Blob is read-only", .{});
     }
 
     if (Environment.isWindows) {

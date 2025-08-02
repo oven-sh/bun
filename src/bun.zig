@@ -3533,6 +3533,10 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
+
+            pub inline fn unwrapGet(oi: Optional) ?backing_int {
+                return if (oi == .none) null else @intFromEnum(oi);
+            }
         };
     };
 }

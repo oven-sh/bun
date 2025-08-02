@@ -5,11 +5,12 @@ import {
   beforeEach,
   describe,
   expect,
+  expectTypeOf,
   jest,
+  mock,
   type Mock,
   spyOn,
   test,
-  expectTypeOf,
 } from "bun:test";
 import { expectType } from "./utilities";
 
@@ -163,3 +164,5 @@ test("expectTypeOf basic type checks", () => {
   // @ts-expect-error
   expectTypeOf({ name: 123 }).toMatchObjectType<{ name: string }>();
 });
+
+mock.clearAllMocks();

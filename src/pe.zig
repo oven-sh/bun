@@ -849,6 +849,12 @@ const ResourceBuilder = struct {
             try data.append(0);
         }
     }
+    
+    // Helper to align a size to 4-byte boundary
+    fn alignToFour(size: usize) usize {
+        if (size % 4 == 0) return size;
+        return size + (4 - (size % 4));
+    }
 
     // Note: Do NOT use a struct here as it gets padded to 8 bytes
     // We need exactly 6 bytes for the header
@@ -870,15 +876,122 @@ const ResourceBuilder = struct {
         var data = std.ArrayList(u8).init(self.allocator);
         defer data.deinit();
 
-        // VS_VERSIONINFO root structure
-        const vs_version_info_start = data.items.len;
-        // Write header fields individually (6 bytes total) to avoid struct padding
-        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        // We'll build the components first, then assemble with proper lengths
+        // This matches editpe's approach
+        
+        // Build StringFileInfo section
+        var string_info = std.ArrayList(u8).init(self.allocator);
+        defer string_info.deinit();
+        
+        // Build StringTable for 040904B0 (US English, Unicode)
+        var string_table = std.ArrayList(u8).init(self.allocator);
+        defer string_table.deinit();
+        
+        // Add string entries to the string table
+        const version_strings = [_]struct { key: []const u8, value: ?[]const u8 }{
+            .{ .key = "CompanyName", .value = company },
+            .{ .key = "FileDescription", .value = description },
+            .{ .key = "FileVersion", .value = version },
+            .{ .key = "LegalCopyright", .value = copyright },
+            .{ .key = "ProductName", .value = product },
+            .{ .key = "ProductVersion", .value = version },
+        };
+
+        for (version_strings) |str| {
+            if (str.value) |value| {
+                // Build each string entry
+                var string_entry = std.ArrayList(u8).init(self.allocator);
+                defer string_entry.deinit();
+                
+                // Calculate the aligned size of the key
+                const key_size = 6 + (str.key.len + 1) * 2; // header + key in UTF-16 with null
+                const key_aligned = alignToFour(key_size);
+                const value_size = (value.len + 1) * 2; // value in UTF-16 with null  
+                const total_len = key_aligned + value_size;
+                
+                // Write string entry header
+                try string_entry.writer().writeInt(u16, @intCast(alignToFour(total_len)), .little); // wLength (aligned)
+                try string_entry.writer().writeInt(u16, @intCast(value.len + 1), .little); // wValueLength (char count including null)
+                try string_entry.writer().writeInt(u16, 1, .little); // wType (1 = text)
+                _ = try writeUtf16String(&string_entry, str.key);
+                try alignTo32Bit(&string_entry);
+                _ = try writeUtf16String(&string_entry, value);
+                try alignTo32Bit(&string_entry);
+                
+                try string_table.appendSlice(string_entry.items);
+            }
+        }
+        
+        // Build the StringTable header
+        const string_table_key = "040904B0";
+        const string_table_header_size = 6 + (string_table_key.len + 1) * 2;
+        const string_table_total = alignToFour(string_table_header_size) + string_table.items.len;
+        
+        // Write StringTable header
+        try string_info.writer().writeInt(u16, @intCast(string_table_total), .little); // wLength
+        try string_info.writer().writeInt(u16, 0, .little); // wValueLength
+        try string_info.writer().writeInt(u16, 1, .little); // wType (1 = text)
+        _ = try writeUtf16String(&string_info, string_table_key);
+        try alignTo32Bit(&string_info);
+        try string_info.appendSlice(string_table.items);
+        
+        // Build StringFileInfo header
+        const string_file_info_key = "StringFileInfo";
+        const string_file_info_header_size = 6 + (string_file_info_key.len + 1) * 2;
+        const string_file_info_total = alignToFour(string_file_info_header_size) + string_info.items.len;
+        
+        // Build VarFileInfo section
+        var var_info = std.ArrayList(u8).init(self.allocator);
+        defer var_info.deinit();
+        
+        // Build Translation entry
+        var translation = std.ArrayList(u8).init(self.allocator);
+        defer translation.deinit();
+        
+        const translation_key = "Translation";
+        const translation_header_size = 6 + (translation_key.len + 1) * 2;
+        const translation_value_size = 4; // 2 words
+        const translation_total = alignToFour(translation_header_size) + translation_value_size;
+        
+        // Write Translation header
+        try translation.writer().writeInt(u16, @intCast(translation_total), .little); // wLength
+        try translation.writer().writeInt(u16, translation_value_size, .little); // wValueLength
+        try translation.writer().writeInt(u16, 0, .little); // wType (0 = binary)
+        _ = try writeUtf16String(&translation, translation_key);
+        try alignTo32Bit(&translation);
+        // Language and code page (0x0409, 0x04B0)
+        try translation.appendSlice(&[_]u8{ 0x09, 0x04, 0xB0, 0x04 });
+        try alignTo32Bit(&translation);
+        
+        // Build VarFileInfo header
+        const var_file_info_key = "VarFileInfo";
+        const var_file_info_header_size = 6 + (var_file_info_key.len + 1) * 2;
+        const var_file_info_total = alignToFour(var_file_info_header_size) + translation.items.len;
+        
+        try var_info.writer().writeInt(u16, @intCast(var_file_info_total), .little); // wLength
+        try var_info.writer().writeInt(u16, 0, .little); // wValueLength
+        try var_info.writer().writeInt(u16, 1, .little); // wType (1 = text)
+        _ = try writeUtf16String(&var_info, var_file_info_key);
+        try alignTo32Bit(&var_info);
+        try var_info.appendSlice(translation.items);
+        
+        // Now build the complete VS_VERSIONINFO
+        const vs_version_info_key = "VS_VERSION_INFO";
+        const vs_header_size = 6 + (vs_version_info_key.len + 1) * 2;
+        const vs_header_aligned = alignToFour(vs_header_size);
+        const fixed_info_size = @sizeOf(PEFile.VS_FIXEDFILEINFO);
+        const fixed_info_aligned = alignToFour(vs_header_aligned + fixed_info_size);
+        
+        // Calculate total length
+        const total_len = fixed_info_aligned + string_file_info_total + var_info.items.len;
+        
+        // Write VS_VERSIONINFO header
+        try data.writer().writeInt(u16, @intCast(total_len), .little); // wLength
         try data.writer().writeInt(u16, @sizeOf(PEFile.VS_FIXEDFILEINFO), .little); // wValueLength
         try data.writer().writeInt(u16, 0, .little); // wType (0 = binary)
-        _ = try writeUtf16String(&data, "VS_VERSION_INFO");
+        _ = try writeUtf16String(&data, vs_version_info_key);
         try alignTo32Bit(&data);
-
+        
         // VS_FIXEDFILEINFO
         const fixed_info = PEFile.VS_FIXEDFILEINFO{
             .signature = PEFile.VS_FFI_SIGNATURE,
@@ -897,115 +1010,27 @@ const ResourceBuilder = struct {
         };
         try data.appendSlice(std.mem.asBytes(&fixed_info));
         try alignTo32Bit(&data);
-
-        // StringFileInfo
-        const string_file_info_start = data.items.len;
-        // Write header fields individually to avoid struct padding
-        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        
+        // Append StringFileInfo
+        try data.writer().writeInt(u16, @intCast(string_file_info_total), .little); // wLength
         try data.writer().writeInt(u16, 0, .little); // wValueLength
         try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
-        _ = try writeUtf16String(&data, "StringFileInfo");
+        _ = try writeUtf16String(&data, string_file_info_key);
         try alignTo32Bit(&data);
+        try data.appendSlice(string_info.items);
+        
+        // Append VarFileInfo
+        try data.appendSlice(var_info.items);
 
-        // StringTable for 040904B0 (US English, Unicode)
-        const string_table_start = data.items.len;
-        // Write header fields individually to avoid struct padding
-        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
-        try data.writer().writeInt(u16, 0, .little); // wValueLength
-        try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
-        _ = try writeUtf16String(&data, "040904B0");
-        try alignTo32Bit(&data);
-
-        // Add string entries
-        const version_strings = [_]struct { key: []const u8, value: ?[]const u8 }{
-            .{ .key = "CompanyName", .value = company },
-            .{ .key = "FileDescription", .value = description },
-            .{ .key = "FileVersion", .value = version },
-            .{ .key = "LegalCopyright", .value = copyright },
-            .{ .key = "ProductName", .value = product },
-            .{ .key = "ProductVersion", .value = version },
-        };
-
-        for (version_strings) |str| {
-            if (str.value) |value| {
-                const string_start = data.items.len;
-                // Write header fields individually to avoid struct padding
-                try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
-                try data.writer().writeInt(u16, 0, .little); // wValueLength (will be updated)
-                try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
-                _ = try writeUtf16String(&data, str.key);
-                try alignTo32Bit(&data);
-
-                // Write value and get character count for wValueLength
-                const value_char_count = try writeUtf16String(&data, value);
-                // wValueLength should be character count including null terminator
-                const value_len = value_char_count;
-
-                // Update string header
-                const string_len = data.items.len - string_start;
-                if (string_len > std.math.maxInt(u16)) return error.StringTooLong;
-                if (value_len > std.math.maxInt(u16)) return error.ValueTooLong;
-                std.mem.writeInt(u16, data.items[string_start..][0..2], @intCast(string_len), .little);
-                std.mem.writeInt(u16, data.items[string_start + 2 ..][0..2], @intCast(value_len), .little);
-
-                try alignTo32Bit(&data);
-            }
-        }
-
-        // Update StringTable header
-        const string_table_len = data.items.len - string_table_start;
-        if (string_table_len > std.math.maxInt(u16)) return error.StringTableTooLong;
-        std.mem.writeInt(u16, data.items[string_table_start..][0..2], @intCast(string_table_len), .little);
-
-        // Update StringFileInfo header
-        const string_file_info_len = data.items.len - string_file_info_start;
-        if (string_file_info_len > std.math.maxInt(u16)) return error.StringFileInfoTooLong;
-        std.mem.writeInt(u16, data.items[string_file_info_start..][0..2], @intCast(string_file_info_len), .little);
-
-        // VarFileInfo
-        const var_file_info_start = data.items.len;
-        // Write header fields individually to avoid struct padding
-        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
-        try data.writer().writeInt(u16, 0, .little); // wValueLength
-        try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
-        _ = try writeUtf16String(&data, "VarFileInfo");
-        try alignTo32Bit(&data);
-
-        // Translation
-        const translation_start = data.items.len;
-        // Write header fields individually to avoid struct padding
-        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
-        try data.writer().writeInt(u16, 4, .little); // wValueLength
-        try data.writer().writeInt(u16, 0, .little); // wType (0 = binary)
-        _ = try writeUtf16String(&data, "Translation");
-        try alignTo32Bit(&data);
-
-        // Language and code page
-        try data.appendSlice(&[_]u8{ 0x09, 0x04, 0xB0, 0x04 }); // 0x0409, 0x04B0
-
-        // Update Translation header
-        const translation_len = data.items.len - translation_start;
-        if (translation_len > std.math.maxInt(u16)) return error.TranslationTooLong;
-        std.mem.writeInt(u16, data.items[translation_start..][0..2], @intCast(translation_len), .little);
-
-        // Update VarFileInfo header
-        const var_file_info_len = data.items.len - var_file_info_start;
-        if (var_file_info_len > std.math.maxInt(u16)) return error.VarFileInfoTooLong;
-        std.mem.writeInt(u16, data.items[var_file_info_start..][0..2], @intCast(var_file_info_len), .little);
-
-        // Update VS_VERSIONINFO header
-        const vs_version_info_len = data.items.len - vs_version_info_start;
-        if (vs_version_info_len > std.math.maxInt(u16)) return error.VersionInfoTooLong;
-        std.mem.writeInt(u16, data.items[vs_version_info_start..][0..2], @intCast(vs_version_info_len), .little);
 
         // Add to resource table
         const version_table = try self.getOrCreateTable(&self.root, PEFile.RT_VERSION);
         const id_table = try self.getOrCreateTable(version_table, 1);
-        const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
-
+        
+        // At the language level, add data directly instead of creating another table
         const version_bytes = try data.toOwnedSlice();
-        try lang_table.entries.append(.{
-            .id = 0,
+        try id_table.entries.append(.{
+            .id = PEFile.LANGUAGE_ID_EN_US,
             .data = version_bytes,
             .data_size = @intCast(version_bytes.len),
             .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -1053,7 +1078,7 @@ const ResourceBuilder = struct {
         // Now build with known offsets
         var tables_offset: u32 = 0;
         var data_entries_offset = total_table_size;
-        var data_offset = total_table_size + total_data_entries;
+        var data_offset = total_table_size + (total_data_entries * @sizeOf(PEFile.ResourceDataEntry));
 
         try self.writeTableRecursive(&tables, &data_entries, &data_bytes, virtual_address, &self.root, &tables_offset, &data_entries_offset, &data_offset);
 
@@ -1075,7 +1100,7 @@ const ResourceBuilder = struct {
             if (entry.subtable) |subtable| {
                 self.calculateTableSizes(subtable, table_size, data_entries);
             } else if (entry.data != null) {
-                data_entries.* += @sizeOf(PEFile.ResourceDataEntry);
+                data_entries.* += 1;  // Count the number of data entries, not their size
             }
         }
     }
@@ -1127,10 +1152,10 @@ const ResourceBuilder = struct {
                 try subdirs.append(.{ .entry = entry, .offset = next_table_offset });
                 next_table_offset += subdir_size;
             } else if (entry.data) |_| {
-                const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len * @sizeOf(PEFile.ResourceDataEntry)));
+                const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len));
                 const dir_entry = PEFile.ResourceDirectoryEntry{
                     .name_or_id = entry.id,
-                    .offset_to_data = data_entry_offset | 0x80000000, // Set high bit to indicate data entry
+                    .offset_to_data = data_entry_offset, // No high bit for data entry (only for subdirectories)
                 };
                 try tables.appendSlice(std.mem.asBytes(&dir_entry));
 

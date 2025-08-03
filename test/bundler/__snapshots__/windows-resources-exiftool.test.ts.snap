@@ -1,0 +1,12 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Windows Resource Editing with exiftool snapshot test with exiftool 1`] = `
+"File Version Number             : 1.2.3.4
+Product Version Number          : 1.2.3.4
+Company Name                    : Snapshot Publisher
+File Description                : Snapshot Test App
+File Version                    : 1.2.3.4
+Legal Copyright                 : Copyright 2024
+Product Name                    : Snapshot Product
+Product Version                 : 1.2.3.4"
+`;

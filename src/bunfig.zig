@@ -352,6 +352,33 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+                    if (test_.get("testMatch")) |expr| brk: {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.test_match_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "testMatch array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.test_match_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "testMatch must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 

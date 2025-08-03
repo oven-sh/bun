@@ -1426,6 +1426,7 @@ pub const TestCommand = struct {
 
         var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
         defer scanner.deinit();
+        scanner.test_match_patterns = ctx.test_options.test_match_patterns;
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or

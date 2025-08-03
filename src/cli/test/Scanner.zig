@@ -14,6 +14,8 @@ scan_dir_buf: bun.PathBuffer = undefined,
 options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
+/// Custom test file patterns, if empty defaults to hardcoded patterns
+test_match_patterns: []const []const u8 = &.{},
 
 const log = bun.Output.scoped(.jest, true);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
@@ -129,11 +131,28 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
+    
+    // If custom patterns are configured, use those instead of hardcoded suffixes
+    if (this.test_match_patterns.len > 0) {
+        return this.matchesTestPatterns(name);
+    }
+    
     const name_without_extension = name[0 .. name.len - extname.len];
     inline for (test_name_suffixes) |suffix| {
         if (strings.endsWithComptime(name_without_extension, suffix)) return true;
     }
 
+    return false;
+}
+
+/// Check if a file name matches any of the configured test patterns using glob matching
+pub fn matchesTestPatterns(this: *Scanner, name: []const u8) bool {
+    for (this.test_match_patterns) |pattern| {
+        const glob_result = bun.glob.match(this.allocator(), pattern, name);
+        if (glob_result.matches()) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -158,6 +177,15 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
 }
 
 pub fn isTestFile(this: *Scanner, name: []const u8) bool {
+    // If custom patterns are configured, use them directly on the full path
+    if (this.test_match_patterns.len > 0) {
+        const extname = std.fs.path.extension(name);
+        if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
+        
+        const relative_path = bun.path.relative(this.fs.top_level_dir, name);
+        return this.matchesTestPatterns(relative_path) and this.doesPathMatchFilter(name);
+    }
+    
     return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name);
 }
 
@@ -190,10 +218,20 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
             if (!entry.abs_path.isEmpty()) return;
 
             this.search_count += 1;
-            if (!this.couldBeTestFile(name, true)) return;
-
+            
             const parts = &[_][]const u8{ entry.dir, entry.base() };
             const path = this.fs.absBuf(parts, &this.open_dir_buf);
+            
+            // For custom patterns, check the full path instead of just filename
+            if (this.test_match_patterns.len > 0) {
+                const extname = std.fs.path.extension(name);
+                if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return;
+                
+                const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+                if (!this.matchesTestPatterns(rel_path)) return;
+            } else {
+                if (!this.couldBeTestFile(name, true)) return;
+            }
 
             if (!this.doesAbsolutePathMatchFilter(path)) {
                 const rel_path = bun.path.relative(this.fs.top_level_dir, path);

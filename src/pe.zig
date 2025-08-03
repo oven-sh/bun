@@ -616,9 +616,12 @@ pub const PEFile = struct {
             return error.MissingResourceSection;
         }
 
-        // Build new resource directory
+        // Build new resource directory - start by parsing existing resources
         var resource_builder = ResourceBuilder.init(allocator);
         defer resource_builder.deinit();
+        
+        // Parse and preserve existing resources
+        try self.parseExistingResources(&resource_builder, rsrc_section.?);
 
         // Load and process icon if provided
         if (settings.icon) |icon_path| {
@@ -657,6 +660,87 @@ pub const PEFile = struct {
         self.updateChecksum();
     }
 
+    fn parseExistingResources(self: *const PEFile, builder: *ResourceBuilder, section: *const SectionHeader) !void {
+        const section_data = self.data.items[section.pointer_to_raw_data..][0..section.size_of_raw_data];
+        if (section_data.len < @sizeOf(ResourceDirectoryTable)) return;
+        
+        // Parse the root resource directory
+        try self.parseResourceTable(
+            builder,
+            &builder.root,
+            section_data,
+            0,
+            section.virtual_address,
+            0  // depth
+        );
+    }
+    
+    fn parseResourceTable(self: *const PEFile, builder: *ResourceBuilder, table: *ResourceBuilder.ResourceTable, section_data: []const u8, offset: u32, virtual_address: u32, depth: u32) !void {
+        // Prevent infinite recursion
+        if (depth > 3) return;
+        if (offset >= section_data.len or offset + @sizeOf(ResourceDirectoryTable) > section_data.len) return;
+        
+        const dir: *const ResourceDirectoryTable = @ptrCast(@alignCast(section_data.ptr + offset));
+        const total_entries = dir.number_of_name_entries + dir.number_of_id_entries;
+        
+        var entry_offset = offset + @sizeOf(ResourceDirectoryTable);
+        var i: u32 = 0;
+        while (i < total_entries) : (i += 1) {
+            if (entry_offset + @sizeOf(ResourceDirectoryEntry) > section_data.len) break;
+            
+            const entry: *const ResourceDirectoryEntry = @ptrCast(@alignCast(section_data.ptr + entry_offset));
+            entry_offset += @sizeOf(ResourceDirectoryEntry);
+            
+            // Skip named entries for now (only handle ID entries)
+            if (entry.name_or_id & 0x80000000 != 0) continue;
+            
+            const id = entry.name_or_id & 0x7FFFFFFF;
+            
+            if (entry.offset_to_data & 0x80000000 != 0) {
+                // This is a subdirectory
+                const subdir_offset = entry.offset_to_data & 0x7FFFFFFF;
+                
+                // Create a subtable
+                const subtable = try builder.allocator.create(ResourceBuilder.ResourceTable);
+                subtable.* = .{
+                    .entries = std.ArrayList(ResourceBuilder.ResourceTableEntry).init(builder.allocator),
+                };
+                
+                // Parse the subdirectory
+                try self.parseResourceTable(builder, subtable, section_data, subdir_offset, virtual_address, depth + 1);
+                
+                // Add to parent table
+                try table.entries.append(.{
+                    .id = id,
+                    .subtable = subtable,
+                });
+            } else {
+                // This is a data entry
+                const data_entry_offset = entry.offset_to_data;
+                if (data_entry_offset + @sizeOf(ResourceDataEntry) > section_data.len) continue;
+                
+                const data_entry: *const ResourceDataEntry = @ptrCast(@alignCast(section_data.ptr + data_entry_offset));
+                
+                // Calculate the actual data offset within the section
+                const data_rva = data_entry.offset_to_data;
+                const data_offset = data_rva - virtual_address;
+                
+                if (data_offset >= section_data.len or data_offset + data_entry.size > section_data.len) continue;
+                
+                // Copy the resource data
+                const resource_data = try builder.allocator.dupe(u8, section_data[data_offset..][0..data_entry.size]);
+                
+                // Add to table
+                try table.entries.append(.{
+                    .id = id,
+                    .data = resource_data,
+                    .data_size = data_entry.size,
+                    .code_page = data_entry.code_page,
+                });
+            }
+        }
+    }
+    
     fn updateResourceSection(self: *PEFile, section: *SectionHeader, data: []const u8) !void {
         const optional_header = self.getOptionalHeader();
 
@@ -781,12 +865,11 @@ const ResourceBuilder = struct {
 
             // Add individual icon to RT_ICON table
             const id_table = try self.getOrCreateTable(icon_table, icon_id);
-            const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
-
-            // Add the actual icon data
+            
+            // At the language level, add data directly instead of creating another table
             const data_copy = try self.allocator.dupe(u8, image_data);
-            try lang_table.entries.append(.{
-                .id = 0,
+            try id_table.entries.append(.{
+                .id = PEFile.LANGUAGE_ID_EN_US,
                 .data = data_copy,
                 .data_size = @intCast(data_copy.len),
                 .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -809,12 +892,11 @@ const ResourceBuilder = struct {
         // Get or create RT_GROUP_ICON table
         const group_table = try self.getOrCreateTable(&self.root, PEFile.RT_GROUP_ICON);
         const name_table = try self.getOrCreateTable(group_table, 1); // MAINICON ID
-        const lang_table = try self.getOrCreateTable(name_table, PEFile.LANGUAGE_ID_EN_US);
-
-        // Add group icon data
+        
+        // At the language level, add data directly instead of creating another table
         const group_data_copy = try group_icon_data.toOwnedSlice();
-        try lang_table.entries.append(.{
-            .id = 0,
+        try name_table.entries.append(.{
+            .id = PEFile.LANGUAGE_ID_EN_US,
             .data = group_data_copy,
             .data_size = @intCast(group_data_copy.len),
             .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -1025,15 +1107,34 @@ const ResourceBuilder = struct {
         // Add to resource table
         const version_table = try self.getOrCreateTable(&self.root, PEFile.RT_VERSION);
         const id_table = try self.getOrCreateTable(version_table, 1);
-
-        // At the language level, add data directly instead of creating another table
+        
+        // Remove existing version resource for this language if present
+        var existing_idx: ?usize = null;
+        for (id_table.entries.items, 0..) |entry, idx| {
+            if (entry.id == PEFile.LANGUAGE_ID_EN_US) {
+                existing_idx = idx;
+                break;
+            }
+        }
+        
         const version_bytes = try data.toOwnedSlice();
-        try id_table.entries.append(.{
+        const new_entry = ResourceTableEntry{
             .id = PEFile.LANGUAGE_ID_EN_US,
             .data = version_bytes,
             .data_size = @intCast(version_bytes.len),
             .code_page = PEFile.CODE_PAGE_ID_EN_US,
-        });
+        };
+        
+        // Replace or append
+        if (existing_idx) |idx| {
+            // Free old data
+            if (id_table.entries.items[idx].data) |old_data| {
+                self.allocator.free(old_data);
+            }
+            id_table.entries.items[idx] = new_entry;
+        } else {
+            try id_table.entries.append(new_entry);
+        }
     }
 
     fn getOrCreateTable(self: *ResourceBuilder, parent: *ResourceTable, id: u32) !*ResourceTable {

@@ -34,18 +34,6 @@ struct AsyncCleanupHook {
 };
 
 void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
-
-// Weak handle owner for NapiRef. This will trigger finalization.
-class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-
-    static NapiRefWeakHandleOwner& get() {
-        static NeverDestroyed<NapiRefWeakHandleOwner> owner;
-        return owner;
-    }
-};
-
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -335,6 +323,30 @@ namespace Napi {
 
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
+class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kUserland
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+
+    static NapiRefWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
+
+class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kRuntime
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+
+    static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefSelfDeletingWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
+
 // If a module registered itself by calling napi_module_register in a static constructor, run this
 // to run the module's entrypoint.
 void executePendingNapiModule(Zig::GlobalObject* globalObject);
@@ -343,12 +355,6 @@ void executePendingNapiModule(Zig::GlobalObject* globalObject);
 
 namespace Zig {
 using namespace JSC;
-
-// Based on v8impl::ReferenceOwnership from Node.js
-enum class NapiRefOwnership : uint8_t {
-    kRuntime,  // The NapiRef C++ object deletes itself when finalized.
-    kUserland, // The user is responsible for calling napi_delete_reference.
-};
 
 static inline JSValue toJS(napi_value val)
 {
@@ -454,43 +460,91 @@ class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
-    NapiRef(napi_env env, JSC::JSValue value, uint32_t initial_refcount, NapiRefOwnership ownership, Bun::NapiFinalizer finalizer, void* native_object);
-    ~NapiRef();
+    void ref();
+    void unref();
+    void clear();
 
-    uint32_t ref();
-    uint32_t unref();
-    JSC::JSValue value() const;
+    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
+        : env(env)
+        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
+        , finalizer(WTFMove(finalizer))
+        , refCount(count)
+    {
+    }
 
-    // Called by the WeakHandleOwner when the JS object is GC'd.
-    void finalizeFromGC();
+    JSC::JSValue value() const
+    {
+        if (refCount == 0 && !m_isEternal) {
+            return weakValueRef.get();
+        }
 
-    // To be used by napi_remove_wrap
-    void clearFinalizer() { m_finalizer.clear(); }
+        return strongRef.get();
+    }
 
-    // For napi_wrap, to link the wrapped C++ object.
+    void setValueInitial(JSC::JSValue value, bool can_be_weak)
+    {
+        if (refCount > 0) {
+            strongRef.set(globalObject->vm(), value);
+        }
+
+        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
+        // In NAPI experimental, they can be, but we must not store weak references to them.
+        if (can_be_weak) {
+            weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
+        }
+
+        if (value.isSymbol()) {
+            auto* symbol = jsDynamicCast<JSC::Symbol*>(value);
+            ASSERT(symbol != nullptr);
+            if (symbol->uid().isRegistered()) {
+                // Global symbols must always be retrievable,
+                // even if garbage collection happens while the ref count is 0.
+                m_isEternal = true;
+                if (refCount == 0) {
+                    strongRef.set(globalObject->vm(), symbol);
+                }
+            }
+        }
+    }
+
+    void callFinalizer()
+    {
+        // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
+        // calling the finalizer
+        Bun::NapiFinalizer saved_finalizer = this->finalizer;
+        this->finalizer.clear();
+        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
+    }
+
+    ~NapiRef()
+    {
+        NAPI_LOG("destruct napi ref %p", this);
+        if (boundCleanup) {
+            boundCleanup->deactivate(env);
+            boundCleanup = nullptr;
+        }
+
+        if (!m_isEternal) {
+            strongRef.clear();
+        }
+
+        // The weak ref can lead to calling the destructor
+        // so we must first clear the weak ref before we call the finalizer
+        weakValueRef.clear();
+    }
+
+    napi_env env = nullptr;
+    JSC::Weak<JSC::JSGlobalObject> globalObject;
+    NapiWeakValue weakValueRef;
+    JSC::Strong<JSC::Unknown> strongRef;
+    Bun::NapiFinalizer finalizer;
+    const napi_env__::BoundFinalizer* boundCleanup = nullptr;
     void* nativeObject = nullptr;
-    const NapiRefOwnership ownership;
+    uint32_t refCount = 0;
+    bool releaseOnWeaken = false;
 
 private:
-    friend class Napi::NapiRefWeakHandleOwner;
-
-    void transitionToStrong();
-    void transitionToWeak();
-    void clearHandle();
-    void callFinalizer();
-
-    enum class HandleType { Empty, Weak, Strong };
-
-    napi_env m_env;
-    JSC::VM& m_vm;
-    Bun::NapiFinalizer m_finalizer;
-    uint32_t m_refCount;
-    HandleType m_handleType;
-    const bool m_canBeWeak;
-
-    // Separate fields instead of union to avoid non-trivial constructor issues
-    JSC::Weak<JSC::JSCell> m_weakHandle;
-    JSC::Strong<JSC::JSCell> m_strongHandle;
+    bool m_isEternal = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

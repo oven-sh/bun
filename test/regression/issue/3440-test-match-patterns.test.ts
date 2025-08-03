@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "../../harness";
 
 describe("issue #3440 - glob patterns as positional arguments", () => {
@@ -126,7 +126,7 @@ describe("issue #3440 - glob patterns as positional arguments", () => {
 
     const stderr = result.stderr.toString();
     expect(result.exitCode).toBe(0);
-    expect(stderr).toContain("2 pass");  
+    expect(stderr).toContain("2 pass");
     expect(stderr).toContain("Ran 2 tests across 2 files");
     // Brace pattern should find utils.test.js and helpers.spec.ts
     // but NOT main.js

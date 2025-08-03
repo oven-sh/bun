@@ -1333,9 +1333,71 @@ pub const PublishCommand = struct {
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
             bun.assertWithLocation(count == encoded_tarball_len, @src());
 
-            try writer.print("\",\"length\":{d}}}}}}}", .{
+            try writer.print("\",\"length\":{d}}}}", .{
                 ctx.tarball_bytes.len,
             });
+
+            // Add provenance attachment if enabled
+            if (ctx.manager.options.publish_config.provenance) {
+                var provenance_generator = ProvenanceGenerator.init(ctx.allocator);
+
+                const access_str = if (ctx.manager.options.publish_config.access) |access| @tagName(access) else null;
+
+                provenance_generator.ensureProvenanceGeneration(access_str) catch |err| {
+                    switch (err) {
+                        error.UnsupportedCIProvider => {
+                            Output.errGeneric("Automatic provenance generation not supported for current CI provider", .{});
+                            Global.crash();
+                        },
+                        error.MissingCIEnvironment => {
+                            Output.errGeneric("Missing required CI environment for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.PublicAccessRequired => {
+                            Output.errGeneric("Can't generate provenance for private package, you must set `access` to public", .{});
+                            Global.crash();
+                        },
+                        else => {
+                            Output.err(err, "Failed to ensure provenance generation", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+
+                // Extract SHA512 hex digest from integrity
+                const integrity_full = try std.fmt.allocPrint(ctx.allocator, "{}", .{bun.fmt.integrity(ctx.integrity, .hex_lower)});
+                defer ctx.allocator.free(integrity_full);
+
+                // Strip "sha512-" prefix to get just the hex digest
+                const integrity_sha512_hex = if (std.mem.startsWith(u8, integrity_full, "sha512-"))
+                    integrity_full[7..]
+                else
+                    integrity_full;
+
+                const provenance_bundle = provenance_generator.generateProvenanceBundle(
+                    ctx.package_name,
+                    version_without_build_tag,
+                    integrity_sha512_hex,
+                ) catch |err| {
+                    Output.err(err, "Failed to generate provenance bundle", .{});
+                    Global.crash();
+                };
+                defer ctx.allocator.free(provenance_bundle);
+
+                const provenance_filename = try std.fmt.allocPrint(ctx.allocator, "{s}-{s}.sigstore", .{ ctx.package_name, version_without_build_tag });
+                defer ctx.allocator.free(provenance_filename);
+
+                try writer.print(",\"{s}\":{{\"content_type\":\"application/vnd.dev.sigstore.bundle+json;version=0.2\",\"data\":\"{s}\",\"length\":{d}}}", .{
+                    provenance_filename,
+                    provenance_bundle,
+                    provenance_bundle.len,
+                });
+
+                // Log provenance generation
+                Output.prettyln("<green>✓<r> Generated provenance attestation for {s}@{s}", .{ ctx.package_name, version_without_build_tag });
+            }
+
+            try writer.writeAll("}}}");
         }
 
         return buf.items;
@@ -1383,3 +1445,4 @@ const Dependency = install.Dependency;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
+const ProvenanceGenerator = @import("../install/provenance.zig").ProvenanceGenerator;

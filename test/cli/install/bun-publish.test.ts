@@ -848,3 +848,294 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   ]);
   expect(exitCode).toBe(0);
 });
+
+describe("--provenance", async () => {
+  test("GitHub Actions provenance generation", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-github");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-1"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-1",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    const githubEnv = {
+      ...env,
+      // GitHub Actions CI environment variables
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "test-org/test-repo",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_WORKFLOW_REF: "test-org/test-repo/.github/workflows/publish.yml@refs/heads/main",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: "abc123def456",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REPOSITORY_ID: "123456789",
+      GITHUB_REPOSITORY_OWNER_ID: "987654321",
+      GITHUB_RUN_ID: "1234567890",
+      GITHUB_RUN_ATTEMPT: "1",
+      RUNNER_ENVIRONMENT: "github-hosted",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://vstoken.actions.githubusercontent.com/token",
+    };
+
+    const { out, err, exitCode } = await publish(githubEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(0);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ provenance-pkg-1@1.0.0");
+  });
+
+  test("GitLab CI provenance generation", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-gitlab");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-2"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-2",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    const gitlabEnv = {
+      ...env,
+      // GitLab CI environment variables
+      GITLAB_CI: "true",
+      CI_PROJECT_URL: "https://gitlab.com/test-org/test-repo",
+      CI_COMMIT_SHA: "abc123def456",
+      CI_JOB_NAME: "publish",
+      CI_RUNNER_ID: "12345",
+      CI_JOB_URL: "https://gitlab.com/test-org/test-repo/-/jobs/987654321",
+      SIGSTORE_ID_TOKEN: "test-token",
+    };
+
+    const { out, err, exitCode } = await publish(gitlabEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(0);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ provenance-pkg-2@1.0.0");
+  });
+
+  test("provenance fails without CI environment", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-no-ci");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-3",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir, "--provenance");
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error:");
+  });
+
+  test("provenance fails with private package", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-private");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-4"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-4",
+          version: "1.0.0",
+          publishConfig: {
+            access: "restricted",
+          },
+        }),
+      ),
+    ]);
+
+    const githubEnv = {
+      ...env,
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "test-org/test-repo",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_WORKFLOW_REF: "test-org/test-repo/.github/workflows/publish.yml@refs/heads/main",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: "abc123def456",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REPOSITORY_ID: "123456789",
+      GITHUB_REPOSITORY_OWNER_ID: "987654321",
+      GITHUB_RUN_ID: "1234567890",
+      GITHUB_RUN_ATTEMPT: "1",
+      RUNNER_ENVIRONMENT: "github-hosted",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://vstoken.actions.githubusercontent.com/token",
+    };
+
+    const { err, exitCode } = await publish(githubEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error:");
+  });
+
+  test("provenance fails with unsupported CI provider", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-unsupported");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-5"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-5",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    const unsupportedCIEnv = {
+      ...env,
+      // CircleCI environment (not supported by provenance implementation)
+      CIRCLECI: "true",
+      CIRCLE_PROJECT_REPONAME: "test-repo",
+      CIRCLE_PROJECT_USERNAME: "test-org",
+    };
+
+    const { err, exitCode } = await publish(unsupportedCIEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error:");
+  });
+
+  test("provenance with --dry-run", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-dry-run");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-6"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-6",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    const githubEnv = {
+      ...env,
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "test-org/test-repo",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_WORKFLOW_REF: "test-org/test-repo/.github/workflows/publish.yml@refs/heads/main",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: "abc123def456",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REPOSITORY_ID: "123456789",
+      GITHUB_REPOSITORY_OWNER_ID: "987654321",
+      GITHUB_RUN_ID: "1234567890",
+      GITHUB_RUN_ATTEMPT: "1",
+      RUNNER_ENVIRONMENT: "github-hosted",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://vstoken.actions.githubusercontent.com/token",
+    };
+
+    const { err, exitCode } = await publish(githubEnv, packageDir, "--provenance", "--dry-run");
+    expect(exitCode).toBe(0);
+    expect(err).not.toContain("error:");
+    expect(await exists(join(registry.packagesPath, "provenance-pkg-6"))).toBeFalse();
+  });
+
+  test("GitHub Actions provenance fails without required environment variables", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-github-incomplete");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-7"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-7",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    // Missing ACTIONS_ID_TOKEN_REQUEST_URL
+    const incompleteGithubEnv = {
+      ...env,
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "test-org/test-repo",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_WORKFLOW_REF: "test-org/test-repo/.github/workflows/publish.yml@refs/heads/main",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: "abc123def456",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REPOSITORY_ID: "123456789",
+      GITHUB_REPOSITORY_OWNER_ID: "987654321",
+      GITHUB_RUN_ID: "1234567890",
+      GITHUB_RUN_ATTEMPT: "1",
+      RUNNER_ENVIRONMENT: "github-hosted",
+      // ACTIONS_ID_TOKEN_REQUEST_URL is missing
+    };
+
+    const { err, exitCode } = await publish(incompleteGithubEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error:");
+  });
+
+  test("GitLab CI provenance fails without required environment variables", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("provenance-gitlab-incomplete");
+    await Promise.all([
+      rm(join(registry.packagesPath, "provenance-pkg-8"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "provenance-pkg-8",
+          version: "1.0.0",
+          publishConfig: {
+            access: "public",
+          },
+        }),
+      ),
+    ]);
+
+    // Missing SIGSTORE_ID_TOKEN
+    const incompleteGitlabEnv = {
+      ...env,
+      GITLAB_CI: "true",
+      CI_PROJECT_URL: "https://gitlab.com/test-org/test-repo",
+      CI_COMMIT_SHA: "abc123def456",
+      CI_JOB_NAME: "publish",
+      CI_RUNNER_ID: "12345",
+      CI_JOB_URL: "https://gitlab.com/test-org/test-repo/-/jobs/987654321",
+      // SIGSTORE_ID_TOKEN is missing
+    };
+
+    const { err, exitCode } = await publish(incompleteGitlabEnv, packageDir, "--provenance");
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error:");
+  });
+});

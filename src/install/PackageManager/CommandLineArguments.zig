@@ -151,6 +151,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
     clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
     clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
+    clap.parseParam("--provenance                           Generate provenance attestation for the package") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
 });
 
@@ -568,6 +569,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish the current package with public access.<r>
                 \\  <b><green>bun publish<r> <cyan>--access public<r>
                 \\
+                \\  <d>Publish with provenance attestation (requires CI environment).<r>
+                \\  <b><green>bun publish<r> <cyan>--provenance --access public<r>
+                \\
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
@@ -825,6 +829,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 Global.crash();
             };
         }
+
+        cli.publish_config.provenance = args.flag("--provenance");
     }
 
     // link and unlink default to not saving, all others default to

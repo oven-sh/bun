@@ -76,6 +76,7 @@ pub const PublishConfig = struct {
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
+    provenance: bool = false,
 };
 
 pub const Access = enum {

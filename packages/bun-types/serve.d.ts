@@ -484,6 +484,9 @@ declare module "bun" {
           ? {}
           : {};
 
+    /**
+     * Development configuration for {@link Bun.serve}
+     */
     type Development =
       | boolean
       | {

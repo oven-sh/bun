@@ -4469,6 +4469,7 @@ pub const H2FrameParser = struct {
 
     pub fn finalize(this: *H2FrameParser) void {
         log("finalize", .{});
+        this.strong_this.deinit();
         this.deref();
     }
 };

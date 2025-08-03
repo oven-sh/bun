@@ -46,7 +46,7 @@ JSC_DEFINE_HOST_FUNCTION(callKeyObject, (JSC::JSGlobalObject * lexicalGlobalObje
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     throwTypeError(lexicalGlobalObject, scope, "Cannot call KeyObject class constructor without |new|"_s);
-    return JSValue::encode({});
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -63,9 +63,9 @@ JSC_DEFINE_HOST_FUNCTION(constructKeyObject, (JSC::JSGlobalObject * lexicalGloba
     }
 
     JSString* typeString = typeValue.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (typeView != "secret"_s && typeView != "public"_s && typeView != "private"_s) {
         return ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "type"_s, typeValue);
@@ -95,7 +95,8 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     auto keyObjectResult = KeyObject::create(wrappedKey);
     if (keyObjectResult.hasException()) [[unlikely]] {
         WebCore::propagateException(*lexicalGlobalObject, scope, keyObjectResult.releaseException());
-        return JSValue::encode({});
+        RELEASE_AND_RETURN(scope, {});
+        return {};
     }
 
     // 2. Determine Key Type and Extract Material

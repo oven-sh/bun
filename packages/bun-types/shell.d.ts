@@ -1,6 +1,4 @@
 declare module "bun" {
-  type ShellFunction = (input: Uint8Array) => Uint8Array;
-
   type ShellExpression =
     | { toString(): string }
     | Array<ShellExpression>
@@ -12,7 +10,7 @@ declare module "bun" {
     | ReadableStream;
 
   /**
-   * The [Bun shell](https://bun.sh/docs/runtime/shell) is a powerful tool for running shell commands.
+   * The [Bun shell](https://bun.com/docs/runtime/shell) is a powerful tool for running shell commands.
    *
    * @example
    * ```ts
@@ -206,7 +204,7 @@ declare module "bun" {
     }
 
     /**
-     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.sh/docs/runtime/shell).
+     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.com/docs/runtime/shell).
      *
      * @example
      * ```ts
@@ -294,7 +292,7 @@ declare module "bun" {
        * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
        * ```
        */
-      bytes(): Uint8Array;
+      bytes(): Uint8Array<ArrayBuffer>;
     }
 
     interface ShellOutput {
@@ -361,7 +359,7 @@ declare module "bun" {
        * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
        * ```
        */
-      bytes(): Uint8Array;
+      bytes(): Uint8Array<ArrayBuffer>;
 
       /**
        * Read from stdout as a Blob

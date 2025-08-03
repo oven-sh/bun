@@ -64,6 +64,33 @@ for (const flag of ["-e", "--print"]) {
       testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
       // testProcessArgv(["--", "abc", "--", "def"], [exe, "abc", "--", "def"]);
     });
+
+    test("process._eval", async () => {
+      const code = flag === "--print" ? "process._eval" : "console.log(process._eval)";
+      const { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, code],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    });
+
+    test("does not crash in non-latin1 directory", async () => {
+      const dir = join(tmpdirSync(), "eval-test-开始学习");
+      await Bun.write(join(dir, "index.js"), "console.log('hello world')");
+
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag, "import './index.js'"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toEqual("hello world\n" + (flag === "--print" ? "undefined\n" : ""));
+      expect(exitCode).toBe(0);
+    });
   });
 }
 
@@ -140,6 +167,18 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
     const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
     expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
+
+  test("process._eval", async () => {
+    const code = "console.log(process._eval)";
+    const { stdout } = run(code);
+
+    // the file piping one on windows can include extra carriage returns
+    if (isWindows) {
+      expect(stdout.toString("utf8")).toInclude(code);
+    } else {
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    }
+  });
 }
 
 describe("bun run - < file-path.js", () => {
@@ -195,4 +234,19 @@ describe("echo | bun run -", () => {
   }
 
   group(run);
+});
+
+test("process._eval (undefined for normal run)", async () => {
+  const cwd = tmpdirSync();
+  const file = join(cwd, "test.js");
+  writeFileSync(file, "console.log(typeof process._eval)");
+
+  const { stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", file],
+    cwd: cwd,
+    env: bunEnv,
+  });
+  expect(stdout.toString("utf8")).toEqual("undefined\n");
+
+  rmSync(cwd, { recursive: true, force: true });
 });

@@ -116,6 +116,8 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
+void us_internal_enable_sweep_timer(struct us_loop_t *loop);
+void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link(struct us_loop_t *loop,
                            struct us_socket_context_t *context);
@@ -421,10 +423,9 @@ struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     size_t pathlen, int options, int socket_ext_size);
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
-                                 const char *data, int length, int msg_more);
+                                 const char *data, int length);
 int us_internal_ssl_socket_raw_write(us_internal_ssl_socket_r s,
-                                     const char *data, int length,
-                                     int msg_more);
+                                     const char *data, int length);
 
 void us_internal_ssl_socket_timeout(us_internal_ssl_socket_r s,
                                     unsigned int seconds);

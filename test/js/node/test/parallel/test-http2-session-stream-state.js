@@ -50,7 +50,7 @@ server.listen(0);
 
 server.on('listening', common.mustCall(() => {
 
-  const client = h2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = h2.connect(`http://localhost:${server.address().port}`);
 
   const headers = { ':path': '/' };
 

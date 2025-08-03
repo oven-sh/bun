@@ -6,3 +6,4 @@ function ReadStream() {
   throw new Error("tty.ReadStream is not implemented for browsers");
 }
 export { ReadStream, WriteStream, isatty };
+export default { ReadStream, WriteStream, isatty };

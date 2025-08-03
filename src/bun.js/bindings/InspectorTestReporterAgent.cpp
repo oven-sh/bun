@@ -13,6 +13,9 @@
 #include "ModuleLoader.h"
 #include <wtf/TZoneMallocInlines.h>
 
+using namespace JSC;
+using namespace Inspector;
+
 namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
@@ -23,10 +26,28 @@ extern "C" {
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
 void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name)
+enum class BunTestType : uint8_t {
+    Test,
+    Describe,
+};
+
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name, BunTestType item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    agent->reportTestFound(callFrame, testId, str);
+
+    Protocol::TestReporter::TestType type;
+    switch (item_type) {
+    case BunTestType::Test:
+        type = Protocol::TestReporter::TestType::Test;
+        break;
+    case BunTestType::Describe:
+        type = Protocol::TestReporter::TestType::Describe;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+
+    agent->reportTestFound(callFrame, testId, str, type, parentId);
 }
 
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
@@ -40,6 +61,7 @@ enum class BunTestStatus : uint8_t {
     Timeout,
     Skip,
     Todo,
+    SkippedBecauseLabel,
 };
 
 void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* agent, int testId, BunTestStatus bunTestStatus, double elapsed)
@@ -61,9 +83,13 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
     case BunTestStatus::Todo:
         status = Protocol::TestReporter::TestStatus::Todo;
         break;
+    case BunTestStatus::SkippedBecauseLabel:
+        status = Protocol::TestReporter::TestStatus::Skipped_because_label;
+        break;
     default:
         ASSERT_NOT_REACHED();
     }
+
     agent->reportTestEnd(testId, status, elapsed);
 }
 }
@@ -83,7 +109,7 @@ InspectorTestReporterAgent::~InspectorTestReporterAgent()
     }
 }
 
-void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorTestReporterAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -112,7 +138,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
 {
     if (!m_enabled)
         return;
@@ -179,7 +205,9 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         sourceID > 0 ? String::number(sourceID) : String(),
         sourceURL,
         lineColumn.line,
-        name);
+        name,
+        type,
+        parentId > 0 ? parentId : std::optional<int>());
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

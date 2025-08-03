@@ -4,31 +4,31 @@
 ///
 /// The Context type must implement:
 /// - `run(*Context)` - performs the work on the thread pool
-/// - `then(*Context, JSC.JSPromise)` - resolves the promise with the result on the JS thread
+/// - `then(*Context, jsc.JSPromise)` - resolves the promise with the result on the JS thread
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
-        event_loop: *JSC.EventLoop,
+        event_loop: *jsc.EventLoop,
         allocator: std.mem.Allocator,
-        promise: JSC.JSPromise.Strong = .{},
-        globalThis: *JSC.JSGlobalObject,
-        concurrent_task: JSC.ConcurrentTask = .{},
+        promise: jsc.JSPromise.Strong = .{},
+        globalThis: *jsc.JSGlobalObject,
+        concurrent_task: jsc.ConcurrentTask = .{},
 
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
         pub const new = bun.TrivialNew(@This());
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) !*This {
             var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
             });
-            var promise = JSC.JSPromise.create(globalThis);
+            var promise = jsc.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.toJS());
             this.ref.ref(this.event_loop.virtual_machine);
 
@@ -66,10 +66,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
-const VirtualMachine = JSC.VirtualMachine;
-const JSPromise = JSC.JSPromise;
-const WorkPoolTask = JSC.WorkPoolTask;
+
+const jsc = bun.jsc;
+const JSPromise = jsc.JSPromise;
+const VirtualMachine = jsc.VirtualMachine;
+const WorkPool = jsc.WorkPool;
+const WorkPoolTask = jsc.WorkPoolTask;

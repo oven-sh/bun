@@ -1,7 +1,9 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
-pub const js = JSC.Codegen.JSSubprocess;
+const Subprocess = @This();
+
+pub const js = jsc.Codegen.JSSubprocess;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -18,7 +20,7 @@ stderr: Readable,
 stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 pid_rusage: ?Rusage = null,
 
-globalThis: *JSC.JSGlobalObject,
+globalThis: *jsc.JSGlobalObject,
 observable_getters: std.enums.EnumSet(enum {
     stdin,
     stdout,
@@ -27,13 +29,13 @@ observable_getters: std.enums.EnumSet(enum {
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
 has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-this_jsvalue: JSC.JSValue = .zero,
+this_jsvalue: jsc.JSValue = .zero,
 
 /// `null` indicates all of the IPC data is uninitialized.
 ipc_data: ?IPC.SendQueue,
 flags: Flags = .{},
 
-weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
+weak_file_sink_stdin_ptr: ?*jsc.WebCore.FileSink = null,
 abort_signal: ?*webcore.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
@@ -56,7 +58,8 @@ pub const Flags = packed struct(u8) {
     has_stdin_destructor_called: bool = false,
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
-    _: u3 = 0,
+    is_stdin_a_readable_stream: bool = false,
+    _: u2 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -82,85 +85,61 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 }
 
 pub const ResourceUsage = struct {
-    pub const js = JSC.Codegen.JSResourceUsage;
+    pub const js = jsc.Codegen.JSResourceUsage;
     pub const toJS = ResourceUsage.js.toJS;
     pub const fromJS = ResourceUsage.js.fromJS;
     pub const fromJSDirect = ResourceUsage.js.fromJSDirect;
 
     rusage: Rusage,
 
-    pub fn getCPUTime(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
-        var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+    pub fn getCPUTime(this: *ResourceUsage, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+        var cpu = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
-        const usrTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
-        const sysTime = JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
+        const usrTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
+        const sysTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
 
-        cpu.put(globalObject, JSC.ZigString.static("user"), usrTime);
-        cpu.put(globalObject, JSC.ZigString.static("system"), sysTime);
-        cpu.put(globalObject, JSC.ZigString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
+        cpu.put(globalObject, jsc.ZigString.static("user"), usrTime);
+        cpu.put(globalObject, jsc.ZigString.static("system"), sysTime);
+        cpu.put(globalObject, jsc.ZigString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
 
         return cpu;
     }
 
-    pub fn getMaxRSS(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.maxrss);
+    pub fn getMaxRSS(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
+        return jsc.JSValue.jsNumber(this.rusage.maxrss);
     }
 
-    pub fn getSharedMemorySize(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.ixrss);
+    pub fn getSharedMemorySize(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
+        return jsc.JSValue.jsNumber(this.rusage.ixrss);
     }
 
-    pub fn getSwapCount(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.nswap);
+    pub fn getSwapCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
+        return jsc.JSValue.jsNumber(this.rusage.nswap);
     }
 
-    pub fn getOps(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
-        var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
-        ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
+    pub fn getOps(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
+        var ops = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ops.put(globalObject, jsc.ZigString.static("in"), jsc.JSValue.jsNumber(this.rusage.inblock));
+        ops.put(globalObject, jsc.ZigString.static("out"), jsc.JSValue.jsNumber(this.rusage.oublock));
         return ops;
     }
 
-    pub fn getMessages(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
-        var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
-        msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
+    pub fn getMessages(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
+        var msgs = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        msgs.put(globalObject, jsc.ZigString.static("sent"), jsc.JSValue.jsNumber(this.rusage.msgsnd));
+        msgs.put(globalObject, jsc.ZigString.static("received"), jsc.JSValue.jsNumber(this.rusage.msgrcv));
         return msgs;
     }
 
-    pub fn getSignalCount(
-        this: *ResourceUsage,
-        _: *JSGlobalObject,
-    ) JSValue {
-        return JSC.JSValue.jsNumber(this.rusage.nsignals);
+    pub fn getSignalCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
+        return jsc.JSValue.jsNumber(this.rusage.nsignals);
     }
 
-    pub fn getContextSwitches(
-        this: *ResourceUsage,
-        globalObject: *JSGlobalObject,
-    ) JSValue {
-        var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-        ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
-        ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
+    pub fn getContextSwitches(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
+        var ctx = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+        ctx.put(globalObject, jsc.ZigString.static("voluntary"), jsc.JSValue.jsNumber(this.rusage.nvcsw));
+        ctx.put(globalObject, jsc.ZigString.static("involuntary"), jsc.JSValue.jsNumber(this.rusage.nivcsw));
         return ctx;
     }
 
@@ -169,8 +148,8 @@ pub const ResourceUsage = struct {
     }
 };
 
-pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: *JSC.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
-    var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
+pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
+    var object_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
     try envp.ensureTotalCapacityPrecise(object_iter.len +
@@ -214,7 +193,7 @@ pub const StdioKind = enum {
     }
 };
 
-pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
+pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
     _ = this.tryKill(this.killSignal);
@@ -223,7 +202,7 @@ pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) v
 pub fn resourceUsage(
     this: *Subprocess,
     globalObject: *JSGlobalObject,
-    _: *JSC.CallFrame,
+    _: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     return this.createResourceUsageObject(globalObject);
 }
@@ -374,7 +353,7 @@ pub fn jsUnref(this: *Subprocess) void {
     this.updateHasPendingActivity();
 }
 
-pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
+pub fn constructor(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*Subprocess {
     return globalObject.throw("Cannot construct Subprocess", .{});
 }
 
@@ -426,7 +405,7 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: ?*MaxBuf, is_sync: bool) Readable {
+    pub fn init(stdio: Stdio, event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: ?*MaxBuf, is_sync: bool) Readable {
         _ = allocator; // autofix
         _ = is_sync; // autofix
         assertStdioResult(result);
@@ -446,6 +425,7 @@ const Readable = union(enum) {
             .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, max_size) },
             .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
             .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
+            .readable_stream => Readable{ .ignore = {} }, // ReadableStream is handled separately
         };
     }
 
@@ -453,7 +433,7 @@ const Readable = union(enum) {
         this.* = .closed;
     }
 
-    pub fn onReady(_: *Readable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
+    pub fn onReady(_: *Readable, _: ?jsc.WebCore.Blob.SizeType, _: ?jsc.WebCore.Blob.SizeType) void {}
 
     pub fn onStart(_: *Readable) void {}
 
@@ -493,11 +473,11 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+    pub fn toJS(this: *Readable, globalThis: *jsc.JSGlobalObject, exited: bool) bun.JSError!JSValue {
         _ = exited; // autofix
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
-            .memfd => return this.toBufferedValue(globalThis) catch .zero,
+            .memfd => return this.toBufferedValue(globalThis),
 
             .fd => |fd| {
                 return fd.toJS(globalThis);
@@ -511,13 +491,11 @@ const Readable = union(enum) {
                 defer this.* = .{ .closed = {} };
 
                 if (buffer.length() == 0) {
-                    return JSC.WebCore.ReadableStream.empty(globalThis);
+                    return jsc.WebCore.ReadableStream.empty(globalThis);
                 }
 
-                const own = buffer.takeSlice(bun.default_allocator) catch {
-                    globalThis.throwOutOfMemory() catch return .zero;
-                };
-                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
+                const own = try buffer.takeSlice(bun.default_allocator);
+                return jsc.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
                 return .js_undefined;
@@ -525,7 +503,7 @@ const Readable = union(enum) {
         }
     }
 
-    pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
+    pub fn toBufferedValue(this: *Readable, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         switch (this.*) {
             .fd => |fd| {
                 return fd.toJS(globalThis);
@@ -535,7 +513,7 @@ const Readable = union(enum) {
                     Output.panic("memfd is only supported on Linux", .{});
                 }
                 this.* = .{ .closed = {} };
-                return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
+                return jsc.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
             },
             .pipe => |pipe| {
                 defer pipe.detach();
@@ -548,7 +526,7 @@ const Readable = union(enum) {
                     return globalThis.throwOutOfMemory();
                 };
 
-                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return jsc.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return .js_undefined;
@@ -557,26 +535,17 @@ const Readable = union(enum) {
     }
 };
 
-pub fn getStderr(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
-pub fn getStdin(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
-pub fn getStdout(
-    this: *Subprocess,
-    globalThis: *JSGlobalObject,
-) JSValue {
+pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
@@ -584,11 +553,7 @@ pub fn getStdout(
     return this.stdout.toJS(globalThis, this.hasExited());
 }
 
-pub fn asyncDispose(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSValue {
+pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
         return .js_undefined;
@@ -608,7 +573,7 @@ pub fn asyncDispose(
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
-            return global.throwValue(err.toJSC(global));
+            return global.throwValue(err.toJS(global));
         },
     }
 
@@ -642,7 +607,7 @@ pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
     _ = this.tryKill(this.killSignal);
 }
 
-fn parseSignal(arg: JSC.JSValue, globalThis: *JSC.JSGlobalObject) !SignalCode {
+fn parseSignal(arg: jsc.JSValue, globalThis: *jsc.JSGlobalObject) !SignalCode {
     if (arg.getNumber()) |sig64| {
         // Node does this:
         if (std.math.isNan(sig64)) {
@@ -680,7 +645,7 @@ fn parseSignal(arg: JSC.JSValue, globalThis: *JSC.JSGlobalObject) !SignalCode {
 pub fn kill(
     this: *Subprocess,
     globalThis: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
+    callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     this.this_jsvalue = callframe.this();
 
@@ -695,7 +660,7 @@ pub fn kill(
         .result => {},
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     }
 
@@ -706,9 +671,9 @@ pub fn hasKilled(this: *const Subprocess) bool {
     return this.process.hasKilled();
 }
 
-pub fn tryKill(this: *Subprocess, sig: SignalCode) JSC.Maybe(void) {
+pub fn tryKill(this: *Subprocess, sig: SignalCode) bun.sys.Maybe(void) {
     if (this.hasExited()) {
-        return .{ .result = {} };
+        return .success;
     }
     return this.process.kill(@intFromEnum(sig));
 }
@@ -724,12 +689,12 @@ fn closeProcess(this: *Subprocess) void {
     this.process.close();
 }
 
-pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doRef(this: *Subprocess, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.jsRef();
     return .js_undefined;
 }
 
-pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doUnref(this: *Subprocess, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.jsUnref();
     return .js_undefined;
 }
@@ -748,7 +713,7 @@ pub fn onStdinDestroyed(this: *Subprocess) void {
     }
 }
 
-pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn doSend(this: *Subprocess, global: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
     IPClog("Subprocess#doSend", .{});
 
     return IPC.doSend(if (this.ipc_data) |*data| data else null, global, callFrame, if (this.hasExited()) .subprocess_exited else .subprocess);
@@ -757,7 +722,7 @@ pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
     const ipc_data = this.ipc() orelse return;
     ipc_data.closeSocketNextTick(nextTick);
 }
-pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalThis;
     _ = callframe;
     this.disconnectIPC(true);
@@ -784,14 +749,14 @@ pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
 
 pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
     const array = try JSValue.createEmptyArray(global, 0);
-    array.push(global, .null);
-    array.push(global, .null); // TODO: align this with options
-    array.push(global, .null); // TODO: align this with options
+    try array.push(global, .null);
+    try array.push(global, .null); // TODO: align this with options
+    try array.push(global, .null); // TODO: align this with options
 
     this.observable_getters.insert(.stdio);
     var pipes = this.stdio_pipes.items;
     if (this.ipc_data != null) {
-        array.push(global, .null);
+        try array.push(global, .null);
         pipes = pipes[@min(1, pipes.len)..];
     }
 
@@ -799,18 +764,18 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
-                array.push(global, JSValue.jsNumber(fdno));
+                try array.push(global, JSValue.jsNumber(fdno));
             }
         } else {
-            array.push(global, JSValue.jsNumber(item.cast()));
+            try array.push(global, JSValue.jsNumber(item.cast()));
         }
     }
     return array;
 }
 
 pub const Source = union(enum) {
-    blob: JSC.WebCore.Blob.Any,
-    array_buffer: JSC.ArrayBuffer.Strong,
+    blob: jsc.WebCore.Blob.Any,
+    array_buffer: jsc.ArrayBuffer.Strong,
     detached: void,
 
     pub fn memoryCost(this: *const Source) usize {
@@ -856,7 +821,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         stdio_result: StdioResult,
         source: Source = .{ .detached = {} },
         process: *ProcessType = undefined,
-        event_loop: JSC.EventLoopHandle,
+        event_loop: jsc.EventLoopHandle,
         buffer: []const u8 = "",
 
         // It seems there is a bug in the Zig compiler. We'll get back to this one later
@@ -896,7 +861,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This {
             const this = bun.new(This, .{
                 .ref_count = .init(),
-                .event_loop = JSC.EventLoopHandle.init(event_loop),
+                .event_loop = jsc.EventLoopHandle.init(event_loop),
                 .process = subprocess,
                 .stdio_result = result,
                 .source = source,
@@ -908,7 +873,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             return this;
         }
 
-        pub fn start(this: *This) JSC.Maybe(void) {
+        pub fn start(this: *This) bun.sys.Maybe(void) {
             log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
             this.ref();
             this.buffer = this.source.slice();
@@ -925,7 +890,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
                         poll.flags.insert(.socket);
                     }
 
-                    return .{ .result = {} };
+                    return .success;
                 },
             }
         }
@@ -969,7 +934,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             }
         }
 
-        pub fn eventLoop(this: *This) JSC.EventLoopHandle {
+        pub fn eventLoop(this: *This) jsc.EventLoopHandle {
             return this.event_loop;
         }
     };
@@ -982,7 +947,7 @@ pub const PipeReader = struct {
 
     reader: IOReader = undefined,
     process: ?*Subprocess = null,
-    event_loop: *JSC.EventLoop = undefined,
+    event_loop: *jsc.EventLoop = undefined,
     ref_count: PipeReader.RefCount,
     state: union(enum) {
         pending: void,
@@ -1009,7 +974,7 @@ pub const PipeReader = struct {
         this.deref();
     }
 
-    pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf) *PipeReader {
+    pub fn create(event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf) *PipeReader {
         var this = bun.new(PipeReader, .{
             .ref_count = .init(),
             .process = process,
@@ -1021,6 +986,7 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
+
         this.reader.setParent(this);
         return this;
     }
@@ -1030,7 +996,7 @@ pub const PipeReader = struct {
             this.reader.read();
     }
 
-    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *JSC.EventLoop) JSC.Maybe(void) {
+    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop) bun.sys.Maybe(void) {
         this.ref();
         this.process = process;
         this.event_loop = event_loop;
@@ -1047,9 +1013,12 @@ pub const PipeReader = struct {
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.socket);
                     this.reader.flags.socket = true;
+                    this.reader.flags.nonblocking = true;
+                    this.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
                 }
 
-                return .{ .result = {} };
+                return .success;
             },
         }
     }
@@ -1104,33 +1073,33 @@ pub const PipeReader = struct {
             this.reader.watch();
     }
 
-    pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toReadableStream(this: *PipeReader, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         defer this.detach();
 
         switch (this.state) {
             .pending => {
-                const stream = JSC.WebCore.ReadableStream.fromPipe(globalObject, this, &this.reader);
+                const stream = jsc.WebCore.ReadableStream.fromPipe(globalObject, this, &this.reader);
                 this.state = .{ .done = &.{} };
                 return stream;
             },
             .done => |bytes| {
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
+                return jsc.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
-                _ = err; // autofix
-                const empty = JSC.WebCore.ReadableStream.empty(globalObject);
-                JSC.WebCore.ReadableStream.cancel(&JSC.WebCore.ReadableStream.fromJS(empty, globalObject).?, globalObject);
+                _ = err;
+                const empty = try jsc.WebCore.ReadableStream.empty(globalObject);
+                jsc.WebCore.ReadableStream.cancel(&(try jsc.WebCore.ReadableStream.fromJS(empty, globalObject)).?, globalObject);
                 return empty;
             },
         }
     }
 
-    pub fn toBuffer(this: *PipeReader, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toBuffer(this: *PipeReader, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         switch (this.state) {
             .done => |bytes| {
                 defer this.state = .{ .done = &.{} };
-                return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return jsc.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
                 return .js_undefined;
@@ -1157,7 +1126,7 @@ pub const PipeReader = struct {
         }
     }
 
-    pub fn eventLoop(this: *PipeReader) *JSC.EventLoop {
+    pub fn eventLoop(this: *PipeReader) *jsc.EventLoop {
         return this.event_loop;
     }
 
@@ -1184,7 +1153,7 @@ pub const PipeReader = struct {
 };
 
 const Writable = union(enum) {
-    pipe: *JSC.WebCore.FileSink,
+    pipe: *jsc.WebCore.FileSink,
     fd: bun.FileDescriptor,
     buffer: *StaticPipeWriter,
     memfd: bun.FileDescriptor,
@@ -1241,7 +1210,7 @@ const Writable = union(enum) {
 
         if (process.this_jsvalue != .zero) {
             if (js.stdinGetCached(process.this_jsvalue)) |existing_value| {
-                JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+                jsc.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }
 
@@ -1261,28 +1230,32 @@ const Writable = union(enum) {
             .ignore = {},
         };
     }
-    pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
+    pub fn onReady(_: *Writable, _: ?jsc.WebCore.Blob.SizeType, _: ?jsc.WebCore.Blob.SizeType) void {}
     pub fn onStart(_: *Writable) void {}
 
     pub fn init(
-        stdio: Stdio,
-        event_loop: *JSC.EventLoop,
+        stdio: *Stdio,
+        event_loop: *jsc.EventLoop,
         subprocess: *Subprocess,
         result: StdioResult,
+        promise_for_stream: *jsc.JSValue,
     ) !Writable {
         assertStdioResult(result);
 
         if (Environment.isWindows) {
-            switch (stdio) {
-                .pipe => {
+            switch (stdio.*) {
+                .pipe, .readable_stream => {
                     if (result == .buffer) {
-                        const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
+                        const pipe = jsc.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
 
                         switch (pipe.writer.startWithCurrentPipe()) {
                             .result => {},
                             .err => |err| {
                                 _ = err; // autofix
                                 pipe.deref();
+                                if (stdio.* == .readable_stream) {
+                                    stdio.readable_stream.cancel(event_loop.global);
+                                }
                                 return error.UnexpectedCreatingStdin;
                             },
                         }
@@ -1291,6 +1264,16 @@ const Writable = union(enum) {
                         subprocess.ref();
                         subprocess.flags.deref_on_stdin_destroyed = true;
                         subprocess.flags.has_stdin_destructor_called = false;
+
+                        if (stdio.* == .readable_stream) {
+                            const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                            if (assign_result.toError()) |err| {
+                                pipe.deref();
+                                subprocess.deref();
+                                return event_loop.global.throwValue(err);
+                            }
+                            promise_for_stream.* = assign_result;
+                        }
 
                         return Writable{
                             .pipe = pipe,
@@ -1328,31 +1311,45 @@ const Writable = union(enum) {
         }
 
         if (comptime Environment.isPosix) {
-            if (stdio == .pipe) {
+            if (stdio.* == .pipe) {
                 _ = bun.sys.setNonblocking(result.?);
             }
         }
 
-        switch (stdio) {
+        switch (stdio.*) {
             .dup2 => @panic("TODO dup2 stdio"),
-            .pipe => {
-                const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
+            .pipe, .readable_stream => {
+                const pipe = jsc.WebCore.FileSink.create(event_loop, result.?);
 
                 switch (pipe.writer.start(pipe.fd, true)) {
                     .result => {},
                     .err => |err| {
                         _ = err; // autofix
                         pipe.deref();
+                        if (stdio.* == .readable_stream) {
+                            stdio.readable_stream.cancel(event_loop.global);
+                        }
+
                         return error.UnexpectedCreatingStdin;
                     },
                 }
+
+                pipe.writer.handle.poll.flags.insert(.socket);
 
                 subprocess.weak_file_sink_stdin_ptr = pipe;
                 subprocess.ref();
                 subprocess.flags.has_stdin_destructor_called = false;
                 subprocess.flags.deref_on_stdin_destroyed = true;
 
-                pipe.writer.handle.poll.flags.insert(.socket);
+                if (stdio.* == .readable_stream) {
+                    const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                    if (assign_result.toError()) |err| {
+                        pipe.deref();
+                        subprocess.deref();
+                        return event_loop.global.throwValue(err);
+                    }
+                    promise_for_stream.* = assign_result;
+                }
 
                 return Writable{
                     .pipe = pipe,
@@ -1388,7 +1385,7 @@ const Writable = union(enum) {
         }
     }
 
-    pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
+    pub fn toJS(this: *Writable, globalThis: *jsc.JSGlobalObject, subprocess: *Subprocess) JSValue {
         return switch (this.*) {
             .fd => |fd| fd.toJS(globalThis),
             .memfd, .ignore => .js_undefined,
@@ -1403,7 +1400,7 @@ const Writable = union(enum) {
                     // https://github.com/oven-sh/bun/pull/14092
                     bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
-                    pipe.onAttachedProcessExit();
+                    pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
                         bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
                     }
@@ -1418,7 +1415,7 @@ const Writable = union(enum) {
                     }
                     return pipe.toJSWithDestructor(
                         globalThis,
-                        JSC.WebCore.Sink.DestructorPtr.init(subprocess),
+                        jsc.WebCore.Sink.DestructorPtr.init(subprocess),
                     );
                 }
             },
@@ -1428,8 +1425,8 @@ const Writable = union(enum) {
     pub fn finalize(this: *Writable) void {
         const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
         if (subprocess.this_jsvalue != .zero) {
-            if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
-                JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+            if (jsc.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
+                jsc.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }
 
@@ -1485,25 +1482,25 @@ pub fn memoryCost(this: *const Subprocess) usize {
         this.stderr.memoryCost();
 }
 
-fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
-    if (JSC.Codegen.JSSubprocess.exitedPromiseGetCached(this_jsvalue)) |promise| {
-        JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_jsvalue, globalThis, .zero);
+fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
+    if (jsc.Codegen.JSSubprocess.exitedPromiseGetCached(this_jsvalue)) |promise| {
+        jsc.Codegen.JSSubprocess.exitedPromiseSetCached(this_jsvalue, globalThis, .zero);
         return promise;
     }
     return null;
 }
 
-fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
-    if (JSC.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
-        JSC.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
+fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
+    if (jsc.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
+        jsc.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
         return callback;
     }
     return null;
 }
 
-fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *JSC.JSGlobalObject) ?JSValue {
-    if (JSC.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
-        JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
+fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
+    if (jsc.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
+        jsc.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
         return callback;
     }
     return null;
@@ -1518,6 +1515,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     this.pid_rusage = rusage.*;
     const is_sync = this.flags.is_sync;
     this.clearAbortSignal();
+
     defer this.deref();
     defer this.disconnectIPC(true);
 
@@ -1528,40 +1526,59 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     jsc_vm.onSubprocessExit(process);
 
-    var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
-    var existing_stdin_value = JSC.JSValue.zero;
+    var stdin: ?*jsc.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
+    var existing_stdin_value = jsc.JSValue.zero;
     if (this_jsvalue != .zero) {
-        if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
+        if (jsc.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
             if (existing_stdin_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
-                    stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));
+                    stdin = @alignCast(@ptrCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
-                existing_stdin_value = existing_value;
+                if (!this.flags.is_stdin_a_readable_stream) {
+                    existing_stdin_value = existing_value;
+                }
             }
         }
     }
 
+    // We won't be sending any more data.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
     }
-    if (this.stdout == .pipe) {
-        this.stdout.pipe.close();
-    }
-    if (this.stderr == .pipe) {
-        this.stderr.pipe.close();
-    }
 
     if (existing_stdin_value != .zero) {
-        JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+        jsc.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+    }
+
+    if (this.flags.is_sync) {
+        // This doesn't match Node.js' behavior, but for synchronous
+        // subprocesses the streams should not keep the timers going.
+        if (this.stdout == .pipe) {
+            this.stdout.close();
+        }
+
+        if (this.stderr == .pipe) {
+            this.stderr.close();
+        }
+    } else {
+        // This matches Node.js behavior. Node calls resume() on the streams.
+        if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+            this.stdout.pipe.reader.read();
+        }
+
+        if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+            this.stderr.pipe.reader.read();
+        }
     }
 
     if (stdin) |pipe| {
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
+
         // It is okay if it does call deref() here, as in that case it was truly ref'd.
-        pipe.onAttachedProcessExit();
+        pipe.onAttachedProcessExit(&status);
     }
 
     var did_update_has_pending_activity = false;
@@ -1582,7 +1599,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
                     else => {
                         // crash in debug mode
@@ -1595,7 +1612,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
-                        status.err.toJSC(globalThis)
+                        status.err.toJS(globalThis)
                     else
                         .js_undefined;
 
@@ -1698,7 +1715,7 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
     this.clearAbortSignal();
 
-    bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
+    bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
     this.finalizeStreams();
 
     this.process.detach();
@@ -1725,23 +1742,23 @@ pub fn getExited(
     this_value: JSValue,
     globalThis: *JSGlobalObject,
 ) JSValue {
-    if (JSC.Codegen.JSSubprocess.exitedPromiseGetCached(this_value)) |promise| {
+    if (jsc.Codegen.JSSubprocess.exitedPromiseGetCached(this_value)) |promise| {
         return promise;
     }
 
     switch (this.process.status) {
         .exited => |exit| {
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
+            return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
         },
         .signaled => |signal| {
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
+            return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
         },
         else => {
-            const promise = JSC.JSPromise.create(globalThis).toJS();
-            JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
+            const promise = jsc.JSPromise.create(globalThis).toJS();
+            jsc.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
             return promise;
         },
     }
@@ -1752,9 +1769,9 @@ pub fn getExitCode(
     _: *JSGlobalObject,
 ) JSValue {
     if (this.process.status == .exited) {
-        return JSC.JSValue.jsNumber(this.process.status.exited.code);
+        return jsc.JSValue.jsNumber(this.process.status.exited.code);
     }
-    return JSC.JSValue.jsNull();
+    return jsc.JSValue.jsNull();
 }
 
 pub fn getSignalCode(
@@ -1763,19 +1780,19 @@ pub fn getSignalCode(
 ) JSValue {
     if (this.process.signalCode()) |signal| {
         if (signal.name()) |name|
-            return JSC.ZigString.init(name).toJS(global)
+            return jsc.ZigString.init(name).toJS(global)
         else
-            return JSC.JSValue.jsNumber(@intFromEnum(signal));
+            return jsc.JSValue.jsNumber(@intFromEnum(signal));
     }
 
-    return JSC.JSValue.jsNull();
+    return jsc.JSValue.jsNull();
 }
 
-pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
+pub fn spawn(globalThis: *jsc.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
     return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
 }
 
-pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
+pub fn spawnSync(globalThis: *jsc.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
     return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
 }
 
@@ -1783,7 +1800,7 @@ extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 // This is split into a separate function to conserve stack space.
 // On Windows, a single path buffer can take 64 KB.
-fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, pretend_argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
+fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, pretend_argv0: ?[*:0]const u8, first_cmd: JSValue, allocator: std.mem.Allocator) bun.JSError!struct {
     argv0: [:0]const u8,
     arg0: [:0]u8,
 } {
@@ -1826,8 +1843,8 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
     };
 }
 
-fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = args.arrayIterator(globalThis);
+fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
+    var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
     argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
@@ -1840,12 +1857,12 @@ fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
-    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
     argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
-    while (cmds_array.next()) |value| {
+    while (try cmds_array.next()) |value| {
         const arg = try value.toBunString(globalThis);
         defer arg.deref();
 
@@ -1858,7 +1875,7 @@ fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
 }
 
 pub fn spawnMaybeSync(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     args_: JSValue,
     secondaryArgsValue: ?JSValue,
     comptime is_sync: bool,
@@ -1913,7 +1930,7 @@ pub fn spawnMaybeSync(
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
-    var abort_signal: ?*JSC.WebCore.AbortSignal = null;
+    var abort_signal: ?*jsc.WebCore.AbortSignal = null;
     defer {
         // Ensure we clean it up on error.
         if (abort_signal) |signal| {
@@ -1982,7 +1999,7 @@ pub fn spawnMaybeSync(
             }
 
             if (try args.getTruthy(globalThis, "signal")) |signal_val| {
-                if (signal_val.as(JSC.WebCore.AbortSignal)) |signal| {
+                if (signal_val.as(jsc.WebCore.AbortSignal)) |signal| {
                     abort_signal = signal.ref();
                 } else {
                     return globalThis.throwInvalidArgumentTypeValue("signal", "AbortSignal", signal_val);
@@ -2031,18 +2048,18 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "stdio")) |stdio_val| {
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
+                        var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
-                            try stdio[i].extract(globalThis, i, value);
+                        while (try stdio_iter.next()) |value| : (i += 1) {
+                            try stdio[i].extract(globalThis, i, value, is_sync);
                             if (i == 2)
                                 break;
                         }
                         i += 1;
 
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
-                            try new_item.extract(globalThis, i, value);
+                            try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {
                                 .result => |opt| opt,
@@ -2061,15 +2078,15 @@ pub fn spawnMaybeSync(
                 }
             } else {
                 if (try args.get(globalThis, "stdin")) |value| {
-                    try stdio[0].extract(globalThis, 0, value);
+                    try stdio[0].extract(globalThis, 0, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stderr")) |value| {
-                    try stdio[2].extract(globalThis, 2, value);
+                    try stdio[2].extract(globalThis, 2, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stdout")) |value| {
-                    try stdio[1].extract(globalThis, 1, value);
+                    try stdio[1].extract(globalThis, 1, value, is_sync);
                 }
             }
 
@@ -2119,7 +2136,7 @@ pub fn spawnMaybeSync(
 
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
-                    const value = val.coerce(i64, globalThis);
+                    const value = try val.coerce(i64, globalThis);
                     if (value > 0) {
                         maxBuffer = value;
                     }
@@ -2235,7 +2252,7 @@ pub fn spawnMaybeSync(
         !stdio[2].isPiped() and
         extra_fds.items.len == 0 and
         !jsc_vm.auto_killer.enabled and
-        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !jsc_vm.jsc_vm.hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
         !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
 
@@ -2261,7 +2278,7 @@ pub fn spawnMaybeSync(
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
-            .loop = JSC.EventLoopHandle.init(jsc_vm),
+            .loop = jsc.EventLoopHandle.init(jsc_vm),
         },
     };
 
@@ -2302,7 +2319,7 @@ pub fn spawnMaybeSync(
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -2335,16 +2352,19 @@ pub fn spawnMaybeSync(
     MaxBuf.createForSubprocess(subprocess, &subprocess.stderr_maxbuf, maxBuffer);
     MaxBuf.createForSubprocess(subprocess, &subprocess.stdout_maxbuf, maxBuffer);
 
+    var promise_for_stream: jsc.JSValue = .zero;
+
     // When run synchronously, subprocess isn't garbage collected
     subprocess.* = Subprocess{
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
         .stdin = Writable.init(
-            stdio[0],
+            &stdio[0],
             loop,
             subprocess,
             spawned.stdin,
+            &promise_for_stream,
         ) catch {
             subprocess.deref();
             return globalThis.throwOutOfMemory();
@@ -2388,6 +2408,27 @@ pub fn spawnMaybeSync(
 
     subprocess.process.setExitHandler(subprocess);
 
+    promise_for_stream.ensureStillAlive();
+    subprocess.flags.is_stdin_a_readable_stream = promise_for_stream != .zero;
+
+    if (promise_for_stream != .zero and !globalThis.hasException()) {
+        if (promise_for_stream.toError()) |err| {
+            _ = globalThis.throwValue(err) catch {};
+        }
+    }
+
+    if (globalThis.hasException()) {
+        const err = globalThis.takeException(error.JSError);
+        // Ensure we kill the process so we don't leave things in an unexpected state.
+        _ = subprocess.tryKill(subprocess.killSignal);
+
+        if (globalThis.hasException()) {
+            return error.JSError;
+        }
+
+        return globalThis.throwValue(err);
+    }
+
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
@@ -2414,15 +2455,15 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
         ipc_data.writeVersionPacket(globalThis);
     }
 
-    if (subprocess.stdin == .pipe) {
-        subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
+    if (subprocess.stdin == .pipe and promise_for_stream == .zero) {
+        subprocess.stdin.pipe.signal = jsc.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 
     const out = if (comptime !is_sync)
@@ -2433,17 +2474,28 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
+    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
+
     if (comptime !is_sync) {
         bun.debugAssert(out != .zero);
 
         if (on_exit_callback.isCell()) {
-            JSC.Codegen.JSSubprocess.onExitCallbackSetCached(out, globalThis, on_exit_callback);
+            jsc.Codegen.JSSubprocess.onExitCallbackSetCached(out, globalThis, on_exit_callback);
         }
         if (on_disconnect_callback.isCell()) {
-            JSC.Codegen.JSSubprocess.onDisconnectCallbackSetCached(out, globalThis, on_disconnect_callback);
+            jsc.Codegen.JSSubprocess.onDisconnectCallbackSetCached(out, globalThis, on_disconnect_callback);
         }
         if (ipc_callback.isCell()) {
-            JSC.Codegen.JSSubprocess.ipcCallbackSetCached(out, globalThis, ipc_callback);
+            jsc.Codegen.JSSubprocess.ipcCallbackSetCached(out, globalThis, ipc_callback);
+        }
+
+        if (stdio[0] == .readable_stream) {
+            jsc.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stdio[0].readable_stream.value);
         }
 
         switch (subprocess.process.watch()) {
@@ -2488,12 +2540,6 @@ pub fn spawnMaybeSync(
     }
 
     should_close_memfd = false;
-
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
 
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener
@@ -2575,7 +2621,7 @@ pub fn spawnMaybeSync(
     const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
     const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
-    const resultPid = JSC.JSValue.jsNumberFromInt32(subprocess.pid());
+    const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
     if (globalThis.hasException()) {
@@ -2583,38 +2629,36 @@ pub fn spawnMaybeSync(
         return .zero;
     }
 
-    const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
-    sync_value.put(globalThis, JSC.ZigString.static("exitCode"), exitCode);
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
-        sync_value.put(globalThis, JSC.ZigString.static("signalCode"), signalCode);
+        sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
     }
-    sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
-    sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
-    sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
-    sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
-    if (timeout != null) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) JSC.JSValue.true else JSC.JSValue.false);
-    if (maxBuffer != null) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) JSC.JSValue.true else JSC.JSValue.false);
-    sync_value.put(globalThis, JSC.ZigString.static("pid"), resultPid);
+    sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
+    sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
+    sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
+    sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
+    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) jsc.JSValue.true else jsc.JSValue.false);
+    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) jsc.JSValue.true else jsc.JSValue.false);
+    sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
 
     return sync_value;
 }
 
-fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
-    const err = JSC.SystemError{
+fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bun.JSError {
+    const err = jsc.SystemError{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
         .errno = -bun.sys.UV_E.NOENT,
-        .path = bun.String.createUTF8(command),
+        .path = bun.String.cloneUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));
 }
 
-const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");
-
 pub fn handleIPCMessage(
     this: *Subprocess,
     message: IPC.DecodedIPCMessage,
-    handle: JSC.JSValue,
+    handle: jsc.JSValue,
 ) void {
     IPClog("Subprocess#handleIPCMessage", .{});
     switch (message) {
@@ -2628,7 +2672,7 @@ pub fn handleIPCMessage(
             const this_jsvalue = this.this_jsvalue;
             defer this_jsvalue.ensureStillAlive();
             if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSSubprocess.ipcCallbackGetCached(this_jsvalue)) |cb| {
+                if (jsc.Codegen.JSSubprocess.ipcCallbackGetCached(this_jsvalue)) |cb| {
                     const globalThis = this.globalThis;
                     globalThis.bunVM().eventLoop().runCallback(
                         cb,
@@ -2655,7 +2699,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
 
     if (this_jsvalue != .zero) {
         // Avoid keeping the callback alive longer than necessary
-        JSC.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
+        jsc.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
         if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
@@ -2667,37 +2711,42 @@ pub fn handleIPCClose(this: *Subprocess) void {
 pub fn ipc(this: *Subprocess) ?*IPC.SendQueue {
     return &(this.ipc_data orelse return null);
 }
-pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {
+pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
     return this.globalThis;
 }
 
-const default_allocator = bun.default_allocator;
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
-const CowString = bun.ptr.CowString;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const JSC = bun.JSC;
-const webcore = bun.webcore;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const which = bun.which;
-const Async = bun.Async;
-const IPC = @import("../../ipc.zig");
-const uws = bun.uws;
-const windows = bun.windows;
-const uv = windows.libuv;
 const IPClog = Output.scoped(.IPC, false);
 
-const PosixSpawn = bun.spawn;
-const Rusage = bun.spawn.Rusage;
-const Process = bun.spawn.Process;
-const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 
-const Subprocess = @This();
 pub const MaxBuf = bun.io.MaxBuf;
+
+const string = []const u8;
+
+const IPC = @import("../../ipc.zig");
+const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const uws = bun.uws;
+const webcore = bun.webcore;
+const which = bun.which;
+const CowString = bun.ptr.CowString;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
+const PosixSpawn = bun.spawn;
+const Process = bun.spawn.Process;
+const Rusage = bun.spawn.Rusage;
+const Stdio = bun.spawn.Stdio;
+
+const windows = bun.windows;
+const uv = windows.libuv;

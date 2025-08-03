@@ -61,7 +61,7 @@ InspectorLifecycleAgent::~InspectorLifecycleAgent()
     }
 }
 
-void InspectorLifecycleAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -146,11 +146,8 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     auto* global = defaultGlobalObject(&m_globalObject);
     auto* esmMap = global->esmRegistryMap();
+    if (!esmMap) return makeUnexpected(ErrorString("Module graph not available"_s));
     auto* cjsMap = global->requireMap();
-
-    if (!esmMap || !cjsMap) {
-        return makeUnexpected(ErrorString("Module graph not available"_s));
-    }
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {

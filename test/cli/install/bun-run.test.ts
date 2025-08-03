@@ -446,7 +446,7 @@ it("should show the correct working directory when run with --cwd", async () => 
 
   // The exit code will not be 1 if it panics.
   expect(await res.exited).toBe(0);
-  expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
+  expect(await res.stdout.text()).toMatch(/subdir/);
 });
 
 it("DCE annotations are respected", () => {
@@ -554,6 +554,31 @@ it("$npm_package_config_* works", async () => {
   expect(await p.exited).toBe(0);
   expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo\n`);
   expect(await new Response(p.stdout).text()).toBe(`bar\n`);
+});
+
+it("does not crash after spawning with $ variable", async () => {
+  await Bun.write(
+    join(run_dir, "package.json"),
+    JSON.stringify({
+      scripts: {
+        debug: "bun index.js $hi",
+      },
+    }),
+  );
+
+  const p = spawn({
+    cmd: [bunExe(), "run", "debug"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(1);
+  const out = await p.stdout.text();
+  expect(out).toBe("");
+  const err = await p.stderr.text();
+  expect(err).toBe(
+    '$ bun index.js $hi\nerror: Module not found "index.js"\nerror: script "debug" exited with code 1\n',
+  );
 });
 
 it("should pass arguments correctly in scripts", async () => {

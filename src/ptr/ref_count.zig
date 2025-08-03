@@ -1,6 +1,3 @@
-const enable_debug = bun.Environment.isDebug;
-const enable_single_threaded_checks = enable_debug;
-
 pub const RefCountOptions = struct {
     /// Defaults to the type basename.
     debug_name: ?[]const u8 = null,
@@ -75,6 +72,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
         pub const scope = bun.Output.Scoped(debug_name, true);
+        const DEBUG_STACK_TRACE = false;
 
         const Destructor = if (options.destructor_ctx) |ctx| fn (*T, ctx) void else fn (*T) void;
         const destructor: Destructor = destructor_untyped;
@@ -106,10 +104,12 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                     counter.active_counts,
                     counter.active_counts + 1,
                 });
-                bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
-                    .frame_count = 2,
-                    .skip_file_patterns = &.{"ptr/ref_count.zig"},
-                });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts += 1;
@@ -130,10 +130,12 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                     counter.active_counts,
                     counter.active_counts - 1,
                 });
-                bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
-                    .frame_count = 2,
-                    .skip_file_patterns = &.{"ptr/ref_count.zig"},
-                });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts -= 1;
@@ -271,6 +273,10 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn hasOneRef(counter: *const @This()) bool {
             if (enable_debug) counter.debug.assertValid();
             return counter.active_counts.load(.seq_cst) == 1;
+        }
+
+        pub fn getCount(counter: *const @This()) u32 {
+            return counter.active_counts.load(.seq_cst);
         }
 
         pub fn dumpActiveRefs(count: *@This()) void {
@@ -559,6 +565,10 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
 const unique_symbol = opaque {};
 
 const std = @import("std");
+
 const bun = @import("bun");
-const assert = bun.assert;
 const AllocationScope = bun.AllocationScope;
+const assert = bun.assert;
+
+const enable_debug = bun.Environment.isDebug;
+const enable_single_threaded_checks = enable_debug;

@@ -107,6 +107,8 @@ type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
   enableControlFlowProfiler?: boolean;
   enableDebugger?: boolean;
+  enableTestReporter?: boolean;
+  enableConsole?: boolean | true;
 } & (
     | {
         enableLifecycleAgentReporter?: false;
@@ -459,7 +461,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
-    this.send("Console.enable");
+
+    if (request.enableConsole ?? true) {
+      this.send("Console.enable");
+    }
 
     if (request.enableControlFlowProfiler) {
       this.send("Runtime.enableControlFlowProfiler");
@@ -471,6 +476,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       if (request.sendImmediatePreventExit) {
         this.send("LifecycleReporter.preventExit");
       }
+    }
+
+    if (request.enableTestReporter) {
+      this.send("TestReporter.enable");
     }
 
     // use !== false because by default if unspecified we want to enable the debugger

@@ -55,7 +55,7 @@ function makeConnection(index) {
     }
 
     c.on('close', function() {
-      // console.error(`closed ${index}`);
+      console.error(`closed ${index}`);
       closes++;
 
       if (closes < N / 2) {

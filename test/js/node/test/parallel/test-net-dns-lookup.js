@@ -30,8 +30,8 @@ const server = net.createServer(function(client) {
 });
 
 server.listen(0, common.mustCall(function() {
-  const socket = net.connect(this.address().port, 'localhost');
-  socket.on('lookup', common.mustCallAtLeast(function(err, ip, type, host) {
+  net.connect(this.address().port, 'localhost')
+    .on('lookup', common.mustCallAtLeast(function(err, ip, type, host) {
       assert.strictEqual(err, null);
       assert.match(ip, /^(127\.0\.0\.1|::1)$/);
       assert.match(type.toString(), /^(4|6)$/);

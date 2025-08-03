@@ -65,7 +65,15 @@ declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
  * Overrides **
  */
 
-interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+class ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  constructor(
+    stream: unknown,
+    underlyingSource: unknown,
+    size: unknown,
+    highWaterMark: unknown,
+    $isReadableStream: typeof $isReadableStream,
+  );
+
   $controlledReadableStream: ReadableStream<R>;
   $underlyingSource: UnderlyingSource;
   $queue: any;
@@ -83,11 +91,6 @@ interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaul
   $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
   $error: typeof ReadableStreamDefaultController.prototype.error;
 }
-
-declare var ReadableStreamDefaultController: {
-  prototype: ReadableStreamDefaultController;
-  new (): ReadableStreamDefaultController;
-};
 
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   $highWaterMark: number;
@@ -344,6 +347,7 @@ declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
 declare function $assignToStream(): TODO;
+declare function $assignStreamIntoResumableSink(): TODO;
 declare function $associatedReadableByteStreamController(): TODO;
 declare function $autoAllocateChunkSize(): TODO;
 declare function $backpressure(): TODO;
@@ -609,15 +613,6 @@ declare class OutOfMemoryError {
   constructor();
 }
 
-declare class ReadableStreamDefaultController {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
-}
 declare class ReadableByteStreamController {
   constructor(
     stream: unknown,

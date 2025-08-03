@@ -339,12 +339,13 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
-const uws = bun.uws;
-const Opcode = uws.Opcode;
-const SendStatus = uws.SendStatus;
-const uws_app_t = @import("./App.zig").uws_app_t;
 const std = @import("std");
+const uws_app_t = @import("./App.zig").uws_app_t;
+
+const uws = bun.uws;
 const NewApp = uws.NewApp;
+const Opcode = uws.Opcode;
 const Request = uws.Request;
-const uws_res = uws.uws_res;
+const SendStatus = uws.SendStatus;
 const SocketContext = uws.SocketContext;
+const uws_res = uws.uws_res;

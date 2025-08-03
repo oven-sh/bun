@@ -148,6 +148,8 @@ pub const UpdateInteractiveCommand = struct {
         target_version: []const u8,
         dep_type: []const u8, // "dependencies", "devDependencies", etc.
         workspace_path: []const u8,
+        original_version: []const u8,
+        package_id: PackageID,
     };
 
     fn updatePackageJsonFilesFromUpdates(
@@ -243,7 +245,6 @@ pub const UpdateInteractiveCommand = struct {
 
     fn updateCatalogDefinitions(
         manager: *PackageManager,
-        _: string, // original_cwd - no longer needed since we removed the install step
         catalog_updates: bun.StringHashMap(CatalogUpdate),
     ) !void {
 
@@ -314,23 +315,13 @@ pub const UpdateInteractiveCommand = struct {
 
             // Save the updated package.json
             try savePackageJson(manager, &package_json, package_json_path);
-
-            // Log what was updated (not needed outside debug)
-            // const workspace_display = if (workspace_path.len > 0) workspace_path else "root";
-            // for (updates_for_workspace.items) |update| {
-            //     if (update.catalog_name) |catalog_name| {
-            //         Output.prettyln("  Updated {s} in catalog:{s} ({s})", .{ update.package_name, catalog_name, workspace_display });
-            //     } else {
-            //         Output.prettyln("  Updated {s} in catalog ({s})", .{ update.package_name, workspace_display });
-            //     }
-            // }
         }
-
-        // Output.prettyln("", .{});
-        // Output.prettyln("<r><green>✓<r> Updated catalog definitions", .{});
     }
 
     fn updateInteractive(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
+        // make the package manager things think we are actually in root dir
+        // _ = bun.sys.chdir(manager.root_dir.dir, manager.root_dir.dir);
+
         const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
@@ -409,6 +400,7 @@ pub const UpdateInteractiveCommand = struct {
 
         if (outdated_packages.len == 0) {
             // No packages need updating - just exit silently
+            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
             return;
         }
 
@@ -447,11 +439,15 @@ pub const UpdateInteractiveCommand = struct {
         for (outdated_packages, selected) |pkg, is_selected| {
             if (!is_selected) continue;
 
-            // Use latest version if requested (either via --latest flag or 'l' key toggle)
+            // Use latest version if requested
             const target_version = if (pkg.use_latest)
                 pkg.latest_version
             else
                 pkg.update_version;
+
+            if (strings.eql(pkg.current_version, target_version)) {
+                continue;
+            }
 
             // For catalog dependencies, we need to collect them separately
             // to update the catalog definitions in the root or workspace package.json
@@ -464,7 +460,6 @@ pub const UpdateInteractiveCommand = struct {
 
                 // For catalog dependencies, we always update the root package.json
                 // (or the workspace root where the catalog is defined)
-                // TODO: In the future, support workspace-specific catalogs
                 const catalog_workspace_path = try bun.default_allocator.dupe(u8, ""); // Always root for now
 
                 try catalog_updates.put(try bun.default_allocator.dupe(u8, catalog_key), .{
@@ -487,6 +482,8 @@ pub const UpdateInteractiveCommand = struct {
                 .target_version = try bun.default_allocator.dupe(u8, target_version),
                 .dep_type = try bun.default_allocator.dupe(u8, pkg.dependency_type),
                 .workspace_path = try bun.default_allocator.dupe(u8, workspace_path),
+                .original_version = try bun.default_allocator.dupe(u8, pkg.current_version),
+                .package_id = pkg.package_id,
             });
         }
 
@@ -526,7 +523,7 @@ pub const UpdateInteractiveCommand = struct {
 
                 // Update catalog definitions first if needed
                 if (has_catalog_updates) {
-                    try updateCatalogDefinitions(manager, original_cwd, catalog_updates);
+                    try updateCatalogDefinitions(manager, catalog_updates);
                 }
 
                 // Update all package.json files directly (fast!)
@@ -535,61 +532,20 @@ pub const UpdateInteractiveCommand = struct {
                 }
 
                 // Get the root package.json from cache (should be updated after our saves)
-                const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
-                    manager.allocator,
-                    manager.log,
-                    manager.original_package_json_path,
-                    .{ .guess_indentation = true },
-                )) {
-                    .parse_err => |err| {
-                        Output.errGeneric("Failed to parse root package.json: {s}", .{@errorName(err)});
-                        return;
-                    },
-                    .read_err => |err| {
-                        Output.errGeneric("Failed to read root package.json: {s}", .{@errorName(err)});
-                        return;
-                    },
-                    .entry => |entry| entry,
+                const package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
+                    if (manager.options.log_level != .silent) {
+                        Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+                        Output.flush();
+                    }
+                    return;
                 };
-                const root_package_json_contents = root_package_json.source.contents;
-
-                // // Update all package.json files directly (to avoid conflicts with catalog updates)
-                // if (has_package_updates) {
-                //     try updatePackageJsonFilesFromUpdates(manager, package_updates.items);
-                // }
-
-                // Create UpdateRequests for the install summary
-                var update_request_array = UpdateRequest.Array{};
-                defer update_request_array.deinit(manager.allocator);
-
-                // Collect all package specs to create UpdateRequests for the summary
-                var all_package_specs = std.ArrayList([]const u8).init(manager.allocator);
-                defer all_package_specs.deinit();
-
-                for (package_updates.items) |update| {
-                    const spec = try std.fmt.allocPrint(manager.allocator, "{s}@{s}", .{ update.name, update.target_version });
-                    try all_package_specs.append(spec);
-                }
-
-                // Parse package specs into UpdateRequests for the install summary
-                if (all_package_specs.items.len > 0) {
-                    const updates = UpdateRequest.parse(
-                        manager.allocator,
-                        manager,
-                        manager.log,
-                        all_package_specs.items,
-                        &update_request_array,
-                        .update,
-                    );
-                    _ = updates; // We just need them in the array for the summary
-                }
-
-                // Set update mode so the install summary shows what was updated
                 manager.to_update = true;
-                manager.update_requests = update_request_array.items;
 
-                // Use the internal installWithManager API instead of spawning a subprocess
-                try PackageManager.installWithManager(manager, ctx, root_package_json_contents, original_cwd);
+                // Reset the timer to show actual install time instead of total command time
+                var install_ctx = ctx;
+                install_ctx.start_time = std.time.nanoTimestamp();
+
+                try PackageManager.installWithManager(manager, install_ctx, package_json_contents, manager.root_dir.dir);
             }
         }
     }
@@ -888,7 +844,7 @@ pub const UpdateInteractiveCommand = struct {
                     .manager = manager,
                     .is_catalog = dep.version.tag == .catalog,
                     .catalog_name = catalog_name,
-                    .use_latest = manager.options.do.update_to_latest, // Set based on --latest flag
+                    .use_latest = manager.options.do.update_to_latest, // default to --latest flag value
                 });
             }
         }
@@ -1433,7 +1389,10 @@ pub const UpdateInteractiveCommand = struct {
                 3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
                 ' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
-                    // Individual selection resets toggle_all mode
+                    // if the package only has a latest version, then we should toggle the latest version instead of update
+                    if (strings.eql(state.packages[state.cursor].current_version, state.packages[state.cursor].update_version)) {
+                        state.packages[state.cursor].use_latest = true;
+                    }
                     state.toggle_all = false;
                     // Don't move cursor on space - let user manually navigate
                 },

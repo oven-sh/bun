@@ -15,7 +15,7 @@ afterAll(() => {
   registry.stop();
 });
 
-describe("bun update --interactive formatting", () => {
+describe("bun update --interactive", () => {
   it("should handle package names of unusual lengths", async () => {
     const dir = tempDirWithFiles("update-interactive-test", {
       "package.json": JSON.stringify({
@@ -400,6 +400,7 @@ registry = "${registryUrl}"
     const exitCode = await update.exited;
     const stdout = await new Response(update.stdout).text();
     const stderr = await new Response(update.stderr).text();
+    const output = stdout + stderr;
 
     if (exitCode !== 0) {
       console.error("Update failed with exit code:", exitCode);
@@ -415,6 +416,15 @@ registry = "${registryUrl}"
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     // no-deps should be updated from 1.0.0 to 2.0.0
     expect(packageJson.dependencies["no-deps"]).toBe("2.0.0");
+
+    // Check that the output shows the package was installed/updated
+    expect(output).toContain("Installing updates...");
+
+    // Should show the installed package in the summary
+    expect(output).toContain("installed no-deps@");
+
+    // Should save the lockfile
+    expect(output).toContain("Saved lockfile");
   });
 
   it("should handle workspace updates with recursive flag", async () => {

@@ -189,7 +189,6 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--test-match <STR>...            Glob patterns to match test files. Defaults to **/*.{test,spec}.{js,ts,jsx,tsx} and **/*_{test,spec}.{js,ts,jsx,tsx}") catch unreachable,
     clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
 };
@@ -478,7 +477,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             };
             ctx.test_options.test_filter_regex = regex;
         }
-        ctx.test_options.test_match_patterns = args.options("--test-match");
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");

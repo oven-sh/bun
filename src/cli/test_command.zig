@@ -1426,28 +1426,40 @@ pub const TestCommand = struct {
 
         var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
         defer scanner.deinit();
-        scanner.test_match_patterns = ctx.test_options.test_match_patterns;
-        const has_relative_path = for (ctx.positionals) |arg| {
+        const has_relative_path_or_glob = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
                 strings.startsWith(arg, "../") or
                 (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+                    strings.startsWith(arg, "..\\"))) or
+                bun.glob.detectGlobSyntax(arg)) break true;
         } else false;
-        if (has_relative_path) {
-            // One of the files is a filepath. Instead of treating the
-            // arguments as filters, treat them as filepaths
+        if (has_relative_path_or_glob) {
+            // One of the arguments is a filepath or glob pattern. Instead of treating the
+            // arguments as filters, treat them as filepaths or glob patterns
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                scanner.scan(arg) catch |err| switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
-                    // don't error if multiple are passed; one might fail
-                    // but the others may not
-                    error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
-                        Global.exit(1);
-                    },
-                };
+                if (bun.glob.detectGlobSyntax(arg)) {
+                    // Handle glob pattern
+                    scanner.scanGlob(arg) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                            Global.exit(1);
+                        },
+                    };
+                } else {
+                    // Handle regular file/directory path
+                    scanner.scan(arg) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        // don't error if multiple are passed; one might fail
+                        // but the others may not
+                        error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                            Global.exit(1);
+                        },
+                    };
+                }
             }
         } else {
             // Treat arguments as filters and scan the codebase

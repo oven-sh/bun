@@ -5,13 +5,13 @@ import { join } from "path";
 test("--inspect-browser should open browser and wait for connection", async () => {
   const dir = tempDirWithFiles("inspect-browser-test", {
     "test.js": `console.log("Hello from debugger test");`,
-    "fake-xdg-open": `#!/bin/bash
+    "xdg-open": `#!/bin/bash
 echo "Opening $1" > xdg-open-calls.txt
 exit 0`,
   });
 
   // Make the fake xdg-open executable
-  await Bun.spawn(["chmod", "+x", join(dir, "fake-xdg-open")], {
+  await Bun.spawn(["chmod", "+x", join(dir, "xdg-open")], {
     cwd: dir,
   }).exited;
 
@@ -60,13 +60,13 @@ exit 0`,
 test("--inspect-browser with custom port should work", async () => {
   const dir = tempDirWithFiles("inspect-browser-port-test", {
     "test.js": `console.log("Hello from debugger test");`,
-    "fake-xdg-open": `#!/bin/bash
+    "xdg-open": `#!/bin/bash
 echo "Opening $1" > xdg-open-calls.txt
 exit 0`,
   });
 
   // Make the fake xdg-open executable
-  await Bun.spawn(["chmod", "+x", join(dir, "fake-xdg-open")], {
+  await Bun.spawn(["chmod", "+x", join(dir, "xdg-open")], {
     cwd: dir,
   }).exited;
 

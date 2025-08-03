@@ -761,8 +761,20 @@ pub const StandaloneModuleGraph = struct {
                             Global.exit(1);
                         };
                         input_result.bytes.deinit();
-                        const writer = file.writer();
-                        pe_file.write(writer) catch |err| {
+                        
+                        // Seek back to start to write the modified PE file
+                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                            .err => |err| {
+                                Output.prettyErrorln("Error seeking to start of file for writing: {}", .{err});
+                                cleanup(zname, cloned_executable_fd);
+                                Global.exit(1);
+                            },
+                            else => {},
+                        }
+                        
+                        // Write the modified PE data
+                        const write_result = bun.sys.File.writeAll(.{ .handle = cloned_executable_fd }, pe_file.data.items);
+                        _ = write_result.unwrap() catch |err| {
                             Output.prettyErrorln("Error writing PE file: {}", .{err});
                             cleanup(zname, cloned_executable_fd);
                             Global.exit(1);

@@ -822,29 +822,25 @@ const ResourceBuilder = struct {
     }
 
     // Helper to write a string as UTF-16LE with null terminator
-    fn writeUtf16String(data: *std.ArrayList(u8), str: []const u8) !void {
-        // Calculate the length first
-        const utf16_len = strings.elementLengthUTF8IntoUTF16([]const u8, str);
-
-        // Ensure we have capacity for the UTF-16 data plus null terminator
-        const start_len = data.items.len;
-        try data.ensureUnusedCapacity((utf16_len + 1) * 2);
-
-        // Resize to make room for UTF-16 data
-        data.items.len = start_len + (utf16_len * 2);
-
-        // Convert UTF-8 to UTF-16LE in place
-        // We need to use a temporary buffer due to alignment requirements
-        var utf16_buf: [1024]u16 = undefined;
-        const utf16_result = strings.convertUTF8toUTF16InBuffer(utf16_buf[0..utf16_len], str);
-
-        // Copy UTF-16 bytes to the output
-        const utf16_bytes = std.mem.sliceAsBytes(utf16_result);
-        @memcpy(data.items[start_len..][0..utf16_bytes.len], utf16_bytes);
-
+    // Returns the number of UTF-16 characters written (including null terminator)
+    fn writeUtf16String(data: *std.ArrayList(u8), str: []const u8) !u32 {
+        // For simple ASCII strings (which all our resource strings are),
+        // we can do a straightforward conversion
+        var char_count: u32 = 0;
+        
+        for (str) |c| {
+            // Write as UTF-16LE (little-endian)
+            try data.append(c);  // Low byte
+            try data.append(0);  // High byte (0 for ASCII)
+            char_count += 1;
+        }
+        
         // Add null terminator
         try data.append(0);
         try data.append(0);
+        char_count += 1;
+        
+        return char_count;
     }
 
     // Helper to align to 32-bit boundary
@@ -854,11 +850,8 @@ const ResourceBuilder = struct {
         }
     }
 
-    const VersionHeader = extern struct {
-        wLength: u16,
-        wValueLength: u16,
-        wType: u16,
-    };
+    // Note: Do NOT use a struct here as it gets padded to 8 bytes
+    // We need exactly 6 bytes for the header
 
     pub fn setVersionInfo(self: *ResourceBuilder, version: []const u8, description: ?[]const u8, company: ?[]const u8, product: ?[]const u8, copyright: ?[]const u8) !void {
         // Parse version string
@@ -879,8 +872,11 @@ const ResourceBuilder = struct {
 
         // VS_VERSIONINFO root structure
         const vs_version_info_start = data.items.len;
-        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = @sizeOf(PEFile.VS_FIXEDFILEINFO), .wType = 0 }));
-        try writeUtf16String(&data, "VS_VERSION_INFO");
+        // Write header fields individually (6 bytes total) to avoid struct padding
+        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        try data.writer().writeInt(u16, @sizeOf(PEFile.VS_FIXEDFILEINFO), .little); // wValueLength
+        try data.writer().writeInt(u16, 0, .little); // wType (0 = binary)
+        _ = try writeUtf16String(&data, "VS_VERSION_INFO");
         try alignTo32Bit(&data);
 
         // VS_FIXEDFILEINFO
@@ -904,14 +900,20 @@ const ResourceBuilder = struct {
 
         // StringFileInfo
         const string_file_info_start = data.items.len;
-        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
-        try writeUtf16String(&data, "StringFileInfo");
+        // Write header fields individually to avoid struct padding
+        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        try data.writer().writeInt(u16, 0, .little); // wValueLength
+        try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
+        _ = try writeUtf16String(&data, "StringFileInfo");
         try alignTo32Bit(&data);
 
         // StringTable for 040904B0 (US English, Unicode)
         const string_table_start = data.items.len;
-        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
-        try writeUtf16String(&data, "040904B0");
+        // Write header fields individually to avoid struct padding
+        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        try data.writer().writeInt(u16, 0, .little); // wValueLength
+        try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
+        _ = try writeUtf16String(&data, "040904B0");
         try alignTo32Bit(&data);
 
         // Add string entries
@@ -927,14 +929,17 @@ const ResourceBuilder = struct {
         for (version_strings) |str| {
             if (str.value) |value| {
                 const string_start = data.items.len;
-                try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
-                try writeUtf16String(&data, str.key);
+                // Write header fields individually to avoid struct padding
+                try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+                try data.writer().writeInt(u16, 0, .little); // wValueLength (will be updated)
+                try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
+                _ = try writeUtf16String(&data, str.key);
                 try alignTo32Bit(&data);
 
-                // Write value and update header
-                const value_start = data.items.len;
-                try writeUtf16String(&data, value);
-                const value_len = @divExact(data.items.len - value_start, 2); // Length in WORDs, including null
+                // Write value and get character count for wValueLength
+                const value_char_count = try writeUtf16String(&data, value);
+                // wValueLength should be character count including null terminator
+                const value_len = value_char_count;
 
                 // Update string header
                 const string_len = data.items.len - string_start;
@@ -959,14 +964,20 @@ const ResourceBuilder = struct {
 
         // VarFileInfo
         const var_file_info_start = data.items.len;
-        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 0, .wType = 1 }));
-        try writeUtf16String(&data, "VarFileInfo");
+        // Write header fields individually to avoid struct padding
+        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        try data.writer().writeInt(u16, 0, .little); // wValueLength
+        try data.writer().writeInt(u16, 1, .little); // wType (1 = text)
+        _ = try writeUtf16String(&data, "VarFileInfo");
         try alignTo32Bit(&data);
 
         // Translation
         const translation_start = data.items.len;
-        try data.appendSlice(std.mem.asBytes(&VersionHeader{ .wLength = 0, .wValueLength = 4, .wType = 0 }));
-        try writeUtf16String(&data, "Translation");
+        // Write header fields individually to avoid struct padding
+        try data.writer().writeInt(u16, 0, .little); // wLength (will be updated)
+        try data.writer().writeInt(u16, 4, .little); // wValueLength
+        try data.writer().writeInt(u16, 0, .little); // wType (0 = binary)
+        _ = try writeUtf16String(&data, "Translation");
         try alignTo32Bit(&data);
 
         // Language and code page

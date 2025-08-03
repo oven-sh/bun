@@ -103,6 +103,7 @@ export default function (
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
+  openInBrowser: boolean,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -125,7 +126,13 @@ export default function (
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          const debugUrl = `https://debug.bun.sh/#${host}${pathname}`;
+          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(debugUrl)}\n`);
+          
+          // Open browser if requested
+          if (openInBrowser) {
+            openUrlInBrowser(debugUrl);
+          }
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
       }
@@ -634,6 +641,29 @@ function notify(options): void {
 function exit(...args: unknown[]): never {
   console.error(...args);
   process.exit(1);
+}
+
+function openUrlInBrowser(url: string): void {
+  // Use Bun.spawn in a detached way to open the browser without blocking
+  // Similar to how bun create does it using openURL
+  try {
+    const opener = process.platform === "darwin" 
+      ? "/usr/bin/open"
+      : process.platform === "win32" 
+      ? "start"
+      : "xdg-open";
+    
+    // Spawn without awaiting to avoid blocking
+    Bun.spawn([opener, url], {
+      stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
+    });
+  } catch (error) {
+    // Best effort - don't fail if browser opening fails
+    if (!!$debug) {
+      $debug("Failed to open browser:", error);
+    }
+  }
 }
 
 type ConnectionOwner = {

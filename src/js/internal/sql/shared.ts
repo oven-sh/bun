@@ -82,7 +82,7 @@ class SQLHelper<T> {
   public readonly columns: (keyof T)[];
 
   constructor(value: T, keys?: (keyof T)[]) {
-    if (keys !== undefined && keys.length === 0) {
+    if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
       keys = Object.keys(value[0]) as (keyof T)[];
     }
 

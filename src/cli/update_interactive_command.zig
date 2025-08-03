@@ -1692,5 +1692,4 @@ const Behavior = Install.Dependency.Behavior;
 
 const PackageManager = Install.PackageManager;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;

@@ -575,6 +575,30 @@ declare module "bun" {
     getex(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Increment the integer value of a key by the given number
+     * @param key The key to increment
+     * @param count The amount to increment by
+     * @returns Promise that resolves with the new value
+     */
+    incrby(key: RedisClient.KeyLike, count: string | number): Promise<number>;
+
+    /**
+     * Decrement the integer value of a key by the given number
+     * @param key The key to decrement
+     * @param count The amount to decrement by
+     * @returns Promise that resolves with the new value
+     */
+    decrby(key: RedisClient.KeyLike, count: string | number): Promise<number>;
+
+    /**
+     * Increment the float value of a key by the given amount
+     * @param key The key to increment
+     * @param count The amount to increment by (float or integer)
+     * @returns Promise that resolves with the new value as a string
+     */
+    incrbyfloat(key: RedisClient.KeyLike, count: string | number): Promise<string>;
+
+    /**
      *  Ping the server
      *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
      */

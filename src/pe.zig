@@ -827,19 +827,19 @@ const ResourceBuilder = struct {
         // For simple ASCII strings (which all our resource strings are),
         // we can do a straightforward conversion
         var char_count: u32 = 0;
-        
+
         for (str) |c| {
             // Write as UTF-16LE (little-endian)
-            try data.append(c);  // Low byte
-            try data.append(0);  // High byte (0 for ASCII)
+            try data.append(c); // Low byte
+            try data.append(0); // High byte (0 for ASCII)
             char_count += 1;
         }
-        
+
         // Add null terminator
         try data.append(0);
         try data.append(0);
         char_count += 1;
-        
+
         return char_count;
     }
 

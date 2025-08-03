@@ -761,7 +761,7 @@ pub const StandaloneModuleGraph = struct {
                             Global.exit(1);
                         };
                         input_result.bytes.deinit();
-                        
+
                         // Seek back to start to write the modified PE file
                         switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                             .err => |err| {
@@ -771,7 +771,7 @@ pub const StandaloneModuleGraph = struct {
                             },
                             else => {},
                         }
-                        
+
                         // Write the modified PE data
                         const write_result = bun.sys.File.writeAll(.{ .handle = cloned_executable_fd }, pe_file.data.items);
                         _ = write_result.unwrap() catch |err| {

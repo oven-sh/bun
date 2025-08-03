@@ -18,8 +18,8 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       "build",
       "--compile",
       "--target=bun-windows-x64-v1.2.19",
-      ...Object.entries(windowsOptions).flatMap(([key, value]) => 
-        value === true ? [`--${key}`] : [`--${key}`, value as string]
+      ...Object.entries(windowsOptions).flatMap(([key, value]) =>
+        value === true ? [`--${key}`] : [`--${key}`, value as string],
       ),
       join(dir, "index.js"),
       "--outfile",
@@ -40,7 +40,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
     }
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     return join(dir, outfile);
   }
 
@@ -125,7 +125,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       console.log("Raw exiftool output:", stdout);
       console.log("Executable path for debugging:", join(dir, "test.exe"));
       const metadata = JSON.parse(stdout)[0];
-      
+
       // Verify the version information
       expect(metadata.FileVersionNumber).toBe("9.8.7.6");
       expect(metadata.ProductVersionNumber).toBe("9.8.7.6");
@@ -155,7 +155,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
 
       const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
       expect(exitCode).toBe(0);
-      
+
       // Windows GUI subsystem
       expect(stdout).toContain("Windows GUI");
     } finally {
@@ -184,7 +184,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       expect(exitCode).toBe(0);
 
       const metadata = JSON.parse(stdout)[0];
-      
+
       // Even with an icon, the version should still be set
       expect(metadata.FileVersionNumber).toBe("1.0.0.0");
       expect(metadata.ProductVersionNumber).toBe("1.0.0.0");
@@ -219,7 +219,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       expect(exitCode).toBe(0);
 
       const metadata = JSON.parse(stdout)[0];
-      
+
       // Verify all fields
       expect(metadata.FileVersionNumber).toBe("5.4.3.2");
       expect(metadata.ProductVersionNumber).toBe("5.4.3.2");
@@ -259,15 +259,16 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       // Extract relevant version info fields for snapshot
       const versionFields = stdout
         .split("\n")
-        .filter(line => 
-          line.includes("File Version Number") ||
-          line.includes("Product Version Number") ||
-          line.includes("File Description") ||
-          line.includes("Company Name") ||
-          line.includes("Product Name") ||
-          line.includes("Legal Copyright") ||
-          line.includes("File Version") ||
-          line.includes("Product Version")
+        .filter(
+          line =>
+            line.includes("File Version Number") ||
+            line.includes("Product Version Number") ||
+            line.includes("File Description") ||
+            line.includes("Company Name") ||
+            line.includes("Product Name") ||
+            line.includes("Legal Copyright") ||
+            line.includes("File Version") ||
+            line.includes("Product Version"),
         )
         .join("\n");
 

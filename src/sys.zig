@@ -4116,7 +4116,7 @@ pub const umask = switch (Environment.os) {
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
 
-pub const File = @import("sys/File.zig");
+pub const File = @import("./sys/File.zig");
 
 const builtin = @import("builtin");
 const sys = @This(); // to avoid ambiguous references.
@@ -4126,13 +4126,10 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const c = bun.c; // translated c headers
-const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const libc_stat = bun.Stat;
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const darwin_nocancel = bun.darwin.nocancel;
-
-const jsc = bun.jsc;
-const SystemError = jsc.SystemError;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

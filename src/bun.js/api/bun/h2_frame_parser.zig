@@ -4446,10 +4446,6 @@ pub const H2FrameParser = struct {
     }
     pub fn detachFromJS(this: *H2FrameParser, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
-            stream.freeResources(this, false);
-        }
         this.detach();
         if (this.strong_this.tryGet()) |this_value| {
             js.gc.context.clear(this_value, this.globalThis);

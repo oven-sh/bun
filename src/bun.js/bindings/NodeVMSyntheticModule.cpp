@@ -108,16 +108,15 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 
     // Use the new API that handles module environment creation internally
     SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
-        globalObject, 
-        Identifier::fromString(vm, identifier()), 
-        exportIdentifiers, 
-        exportValues
-    );
+        globalObject,
+        Identifier::fromString(vm, identifier()),
+        exportIdentifiers,
+        exportValues);
 
     if (!moduleRecord) {
         // Fallback to old approach if new API fails
         moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
-        
+
         for (const String& exportName : m_exportNames) {
             Identifier exportIdentifier = Identifier::fromString(vm, exportName);
             moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));

@@ -858,6 +858,8 @@ src/string/StringJoiner.zig
 src/string/WTFStringImpl.zig
 src/sys_uv.zig
 src/sys.zig
+src/sys/Error.zig
+src/sys/File.zig
 src/system_timer.zig
 src/test/fixtures.zig
 src/test/recover.zig

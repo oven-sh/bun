@@ -675,6 +675,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
             }
 
+            // We need to add this here to not trip up
+            // `checkEdgeRemoval(edge_idx)` (which checks that there no
+            // references to `edge_idx`.
+            //
+            // I don't think `g.first_import.items[file_index]` is ever read
+            // from again in this function, so this is safe.
+            g.first_import.items[file_index.get()] = .none;
+
             // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()[0..quick_lookup_values_to_care_len]) |val| {
                 if (!val.seen) {
@@ -1836,7 +1844,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn checkEdgeRemoval(g: *@This(), edge_index: EdgeIndex) void {
             // Enable this on any builds with asan enabled so we can catch stuff
             // in CI too
-            if (comptime bun.asan.enabled) return;
+            const enabled = bun.asan.enabled or bun.Environment.ci_assert;
+            if (comptime !enabled) return;
 
             for (g.first_dep.items) |maybe_first_dep| {
                 if (maybe_first_dep.unwrap()) |first_dep| {

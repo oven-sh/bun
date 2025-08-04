@@ -400,7 +400,8 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
-            .Locked => this.Locked.memoryCost(),
+            // TODO: make this track if the readablestream has been set as the current JSValue
+            .Locked => this.Locked.sizeHint(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };

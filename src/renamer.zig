@@ -869,6 +869,7 @@ pub fn computeInitialReservedNames(
     const extras = .{
         "Promise",
         "Require",
+        "$",
     };
 
     const cjs_names = .{

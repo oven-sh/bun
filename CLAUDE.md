@@ -225,7 +225,7 @@ bun ci
 5. **Use absolute paths** - Always use absolute paths in file operations
 6. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
 7. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
-8. **Cross-platform** - Test on macOS, Linux, and Windows when making platform-specific changes
+8. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
 9. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
 10. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 11. **Transpiled source** - Find transpiled files in `/tmp/bun-debug-src/` for debugging

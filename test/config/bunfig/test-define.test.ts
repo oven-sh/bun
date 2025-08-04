@@ -81,14 +81,7 @@ test("test.define with different value types", async () => {
   const dir = tempDirWithFiles("bunfig-test-define-types", {
     "bunfig.toml": `
 [test]
-[test.define]
-"STRING_VAR" = '"hello"'
-"NUMBER_VAR" = '42'
-"BOOLEAN_VAR" = 'true'
-"NULL_VAR" = 'null'
-"UNDEFINED_VAR" = 'undefined'
-"OBJECT_VAR" = '{"key": "value"}'
-"ARRAY_VAR" = '[1, 2, 3]'
+define = { "STRING_VAR" = '"hello"', "NUMBER_VAR" = '42', "BOOLEAN_VAR" = 'true', "NULL_VAR" = 'null', "UNDEFINED_VAR" = 'undefined', "OBJECT_VAR" = '{"key": "value"}', "ARRAY_VAR" = '[1, 2, 3]' }
 `,
     "test.test.js": `
 import { test, expect } from "bun:test";

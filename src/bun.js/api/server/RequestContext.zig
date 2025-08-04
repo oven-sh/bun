@@ -162,6 +162,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctx.flags.response_protected = true;
             value.protect();
 
+            if (response.body.value == .Route) {
+                ctx.response_ptr = response;
+                ctx.render(response);
+                return;
+            }
+
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
                     var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1365,7 +1371,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.endWithoutBody(this.shouldCloseConnection());
                 return;
             };
-            const globalThis = server.globalThis;
+            const globalThis = this.server.?.globalThis;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
@@ -1434,6 +1440,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
+                .Route => {
+                    this.renderMetadata();
+                    this.response_ptr = response;
+                    this.render(response);
+                },
                 .Used, .Null, .Empty, .Error => {
                     this.renderMetadata();
                     resp.writeHeaderInt("content-length", 0);
@@ -1487,6 +1498,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
+
+                if (response.body.value == .Route) {
+                    ctx.response_ptr = response;
+                    ctx.render(response);
+                    return;
+                }
+
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
                         var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1545,6 +1563,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue = fulfilled_value;
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
+
+                        if (response.body.value == .Route) {
+                            ctx.response_ptr = response;
+                            ctx.render(response);
+                            return;
+                        }
+
                         ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {
@@ -1705,6 +1730,93 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     // toBlobIfPossible checks for WTFString needing a conversion.
                     this.blob = value.useAsAnyBlobAllowNonUTF8String();
                     this.renderWithBlobFromBodyValue();
+                    return;
+                },
+                // todo
+                // requires better implementation.
+                .Route => |route_ptr| {
+                    if (bun.Environment.enable_logs)
+                        ctxLog(".Route.doRenderWithBody route {s}", .{@tagName(route_ptr.data.state)});
+
+                    if (this.isAbortedOrEnded()) {
+                        return;
+                    }
+
+                    const srv = this.server orelse {
+                        globalThis.throwInvalidArguments("Server unavailable", .{}) catch {};
+                        return;
+                    };
+
+                    const server_any = AnyServer.from(srv);
+                    route_ptr.data.server = server_any;
+
+                    if (srv.config.development.isHMREnabled()) {
+                        const dev = server_any.ensureDevServer() catch null;
+                        if (dev) |d| {
+                            bake.DevServer.registerCatchAllHtmlRoute(d, route_ptr.data) catch bun.outOfMemory();
+                        } else {
+                            const msg = bun.String.static("HMR disabled: register HTMLBundle in `routes` to enable dev server.").toJS(globalThis);
+                            jsc.ConsoleObject.messageWithTypeAndLevel(
+                                undefined,
+                                jsc.ConsoleObject.MessageType.Log,
+                                jsc.ConsoleObject.MessageLevel.Warning,
+                                globalThis,
+                                &[_]jsc.JSValue{msg},
+                                1,
+                            );
+                        }
+                    }
+
+                    const resp_ptr = this.resp.?;
+                    const resp_any = uws.AnyResponse.init(resp_ptr);
+                    const response = this.response_ptr.?;
+                    const status_code = response.statusCode();
+                    var headers_ref: ?*FetchHeaders = null;
+                    if (response.init.headers) |h| {
+                        headers_ref = h.cloneThis(globalThis) catch |err| {
+                            _ = globalThis.takeException(err);
+                            return;
+                        };
+                    }
+
+                    if (this.req) |req| {
+                        if (route_ptr.data.state == .html) {
+                            this.sendHtmlRoute(route_ptr.data.state.html, resp_any, status_code, headers_ref);
+                            return;
+                        }
+                        if (this.method == .HEAD or this.method == .GET) {
+                            if (status_code != 200 or headers_ref != null) {
+                                this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                                return;
+                            }
+                        }
+                        if (this.method == .HEAD) {
+                            route_ptr.data.onHEADRequest(req, resp_any);
+                        } else {
+                            route_ptr.data.onRequest(req, resp_any);
+                        }
+                        if (headers_ref) |h| h.deref();
+                        return;
+                    }
+
+                    switch (route_ptr.data.state) {
+                        .html => |html| {
+                            this.sendHtmlRoute(html, resp_any, status_code, headers_ref);
+                        },
+                        .err => |log| {
+                            if (bun.Environment.enable_logs)
+                                ctxLog("HTML route build failed", .{});
+                            if (srv.config.isDevelopment()) {
+                                _ = log;
+                            }
+                            resp_any.writeStatus("500 Build Failed");
+                            resp_any.endWithoutBody(false);
+                        },
+                        else => {
+                            this.addPendingRoute(route_ptr.data, resp_any, status_code, headers_ref);
+                        },
+                    }
+
                     return;
                 },
                 .Locked => |*lock| {
@@ -2408,6 +2520,49 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
 
+        fn sendHtmlRoute(this: *RequestContext, html: *StaticRoute, resp_any: uws.AnyResponse, status_code: u16, headers_ref: ?*FetchHeaders) void {
+            if (bun.Environment.enable_logs)
+                ctxLog("sendHtmlRoute status={d} method={s}", .{ status_code, @tagName(this.method) });
+
+            if (status_code != 200 or headers_ref != null) {
+                var temp = StaticRoute.initFromAnyBlob(&html.blob, .{ .server = html.server, .status_code = status_code, .headers = headers_ref });
+
+                defer temp.deref();
+                temp.onWithMethod(this.method, resp_any);
+                if (headers_ref) |h| h.deref();
+            } else if (this.method == .HEAD) {
+                html.onHEAD(resp_any);
+            } else {
+                html.on(resp_any);
+            }
+        }
+
+        fn addPendingRoute(
+            this: *RequestContext,
+            route: *HTMLBundle.Route,
+            resp_any: uws.AnyResponse,
+            status_code: u16,
+            headers_ref: ?*FetchHeaders,
+        ) void {
+            if (bun.Environment.enable_logs)
+                ctxLog("pending HTML route state={s} status={d}", .{ @tagName(route.state), status_code });
+            const pending = bun.new(HTMLBundle.Route.PendingResponse, .{
+                .method = this.method,
+                .resp = resp_any,
+                .server = route.server,
+                .route = route,
+                .status_code = status_code,
+                .headers = headers_ref,
+            });
+            route.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+            route.ref();
+            resp_any.onAborted(*HTMLBundle.Route.PendingResponse, HTMLBundle.Route.PendingResponse.onAborted, pending);
+            this.flags.has_marked_pending = true;
+            if (route.state == .pending) {
+                route.scheduleBundle(route.server.?) catch bun.outOfMemory();
+            }
+        }
+
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             if (bun.Environment.export_cpp_apis) {
@@ -2533,6 +2688,7 @@ const Output = bun.Output;
 const S3 = bun.S3;
 const String = bun.String;
 const assert = bun.assert;
+
 const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
@@ -2546,10 +2702,14 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const AnyRequestContext = jsc.API.AnyRequestContext;
+const AnyServer = jsc.API.AnyServer;
 
 const WebCore = jsc.WebCore;
 const Blob = jsc.WebCore.Blob;
 const Body = jsc.WebCore.Body;
+const HTMLBundle = jsc.API.HTMLBundle;
 const FetchHeaders = jsc.WebCore.FetchHeaders;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const StaticRoute = @import("./StaticRoute.zig");
+const bake = bun.bake;

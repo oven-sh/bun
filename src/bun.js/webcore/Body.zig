@@ -226,6 +226,7 @@ pub const Value = union(Tag) {
     pub const HiveAllocator = bun.HiveArray(HiveRef, pool_size).Fallback;
 
     Blob: Blob,
+    Route: bun.ptr.RefPtr(HTMLBundle.Route),
 
     /// This is the String type from WebKit
     /// It is reference counted, so we must always deref it (which this does automatically)
@@ -278,6 +279,13 @@ pub const Value = union(Tag) {
             .Used, .Empty => true,
             .InternalBlob => this.InternalBlob.slice().len == 0,
             .Blob => this.Blob.size == 0,
+            .Route => brk: {
+                const route = this.Route.data;
+                if (route.state == .html) {
+                    break :brk route.state.html.cached_blob_size == 0;
+                }
+                break :brk false;
+            },
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
             .Error, .Locked => false,
         };
@@ -372,6 +380,13 @@ pub const Value = union(Tag) {
             .Blob => @truncate(this.Blob.getSizeForBindings()),
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
+            .Route => brk: {
+                const route = this.Route.data;
+                if (route.state == .html) {
+                    break :brk @as(Blob.SizeType, @truncate(route.state.html.cached_blob_size));
+                }
+                break :brk 0;
+            },
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
             else => 0,
@@ -393,6 +408,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
             .Locked => this.Locked.sizeHint(),
+            .Route => this.Route.data.memoryCost(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };
@@ -403,6 +419,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.sliceConst().len,
             .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
             .Locked => this.Locked.sizeHint(),
+            .Route => 0,
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };
@@ -432,6 +449,7 @@ pub const Value = union(Tag) {
 
     pub const Tag = enum {
         Blob,
+        Route,
         WTFStringImpl,
         InternalBlob,
         // InlineBlob,
@@ -470,6 +488,9 @@ pub const Value = union(Tag) {
                     },
                 };
                 return value;
+            },
+            .Route => {
+                return jsc.WebCore.ReadableStream.empty(globalThis);
             },
             .Locked => {
                 var locked = &this.Locked;
@@ -799,6 +820,10 @@ pub const Value = union(Tag) {
                 this.* = .{ .Used = {} };
                 return new_blob;
             },
+            .Route => {
+                // TODO
+                return Blob.initEmpty(undefined);
+            },
             // .InlineBlob => {
             //     const cloned = this.InlineBlob.bytes;
             //     // keep same behavior as InternalBlob but clone the data
@@ -830,6 +855,7 @@ pub const Value = union(Tag) {
             .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
             // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
+            .Route => return null, // TODO
             else => return null,
         };
 
@@ -856,6 +882,7 @@ pub const Value = union(Tag) {
                     };
                 }
             },
+            .Route => .{ .Blob = Blob.initEmpty(undefined) }, // TODO: handle Route
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
             else => .{ .Blob = Blob.initEmpty(undefined) },
@@ -873,6 +900,7 @@ pub const Value = union(Tag) {
             .Blob => .{ .Blob = this.Blob },
             .InternalBlob => .{ .InternalBlob = this.InternalBlob },
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
+            .Route => .{ .Blob = Blob.initEmpty(undefined) }, // TODO: handle Route
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
             else => .{ .Blob = Blob.initEmpty(undefined) },
@@ -957,6 +985,11 @@ pub const Value = union(Tag) {
 
         if (tag == .WTFStringImpl) {
             this.WTFStringImpl.deref();
+            this.* = Value{ .Null = {} };
+        }
+
+        if (tag == .Route) {
+            this.Route.deref();
             this.* = Value{ .Null = {} };
         }
 
@@ -1061,6 +1094,10 @@ pub const Value = union(Tag) {
         if (this.* == .WTFStringImpl) {
             this.WTFStringImpl.ref();
             return Value{ .WTFStringImpl = this.WTFStringImpl };
+        }
+
+        if (this.* == .Route) {
+            return Value{ .Route = this.Route.dupeRef() };
         }
 
         if (this.* == .Null) {
@@ -1411,6 +1448,9 @@ pub const ValueBufferer = struct {
                 }
                 return;
             },
+            .Route => {
+                sink.onFinishedBuffering(sink.ctx, "", null, false);
+            },
             .Locked => {
                 try sink.bufferLockedBodyValue(value);
             },
@@ -1679,3 +1719,4 @@ const streams = jsc.WebCore.streams;
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = Blob.Any;
 const InternalBlob = Blob.Internal;
+const HTMLBundle = jsc.API.HTMLBundle;

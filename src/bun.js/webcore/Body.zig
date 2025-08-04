@@ -22,6 +22,14 @@ pub fn clone(this: *Body, globalThis: *JSGlobalObject) bun.JSError!Body {
     };
 }
 
+pub fn memoryCost(this: *const Body) usize {
+    return this.value.memoryCost();
+}
+
+pub fn estimatedSize(this: *const Body) usize {
+    return this.value.estimatedSize();
+}
+
 pub fn writeFormat(this: *Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
 
@@ -392,7 +400,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
-            .Locked => this.Locked.sizeHint(),
+            .Locked => this.Locked.memoryCost(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };

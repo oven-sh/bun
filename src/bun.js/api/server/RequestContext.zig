@@ -60,7 +60,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn memoryCost(this: *const RequestContext) usize {
             // The Sink and ByteStream aren't owned by this.
-            return @sizeOf(RequestContext) + this.request_body_buf.capacity + this.response_buf_owned.capacity + this.blob.memoryCost();
+            return @sizeOf(RequestContext) +
+                this.request_body_buf.capacity +
+                this.response_buf_owned.capacity +
+                this.blob.memoryCost() +
+                (if (this.resp) |response| response.memoryCost() else 0);
         }
 
         pub inline fn isAsync(this: *const RequestContext) bool {

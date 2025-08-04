@@ -74,7 +74,7 @@ public:
     };
 
     size_t memoryCost() {
-        return getBufferedAmount() + sizeof(WebSocket);
+        return sizeof(WebSocket<SSL, isServer, USERDATA>) + this->getAsyncSocketData()->memoryCost();
     }
 
     /* Sending fragmented messages puts a bit of effort on the user; you must not interleave regular sends

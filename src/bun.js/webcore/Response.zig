@@ -38,6 +38,15 @@ pub fn estimatedSize(this: *Response) callconv(.C) usize {
     return this.reported_estimated_size;
 }
 
+pub fn memoryCost(this: *const Response) usize {
+    var counter: usize = @sizeOf(Response);
+    counter += this.body.memoryCost();
+    counter += this.url.estimatedSize();
+    counter += this.init.memoryCost();
+
+    return counter;
+}
+
 pub fn calculateEstimatedByteSize(this: *Response) void {
     this.reported_estimated_size = this.body.value.estimatedSize() +
         this.url.byteSlice().len +
@@ -613,6 +622,10 @@ pub const Init = struct {
     status_code: u16,
     status_text: bun.String = bun.String.empty,
     method: Method = Method.GET,
+
+    pub fn memoryCost(this: *const Init) usize {
+        return this.status_text.estimatedSize();
+    }
 
     pub fn clone(this: Init, ctx: *JSGlobalObject) bun.JSError!Init {
         var that = this;

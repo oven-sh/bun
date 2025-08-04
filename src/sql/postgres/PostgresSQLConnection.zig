@@ -717,24 +717,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         },
     };
 
-    ptr.updateHasPendingActivity();
-    ptr.poll_ref.ref(vm);
-    const js_value = ptr.toJS(globalObject);
-    js_value.ensureStillAlive();
-    ptr.js_value = js_value;
-
-    js.onconnectSetCached(js_value, globalObject, on_connect);
-    js.oncloseSetCached(js_value, globalObject, on_close);
-    bun.analytics.Features.postgres_connections += 1;
-
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
-        var failed_to_connect: bool = false;
-        defer if (failed_to_connect) {
-            ptr.status = .disconnected;
-            ptr.updateHasPendingActivity();
-        };
 
         const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
             const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
@@ -750,7 +735,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
-                    failed_to_connect = true;
+                    ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };
@@ -761,14 +746,23 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
-                    failed_to_connect = true;
+                    ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };
         }
-        ptr.resetConnectionTimeout();
     }
 
+    // only call toJS if connectUnixAnon does not fail immediately
+    ptr.updateHasPendingActivity();
+    ptr.resetConnectionTimeout();
+    ptr.poll_ref.ref(vm);
+    const js_value = ptr.toJS(globalObject);
+    js_value.ensureStillAlive();
+    ptr.js_value = js_value;
+    js.onconnectSetCached(js_value, globalObject, on_connect);
+    js.oncloseSetCached(js_value, globalObject, on_close);
+    bun.analytics.Features.postgres_connections += 1;
     return js_value;
 }
 

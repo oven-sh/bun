@@ -5,8 +5,8 @@ const Ids = struct {
 
 pub const Store = struct {
     /// Accessed from multiple threads
-    entries: Entry.List,
-    nodes: Node.List,
+    entries: Entry.List = .empty,
+    nodes: Node.List = .empty,
 
     const log = Output.scoped(.Store, false);
 
@@ -50,6 +50,577 @@ pub const Store = struct {
     }
 
     pub const Installer = @import("./Installer.zig").Installer;
+
+    pub fn create(
+        manager: *PackageManager,
+        install_root_dependencies: bool,
+        workspace_filters: []const WorkspaceFilter,
+    ) OOM!Store {
+        var timer = std.time.Timer.start() catch unreachable;
+
+        const NextNode = struct {
+            parent_id: Node.Id,
+            dep_id: DependencyID,
+            pkg_id: PackageID,
+        };
+
+        var next_node_stack: std.ArrayList(NextNode) = .init(manager.allocator);
+        defer next_node_stack.deinit();
+
+        try next_node_stack.append(.{
+            .parent_id = .invalid,
+            .dep_id = invalid_dependency_id,
+            .pkg_id = 0,
+        });
+
+        // struct holding up-to-date pointers to multi array list fields
+        // and some code moved into functions for reuse
+        const BuilderCtx = struct {
+            store: Store,
+            allocator: std.mem.Allocator,
+
+            // lockfile buffers
+            string_buf: []const u8,
+            dependencies: []const Dependency,
+            resolutions: []const PackageID,
+            pkg_names: []const String,
+            pkg_resolutions: []const Resolution,
+            pkg_name_hashes: []const PackageNameHash,
+            pkg_dependency_slices: []const DependencySlice,
+
+            node_dep_ids: []DependencyID,
+            node_pkg_ids: []PackageID,
+            node_parent_ids: []Node.Id,
+            node_dependencies: []std.ArrayListUnmanaged(Ids),
+            node_peers: []Node.Peers,
+            node_nodes: []std.ArrayListUnmanaged(Node.Id),
+
+            node_dedupe: std.AutoArrayHashMap(PackageID, Node.Id),
+
+            entry_dependencies: []Entry.Dependencies,
+            entry_parents: []std.ArrayListUnmanaged(Entry.Id),
+
+            pub fn init(allocator: std.mem.Allocator, lockfile: *const Lockfile) OOM!@This() {
+                const pkgs = lockfile.packages.slice();
+                var ctx: @This() = .{
+                    .store = .{},
+                    .allocator = allocator,
+                    .string_buf = lockfile.buffers.string_bytes.items,
+                    .dependencies = lockfile.buffers.dependencies.items,
+                    .resolutions = lockfile.buffers.resolutions.items,
+                    .pkg_names = pkgs.items(.name),
+                    .pkg_resolutions = pkgs.items(.resolution),
+                    .pkg_name_hashes = pkgs.items(.name_hash),
+                    .pkg_dependency_slices = pkgs.items(.dependencies),
+                    .node_dep_ids = &.{},
+                    .node_pkg_ids = &.{},
+                    .node_parent_ids = &.{},
+                    .node_dependencies = &.{},
+                    .node_peers = &.{},
+                    .node_nodes = &.{},
+                    .node_dedupe = .init(allocator),
+                    .entry_dependencies = &.{},
+                    .entry_parents = &.{},
+                };
+
+                // Both of these will be similar in size to packages.len. Peer dependencies will make them slightly larger.
+                try ctx.store.nodes.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
+                try ctx.store.entries.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
+
+                return ctx;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                this.node_dedupe.deinit();
+            }
+
+            const NodeParentIterator = struct {
+                next_id: Node.Id,
+                node_parent_ids: []const Node.Id,
+
+                pub fn next(this: *@This()) ?Node.Id {
+                    if (this.next_id == .invalid) {
+                        return null;
+                    }
+                    const curr_id = this.next_id;
+                    this.next_id = this.node_parent_ids[curr_id.get()];
+                    return curr_id;
+                }
+            };
+
+            pub fn iterateNodeParents(this: *const @This(), first_parent_id: Node.Id) NodeParentIterator {
+                return .{ .next_id = first_parent_id, .node_parent_ids = this.node_parent_ids };
+            }
+
+            const AppendNodeResult = union(enum) {
+                new_node: Node.Id,
+                deduplicated,
+            };
+
+            pub fn appendNode(this: *@This(), next_node: NextNode) OOM!AppendNodeResult {
+                if (this.node_dedupe.get(next_node.pkg_id)) |dedupe_node_id| create_new_node: {
+                    const node_dep = this.dependencies[next_node.dep_id];
+
+                    const dedupe_dep_id = this.node_dep_ids[dedupe_node_id.get()];
+                    const dedupe_dep = this.dependencies[dedupe_dep_id];
+
+                    if (dedupe_dep.name_hash != node_dep.name_hash) {
+                        // create a new node if it's an alias so we don't lose the alias name
+                        break :create_new_node;
+                    }
+
+                    try this.addNodeToParentNodes(next_node.parent_id, dedupe_node_id);
+                    return .deduplicated;
+                }
+
+                const pkg_deps = this.pkg_dependency_slices[next_node.pkg_id];
+
+                const node_id: Node.Id = .from(@intCast(this.store.nodes.len));
+                try this.store.nodes.append(this.allocator, .{
+                    .pkg_id = next_node.pkg_id,
+                    .dep_id = next_node.dep_id,
+                    .parent_id = next_node.parent_id,
+                    // capacity is set to the expected size after we
+                    // find the exact dependency count
+                    .nodes = .empty,
+                    .dependencies = try .initCapacity(this.allocator, pkg_deps.len),
+                });
+
+                // update pointers
+                const nodes = this.store.nodes.slice();
+                this.node_dep_ids = nodes.items(.dep_id);
+                this.node_pkg_ids = nodes.items(.pkg_id);
+                this.node_parent_ids = nodes.items(.parent_id);
+                this.node_dependencies = nodes.items(.dependencies);
+                this.node_peers = nodes.items(.peers);
+                this.node_nodes = nodes.items(.nodes);
+
+                return .{ .new_node = node_id };
+            }
+
+            pub fn addNodeToParentNodes(this: *@This(), parent_id: Node.Id, node_id: Node.Id) OOM!void {
+                this.node_nodes[parent_id.get()].appendAssumeCapacity(node_id);
+
+                if (this.node_nodes[parent_id.get()].items.len == this.node_dependencies[parent_id.get()].items.len) {
+                    // we've visited all the children nodes of the parent, see if we can add to the dedupe map.
+                    try this.maybeAddNodeToDedupeMap(parent_id);
+                }
+            }
+
+            pub fn maybeAddNodeToDedupeMap(this: *@This(), node_id: Node.Id) OOM!void {
+                if (this.node_peers[node_id.get()].list.items.len != 0) {
+                    // only nodes without peers (transitive or direct) are added to the map.
+                    return;
+                }
+
+                const dep_id = this.node_dep_ids[node_id.get()];
+                if (dep_id == invalid_dependency_id) {
+                    // no need to add the root package
+                    return;
+                }
+
+                const dep = this.dependencies[dep_id];
+                const pkg_id = this.node_pkg_ids[node_id.get()];
+
+                if (dep.name_hash != this.pkg_name_hashes[pkg_id]) {
+                    // don't add to the dedupe map if the dependency name does not match
+                    // the package name. this means it's an alias, and won't be as common
+                    // as a normal dependency on this package.
+                    return;
+                }
+
+                const dedupe = try this.node_dedupe.getOrPut(pkg_id);
+                if (comptime Environment.ci_assert) {
+                    bun.assertWithLocation(!dedupe.found_existing, @src());
+                }
+
+                dedupe.value_ptr.* = node_id;
+            }
+
+            pub fn appendEntry(this: *@This(), entry: Entry) OOM!Entry.Id {
+                const entry_id: Entry.Id = .from(@intCast(this.store.entries.len));
+                try this.store.entries.append(this.allocator, entry);
+
+                // update pointers
+                const entries = this.store.entries.slice();
+                this.entry_dependencies = entries.items(.dependencies);
+                this.entry_parents = entries.items(.parents);
+
+                return entry_id;
+            }
+        };
+
+        var ctx: BuilderCtx = try .init(manager.allocator, manager.lockfile);
+        defer ctx.deinit();
+
+        var dep_ids_sort_buf: std.ArrayList(DependencyID) = .init(ctx.allocator);
+        defer dep_ids_sort_buf.deinit();
+
+        var peer_dep_ids_buf: std.ArrayList(DependencyID) = .init(ctx.allocator);
+        defer peer_dep_ids_buf.deinit();
+
+        var visited_node_ids_buf: std.ArrayList(Node.Id) = .init(ctx.allocator);
+        defer visited_node_ids_buf.deinit();
+
+        // First pass: create full dependency tree with resolved peers
+        next_node: while (next_node_stack.pop()) |next_node| {
+            {
+                // check for cycles
+                var parent_iter = ctx.iterateNodeParents(next_node.parent_id);
+                while (parent_iter.next()) |parent_id| {
+                    if (ctx.node_pkg_ids[parent_id.get()] == next_node.pkg_id) {
+                        // skip the new node, and add the previously added node to parent so it appears in
+                        // 'node_modules/.bun/parent@version/node_modules'.
+
+                        const dep_id = ctx.node_dep_ids[parent_id.get()];
+                        if (dep_id == invalid_dependency_id or next_node.dep_id == invalid_dependency_id) {
+                            try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
+                            continue :next_node;
+                        }
+
+                        // ensure the dependency name is the same before skipping the cycle. if they aren't
+                        // we lose dependency name information for the symlinks
+                        if (ctx.dependencies[dep_id].name_hash == ctx.dependencies[next_node.dep_id].name_hash) {
+                            try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
+                            continue :next_node;
+                        }
+                    }
+                }
+            }
+
+            const node_id = switch (try ctx.appendNode(next_node)) {
+                .new_node => |id| id,
+                .deduplicated => continue,
+            };
+
+            const pkg_deps = ctx.pkg_dependency_slices[next_node.pkg_id];
+            dep_ids_sort_buf.clearRetainingCapacity();
+            try dep_ids_sort_buf.ensureUnusedCapacity(pkg_deps.len);
+            for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
+                dep_ids_sort_buf.appendAssumeCapacity(dep_id);
+            }
+
+            // TODO: make this sort in an order that allows peers to be resolved last
+            // and devDependency handling to match `hoistDependency`
+            std.sort.pdq(
+                DependencyID,
+                dep_ids_sort_buf.items,
+                Lockfile.DepSorter{ .lockfile = manager.lockfile },
+                Lockfile.DepSorter.isLessThan,
+            );
+
+            peer_dep_ids_buf.clearRetainingCapacity();
+            for (dep_ids_sort_buf.items) |dep_id| {
+                if (Tree.isFilteredDependencyOrWorkspace(
+                    dep_id,
+                    next_node.pkg_id,
+                    workspace_filters,
+                    install_root_dependencies,
+                    manager,
+                    manager.lockfile,
+                )) {
+                    continue;
+                }
+
+                const pkg_id = ctx.resolutions[dep_id];
+                const dep = ctx.dependencies[dep_id];
+
+                // TODO: handle duplicate dependencies. should be similar logic
+                // like we have for dev dependencies in `hoistDependency`
+
+                if (dep.behavior.isPeer()) {
+                    try peer_dep_ids_buf.append(dep_id);
+                    continue;
+                }
+
+                // simple case:
+                // - add it as a dependency
+                // - queue it
+                ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                try next_node_stack.append(.{
+                    .parent_id = node_id,
+                    .dep_id = dep_id,
+                    .pkg_id = pkg_id,
+                });
+            }
+
+            for (peer_dep_ids_buf.items) |peer_dep_id| {
+                const resolved_pkg_id = resolved_pkg_id: {
+
+                    // Go through the peers parents looking for a package with the same name.
+                    // If none is found, use current best version. Parents visited must have
+                    // the package id for the chosen peer marked as a transitive peer. Nodes
+                    // are deduplicated only if their package id and their transitive peer package
+                    // ids are equal.
+                    const peer_dep = ctx.dependencies[peer_dep_id];
+
+                    // Start with the parent of the new node. A package
+                    // cannot resolve it's own peer.
+                    // var curr_id = ctx.node_parent_ids[node_id.get()];
+                    var parent_iter = ctx.iterateNodeParents(ctx.node_parent_ids[node_id.get()]);
+
+                    visited_node_ids_buf.clearRetainingCapacity();
+                    try visited_node_ids_buf.append(node_id);
+
+                    while (parent_iter.next()) |parent_id| {
+                        for (ctx.node_dependencies[parent_id.get()].items) |ids| {
+                            const dep = ctx.dependencies[ids.dep_id];
+
+                            if (dep.name_hash != peer_dep.name_hash) {
+                                continue;
+                            }
+
+                            const res = ctx.pkg_resolutions[ids.pkg_id];
+
+                            if (peer_dep.version.tag != .npm or res.tag != .npm) {
+                                // TODO: print warning for this? we don't have a version
+                                // to compare to say if this satisfies or not.
+                                break :resolved_pkg_id ids.pkg_id;
+                            }
+
+                            const peer_dep_version = peer_dep.version.value.npm.version;
+                            const res_version = res.value.npm.version;
+
+                            if (!peer_dep_version.satisfies(res_version, ctx.string_buf, ctx.string_buf)) {
+                                // TODO: add warning!
+                            }
+
+                            break :resolved_pkg_id ids.pkg_id;
+                        }
+
+                        const curr_peers = ctx.node_peers[parent_id.get()];
+                        for (curr_peers.list.items) |ids| {
+                            const transitive_peer_dep = ctx.dependencies[ids.dep_id];
+
+                            if (transitive_peer_dep.name_hash != peer_dep.name_hash) {
+                                continue;
+                            }
+
+                            // A transitive peer with the same name has already passed
+                            // through this node
+
+                            break :resolved_pkg_id ids.pkg_id;
+                        }
+
+                        // TODO: prevent marking workspace and symlink deps with transitive peers
+
+                        // add to visited parents after searching for a peer resolution.
+                        // if a node resolves a transitive peer, it can still be deduplicated
+                        try visited_node_ids_buf.append(parent_id);
+                    }
+
+                    if (peer_dep.behavior.isOptionalPeer()) {
+                        // exclude it
+                        continue;
+                    }
+
+                    // set the length to 1 so we only add this peer to the current node
+                    visited_node_ids_buf.items.len = 1;
+
+                    // choose the current best version
+                    break :resolved_pkg_id ctx.resolutions[peer_dep_id];
+                };
+
+                if (comptime Environment.ci_assert) {
+                    bun.assertWithLocation(resolved_pkg_id != invalid_package_id, @src());
+                }
+
+                for (visited_node_ids_buf.items) |visited_id| {
+                    const insert_ctx: Node.TransitivePeer.OrderedArraySetCtx = .{
+                        .string_buf = ctx.string_buf,
+                        .pkg_names = ctx.pkg_names,
+                    };
+                    const peer: Node.TransitivePeer = .{
+                        .dep_id = peer_dep_id,
+                        .pkg_id = resolved_pkg_id,
+                    };
+                    try ctx.node_peers[visited_id.get()].insert(ctx.allocator, peer, &insert_ctx);
+                }
+
+                ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
+                try next_node_stack.append(.{
+                    .parent_id = node_id,
+                    .dep_id = peer_dep_id,
+                    .pkg_id = resolved_pkg_id,
+                });
+            }
+
+            const node_dependencies_count = ctx.node_dependencies[node_id.get()].items.len;
+
+            try ctx.node_nodes[node_id.get()].ensureTotalCapacityPrecise(ctx.allocator, node_dependencies_count);
+
+            if (node_dependencies_count == 0) {
+                // it's a leaf. we can try adding it to the dedupe map now
+                try ctx.maybeAddNodeToDedupeMap(node_id);
+            }
+
+            if (next_node.parent_id != .invalid) {
+                try ctx.addNodeToParentNodes(next_node.parent_id, node_id);
+            }
+        }
+
+        if (manager.options.log_level.isVerbose()) {
+            const full_tree_end = timer.read();
+            timer.reset();
+            Output.prettyErrorln("Resolved peers: {d} nodes [{}]", .{
+                ctx.store.nodes.len,
+                bun.fmt.fmtDurationOneDecimal(full_tree_end),
+            });
+        }
+
+        const EntryDedupe = struct {
+            entry_id: Entry.Id,
+            dep_id: DependencyID,
+            peers: OrderedArraySet(Node.TransitivePeer, Node.TransitivePeer.OrderedArraySetCtx),
+        };
+
+        var entry_dedupe: std.AutoArrayHashMap(PackageID, std.ArrayList(EntryDedupe)) = .init(ctx.allocator);
+        defer entry_dedupe.deinit();
+
+        var res_fmt_buf: std.ArrayList(u8) = .init(ctx.allocator);
+        defer res_fmt_buf.deinit();
+
+        const NextEntry = struct {
+            node_id: Node.Id,
+            parent_id: Entry.Id,
+        };
+
+        var next_entry_queue: std.fifo.LinearFifo(NextEntry, .Dynamic) = .init(ctx.allocator);
+        defer next_entry_queue.deinit();
+
+        try next_entry_queue.writeItem(.{
+            .node_id = .from(0),
+            .parent_id = .invalid,
+        });
+
+        // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
+        next_entry: while (next_entry_queue.readItem()) |next_entry| {
+            const pkg_id = ctx.node_pkg_ids[next_entry.node_id.get()];
+            const dep_id = ctx.node_dep_ids[next_entry.node_id.get()];
+
+            const dedupe = try entry_dedupe.getOrPut(pkg_id);
+            if (!dedupe.found_existing) {
+                dedupe.value_ptr.* = .init(ctx.allocator);
+            } else {
+                const peers = ctx.node_peers[next_entry.node_id.get()];
+
+                for (dedupe.value_ptr.items) |info| {
+                    // if (info.dep_id != invalid_dependency_id and dep_id != invalid_dependency_id) {
+                    //     const curr_dep = dependencies[dep_id];
+                    //     const existing_dep = dependencies[info.dep_id];
+
+                    //     if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                    //         if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
+                    //             continue;
+                    //         }
+                    //     }
+                    // }
+
+                    const eql_ctx: Node.TransitivePeer.OrderedArraySetCtx = .{
+                        .string_buf = ctx.string_buf,
+                        .pkg_names = ctx.pkg_names,
+                    };
+
+                    if (info.peers.eql(&peers, &eql_ctx)) {
+                        // dedupe! depend on the already created entry
+
+                        var parents = &ctx.entry_parents[info.entry_id.get()];
+
+                        // if (dep_id != invalid_dependency_id and dependencies[dep_id].behavior.isWorkspace()) {
+                        //     try parents.append(lockfile.allocator, next_entry.parent_id);
+                        //     continue :next_entry;
+                        // }
+                        const insert_ctx: Entry.DependenciesOrderedArraySetCtx = .{
+                            .string_buf = ctx.string_buf,
+                            .dependencies = ctx.dependencies,
+                        };
+                        try ctx.entry_dependencies[next_entry.parent_id.get()].insert(
+                            ctx.allocator,
+                            .{ .entry_id = info.entry_id, .dep_id = dep_id },
+                            &insert_ctx,
+                        );
+                        try parents.append(ctx.allocator, next_entry.parent_id);
+                        continue :next_entry;
+                    }
+                }
+
+                // nothing matched - create a new entry
+            }
+
+            const entry_id = try ctx.appendEntry(.{
+                .node_id = next_entry.node_id,
+                .dependencies = dependencies: {
+                    if (dedupe.found_existing and dep_id != invalid_dependency_id and ctx.dependencies[dep_id].version.tag == .workspace) {
+                        break :dependencies .empty;
+                    }
+
+                    break :dependencies try .initCapacity(ctx.allocator, ctx.node_nodes[next_entry.node_id.get()].items.len);
+                },
+                .parents = parents: {
+                    var parents: std.ArrayListUnmanaged(Entry.Id) = try .initCapacity(ctx.allocator, 1);
+                    parents.appendAssumeCapacity(next_entry.parent_id);
+                    break :parents parents;
+                },
+                .peer_hash = peer_hash: {
+                    const peers = ctx.node_peers[next_entry.node_id.get()];
+                    if (peers.len() == 0) {
+                        break :peer_hash .none;
+                    }
+                    var hasher = bun.Wyhash11.init(0);
+                    for (peers.slice()) |peer_ids| {
+                        const pkg_name = ctx.pkg_names[peer_ids.pkg_id];
+                        hasher.update(pkg_name.slice(ctx.string_buf));
+                        const pkg_res = ctx.pkg_resolutions[peer_ids.pkg_id];
+                        res_fmt_buf.clearRetainingCapacity();
+                        try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(ctx.string_buf, .posix)});
+                        hasher.update(res_fmt_buf.items);
+                    }
+                    break :peer_hash .from(hasher.final());
+                },
+            });
+
+            if (next_entry.parent_id != .invalid) skip_adding_dependency: {
+                if (dep_id != invalid_dependency_id and ctx.dependencies[dep_id].behavior.isWorkspace()) {
+                    // skip implicit workspace dependencies on the root.
+                    break :skip_adding_dependency;
+                }
+
+                const insert_ctx: Entry.DependenciesOrderedArraySetCtx = .{
+                    .string_buf = ctx.string_buf,
+                    .dependencies = ctx.dependencies,
+                };
+                try ctx.entry_dependencies[next_entry.parent_id.get()].insert(
+                    ctx.allocator,
+                    .{ .entry_id = entry_id, .dep_id = dep_id },
+                    &insert_ctx,
+                );
+            }
+
+            try dedupe.value_ptr.append(.{
+                .entry_id = entry_id,
+                .dep_id = dep_id,
+                .peers = ctx.node_peers[next_entry.node_id.get()],
+            });
+
+            for (ctx.node_nodes[next_entry.node_id.get()].items) |node_id| {
+                try next_entry_queue.writeItem(.{
+                    .node_id = node_id,
+                    .parent_id = entry_id,
+                });
+            }
+        }
+
+        if (manager.options.log_level.isVerbose()) {
+            const dedupe_end = timer.read();
+            Output.prettyErrorln("Created store: {d} entries [{}]", .{
+                ctx.store.entries.len,
+                bun.fmt.fmtDurationOneDecimal(dedupe_end),
+            });
+        }
+
+        return ctx.store;
+    }
 
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn isCycle(this: *const Store, id: Entry.Id, maybe_parent_id: Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Entry.Id, void)) bool {
@@ -399,7 +970,6 @@ pub const Store = struct {
         pub const TransitivePeer = struct {
             dep_id: DependencyID,
             pkg_id: PackageID,
-            auto_installed: bool,
 
             pub const OrderedArraySetCtx = struct {
                 string_buf: string,
@@ -535,6 +1105,7 @@ const std = @import("std");
 const bun = @import("bun");
 const OOM = bun.OOM;
 const Output = bun.Output;
+const Environment = bun.Environment;
 
 const Semver = bun.Semver;
 const String = Semver.String;
@@ -543,7 +1114,15 @@ const install = bun.install;
 const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
+const invalid_package_id = install.invalid_package_id;
 const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
+const PackageManager = install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const Tree = Lockfile.Tree;
+const DependencySlice = Lockfile.DependencySlice;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const PackageIDList = Lockfile.PackageIDList;

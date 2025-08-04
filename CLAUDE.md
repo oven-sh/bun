@@ -133,7 +133,6 @@ test("my feature", async () => {
 When implementing JavaScript classes in C++:
 
 1. Create three classes if there's a public constructor:
-
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
    - `class FooPrototype : public JSC::JSNonFinalObject`
    - `class FooConstructor : public JSC::InternalFunction`
@@ -193,7 +192,6 @@ Built-in JavaScript modules use special syntax and are organized as:
    ```
 
 3. **Debug helpers**:
-
    - `$debug()` - Like console.log but stripped in release builds
    - `$assert()` - Assertions stripped in release builds
    - `if($debug) {}` - Check if debug env var is set
@@ -229,7 +227,8 @@ bun ci
 7. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
 8. **Cross-platform** - Test on macOS, Linux, and Windows when making platform-specific changes
 9. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
-10. **Transpiled source** - Find transpiled files in `/tmp/bun-debug-src/` for debugging
+10. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
+11. **Transpiled source** - Find transpiled files in `/tmp/bun-debug-src/` for debugging
 
 ## Key APIs and Features
 

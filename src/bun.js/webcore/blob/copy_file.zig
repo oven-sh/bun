@@ -18,7 +18,7 @@ pub const CopyFile = struct {
     globalThis: *JSGlobalObject,
 
     mkdirp_if_not_exists: bool = false,
-    mode: ?u32 = null,
+    mode: ?bun.Mode = null,
 
     pub const ResultType = anyerror!SizeType;
 
@@ -32,7 +32,7 @@ pub const CopyFile = struct {
         max_len: SizeType,
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
-        mode: ?u32,
+        mode: ?bun.Mode,
     ) !*CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
@@ -161,14 +161,14 @@ pub const CopyFile = struct {
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    @intCast(this.mode orelse jsc.Node.fs.default_permission),
+                    this.mode orelse jsc.Node.fs.default_permission,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| blk: {
                             // Set file mode if specified
                             if (comptime !Environment.isWindows) {
                                 if (this.mode) |file_mode| {
-                                    _ = bun.sys.fchmod(result_fd, @intCast(file_mode));
+                                    _ = bun.sys.fchmod(result_fd, file_mode);
                                 }
                             }
                             break :blk result_fd;

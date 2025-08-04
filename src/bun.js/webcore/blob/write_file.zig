@@ -22,7 +22,7 @@ pub const WriteFile = struct {
     could_block: bool = false,
     close_after_io: bool = false,
     mkdirp_if_not_exists: bool = false,
-    mode: ?u32 = null,
+    mode: ?bun.Mode = null,
 
     pub const io_tag = io.Poll.Tag.WriteFile;
 
@@ -78,7 +78,7 @@ pub const WriteFile = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-        mode: ?u32,
+        mode: ?bun.Mode,
     ) !*WriteFile {
         const write_file = bun.new(WriteFile, WriteFile{
             .file_blob = file_blob,
@@ -101,7 +101,7 @@ pub const WriteFile = struct {
         context: Context,
         comptime callback: fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
-        mode: ?u32,
+        mode: ?bun.Mode,
     ) !*WriteFile {
         const Handler = struct {
             pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
@@ -228,7 +228,7 @@ pub const WriteFile = struct {
         // Set file mode if specified
         if (comptime !Environment.isWindows) {
             if (this.mode) |file_mode| {
-                _ = bun.sys.fchmod(fd, @intCast(file_mode));
+                _ = bun.sys.fchmod(fd, file_mode);
             }
         }
 
@@ -356,7 +356,7 @@ pub const WriteFileWindows = struct {
     onCompleteCallback: WriteFileOnWriteFileCallback,
     onCompleteCtx: *anyopaque,
     mkdirp_if_not_exists: bool = false,
-    mode: ?u32 = null,
+    mode: ?bun.Mode = null,
     uv_bufs: [1]uv.uv_buf_t,
 
     fd: uv.uv_file = -1,
@@ -375,7 +375,7 @@ pub const WriteFileWindows = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-        mode: ?u32,
+        mode: ?bun.Mode,
     ) *WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
@@ -638,7 +638,7 @@ pub const WriteFileWindows = struct {
         context: Context,
         comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
-        mode: ?u32,
+        mode: ?bun.Mode,
     ) *WriteFileWindows {
         return WriteFileWindows.createWithCtx(
             file_blob,

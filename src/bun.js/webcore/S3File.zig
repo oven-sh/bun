@@ -147,14 +147,14 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     switch (path_or_blob) {
         .path => |path| {
             const options = args.nextEat();
-            var mode: ?u32 = null;
+            var mode: ?bun.Mode = null;
 
             // Parse mode from options if present
             if (options) |options_object| {
                 if (options_object.isObject()) {
                     if (try options_object.getTruthy(globalThis, "mode")) |mode_value| {
                         if (try jsc.Node.modeFromJS(globalThis, mode_value)) |file_mode| {
-                            mode = @intCast(file_mode);
+                            mode = file_mode;
                         }
                     }
                 }
@@ -175,14 +175,14 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         },
         .blob => {
             const options = args.nextEat();
-            var mode: ?u32 = null;
+            var mode: ?bun.Mode = null;
 
             // Parse mode from options if present
             if (options) |options_object| {
                 if (options_object.isObject()) {
                     if (try options_object.getTruthy(globalThis, "mode")) |mode_value| {
                         if (try jsc.Node.modeFromJS(globalThis, mode_value)) |file_mode| {
-                            mode = @intCast(file_mode);
+                            mode = file_mode;
                         }
                     }
                 }

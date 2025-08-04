@@ -1303,7 +1303,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         char error_msg[256];
         ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
-        printf("SSL_CTX_set_cipher_list failed: %s, %s\n", options.ssl_ciphers, error_msg);
         // TLS1.2 ciphers were deliberately cleared, so don't consider
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
         // works). If the user actually sets a value (like "no-such-cipher"), then

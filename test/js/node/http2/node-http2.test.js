@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { bunEnv, bunExe, isCI, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
@@ -9,7 +10,6 @@ import tls from "node:tls";
 import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
 const { afterEach, beforeEach, describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
 function getMemorySize(obj) {

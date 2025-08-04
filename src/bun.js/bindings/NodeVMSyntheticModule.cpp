@@ -94,24 +94,37 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
-
-    m_moduleRecord.set(vm, this, moduleRecord);
-
-    SymbolTable* exportSymbolTable = SymbolTable::create(vm);
-
-    ScopeOffset offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-    exportSymbolTable->set(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
-
+    // Convert export names to Vector<Identifier>
+    Vector<Identifier, 4> exportIdentifiers;
     for (const String& exportName : m_exportNames) {
-        auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        Identifier exportIdentifier = Identifier::fromString(vm, exportName);
-        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));
-        exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
+        exportIdentifiers.append(Identifier::fromString(vm, exportName));
     }
 
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
-    moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
+    // Create empty export values - they will be filled later during evaluation
+    MarkedArgumentBuffer exportValues;
+    for (size_t i = 0; i < m_exportNames.size(); ++i) {
+        exportValues.append(jsUndefined());
+    }
+
+    // Use the new API that handles module environment creation internally
+    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
+        globalObject, 
+        Identifier::fromString(vm, identifier()), 
+        exportIdentifiers, 
+        exportValues
+    );
+
+    if (!moduleRecord) {
+        // Fallback to old approach if new API fails
+        moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
+        
+        for (const String& exportName : m_exportNames) {
+            Identifier exportIdentifier = Identifier::fromString(vm, exportName);
+            moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));
+        }
+    }
+
+    m_moduleRecord.set(vm, this, moduleRecord);
 }
 
 void NodeVMSyntheticModule::ensureModuleRecord(JSGlobalObject* globalObject)

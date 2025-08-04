@@ -533,17 +533,9 @@ pub const Mapping = struct {
                     return null;
 
                 const name = source_map.external_source_names[@intCast(index)];
-
-                var buf: bun.PathBuffer = undefined;
-                const normalized = bun.path.joinAbsStringBufZ(
-                    bun.path.dirname(base_filename, .auto),
-                    &buf,
-                    &.{name},
-                    .loose,
-                );
-                switch (bun.sys.File.readFrom(
+                switch (bun.sys.File.readFromJoinedPath(
                     std.fs.cwd(),
-                    normalized,
+                    &.{ bun.path.dirname(base_filename, .auto), name },
                     bun.default_allocator,
                 )) {
                     .result => |r| break :bytes r,

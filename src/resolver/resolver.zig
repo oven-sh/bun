@@ -761,7 +761,8 @@ pub const Resolver = struct {
         // It's always relative to the current working directory of the project root.
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
-        var source_dir_resolver: bun.path.PosixToWinNormalizer = .{};
+        const source_dir_resolver: bun.path.PosixToWinNormalizer = bun.path.PosixToWinNormalizer.get();
+        defer source_dir_resolver.deinit();
         const source_dir_normalized = brk: {
             if (r.standalone_module_graph) |graph| {
                 if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
@@ -986,9 +987,10 @@ pub const Resolver = struct {
                         }
                     } else if (dir.abs_real_path.len > 0) {
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                        var buf: bun.PathBuffer = undefined;
+                        var buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(buf);
 
-                        var out = r.fs.absBuf(&parts, &buf);
+                        var out = r.fs.absBuf(&parts, buf);
 
                         const store_fd = r.store_fd;
 
@@ -1002,7 +1004,7 @@ pub const Resolver = struct {
 
                             if (!store_fd) {
                                 assert(file.stdioTag() == null);
-                                out = try file.getFdPath(&buf);
+                                out = try file.getFdPath(buf);
                                 file.close();
                                 query.entry.cache.fd = .invalid;
                             } else {
@@ -1014,15 +1016,14 @@ pub const Resolver = struct {
                         defer {
                             if (r.fs.fs.needToCloseFiles()) {
                                 if (query.entry.cache.fd.isValid()) {
-                                    var file = query.entry.cache.fd.stdFile();
-                                    file.close();
+                                    query.entry.cache.fd.close();
                                     query.entry.cache.fd = .invalid;
                                 }
                             }
                         }
 
                         if (store_fd) {
-                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
+                            out = try bun.getFdPath(query.entry.cache.fd, buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -1140,21 +1141,22 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            var normalizer = ResolvePath.PosixToWinNormalizer{};
-            if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
-                return .{
-                    .success = Result{
-                        .dirname_fd = entry.dirname_fd,
-                        .path_pair = entry.path_pair,
-                        .diff_case = entry.diff_case,
-                        .package_json = entry.package_json,
-                        .file_fd = entry.file_fd,
-                        .jsx = r.opts.jsx,
-                    },
-                };
-            }
-
-            return .{ .not_found = {} };
+            const normalizer = ResolvePath.PosixToWinNormalizer.get();
+            defer normalizer.deinit();
+            const entry = r.loadAsFileOrDirectory(
+                normalizer.resolve(source_dir, import_path),
+                kind,
+            ) orelse return .{ .not_found = {} };
+            return .{
+                .success = Result{
+                    .dirname_fd = entry.dirname_fd,
+                    .path_pair = entry.path_pair,
+                    .diff_case = entry.diff_case,
+                    .package_json = entry.package_json,
+                    .file_fd = entry.file_fd,
+                    .jsx = r.opts.jsx,
+                },
+            };
         }
 
         // Check both relative and package paths for CSS URL tokens, with relative
@@ -1287,6 +1289,7 @@ pub const Resolver = struct {
 
     pub fn checkRelativePath(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind, global_cache: GlobalCache) Result.Union {
         const parts = [_]string{ source_dir, import_path };
+
         const abs_path = r.fs.absBuf(&parts, bufs(.relative_abs_path));
 
         if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_path)) {

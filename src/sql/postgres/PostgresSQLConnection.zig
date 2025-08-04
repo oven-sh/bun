@@ -730,6 +730,11 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
         defer hostname.deinit();
+        var failed_to_connect: bool = false;
+        defer if (failed_to_connect) {
+            ptr.status = .disconnected;
+            ptr.updateHasPendingActivity();
+        };
 
         const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
             const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
@@ -745,7 +750,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
-                    ptr.deinit();
+                    failed_to_connect = true;
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };
@@ -756,7 +761,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
-                    ptr.deinit();
+                    failed_to_connect = true;
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };

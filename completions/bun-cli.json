@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "commands": {
     "run": {
       "name": "run",
@@ -16,7 +16,8 @@
           "name": "file",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "javascript_files"
         }
       ],
       "examples": [
@@ -26,14 +27,20 @@
         "bun run lint"
       ],
       "usage": "Usage: bun run [flags] <file or script>",
-      "documentationUrl": "https://bun.com/docs/cli/run"
+      "documentationUrl": "https://bun.com/docs/cli/run",
+      "dynamicCompletions": {
+        "scripts": true,
+        "files": true,
+        "binaries": true
+      }
     },
     "lint": {
       "name": "lint",
       "description": "$ bunx oxlint --config=oxlint.json --format=github src/js --help",
       "flags": [],
       "positionalArgs": [],
-      "examples": []
+      "examples": [],
+      "dynamicCompletions": {}
     },
     "test": {
       "name": "test",
@@ -149,7 +156,8 @@
           "name": "patterns",
           "required": false,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "test_files"
         }
       ],
       "examples": [
@@ -158,7 +166,10 @@
         "bun test --test-name-pattern baz"
       ],
       "usage": "Usage: bun test [flags] [<patterns>]",
-      "documentationUrl": "https://bun.com/docs/cli/test"
+      "documentationUrl": "https://bun.com/docs/cli/test",
+      "dynamicCompletions": {
+        "files": true
+      }
     },
     "x": {
       "name": "x",
@@ -183,7 +194,8 @@
           "name": "package@version",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "package"
         },
         {
           "name": "flags",
@@ -193,7 +205,11 @@
         }
       ],
       "examples": [],
-      "usage": "Usage: bunx [flags] <package><@version> [flags and arguments for the package]"
+      "usage": "Usage: bunx [flags] <package><@version> [flags and arguments for the package]",
+      "dynamicCompletions": {},
+      "aliases": [
+        "bunx"
+      ]
     },
     "exec": {
       "name": "exec",
@@ -204,14 +220,16 @@
           "name": "script",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "script"
         }
       ],
       "examples": [
         "bun exec \"echo hi\"",
         "bun exec \"echo \\\"hey friends\\\"!\""
       ],
-      "usage": "Usage: bun exec <script>"
+      "usage": "Usage: bun exec <script>",
+      "dynamicCompletions": {}
     },
     "install": {
       "name": "install",
@@ -524,8 +542,11 @@
         "bun install --production"
       ],
       "usage": "Usage: bun install [flags] <name>@<version>",
-      "alias": "bun i",
-      "documentationUrl": "https://bun.com/docs/cli/install."
+      "aliases": [
+        "i"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/install.",
+      "dynamicCompletions": {}
     },
     "add": {
       "name": "add",
@@ -822,7 +843,8 @@
           "name": "package@version",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "package"
         }
       ],
       "examples": [
@@ -834,8 +856,13 @@
         "bun add --peer esbuild"
       ],
       "usage": "Usage: bun add [flags] <package><@version>",
-      "alias": "bun a",
-      "documentationUrl": "https://bun.com/docs/cli/add."
+      "aliases": [
+        "a"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/add.",
+      "dynamicCompletions": {
+        "packages": true
+      }
     },
     "remove": {
       "name": "remove",
@@ -1087,15 +1114,21 @@
           "name": "packages",
           "required": false,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "installed_package"
         }
       ],
       "examples": [
         "bun remove ts-node"
       ],
       "usage": "Usage: bun remove [flags] [<packages>]",
-      "alias": "bun r",
-      "documentationUrl": "https://bun.com/docs/cli/remove."
+      "aliases": [
+        "rm"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/remove.",
+      "dynamicCompletions": {
+        "packages": true
+      }
     },
     "update": {
       "name": "update",
@@ -1372,7 +1405,8 @@
         "bun update zod jquery@3"
       ],
       "usage": "Usage: bun update [flags] <name>@<version>",
-      "documentationUrl": "https://bun.com/docs/cli/update."
+      "documentationUrl": "https://bun.com/docs/cli/update.",
+      "dynamicCompletions": {}
     },
     "audit": {
       "name": "audit",
@@ -1399,7 +1433,8 @@
         "bun audit --json"
       ],
       "usage": "Usage: bun audit [flags]",
-      "documentationUrl": "https://bun.com/docs/install/audit."
+      "documentationUrl": "https://bun.com/docs/install/audit.",
+      "dynamicCompletions": {}
     },
     "outdated": {
       "name": "outdated",
@@ -1673,7 +1708,8 @@
         "bun outdated \"!is-even\""
       ],
       "usage": "Usage: bun outdated [flags] [filter]",
-      "documentationUrl": "https://bun.com/docs/cli/outdated."
+      "documentationUrl": "https://bun.com/docs/cli/outdated.",
+      "dynamicCompletions": {}
     },
     "link": {
       "name": "link",
@@ -1925,7 +1961,8 @@
           "name": "packages",
           "required": false,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "package"
         }
       ],
       "examples": [
@@ -1933,7 +1970,8 @@
         "bun link <package>"
       ],
       "usage": "Usage: bun link [flags] [<packages>]",
-      "documentationUrl": "https://bun.com/docs/cli/link."
+      "documentationUrl": "https://bun.com/docs/cli/link.",
+      "dynamicCompletions": {}
     },
     "unlink": {
       "name": "unlink",
@@ -2186,7 +2224,8 @@
         "bun unlink"
       ],
       "usage": "Usage: bun unlink [flags]",
-      "documentationUrl": "https://bun.com/docs/cli/unlink."
+      "documentationUrl": "https://bun.com/docs/cli/unlink.",
+      "dynamicCompletions": {}
     },
     "publish": {
       "name": "publish",
@@ -2490,7 +2529,8 @@
         "bun publish --tag next ./path/to/tarball.tgz"
       ],
       "usage": "Usage: bun publish [flags] [dist]",
-      "documentationUrl": "https://bun.com/docs/cli/publish."
+      "documentationUrl": "https://bun.com/docs/cli/publish.",
+      "dynamicCompletions": {}
     },
     "patch": {
       "name": "patch",
@@ -2757,7 +2797,8 @@
           "name": "package@version",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "package"
         }
       ],
       "examples": [
@@ -2766,7 +2807,8 @@
         "bun patch --patches-dir 'my-patches' 'node_modules/jquery'"
       ],
       "usage": "Usage: bun patch [flags or options] <package>@<version>",
-      "documentationUrl": "https://bun.com/docs/install/patch."
+      "documentationUrl": "https://bun.com/docs/install/patch.",
+      "dynamicCompletions": {}
     },
     "pm": {
       "name": "pm",
@@ -2788,7 +2830,130 @@
       ],
       "examples": [],
       "usage": "Usage: bun pm [flags] [<command>]",
-      "documentationUrl": "https://bun.com/docs/cli/pm."
+      "documentationUrl": "https://bun.com/docs/cli/pm.",
+      "subcommands": {
+        "pack": {
+          "name": "pack",
+          "description": "create a tarball of the current workspace",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "bin": {
+          "name": "bin",
+          "description": "print the path to bin folder",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "ls": {
+          "name": "ls",
+          "description": "list the dependency tree according to the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "why": {
+          "name": "why",
+          "description": "<pkg>            show dependency tree explaining why a package is installed",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "whoami": {
+          "name": "whoami",
+          "description": "print the current npm username",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "view": {
+          "name": "view",
+          "description": "name[@version]  view package metadata from the registry (use `bun info` instead)",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "version": {
+          "name": "version",
+          "description": "[increment]  bump the version in package.json and create a git tag",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "pkg": {
+          "name": "pkg",
+          "description": "manage data in package.json",
+          "flags": [],
+          "positionalArgs": [],
+          "subcommands": {
+            "get": {
+              "name": "get",
+              "description": "get values from package.json"
+            },
+            "set": {
+              "name": "set",
+              "description": "set values in package.json"
+            },
+            "delete": {
+              "name": "delete",
+              "description": "delete keys from package.json"
+            },
+            "fix": {
+              "name": "fix",
+              "description": "auto-correct common package.json errors"
+            }
+          }
+        },
+        "hash": {
+          "name": "hash",
+          "description": "generate & print the hash of the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "hash-string": {
+          "name": "hash-string",
+          "description": "print the string used to hash the lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "hash-print": {
+          "name": "hash-print",
+          "description": "print the hash stored in the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "cache": {
+          "name": "cache",
+          "description": "rm             clear the cache",
+          "flags": [],
+          "positionalArgs": [],
+          "subcommands": {
+            "rm": {
+              "name": "rm",
+              "description": "clear the cache"
+            }
+          }
+        },
+        "migrate": {
+          "name": "migrate",
+          "description": "migrate another package manager's lockfile without installing anything",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "untrusted": {
+          "name": "untrusted",
+          "description": "print current untrusted dependencies with scripts",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "trust": {
+          "name": "trust",
+          "description": "names ...      run scripts for untrusted dependencies and add to `trustedDependencies`",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "default-trusted": {
+          "name": "default-trusted",
+          "description": "print the default trusted dependencies list",
+          "flags": [],
+          "positionalArgs": []
+        }
+      },
+      "dynamicCompletions": {}
     },
     "info": {
       "name": "info",
@@ -3047,7 +3212,8 @@
           "name": "package@version",
           "required": true,
           "multiple": false,
-          "type": "string"
+          "type": "string",
+          "completionType": "package"
         }
       ],
       "examples": [
@@ -3056,7 +3222,8 @@
         "bun info react version --json"
       ],
       "usage": "Usage: bun info [flags] <package>[@<version>]",
-      "documentationUrl": "https://bun.com/docs/cli/info."
+      "documentationUrl": "https://bun.com/docs/cli/info.",
+      "dynamicCompletions": {}
     },
     "build": {
       "name": "build",
@@ -3349,7 +3516,10 @@
         "bun build --compile --outfile=my-app ./cli.ts"
       ],
       "usage": "Usage:",
-      "documentationUrl": "https://bun.com/docs/bundler"
+      "documentationUrl": "https://bun.com/docs/bundler",
+      "dynamicCompletions": {
+        "files": true
+      }
     },
     "init": {
       "name": "init",
@@ -3407,7 +3577,8 @@
         "bun init --react",
         "bun init --react=tailwind my-app"
       ],
-      "usage": "Usage: bun init [flags] [<folder>]"
+      "usage": "Usage: bun init [flags] [<folder>]",
+      "dynamicCompletions": {}
     },
     "create": {
       "name": "create",
@@ -3416,7 +3587,11 @@
       "positionalArgs": [],
       "examples": [],
       "usage": "Usage:",
-      "documentationUrl": "https://bun.com/docs/cli/bun-create"
+      "documentationUrl": "https://bun.com/docs/cli/bun-create",
+      "dynamicCompletions": {},
+      "aliases": [
+        "c"
+      ]
     },
     "upgrade": {
       "name": "upgrade",
@@ -3435,7 +3610,8 @@
         "bun upgrade --stable"
       ],
       "usage": "Usage: bun upgrade [flags]",
-      "documentationUrl": "https://bun.com/docs/installation#upgrading"
+      "documentationUrl": "https://bun.com/docs/installation#upgrading",
+      "dynamicCompletions": {}
     }
   },
   "globalFlags": [
@@ -3817,5 +3993,25 @@
       "required": false,
       "multiple": false
     }
-  ]
+  ],
+  "specialHandling": {
+    "bareCommand": {
+      "description": "Run JavaScript/TypeScript files directly or access package scripts and binaries",
+      "canRunFiles": true,
+      "dynamicCompletions": {
+        "scripts": true,
+        "files": true,
+        "binaries": true
+      }
+    }
+  },
+  "bunGetCompletes": {
+    "available": true,
+    "commands": {
+      "scripts": "bun getcompletes s",
+      "binaries": "bun getcompletes b",
+      "packages": "bun getcompletes a",
+      "files": "bun getcompletes j"
+    }
+  }
 }

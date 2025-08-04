@@ -6,6 +6,13 @@
  * containing all flag information, descriptions, and whether they support
  * positional or non-positional arguments.
  * 
+ * Handles complex cases like:
+ * - Nested subcommands (bun pm cache rm)
+ * - Command aliases (bun i = bun install, bun a = bun add)
+ * - Dynamic completions (scripts, packages, files)
+ * - Context-aware flags
+ * - Special cases like bare 'bun' vs 'bun run'
+ * 
  * Output is saved to completions/bun-cli.json for use in generating
  * shell completions (fish, bash, zsh).
  */
@@ -26,9 +33,25 @@ interface FlagInfo {
   multiple?: boolean;
 }
 
+interface SubcommandInfo {
+  name: string;
+  description: string;
+  flags?: FlagInfo[];
+  subcommands?: Record<string, SubcommandInfo>;
+  positionalArgs?: {
+    name: string;
+    description?: string;
+    required: boolean;
+    multiple: boolean;
+    type?: string;
+    completionType?: string;
+  }[];
+  examples?: string[];
+}
+
 interface CommandInfo {
   name: string;
-  alias?: string;
+  aliases?: string[];
   description: string;
   usage?: string;
   flags: FlagInfo[];
@@ -38,16 +61,43 @@ interface CommandInfo {
     required: boolean;
     multiple: boolean;
     type?: string;
+    completionType?: string;
   }[];
   examples: string[];
-  subcommands?: string[];
+  subcommands?: Record<string, SubcommandInfo>;
   documentationUrl?: string;
+  dynamicCompletions?: {
+    scripts?: boolean;
+    packages?: boolean;
+    files?: boolean;
+    binaries?: boolean;
+  };
 }
 
 interface CompletionData {
   version: string;
   commands: Record<string, CommandInfo>;
   globalFlags: FlagInfo[];
+  specialHandling: {
+    bareCommand: {
+      description: string;
+      canRunFiles: boolean;
+      dynamicCompletions: {
+        scripts: boolean;
+        files: boolean;
+        binaries: boolean;
+      };
+    };
+  };
+  bunGetCompletes: {
+    available: boolean;
+    commands: {
+      scripts: string; // "bun getcompletes s" or "bun getcompletes z"
+      binaries: string; // "bun getcompletes b"
+      packages: string; // "bun getcompletes a <prefix>"
+      files: string; // "bun getcompletes j"
+    };
+  };
 }
 
 const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "/workspace/bun/build/debug/bun-debug";
@@ -121,13 +171,13 @@ function parseFlag(line: string): FlagInfo | null {
       }
 
       // Look for default values in description
-      const defaultMatch = description.match(/[Dd]efault(?:s?)\s*(?:is|to|:)\s*"?([^".\s]+)"?/);
+      const defaultMatch = description.match(/[Dd]efault(?:s?)\s*(?:is|to|:)\s*"?([^".\s,]+)"?/);
       if (defaultMatch) {
         defaultValue = defaultMatch[1];
       }
 
       // Look for choices/enums
-      const choicesMatch = description.match(/(?:One of|Valid (?:orders?|values?)):?\s*"?([^"]+)"?/);
+      const choicesMatch = description.match(/(?:One of|Valid (?:orders?|values?|options?)):?\s*"?([^"]+)"?/);
       if (choicesMatch) {
         choices = choicesMatch[1].split(/[,\s]+/).map(s => s.replace(/[",]/g, '').trim()).filter(Boolean);
       }
@@ -152,8 +202,8 @@ function parseFlag(line: string): FlagInfo | null {
 /**
  * Parse usage line to extract positional arguments
  */
-function parseUsage(usage: string): { name: string; description?: string; required: boolean; multiple: boolean; type?: string; }[] {
-  const args: { name: string; description?: string; required: boolean; multiple: boolean; type?: string; }[] = [];
+function parseUsage(usage: string): { name: string; description?: string; required: boolean; multiple: boolean; type?: string; completionType?: string; }[] {
+  const args: { name: string; description?: string; required: boolean; multiple: boolean; type?: string; completionType?: string; }[] = [];
   
   // Extract parts after command name
   const parts = usage.split(/\s+/).slice(2); // Skip "Usage:" and command name
@@ -163,6 +213,7 @@ function parseUsage(usage: string): { name: string; description?: string; requir
       let name = part;
       let required = false;
       let multiple = false;
+      let completionType: string | undefined;
       
       // Clean up the argument name
       name = name.replace(/[\[\]<>]/g, '');
@@ -178,11 +229,21 @@ function parseUsage(usage: string): { name: string; description?: string; requir
       
       // Skip flags
       if (!name.startsWith('-') && name.length > 0) {
+        // Determine completion type based on argument name
+        if (name.toLowerCase().includes('package')) {
+          completionType = 'package';
+        } else if (name.toLowerCase().includes('script')) {
+          completionType = 'script';
+        } else if (name.toLowerCase().includes('file') || name.includes('.')) {
+          completionType = 'file';
+        }
+        
         args.push({
           name,
           required,
           multiple,
-          type: 'string' // Default type
+          type: 'string', // Default type
+          completionType
         });
       }
     }
@@ -217,6 +278,61 @@ async function getHelpOutput(command: string[]): Promise<string> {
 }
 
 /**
+ * Parse PM subcommands from help output
+ */
+function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
+  const lines = helpText.split('\n');
+  const subcommands: Record<string, SubcommandInfo> = {};
+  
+  let inCommands = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    if (trimmed === 'Commands:') {
+      inCommands = true;
+      continue;
+    }
+    
+    if (inCommands && trimmed.startsWith('Learn more')) {
+      break;
+    }
+    
+    if (inCommands && line.match(/^\s+bun pm \w+/)) {
+      // Parse lines like: "bun pm pack                 create a tarball of the current workspace"
+      const match = line.match(/^\s+bun pm (\S+)(?:\s+(.+))?$/);
+      if (match) {
+        const [, name, description = ''] = match;
+        subcommands[name] = {
+          name,
+          description: description.trim(),
+          flags: [],
+          positionalArgs: []
+        };
+        
+        // Special handling for subcommands with their own subcommands
+        if (name === 'cache') {
+          subcommands[name].subcommands = {
+            rm: {
+              name: 'rm',
+              description: 'clear the cache'
+            }
+          };
+        } else if (name === 'pkg') {
+          subcommands[name].subcommands = {
+            get: { name: 'get', description: 'get values from package.json' },
+            set: { name: 'set', description: 'set values in package.json' },
+            delete: { name: 'delete', description: 'delete keys from package.json' },
+            fix: { name: 'fix', description: 'auto-correct common package.json errors' }
+          };
+        }
+      }
+    }
+  }
+  
+  return subcommands;
+}
+
+/**
  * Parse help output into CommandInfo
  */
 function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
@@ -243,11 +359,11 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
       continue;
     }
 
-    // Extract alias
+    // Extract aliases
     if (trimmed.startsWith('Alias:')) {
       const aliasMatch = trimmed.match(/Alias:\s*(.+)/);
       if (aliasMatch) {
-        command.alias = aliasMatch[1].trim();
+        command.aliases = aliasMatch[1].split(/[,\s]+/).map(a => a.trim()).filter(Boolean);
       }
       continue;
     }
@@ -291,6 +407,61 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
     if (inExamples && trimmed && !trimmed.startsWith('Full documentation')) {
       if (trimmed.startsWith('bun ') || trimmed.startsWith('./') || trimmed.startsWith('Bundle')) {
         command.examples.push(trimmed);
+      }
+    }
+  }
+
+  // Special case for pm command
+  if (commandName === 'pm') {
+    command.subcommands = parsePmSubcommands(helpText);
+  }
+
+  // Add dynamic completion info based on command
+  command.dynamicCompletions = {};
+  if (commandName === 'run') {
+    command.dynamicCompletions.scripts = true;
+    command.dynamicCompletions.files = true;
+    command.dynamicCompletions.binaries = true;
+    // Also add file type info for positional args
+    for (const arg of command.positionalArgs) {
+      if (arg.name.includes('file') || arg.name.includes('script')) {
+        arg.completionType = 'javascript_files';
+      }
+    }
+  } else if (commandName === 'add') {
+    command.dynamicCompletions.packages = true;
+    // Mark package args
+    for (const arg of command.positionalArgs) {
+      if (arg.name.includes('package') || arg.name === 'name') {
+        arg.completionType = 'package';
+      }
+    }
+  } else if (commandName === 'remove') {
+    command.dynamicCompletions.packages = true; // installed packages
+    for (const arg of command.positionalArgs) {
+      if (arg.name.includes('package') || arg.name === 'name') {
+        arg.completionType = 'installed_package';
+      }
+    }
+  } else if (['test'].includes(commandName)) {
+    command.dynamicCompletions.files = true;
+    for (const arg of command.positionalArgs) {
+      if (arg.name.includes('pattern') || arg.name.includes('file')) {
+        arg.completionType = 'test_files';
+      }
+    }
+  } else if (['build'].includes(commandName)) {
+    command.dynamicCompletions.files = true;
+    for (const arg of command.positionalArgs) {
+      if (arg.name === 'entrypoint' || arg.name.includes('file')) {
+        arg.completionType = 'javascript_files';
+      }
+    }
+  } else if (commandName === 'create') {
+    // Create has special template completions
+    for (const arg of command.positionalArgs) {
+      if (arg.name.includes('template')) {
+        arg.completionType = 'create_template';
       }
     }
   }
@@ -364,6 +535,25 @@ function parseGlobalFlags(helpText: string): FlagInfo[] {
 }
 
 /**
+ * Add command aliases based on common patterns
+ */
+function addCommandAliases(commands: Record<string, CommandInfo>): void {
+  const aliasMap: Record<string, string[]> = {
+    'install': ['i'],
+    'add': ['a'],
+    'remove': ['rm'],
+    'create': ['c'],
+    'x': ['bunx']  // bunx is an alias for bun x
+  };
+
+  for (const [command, aliases] of Object.entries(aliasMap)) {
+    if (commands[command]) {
+      commands[command].aliases = aliases;
+    }
+  }
+}
+
+/**
  * Main function to generate completion data
  */
 async function generateCompletions(): Promise<void> {
@@ -377,9 +567,29 @@ async function generateCompletions(): Promise<void> {
   console.log(`📋 Found ${mainCommands.length} main commands: ${mainCommands.join(', ')}`);
   
   const completionData: CompletionData = {
-    version: "1.0.0",
+    version: "1.1.0",
     commands: {},
-    globalFlags
+    globalFlags,
+    specialHandling: {
+      bareCommand: {
+        description: "Run JavaScript/TypeScript files directly or access package scripts and binaries",
+        canRunFiles: true,
+        dynamicCompletions: {
+          scripts: true,
+          files: true,
+          binaries: true
+        }
+      }
+    },
+    bunGetCompletes: {
+      available: true,
+      commands: {
+        scripts: "bun getcompletes s", // or "bun getcompletes z" for scripts with descriptions
+        binaries: "bun getcompletes b",
+        packages: "bun getcompletes a", // takes prefix as argument
+        files: "bun getcompletes j" // JavaScript/TypeScript files
+      }
+    }
   };
 
   // Parse each command
@@ -397,8 +607,11 @@ async function generateCompletions(): Promise<void> {
     }
   }
 
+  // Add common aliases
+  addCommandAliases(completionData.commands);
+
   // Also check some common subcommands that might have their own help
-  const additionalCommands = ['pm', 'x'];
+  const additionalCommands = ['pm'];
   for (const commandName of additionalCommands) {
     if (!completionData.commands[commandName]) {
       console.log(`📖 Parsing help for additional command: ${commandName}`);
@@ -436,14 +649,23 @@ async function generateCompletions(): Promise<void> {
   
   let totalFlags = 0;
   let totalExamples = 0;
+  let totalSubcommands = 0;
   for (const [name, cmd] of Object.entries(completionData.commands)) {
     totalFlags += cmd.flags.length;
     totalExamples += cmd.examples.length;
-    console.log(`   - ${name}: ${cmd.flags.length} flags, ${cmd.positionalArgs.length} positional args, ${cmd.examples.length} examples`);
+    const subcommandCount = cmd.subcommands ? Object.keys(cmd.subcommands).length : 0;
+    totalSubcommands += subcommandCount;
+    
+    const aliasInfo = cmd.aliases ? ` (aliases: ${cmd.aliases.join(', ')})` : '';
+    const subcommandInfo = subcommandCount > 0 ? `, ${subcommandCount} subcommands` : '';
+    const dynamicInfo = cmd.dynamicCompletions ? ` [dynamic: ${Object.keys(cmd.dynamicCompletions).join(', ')}]` : '';
+    
+    console.log(`   - ${name}${aliasInfo}: ${cmd.flags.length} flags, ${cmd.positionalArgs.length} positional args, ${cmd.examples.length} examples${subcommandInfo}${dynamicInfo}`);
   }
   
   console.log(`   - Total command flags: ${totalFlags}`);
   console.log(`   - Total examples: ${totalExamples}`);
+  console.log(`   - Total subcommands: ${totalSubcommands}`);
 }
 
 // Run the script

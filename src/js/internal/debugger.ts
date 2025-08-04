@@ -128,7 +128,7 @@ export default function (
         if (protocol.includes("ws")) {
           const debugUrl = `https://debug.bun.sh/#${host}${pathname}`;
           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(debugUrl)}\n`);
-          
+
           // Open browser if requested
           if (openInBrowser) {
             openUrlInBrowser(debugUrl);
@@ -647,12 +647,9 @@ function openUrlInBrowser(url: string): void {
   // Use Bun.spawn in a detached way to open the browser without blocking
   // Similar to how bun create does it using openURL
   try {
-    const opener = process.platform === "darwin" 
-      ? "/usr/bin/open"
-      : process.platform === "win32" 
-      ? "start"
-      : "xdg-open";
-    
+    const opener =
+      process.platform === "darwin" ? "/usr/bin/open" : process.platform === "win32" ? "start" : "xdg-open";
+
     // Spawn without awaiting to avoid blocking
     Bun.spawn([opener, url], {
       stdio: ["ignore", "ignore", "ignore"],

@@ -4,6 +4,18 @@ state and improves the development experience.
 
 HMR is enabled by default when using Bun's full-stack development server.
 
+## React Fast Refresh
+
+For React applications, enable React Fast Refresh for component-level hot reloading:
+
+```typescript
+await Bun.build({
+  entrypoints: ['./src/App.tsx'],
+  reactFastRefresh: true,
+  hotModuleReloading: true,
+});
+```
+
 ## `import.meta.hot` API Reference
 
 Bun implements a client-side HMR API modeled after [Vite's `import.meta.hot` API](https://vitejs.dev/guide/api-hmr.html). It can be checked for with `if (import.meta.hot)`, tree-shaking it in production

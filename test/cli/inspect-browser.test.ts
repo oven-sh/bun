@@ -3,9 +3,9 @@
 // CI to run it reliably.
 
 import { expect, test } from "bun:test";
+import { chmod } from "fs/promises";
 import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { chmod } from "fs/promises";
 
 async function setupInspectorTest(testName: string, files: Record<string, string>) {
   const dir = tempDirWithFiles(testName, {

@@ -36,7 +36,6 @@ async function setupInspectorTest(testName: string, files: Record<string, string
     },
   });
   process.chdir(pwd);
-  server.unref();
 
   return { dir, promise, server };
 }

@@ -221,7 +221,7 @@ bun ci
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
 2. **Use `await using`** for proper resource cleanup with Bun APIs (Bun.spawn, Bun.serve, Bun.connect, etc.)
 3. **Follow existing code style** - check neighboring files for patterns
-4. **Create regression tests** in `test/regression/issue/` when fixing bugs
+4. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
 5. **Use absolute paths** - Always use absolute paths in file operations
 6. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
 7. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup

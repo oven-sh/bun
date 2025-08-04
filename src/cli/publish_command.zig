@@ -1409,6 +1409,7 @@ const stringZ = [:0]const u8;
 
 const Open = @import("../open.zig");
 const std = @import("std");
+const ProvenanceGenerator = @import("../install/provenance.zig").ProvenanceGenerator;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
@@ -1445,4 +1446,3 @@ const Dependency = install.Dependency;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
-const ProvenanceGenerator = @import("../install/provenance.zig").ProvenanceGenerator;

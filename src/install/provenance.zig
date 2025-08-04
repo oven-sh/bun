@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 const string = []const u8;
 
 pub const ProvenanceError = error{
@@ -344,3 +342,6 @@ pub const ProvenanceGenerator = struct {
         return encoded;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

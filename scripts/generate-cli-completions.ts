@@ -205,9 +205,7 @@ function parseFlag(line: string): FlagInfo | null {
 /**
  * Parse usage line to extract positional arguments
  */
-function parseUsage(
-  usage: string,
-): {
+function parseUsage(usage: string): {
   name: string;
   description?: string;
   required: boolean;

@@ -39,7 +39,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
     const ciphersSet = getValidCiphersSet();
     const requested = ciphers.split(":");
     for (const r of requested) {
-      if (!ciphersSet.has(r)) {
+      if (r && !ciphersSet.has(r)) {
         throw $ERR_SSL_NO_CIPHER_MATCH();
       }
     }

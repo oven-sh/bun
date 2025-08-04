@@ -625,13 +625,7 @@ pub const PEFile = struct {
 
         // Load and process icon if provided
         if (settings.icon) |icon_path| {
-
-            // Simple approach - just read the file
-            const icon_data = std.fs.cwd().readFileAlloc(allocator, icon_path, std.math.maxInt(usize)) catch {
-                return error.FileNotFound;
-            };
-            defer allocator.free(icon_data);
-
+            const icon_data = try bun.sys.File.readFrom(bun.FD.cwd(), icon_path, allocator).unwrap();
             try resource_builder.setIcon(icon_data);
         }
 
@@ -899,6 +893,7 @@ const ResourceBuilder = struct {
 
     // Helper to write a string as UTF-16LE with null terminator
     // Returns the number of UTF-16 characters written (including null terminator)
+    // TODO: support non-ascii.
     fn writeUtf16String(data: *std.ArrayList(u8), str: []const u8) !u32 {
         // For simple ASCII strings (which all our resource strings are),
         // we can do a straightforward conversion

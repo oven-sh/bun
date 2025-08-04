@@ -355,6 +355,12 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
+        // Preserve console functionality for test environment
+        // This ensures that DOM libraries like happy-dom don't break console output
+        if (!outside_of_test) {
+            preserveConsoleForTests(globalObject);
+        }
+
         const module = JSValue.createEmptyObject(globalObject, 14);
 
         const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
@@ -449,6 +455,69 @@ pub const Jest = struct {
         createMockObjects(globalObject, module);
 
         return module;
+    }
+
+    /// Preserve console functionality for test environments when DOM libraries override it
+    fn preserveConsoleForTests(globalObject: *JSGlobalObject) void {
+        // Execute JavaScript code to set up console preservation
+        const console_preserve_code =
+            \\(() => {
+            \\  // Store the original Bun console
+            \\  const originalConsole = globalThis.console;
+            \\  const bunConsoleSymbol = Symbol.for('Bun.originalConsole');
+            \\  originalConsole[bunConsoleSymbol] = true;
+            \\  
+            \\  // Create a bridged console that always forwards to Bun's console
+            \\  const bridgedMethods = ['log', 'error', 'warn', 'info', 'debug', 'trace', 'assert', 'clear', 'count', 'countReset', 'dir', 'dirxml', 'group', 'groupCollapsed', 'groupEnd', 'table', 'time', 'timeEnd', 'timeLog'];
+            \\  const bridgedConsole = {};
+            \\  
+            \\  for (const method of bridgedMethods) {
+            \\    bridgedConsole[method] = function(...args) {
+            \\      return originalConsole[method](...args);
+            \\    };
+            \\  }
+            \\  
+            \\  // Copy Console constructor and other properties
+            \\  bridgedConsole.Console = originalConsole.Console;
+            \\  
+            \\  // Set up property descriptor to intercept console assignment
+            \\  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'console');
+            \\  let currentConsole = originalConsole;
+            \\  
+            \\  Object.defineProperty(globalThis, 'console', {
+            \\    get() {
+            \\      return currentConsole;
+            \\    },
+            \\    set(newConsole) {
+            \\      // Check if this is not Bun's original console (e.g., happy-dom's VirtualConsole)
+            \\      const isBunConsole = newConsole && newConsole[bunConsoleSymbol];
+            \\      
+            \\      if (!isBunConsole && newConsole && typeof newConsole.log === 'function') {
+            \\        // Use bridged console that forwards to Bun's original console
+            \\        currentConsole = bridgedConsole;
+            \\      } else {
+            \\        currentConsole = newConsole || originalConsole;
+            \\      }
+            \\    },
+            \\    configurable: true,
+            \\    enumerable: true
+            \\  });
+            \\})();
+        ;
+
+        // Execute the console preservation code
+        var exception: JSValue = .zero;
+        _ = jsc.JSModuleLoader.evaluate(
+            globalObject,
+            console_preserve_code.ptr,
+            console_preserve_code.len,
+            "bun:test:console-preserve".ptr,
+            "bun:test:console-preserve".len,
+            "".ptr,
+            0,
+            globalObject.toJSValue(),
+            @ptrCast(&exception),
+        );
     }
 
     fn createMockObjects(globalObject: *JSGlobalObject, module: JSValue) void {

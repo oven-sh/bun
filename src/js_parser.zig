@@ -4727,6 +4727,7 @@ pub const MacroState = struct {
 
 const Jest = struct {
     expect: Ref = Ref.None,
+    expectTypeOf: Ref = Ref.None,
     describe: Ref = Ref.None,
     @"test": Ref = Ref.None,
     it: Ref = Ref.None,
@@ -6736,6 +6737,7 @@ fn NewParser_(
                 p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
                 p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
                 p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
+                p.jest.expectTypeOf = try p.declareCommonJSSymbol(.unbound, "expectTypeOf");
                 p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");

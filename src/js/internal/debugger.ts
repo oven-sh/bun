@@ -647,8 +647,7 @@ function openUrlInBrowser(url: string): void {
   // Use Bun.spawn in a detached way to open the browser without blocking
   // Similar to how bun create does it using openURL
   try {
-    const opener =
-      process.platform === "darwin" ? "/usr/bin/open" : process.platform === "win32" ? "start" : "xdg-open";
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
 
     // Spawn without awaiting to avoid blocking
     Bun.spawn([opener, url], {

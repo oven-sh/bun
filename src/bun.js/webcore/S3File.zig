@@ -148,7 +148,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         .path => |path| {
             const options = args.nextEat();
             var mode: ?u32 = null;
-            
+
             // Parse mode from options if present
             if (options) |options_object| {
                 if (options_object.isObject()) {
@@ -159,7 +159,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                     }
                 }
             }
-            
+
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
             }
@@ -176,7 +176,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         .blob => {
             const options = args.nextEat();
             var mode: ?u32 = null;
-            
+
             // Parse mode from options if present
             if (options) |options_object| {
                 if (options_object.isObject()) {
@@ -187,7 +187,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                     }
                 }
             }
-            
+
             return try Blob.writeFileInternal(globalThis, &path_or_blob, data, .{
                 .mkdirp_if_not_exists = false,
                 .extra_options = options,

@@ -102,5 +102,4 @@ pub const libuv_error_map = brk: {
 
 const bun = @import("bun");
 const std = @import("std");
-const Environment = bun.Environment;
 const SystemErrno = bun.sys.SystemErrno;

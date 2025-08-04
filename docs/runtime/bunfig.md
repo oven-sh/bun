@@ -159,6 +159,15 @@ Same as the top-level `smol` field, but only applies to `bun test`.
 smol = true
 ```
 
+### `test.define`
+
+Same as the top-level `define` field, but only applies to `bun test`. Test-specific defines will override global defines with the same key.
+
+```toml
+[test]
+define = { "process.env.NODE_ENV" = "'test'", "TEST_MODE" = "true" }
+```
+
 ### `test.coverage`
 
 Enables coverage reporting. Default `false`. Use `--coverage` to override.

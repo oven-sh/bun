@@ -361,17 +361,17 @@ pub const Bunfig = struct {
                             if (prop.value.?.data != .e_string) continue;
                             valid_count += 1;
                         }
-                        
+
                         // Get existing global defines if any
                         const existing_define = this.bunfig.define;
                         const existing_count = if (existing_define) |d| d.keys.len else 0;
                         const total_count = existing_count + valid_count;
-                        
+
                         // Allocate space for merged defines
                         var buffer = allocator.alloc([]const u8, total_count * 2) catch unreachable;
                         var keys = buffer[0..total_count];
                         var values = buffer[total_count..];
-                        
+
                         // Copy existing defines first
                         var i: usize = 0;
                         if (existing_define) |d| {
@@ -381,13 +381,13 @@ pub const Bunfig = struct {
                                 i += 1;
                             }
                         }
-                        
+
                         // Add test-specific defines (will override if duplicate keys)
                         for (properties) |prop| {
                             if (prop.value.?.data != .e_string) continue;
                             const key = prop.key.?.data.e_string.string(allocator) catch unreachable;
                             const value = prop.value.?.data.e_string.string(allocator) catch unreachable;
-                            
+
                             // Check if key already exists and update it
                             var found = false;
                             for (keys[0..i], 0..) |existing_key, idx| {
@@ -397,7 +397,7 @@ pub const Bunfig = struct {
                                     break;
                                 }
                             }
-                            
+
                             // If not found, add new key-value pair
                             if (!found) {
                                 keys[i] = key;
@@ -405,7 +405,7 @@ pub const Bunfig = struct {
                                 i += 1;
                             }
                         }
-                        
+
                         // Update with merged defines
                         this.bunfig.define = api.StringMap{
                             .keys = keys[0..i],

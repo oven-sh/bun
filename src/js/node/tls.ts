@@ -15,12 +15,35 @@ const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+let _DEFAULT_CIPHERS_SET: Set<string> | undefined;
+function getValidCiphersSet() {
+  if (!_DEFAULT_CIPHERS_SET) {
+    _DEFAULT_CIPHERS_SET = new Set(
+      "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA".split(
+        ":",
+      ),
+    );
+  }
+  return _DEFAULT_CIPHERS_SET;
+}
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
   // @SECLEVEL=<n> changes the security level and that affects subsequent
   // operations.
-  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, `${name}.ciphers`);
+  if (ciphers !== undefined && ciphers !== null) {
+    validateString(ciphers, `${name}.ciphers`);
+
+    // TODO: right now we need this because we dont create the CTX before listening/connecting
+    // we need to change that in the future and let BoringSSL do the validation
+    const ciphersSet = getValidCiphersSet();
+    const requested = ciphers.split(":");
+    for (const r of requested) {
+      if (!ciphersSet.has(r)) {
+        throw $ERR_SSL_NO_CIPHER_MATCH();
+      }
+    }
+  }
 }
 
 const SymbolReplace = Symbol.replace;

@@ -284,7 +284,7 @@ test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts 
+test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

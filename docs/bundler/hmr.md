@@ -10,7 +10,7 @@ For React applications, enable React Fast Refresh for component-level hot reload
 
 ```typescript
 await Bun.build({
-  entrypoints: ['./src/App.tsx'],
+  entrypoints: ["./src/App.tsx"],
   reactFastRefresh: true,
   hotModuleReloading: true,
 });

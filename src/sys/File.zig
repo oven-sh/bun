@@ -432,20 +432,21 @@ pub fn toSource(path: anytype, allocator: std.mem.Allocator, opts: ToSourceOptio
     return toSourceAt(std.fs.cwd(), path, allocator, opts);
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const sys = bun.sys;
-
-const O = sys.O;
-const posix = std.posix;
-const windows = bun.windows;
-const default_allocator = bun.default_allocator;
-const Maybe = bun.sys.Maybe;
-const Error = bun.sys.Error;
-const SystemErrno = bun.sys.SystemErrno;
 const Environment = bun.Environment;
+const default_allocator = bun.default_allocator;
+const windows = bun.windows;
+
+const sys = bun.sys;
+const Error = bun.sys.Error;
+const Maybe = bun.sys.Maybe;
+const O = sys.O;
+const SystemErrno = bun.sys.SystemErrno;
 const fstat = sys.fstat;
-const pread = sys.pread;
-const getFileSize = sys.getFileSize;
 const getFdPath = sys.getFdPath;
+const getFileSize = sys.getFileSize;
 const openatWindowsTMaybeNormalize = sys.openatWindowsTMaybeNormalize;
+const pread = sys.pread;
+
+const std = @import("std");
+const posix = std.posix;

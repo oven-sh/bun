@@ -263,7 +263,8 @@ pub const coreutils_error_map = brk: {
     break :brk map;
 };
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const SystemErrno = bun.sys.SystemErrno;

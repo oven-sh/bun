@@ -326,14 +326,16 @@ pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
 }
 
-const bun = @import("bun");
 const std = @import("std");
-const sys = bun.sys;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 
 const jsc = bun.jsc;
-const Environment = bun.Environment;
+const SystemError = jsc.SystemError;
+
+const sys = bun.sys;
 const E = sys.E;
+const SystemErrno = sys.SystemErrno;
 const coreutils_error_map = sys.coreutils_error_map;
 const libuv_error_map = sys.libuv_error_map;
-const SystemError = jsc.SystemError;
-const SystemErrno = sys.SystemErrno;

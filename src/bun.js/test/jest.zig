@@ -469,6 +469,7 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
+        mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
         const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);

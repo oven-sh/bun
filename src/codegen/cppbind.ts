@@ -14,7 +14,7 @@ To run manually:
 
 1. **nothrow** - Function that never throws exceptions:
    ```cpp
-   [[ZIG_EXPORT(nothrow)]] void hello_world() {
+   extern "C" [[ZIG_EXPORT(nothrow)]] void hello_world() {
        printf("hello world\n");
    }
    ```
@@ -22,7 +22,7 @@ To run manually:
 
 2. **zero_is_throw** - Function returns JSValue, where .zero indicates an exception:
    ```cpp
-   [[ZIG_EXPORT(zero_is_throw)]] JSValue create_object(JSGlobalObject* globalThis) {
+   extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSValue create_object(JSGlobalObject* globalThis) {
        auto scope = DECLARE_THROW_SCOPE();
        // ...
        RETURN_IF_EXCEPTION(scope, {});
@@ -33,7 +33,7 @@ To run manually:
 
 3. **check_slow** - Function that may throw, performs runtime exception checking:
    ```cpp
-   [[ZIG_EXPORT(check_slow)]] void process_data(JSGlobalObject* globalThis) {
+   extern "C" [[ZIG_EXPORT(check_slow)]] void process_data(JSGlobalObject* globalThis) {
        auto scope = DECLARE_THROW_SCOPE();
        // ...
        RETURN_IF_EXCEPTION(scope, );

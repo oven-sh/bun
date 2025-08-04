@@ -18,6 +18,7 @@ pub const CopyFile = struct {
     globalThis: *JSGlobalObject,
 
     mkdirp_if_not_exists: bool = false,
+    mode: ?u32 = null,
 
     pub const ResultType = anyerror!SizeType;
 
@@ -31,6 +32,7 @@ pub const CopyFile = struct {
         max_len: SizeType,
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
+        mode: ?u32,
     ) !*CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
@@ -41,6 +43,7 @@ pub const CopyFile = struct {
             .destination_file_store = store.data.file,
             .source_file_store = source_store.data.file,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .mode = mode,
         });
         store.ref();
         source_store.ref();
@@ -158,10 +161,18 @@ pub const CopyFile = struct {
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    jsc.Node.fs.default_permission,
+                    this.mode orelse jsc.Node.fs.default_permission,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
-                        .result => |result_fd| result_fd,
+                        .result => |result_fd| blk: {
+                            // Set file mode if specified
+                            if (comptime !Environment.isWindows) {
+                                if (this.mode) |file_mode| {
+                                    _ = bun.sys.fchmod(result_fd, file_mode);
+                                }
+                            }
+                            break :blk result_fd;
+                        },
                         .err => |errno| {
                             this.system_error = errno.toSystemError();
                             return bun.errnoToZigErr(errno.errno);

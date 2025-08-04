@@ -988,6 +988,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 write_file_promise,
                 &WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
+                options.mode,
             );
             return promise_value;
         }
@@ -999,6 +1000,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             write_file_promise,
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
+            options.mode,
         ) catch unreachable;
         var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
         // Defer promise creation until we're just about to schedule the task
@@ -1028,6 +1030,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
+            options.mode,
         ) catch unreachable;
         file_copier.schedule();
         return file_copier.promise.value();
@@ -1168,6 +1171,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
+    mode: ?u32 = null,
 };
 
 /// ## Errors
@@ -1242,6 +1246,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             str,
                             &needs_async,
                             true,
+                            options.mode,
                         );
                         if (!needs_async) {
                             return result;
@@ -1253,6 +1258,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             str,
                             &needs_async,
                             false,
+                            options.mode,
                         );
                         if (!needs_async) {
                             return result;
@@ -1273,6 +1279,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             buffer_view.byteSlice(),
                             &needs_async,
                             true,
+                            options.mode,
                         );
 
                         if (!needs_async) {
@@ -1285,6 +1292,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             buffer_view.byteSlice(),
                             &needs_async,
                             false,
+                            options.mode,
                         );
 
                         if (!needs_async) {
@@ -1495,6 +1503,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
+    var mode: ?u32 = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1504,6 +1513,11 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
+            if (try options_object.getTruthy(globalThis, "mode")) |mode_value| {
+                if (try jsc.Node.modeFromJS(globalThis, mode_value)) |file_mode| {
+                    mode = @intCast(file_mode);
+                }
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1511,6 +1525,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return writeFileInternal(globalThis, &path_or_blob, data, .{
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
+        .mode = mode,
     });
 }
 
@@ -1522,17 +1537,24 @@ fn writeStringToFileFast(
     str: bun.String,
     needs_async: *bool,
     comptime needs_open: bool,
+    mode: ?u32,
 ) jsc.JSValue {
     const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
         var file_path: bun.PathBuffer = undefined;
+        const open_mode = mode orelse write_permissions;
         switch (bun.sys.open(
             pathlike.path.sliceZ(&file_path),
             // we deliberately don't use O_TRUNC here
             // it's a perf optimization
             bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
-            write_permissions,
+            open_mode,
         )) {
             .result => |result| {
+                if (comptime !Environment.isWindows) {
+                    if (mode) |file_mode| {
+                        _ = bun.sys.fchmod(result, file_mode);
+                    }
+                }
                 break :brk result;
             },
             .err => |err| {
@@ -1604,9 +1626,11 @@ fn writeBytesToFileFast(
     bytes: []const u8,
     needs_async: *bool,
     comptime needs_open: bool,
+    mode: ?u32,
 ) jsc.JSValue {
     const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
         var file_path: bun.PathBuffer = undefined;
+        const open_mode = mode orelse write_permissions;
         switch (bun.sys.open(
             pathlike.path.sliceZ(&file_path),
             if (!Environment.isWindows)
@@ -1615,9 +1639,14 @@ fn writeBytesToFileFast(
                 bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK
             else
                 bun.O.WRONLY | bun.O.CREAT,
-            write_permissions,
+            open_mode,
         )) {
             .result => |result| {
+                if (comptime !Environment.isWindows) {
+                    if (mode) |file_mode| {
+                        _ = bun.sys.fchmod(result, file_mode);
+                    }
+                }
                 break :brk result;
             },
             .err => |err| {
@@ -2237,6 +2266,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     }
     var mkdirp_if_not_exists: ?bool = null;
+    var mode: ?u32 = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -2245,6 +2275,11 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     return globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
+            }
+            if (try options_object.getTruthy(globalThis, "mode")) |mode_value| {
+                if (try jsc.Node.modeFromJS(globalThis, mode_value)) |file_mode| {
+                    mode = @intCast(file_mode);
+                }
             }
             if (try options_object.getTruthy(globalThis, "type")) |content_type| {
                 //override the content type
@@ -2274,7 +2309,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         }
     }
     var blob_internal: PathOrBlob = .{ .blob = this.* };
-    return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
+    return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options, .mode = mode });
 }
 
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

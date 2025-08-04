@@ -527,3 +527,122 @@ if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     expect(await exited).toBe(0);
   }, 10000);
 }
+
+// Skip mode tests on Windows as file permissions work differently
+if (!isWindows) {
+  describe("mode option", () => {
+    it("Bun.write() with mode option sets correct file permissions", async () => {
+      const filename = path.join(tmpdir(), `mode-test-${Date.now()}.txt`);
+      
+      // Test mode 0o644 (read/write for owner, read for group/others)
+      await Bun.write(filename, "test content", { mode: 0o644 });
+      const stats = fs.statSync(filename);
+      expect(stats.mode & 0o777).toBe(0o644);
+      
+      try {
+        fs.unlinkSync(filename);
+      } catch (e) {}
+    });
+
+    it("Bun.write() with mode option as decimal", async () => {
+      const filename = path.join(tmpdir(), `mode-decimal-test-${Date.now()}.txt`);
+      
+      // Test mode 0o755 as decimal (493)
+      await Bun.write(filename, "test content", { mode: 493 });
+      const stats = fs.statSync(filename);
+      expect(stats.mode & 0o777).toBe(0o755);
+      
+      try {
+        fs.unlinkSync(filename);
+      } catch (e) {}
+    });
+
+    it("Bun.write() with mode option and createPath", async () => {
+      const testDir = path.join(tmpdir(), `mode-mkdir-test-${Date.now()}`);
+      const filename = path.join(testDir, "test.txt");
+      
+      // Test mode with createPath
+      await Bun.write(filename, "test content", { mode: 0o600, createPath: true });
+      const stats = fs.statSync(filename);
+      expect(stats.mode & 0o777).toBe(0o600);
+      
+      try {
+        fs.rmSync(testDir, { recursive: true });
+      } catch (e) {}
+    });
+
+    it("blob.write() with mode option", async () => {
+      const filename = path.join(tmpdir(), `blob-mode-test-${Date.now()}.txt`);
+      const file = Bun.file(filename);
+      
+      // Test blob write with mode
+      await file.write("test content", { mode: 0o640 });
+      const stats = fs.statSync(filename);
+      expect(stats.mode & 0o777).toBe(0o640);
+      
+      try {
+        fs.unlinkSync(filename);
+      } catch (e) {}
+    });
+
+    it("Bun.write() file to file copy with mode", async () => {
+      const sourceFile = path.join(tmpdir(), `source-${Date.now()}.txt`);
+      const destFile = path.join(tmpdir(), `dest-mode-${Date.now()}.txt`);
+      
+      // Create source file
+      await Bun.write(sourceFile, "source content");
+      
+      // Copy with specific mode
+      await Bun.write(Bun.file(destFile), Bun.file(sourceFile), { mode: 0o660 });
+      const stats = fs.statSync(destFile);
+      expect(stats.mode & 0o777).toBe(0o660);
+      
+      try {
+        fs.unlinkSync(sourceFile);
+        fs.unlinkSync(destFile);
+      } catch (e) {}
+    });
+
+    it("mode validation - should handle edge cases", async () => {
+      const filename1 = path.join(tmpdir(), `mode-truncate-test-${Date.now()}.txt`);
+      const filename2 = path.join(tmpdir(), `mode-negative-test-${Date.now()}.txt`);
+      
+      // Test mode > 0o777 gets truncated (like Node.js)
+      await Bun.write(filename1, "test", { mode: 0o1644 });
+      const stats1 = fs.statSync(filename1);
+      expect(stats1.mode & 0o777).toBe(0o644); // 0o1644 & 0o777 = 0o644
+      
+      // Test negative mode should throw
+      try {
+        await Bun.write(filename2, "test", { mode: -1 });
+        throw new Error("Should have thrown for negative mode");
+      } catch (error) {
+        expect(error.message).toContain("out of range");
+      }
+      
+      try {
+        fs.unlinkSync(filename1);
+      } catch (e) {}
+    });
+
+    it("mode option should work with different data types", async () => {
+      const testCases = [
+        ["string", "test string"],
+        ["Uint8Array", new Uint8Array([1, 2, 3, 4])],
+        ["ArrayBuffer", new ArrayBuffer(10)],
+      ];
+
+      for (const [type, data] of testCases) {
+        const filename = path.join(tmpdir(), `mode-${type}-test-${Date.now()}.txt`);
+        
+        await Bun.write(filename, data, { mode: 0o622 });
+        const stats = fs.statSync(filename);
+        expect(stats.mode & 0o777).toBe(0o622);
+        
+        try {
+          fs.unlinkSync(filename);
+        } catch (e) {}
+      }
+    });
+  });
+}

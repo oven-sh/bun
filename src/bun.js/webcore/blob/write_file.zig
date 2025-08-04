@@ -22,6 +22,7 @@ pub const WriteFile = struct {
     could_block: bool = false,
     close_after_io: bool = false,
     mkdirp_if_not_exists: bool = false,
+    mode: ?u32 = null,
 
     pub const io_tag = io.Poll.Tag.WriteFile;
 
@@ -77,6 +78,7 @@ pub const WriteFile = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        mode: ?u32,
     ) !*WriteFile {
         const write_file = bun.new(WriteFile, WriteFile{
             .file_blob = file_blob,
@@ -85,6 +87,7 @@ pub const WriteFile = struct {
             .onCompleteCallback = onCompleteCallback,
             .task = .{ .callback = &doWriteLoopTask },
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .mode = mode,
         });
         file_blob.store.?.ref();
         bytes_blob.store.?.ref();
@@ -98,6 +101,7 @@ pub const WriteFile = struct {
         context: Context,
         comptime callback: fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
+        mode: ?u32,
     ) !*WriteFile {
         const Handler = struct {
             pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
@@ -111,6 +115,7 @@ pub const WriteFile = struct {
             @as(*anyopaque, @ptrCast(context)),
             Handler.run,
             mkdirp_if_not_exists,
+            mode,
         );
     }
 
@@ -219,6 +224,13 @@ pub const WriteFile = struct {
         }
 
         const fd = this.opened_fd;
+
+        // Set file mode if specified
+        if (comptime !Environment.isWindows) {
+            if (this.mode) |file_mode| {
+                _ = bun.sys.fchmod(fd, file_mode);
+            }
+        }
 
         this.could_block = brk: {
             if (this.file_blob.store) |store| {
@@ -344,6 +356,7 @@ pub const WriteFileWindows = struct {
     onCompleteCallback: WriteFileOnWriteFileCallback,
     onCompleteCtx: *anyopaque,
     mkdirp_if_not_exists: bool = false,
+    mode: ?u32 = null,
     uv_bufs: [1]uv.uv_buf_t,
 
     fd: uv.uv_file = -1,
@@ -362,6 +375,7 @@ pub const WriteFileWindows = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        mode: ?u32,
     ) *WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
@@ -369,6 +383,7 @@ pub const WriteFileWindows = struct {
             .onCompleteCtx = onWriteFileContext,
             .onCompleteCallback = onCompleteCallback,
             .mkdirp_if_not_exists = mkdirp_if_not_exists and file_blob.store.?.data.file.pathlike == .path,
+            .mode = mode,
             .io_request = std.mem.zeroes(uv.fs_t),
             .uv_bufs = .{.{ .base = undefined, .len = 0 }},
             .event_loop = event_loop,
@@ -623,6 +638,7 @@ pub const WriteFileWindows = struct {
         context: Context,
         comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
+        mode: ?u32,
     ) *WriteFileWindows {
         return WriteFileWindows.createWithCtx(
             file_blob,
@@ -631,6 +647,7 @@ pub const WriteFileWindows = struct {
             @as(*anyopaque, @ptrCast(context)),
             @ptrCast(callback),
             mkdirp_if_not_exists,
+            mode,
         );
     }
 };

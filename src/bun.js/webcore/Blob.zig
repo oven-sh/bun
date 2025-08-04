@@ -1547,12 +1547,12 @@ fn writeStringToFileFast(
             // we deliberately don't use O_TRUNC here
             // it's a perf optimization
             bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
-            open_mode,
+            @intCast(open_mode),
         )) {
             .result => |result| {
                 if (comptime !Environment.isWindows) {
                     if (mode) |file_mode| {
-                        _ = bun.sys.fchmod(result, file_mode);
+                        _ = bun.sys.fchmod(result, @intCast(file_mode));
                     }
                 }
                 break :brk result;
@@ -1639,12 +1639,12 @@ fn writeBytesToFileFast(
                 bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK
             else
                 bun.O.WRONLY | bun.O.CREAT,
-            open_mode,
+            @intCast(open_mode),
         )) {
             .result => |result| {
                 if (comptime !Environment.isWindows) {
                     if (mode) |file_mode| {
-                        _ = bun.sys.fchmod(result, file_mode);
+                        _ = bun.sys.fchmod(result, @intCast(file_mode));
                     }
                 }
                 break :brk result;

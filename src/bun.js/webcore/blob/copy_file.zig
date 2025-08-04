@@ -161,14 +161,14 @@ pub const CopyFile = struct {
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    this.mode orelse jsc.Node.fs.default_permission,
+                    @intCast(this.mode orelse jsc.Node.fs.default_permission),
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| blk: {
                             // Set file mode if specified
                             if (comptime !Environment.isWindows) {
                                 if (this.mode) |file_mode| {
-                                    _ = bun.sys.fchmod(result_fd, file_mode);
+                                    _ = bun.sys.fchmod(result_fd, @intCast(file_mode));
                                 }
                             }
                             break :blk result_fd;

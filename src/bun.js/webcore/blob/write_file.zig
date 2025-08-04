@@ -228,7 +228,7 @@ pub const WriteFile = struct {
         // Set file mode if specified
         if (comptime !Environment.isWindows) {
             if (this.mode) |file_mode| {
-                _ = bun.sys.fchmod(fd, file_mode);
+                _ = bun.sys.fchmod(fd, @intCast(file_mode));
             }
         }
 

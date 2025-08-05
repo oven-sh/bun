@@ -205,7 +205,6 @@ deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_p
 /// UWS can handle closing the websocket connections themselves
 active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
-
 // Debugging
 
 dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
@@ -4066,7 +4065,6 @@ const SourceMap = bun.sourcemap;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;
-const DebugGuardedValue = bun.threading.DebugGuardedValue;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;

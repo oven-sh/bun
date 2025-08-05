@@ -254,7 +254,7 @@ export fn sniCallbackBridge(s: *uws.us_internal_ssl_socket_t, hostname: [*c]cons
         socket: *uws.us_internal_ssl_socket_t,
         result_cb_fn: uws.us_sni_result_cb,
         
-        pub fn callback(this: *@This(), globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn callback(this: *@This(), _: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const args = callFrame.arguments(2);
             
             // First argument should be error (or null)  
@@ -262,7 +262,7 @@ export fn sniCallbackBridge(s: *uws.us_internal_ssl_socket_t, hostname: [*c]cons
             // Second argument should be SecureContext (or null/undefined)
             const secure_context_arg = if (args.len > 1) args.ptr[1] else .js_null;
             
-            var result = uws.us_tagged_ssl_sni_result{
+            const result = uws.us_tagged_ssl_sni_result{
                 .tag = @intFromEnum(uws.us_ssl_sni_result_type.US_SSL_SNI_RESULT_NONE),
                 .val = undefined,
             };

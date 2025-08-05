@@ -1389,8 +1389,6 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
-            @fence(.acquire);
-
             return this.has_pending_activity.load(.acquire);
         }
 

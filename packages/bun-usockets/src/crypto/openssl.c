@@ -84,9 +84,12 @@ struct us_tagged_ssl_sni_result {
   union us_ssl_sni_result val;
 };
 
-void (*us_sni_result_cb)(struct us_internal_ssl_socket_t*, struct us_tagged_ssl_sni_result result);
-void (*us_sni_callback)(struct us_internal_ssl_socket_t*,
-               const char *hostname, us_tagged_ssl_sni_result result_cb, void* ctx)
+typedef void (*us_sni_result_cb)(struct us_internal_ssl_socket_t*, struct us_tagged_ssl_sni_result result);
+typedef void (*us_sni_callback)(struct us_internal_ssl_socket_t*,
+               const char *hostname, us_sni_result_cb result_cb, void* ctx);
+
+/* Forward declaration */
+int us_internal_ssl_cert_cb(SSL *ssl, void *arg);
 
 
 struct us_internal_ssl_socket_context_t {
@@ -175,8 +178,7 @@ int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   loop_ssl_data->last_write_was_msg_more =
       loop_ssl_data->msg_more || length == 16413;
-  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length,
-                                loop_ssl_data->last_write_was_msg_more);
+  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -1388,7 +1390,7 @@ void us_internal_ssl_socket_context_sni_result(
 
 
     switch(result.tag) {
-      case US_SSL_SNI_RESULT_OPTIONS:
+      case US_SSL_SNI_RESULT_OPTIONS: {
         enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
         SSL_CTX *ssl_context = create_ssl_context_from_bun_options(result.val.options, &err);
         if (ssl_context) {
@@ -1397,7 +1399,8 @@ void us_internal_ssl_socket_context_sni_result(
           // error in this case lets fallback to the default and continue
         }
         break;
-      case US_SSL_SNI_RESULT_SSL_CONTEXT:
+      }
+      case US_SSL_SNI_RESULT_SSL_CONTEXT: {
         SSL_CTX *ssl_context = result.val.ssl_context;  
         if (ssl_context) {
           // set ssl context
@@ -1406,6 +1409,7 @@ void us_internal_ssl_socket_context_sni_result(
           // error in this case lets fallback to the default and continue
         }
         break;
+      }
     }
     // if cert_cb_running is 1 it means we are in the middle of a handshake already so no need to update again
     // if cert_cb_running is 0 it means this callback is async and we need to update the handshake
@@ -1633,8 +1637,8 @@ us_internal_bun_create_ssl_socket_context(
   /* Otherwise ee continue by creating a non-SSL context, but with larger ext to
    * hold our SSL stuff */
   struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_create_bun_socket_context(
-          0, loop,
+      (struct us_internal_ssl_socket_context_t *)us_create_bun_ssl_socket_context(
+          loop,
           sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
           options, err);
 
@@ -1699,19 +1703,19 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 }
 
 // TODO does this need more changes?
-struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
+struct us_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* is_connected) {
+    int port, int options, int socket_ext_size, int* is_resolved) {
   return us_socket_context_connect(
-      2, &context->sc, host, port, options,
+      1, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size, is_connected);
+          socket_ext_size, is_resolved);
 }
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
+struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size) {
-  return (struct us_internal_ssl_socket_t *)us_socket_context_connect_unix(
-      0, &context->sc, server_path, pathlen, options,
+  return us_socket_context_connect_unix(
+      1, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size);
 }
@@ -1825,26 +1829,25 @@ us_internal_ssl_socket_get_native_handle(struct us_internal_ssl_socket_t *s) {
 }
 
 int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
-                                     const char *data, int length,
-                                     int msg_more) {
+                                     const char *data, int length) {
 
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_socket_is_closed(1, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return 0;
   }
-  return us_socket_write(0, &s->s, data, length, msg_more);
+  return us_socket_write(1, &s->s, data, length);
 }
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
-                                 const char *data, int length, int msg_more) {
+                                 const char *data, int length) {
   
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
+  if (us_socket_is_closed(1, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
     return 0;
   }
 
   struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(1, &s->s);
 
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
+  struct us_loop_t *loop = us_socket_context_loop(1, &context->sc);
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)loop->data.ssl_data;
 
@@ -1856,12 +1859,12 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_read_input_length = 0;
 
   loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = msg_more;
+  loop_ssl_data->msg_more = 0;
   loop_ssl_data->last_write_was_msg_more = 0;
   int written = SSL_write(s->ssl, data, length);
   loop_ssl_data->msg_more = 0;
 
-  if (loop_ssl_data->last_write_was_msg_more && !msg_more) {
+  if (loop_ssl_data->last_write_was_msg_more) {
     us_socket_flush(0, &s->s);
   }
 
@@ -2160,8 +2163,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   us_socket_context_ref(0,old_context);
 
   enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  struct us_socket_context_t *context = us_create_bun_socket_context(
-      1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
+  struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
+      old_context->loop, sizeof(struct us_wrapped_socket_context_t),
       options, &err);
   
   // Handle SSL context creation failure

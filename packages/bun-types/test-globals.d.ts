@@ -10,6 +10,7 @@ declare var test: typeof import("bun:test").test;
 declare var it: typeof import("bun:test").it;
 declare var describe: typeof import("bun:test").describe;
 declare var expect: typeof import("bun:test").expect;
+declare var expectTypeOf: typeof import("bun:test").expectTypeOf;
 declare var beforeAll: typeof import("bun:test").beforeAll;
 declare var beforeEach: typeof import("bun:test").beforeEach;
 declare var afterEach: typeof import("bun:test").afterEach;

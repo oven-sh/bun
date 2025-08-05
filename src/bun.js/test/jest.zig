@@ -135,6 +135,10 @@ pub const TestRunner = struct {
         }
     }
 
+    pub fn hasTestFilter(this: *const TestRunner) bool {
+        return this.filter_regex != null;
+    }
+
     pub fn setTimeout(
         this: *TestRunner,
         milliseconds: u32,
@@ -439,6 +443,13 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
+        // Add expectTypeOf function
+        module.put(
+            globalObject,
+            ZigString.static("expectTypeOf"),
+            ExpectTypeOf.js.getConstructor(globalObject),
+        );
+
         createMockObjects(globalObject, module);
 
         return module;
@@ -462,6 +473,7 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
+        mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
         const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
@@ -864,21 +876,28 @@ pub const DescribeScope = struct {
     line_number: u32 = 0,
     test_id_for_debugger: u32 = 0,
 
+    /// Does this DescribeScope or any of the children describe scopes have tests?
+    ///
+    /// If all tests were filtered out due to `-t`, then this will be false.
+    ///
+    /// .only has to be evaluated later.]
+    children_have_tests: bool = false,
+
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.isWithinOnlyScope();
+        if (this.parent) |parent| return parent.isWithinOnlyScope();
         return false;
     }
 
     fn isWithinSkipScope(this: *const DescribeScope) bool {
         if (this.tag == .skip) return true;
-        if (this.parent != null) return this.parent.?.isWithinSkipScope();
+        if (this.parent) |parent| return parent.isWithinSkipScope();
         return false;
     }
 
     fn isWithinTodoScope(this: *const DescribeScope) bool {
         if (this.tag == .todo) return true;
-        if (this.parent != null) return this.parent.?.isWithinTodoScope();
+        if (this.parent) |parent| return parent.isWithinTodoScope();
         return false;
     }
 
@@ -886,7 +905,7 @@ pub const DescribeScope = struct {
         if (this.tag == .skip or
             this.tag == .todo) return false;
         if (Jest.runner.?.only and this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.shouldEvaluateScope();
+        if (this.parent) |parent| return parent.shouldEvaluateScope();
         return true;
     }
 
@@ -1164,6 +1183,29 @@ pub const DescribeScope = struct {
         return .js_undefined;
     }
 
+    fn markChildrenHaveTests(this: *DescribeScope) void {
+        var parent: ?*DescribeScope = this;
+        while (parent) |scope| {
+            if (scope.children_have_tests) break;
+            scope.children_have_tests = true;
+            parent = scope.parent;
+        }
+    }
+
+    // TODO: combine with shouldEvaluateScope() once we make beforeAll run with the first scheduled test in the scope.
+    fn shouldRunBeforeAllAndAfterAll(this: *const DescribeScope) bool {
+        if (this.children_have_tests) {
+            return true;
+        }
+
+        if (Jest.runner.?.hasTestFilter()) {
+            // All tests in this scope were filtered out.
+            return false;
+        }
+
+        return true;
+    }
+
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
@@ -1182,15 +1224,21 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |err| {
-                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
-                    i += 1;
+            // TODO: we need to delay running beforeAll until the first test
+            // actually runs instead of when we start scheduling tests.
+            // At this point, we don't properly know if we should run beforeAll scopes in cases like when `.only` is used.
+            if (this.shouldRunBeforeAllAndAfterAll()) {
+                if (this.runCallback(globalObject, .beforeAll)) |err| {
+                    _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
+                    while (i < end) {
+                        Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
+                        i += 1;
+                    }
+                    this.deinit(globalObject);
+                    return;
                 }
-                this.deinit(globalObject);
-                return;
             }
+
             if (end == 0) {
                 var runner = allocator.create(TestRunnerTask) catch unreachable;
                 runner.* = .{
@@ -1242,7 +1290,8 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope() and this.shouldRunBeforeAllAndAfterAll()) {
+
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
@@ -1728,7 +1777,7 @@ pub const TestRunnerTask = struct {
             }
         }
 
-        describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+        describe.onTestComplete(globalThis, test_id, result.isSkipped());
 
         Jest.runner.?.runNextTest();
     }
@@ -1767,6 +1816,14 @@ pub const Result = union(TestRunner.Test.Status) {
     fail_because_todo_passed: u32,
     fail_because_expected_has_assertions: void,
     fail_because_expected_assertion_count: Counter,
+
+    pub fn isSkipped(this: *const Result) bool {
+        return switch (this.*) {
+            .skip, .skipped_because_label => true,
+            .todo => !Jest.runner.?.test_options.run_todo,
+            else => false,
+        };
+    }
 
     pub fn isFailure(this: *const Result) bool {
         return this.* == .fail or this.* == .timeout or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
@@ -1960,6 +2017,10 @@ inline fn createScope(
                 break :brk 0;
             },
         }) catch unreachable;
+
+        if (!is_skip) {
+            parent.markChildrenHaveTests();
+        }
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
@@ -2429,6 +2490,7 @@ const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
+const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;

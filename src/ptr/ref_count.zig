@@ -275,6 +275,10 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
             return counter.active_counts.load(.seq_cst) == 1;
         }
 
+        pub fn getCount(counter: *const @This()) u32 {
+            return counter.active_counts.load(.seq_cst);
+        }
+
         pub fn dumpActiveRefs(count: *@This()) void {
             if (enable_debug) {
                 const ptr: *T = @alignCast(@fieldParentPtr(field_name, count));

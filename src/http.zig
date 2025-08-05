@@ -167,6 +167,50 @@ pub fn onOpen(
     }
 }
 
+pub fn checkALPNNegotiation(client: *HTTPClient, ssl_ptr: *BoringSSL.SSL) void {
+    // Check if HTTP/2 was negotiated via ALPN
+    var alpn_selected: [*c]const u8 = undefined;
+    var alpn_len: c_uint = undefined;
+    BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_selected, &alpn_len);
+
+    if (alpn_len > 0) {
+        const alpn_protocol = alpn_selected[0..alpn_len];
+        log("ALPN negotiated: {s}", .{alpn_protocol});
+
+        // Store the negotiated protocol
+        client.negotiated_protocol = bun.default_allocator.dupe(u8, alpn_protocol) catch "";
+
+        if (strings.eql(alpn_protocol, "h2")) {
+            client.should_use_http2 = true;
+            log("HTTP/2 negotiated via ALPN, will upgrade after connection", .{});
+        } else if (strings.eql(alpn_protocol, "http/1.1") or strings.eql(alpn_protocol, "http/1.0")) {
+            client.should_use_http2 = false;
+            log("HTTP/1.1 negotiated via ALPN", .{});
+        } else {
+            // Unknown protocol, default to HTTP/1.1
+            client.should_use_http2 = false;
+            log("Unknown ALPN protocol '{s}', defaulting to HTTP/1.1", .{alpn_protocol});
+        }
+    } else {
+        log("No ALPN negotiated, defaulting to HTTP/1.1", .{});
+        client.should_use_http2 = false;
+    }
+}
+
+pub fn fallbackToHTTP1(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("Falling back from HTTP/2 to HTTP/1.1", .{});
+    
+    // Reset HTTP/2 state
+    client.should_use_http2 = false;
+    client.http2_attempted = true;
+    client.state.flags.is_http2 = false;
+    
+    // Continue with HTTP/1.1 processing
+    if (client.state.request_stage == .pending) {
+        client.onWritable(true, comptime is_ssl, socket);
+    }
+}
+
 pub fn firstCall(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -177,6 +221,15 @@ pub fn firstCall(
             client.onPreconnect(is_ssl, socket);
             return;
         }
+    }
+
+    // HTTP/2 upgrade is handled by AsyncHTTP layer, not here
+    // The ALPN negotiation result is stored in should_use_http2 for upper layers to use
+    
+    // Reset HTTP/2 flag for this lower-level client since HTTP/2 is handled elsewhere
+    if (client.should_use_http2) {
+        log("HTTP/2 negotiated, will be handled by AsyncHTTP layer", .{});
+        // Don't try to handle HTTP/2 at this low level
     }
 
     if (client.state.request_stage == .pending) {
@@ -440,6 +493,11 @@ async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 unix_socket_path: jsc.ZigString.Slice = jsc.ZigString.Slice.empty,
 
+// HTTP/2 protocol negotiation support
+negotiated_protocol: []const u8 = "",
+should_use_http2: bool = false,
+http2_attempted: bool = false,
+
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
         bun.default_allocator.free(this.redirect);
@@ -455,6 +513,205 @@ pub fn deinit(this: *HTTPClient) void {
     }
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
+
+    // Clean up negotiated protocol string
+    if (this.negotiated_protocol.len > 0) {
+        bun.default_allocator.free(this.negotiated_protocol);
+        this.negotiated_protocol = "";
+    }
+}
+
+pub fn upgradeToHTTP2(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    // This method handles the transition from HTTP/1.1 to HTTP/2 client
+    // when ALPN negotiation indicates HTTP/2 support
+
+    if (!this.should_use_http2) {
+        return error.HTTP2NotNegotiated;
+    }
+
+    if (this.http2_attempted) {
+        return error.HTTP2AlreadyAttempted;
+    }
+
+    this.http2_attempted = true;
+    log("Upgrading to HTTP/2 for {s}", .{this.url.href});
+
+    // Set HTTP/2 flag in the internal state
+    this.state.flags.is_http2 = true;
+    
+    // Send HTTP/2 connection preface
+    try this.sendHTTP2Preface(is_ssl, socket);
+}
+
+pub fn sendHTTP2Preface(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    // HTTP/2 Connection Preface (RFC 7540, Section 3.5)
+    const HTTP2_CONNECTION_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    
+    log("Sending HTTP/2 connection preface", .{});
+    
+    // Send the connection preface
+    const bytes_written = socket.write(HTTP2_CONNECTION_PREFACE);
+    if (bytes_written != HTTP2_CONNECTION_PREFACE.len) {
+        return error.HTTP2ConnectionPrefaceFailed;
+    }
+    
+    // Send initial SETTINGS frame
+    try this.sendHTTP2Settings(is_ssl, socket);
+}
+
+pub fn sendHTTP2Settings(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    _ = this;
+    
+    log("Sending HTTP/2 SETTINGS frame", .{});
+    
+    // SETTINGS frame header (9 bytes) + payload (36 bytes for 6 settings)
+    const settings_payload_size = 36; // 6 settings * 6 bytes each
+    
+    // Frame header: length (24 bits) + type (8 bits) + flags (8 bits) + stream ID (32 bits)
+    var frame_header: [9]u8 = undefined;
+    // Length (24 bits, big endian)
+    frame_header[0] = 0;
+    frame_header[1] = 0;
+    frame_header[2] = settings_payload_size;
+    // Type: SETTINGS (0x04)
+    frame_header[3] = 0x04;
+    // Flags: 0 (no ACK for initial settings)
+    frame_header[4] = 0x00;
+    // Stream ID: 0 (connection-level frame)
+    frame_header[5] = 0;
+    frame_header[6] = 0;
+    frame_header[7] = 0;
+    frame_header[8] = 0;
+    
+    // SETTINGS payload (6 settings)
+    var settings_payload: [settings_payload_size]u8 = undefined;
+    var offset: usize = 0;
+    
+    // SETTINGS_HEADER_TABLE_SIZE (0x1) = 4096
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 1; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0x10; offset += 1;
+    settings_payload[offset] = 0x00; offset += 1; // Value: 4096
+    
+    // SETTINGS_ENABLE_PUSH (0x2) = 0 (disabled for client)
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 2; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1; // Value: 0
+    
+    // SETTINGS_MAX_CONCURRENT_STREAMS (0x3) = 100
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 3; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 100; offset += 1; // Value: 100
+    
+    // SETTINGS_INITIAL_WINDOW_SIZE (0x4) = 65535
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 4; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0xFF; offset += 1;
+    settings_payload[offset] = 0xFF; offset += 1; // Value: 65535
+    
+    // SETTINGS_MAX_FRAME_SIZE (0x5) = 16384
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 5; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0x40; offset += 1;
+    settings_payload[offset] = 0x00; offset += 1; // Value: 16384
+    
+    // SETTINGS_MAX_HEADER_LIST_SIZE (0x6) = 8192
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 6; offset += 1; // ID
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0; offset += 1;
+    settings_payload[offset] = 0x20; offset += 1;
+    settings_payload[offset] = 0x00; offset += 1; // Value: 8192
+    
+    // Send frame header
+    var bytes_written = socket.write(&frame_header);
+    if (bytes_written != frame_header.len) {
+        return error.HTTP2SettingsHeaderFailed;
+    }
+    
+    // Send settings payload
+    bytes_written = socket.write(&settings_payload);
+    if (bytes_written != settings_payload.len) {
+        return error.HTTP2SettingsPayloadFailed;
+    }
+    
+    log("HTTP/2 SETTINGS frame sent successfully", .{});
+    
+    // TODO: Send initial HTTP/2 request here
+    // For now, we fall back to HTTP/1.1 after settings
+    // This is a simplified implementation that just establishes the HTTP/2 connection
+}
+
+pub fn handleHTTP2Data(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    incoming_data: []const u8,
+    ctx: *NewHTTPContext(is_ssl),
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
+    
+    log("handleHTTP2Data: {} bytes", .{incoming_data.len});
+    
+    // For now, we need to delegate to a proper HTTP/2 client implementation
+    // The current architecture doesn't have a fully integrated HTTP/2 client
+    // so we fall back to HTTP/1.1 for now to avoid malformed response errors
+    
+    // Set flags back to HTTP/1.1 and reprocess the data
+    this.state.flags.is_http2 = false;
+    this.should_use_http2 = false;
+    
+    log("HTTP/2 data handling not fully implemented, falling back to HTTP/1.1", .{});
+    
+    // Re-process as HTTP/1.1
+    switch (this.state.response_stage) {
+        .pending, .headers => {
+            this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
+        },
+        .body => {
+            this.setTimeout(socket, 5);
+
+            const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
+            }
+        },
+        .body_chunk => {
+            this.setTimeout(socket, 5);
+
+            const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
+            }
+        },
+        .fail => {},
+        else => {
+            this.state.pending_response = null;
+            this.closeAndFail(error.UnexpectedData, is_ssl, socket);
+            return;
+        },
+    }
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -1470,6 +1727,12 @@ pub fn onData(
         return;
     }
 
+    // Handle HTTP/2 frames if negotiated
+    if (this.state.flags.is_http2) {
+        this.handleHTTP2Data(is_ssl, incoming_data, ctx, socket);
+        return;
+    }
+
     switch (this.state.response_stage) {
         .pending, .headers => {
             this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
@@ -2442,6 +2705,8 @@ pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
+pub const HTTP2Client = @import("./http/HTTP2Client.zig");
+pub const HTTP2Integration = @import("./http/HTTP2Integration.zig");
 
 const string = []const u8;
 

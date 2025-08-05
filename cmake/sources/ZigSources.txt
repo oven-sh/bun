@@ -550,6 +550,10 @@ src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
+src/http/HTTP2Client.zig
+src/http/HTTP2ClientEnhanced.zig
+src/http/HTTP2Integration.zig
+src/http/HTTP2Manager.zig
 src/http/HTTPCertError.zig
 src/http/HTTPContext.zig
 src/http/HTTPRequestBody.zig

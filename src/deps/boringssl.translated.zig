@@ -19051,7 +19051,7 @@ pub const SSL = opaque {
         _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
         _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
 
-        const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpns = &[_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
         bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);

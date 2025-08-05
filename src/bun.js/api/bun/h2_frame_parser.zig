@@ -24,7 +24,7 @@ const PaddingStrategy = enum {
     aligned,
     max,
 };
-const FrameType = enum(u8) {
+pub const FrameType = enum(u8) {
     HTTP_FRAME_DATA = 0x00,
     HTTP_FRAME_HEADERS = 0x01,
     HTTP_FRAME_PRIORITY = 0x02,
@@ -42,11 +42,11 @@ const FrameType = enum(u8) {
 const PingFrameFlags = enum(u8) {
     ACK = 0x1,
 };
-const DataFrameFlags = enum(u8) {
+pub const DataFrameFlags = enum(u8) {
     END_STREAM = 0x1,
     PADDED = 0x8,
 };
-const HeadersFrameFlags = enum(u8) {
+pub const HeadersFrameFlags = enum(u8) {
     END_STREAM = 0x1,
     END_HEADERS = 0x4,
     PADDED = 0x8,
@@ -56,7 +56,7 @@ const SettingsFlags = enum(u8) {
     ACK = 0x1,
 };
 
-const ErrorCode = enum(u32) {
+pub const ErrorCode = enum(u32) {
     NO_ERROR = 0x0,
     PROTOCOL_ERROR = 0x1,
     INTERNAL_ERROR = 0x2,
@@ -75,7 +75,7 @@ const ErrorCode = enum(u32) {
     _, // we can have unsupported extension/custom error codes types
 };
 
-const SettingsType = enum(u16) {
+pub const SettingsType = enum(u16) {
     SETTINGS_HEADER_TABLE_SIZE = 0x1,
     SETTINGS_ENABLE_PUSH = 0x2,
     SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
@@ -147,7 +147,7 @@ const StreamPriority = packed struct(u40) {
     }
 };
 
-const FrameHeader = packed struct(u72) {
+pub const FrameHeader = packed struct(u72) {
     length: u24 = 0,
     type: u8 = @intFromEnum(FrameType.HTTP_FRAME_SETTINGS),
     flags: u8 = 0,
@@ -181,7 +181,7 @@ const SettingsPayloadUnit = packed struct(u48) {
     }
 };
 
-const FullSettingsPayload = packed struct(u288) {
+pub const FullSettingsPayload = packed struct(u288) {
     _headerTableSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_HEADER_TABLE_SIZE),
     headerTableSize: u32 = 4096,
     _enablePushType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH),

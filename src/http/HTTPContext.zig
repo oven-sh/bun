@@ -252,6 +252,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                             }
                         }
 
+                        // Check ALPN negotiation after successful handshake
+                        if (comptime ssl) {
+                            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+                            client.checkALPNNegotiation(ssl_ptr);
+                        }
+
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if we are here is because server rejected us, and the error_no is the cause of this

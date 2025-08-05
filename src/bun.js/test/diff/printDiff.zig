@@ -365,23 +365,34 @@ fn printModifiedSegmentWithoutDiffdiff(
     writer: anytype,
     config: DiffConfig,
     segment: DiffSegment,
-    removed_prefix: PrefixStyle,
-    inserted_prefix: PrefixStyle,
+    modified_style: ModifiedStyle,
 ) !void {
+    const removed_prefix = switch (modified_style.single_line) {
+        true => prefix_styles.single_line_removed,
+        false => prefix_styles.removed,
+    };
+    const inserted_prefix = switch (modified_style.single_line) {
+        true => prefix_styles.single_line_inserted,
+        false => prefix_styles.inserted,
+    };
+
     try printLinePrefix(writer, config, removed_prefix);
     try printSegment(segment.removed, writer, config, styles.removed_line);
     try writer.writeAll("\n");
     try printLinePrefix(writer, config, inserted_prefix);
     try printSegment(segment.inserted, writer, config, styles.inserted_line);
-    try writer.writeAll("\n");
+    if (!modified_style.single_line) try writer.writeAll("\n");
 }
 
+const ModifiedStyle = struct {
+    single_line: bool,
+};
 fn printModifiedSegment(
     segment: DiffSegment,
     arena: std.mem.Allocator,
     writer: anytype,
     config: DiffConfig,
-    modified_style: struct { single_line: bool },
+    modified_style: ModifiedStyle,
 ) !void {
     const removed_prefix = switch (modified_style.single_line) {
         true => prefix_styles.single_line_removed,
@@ -393,7 +404,7 @@ fn printModifiedSegment(
     };
 
     if (mode == .fg) {
-        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
     var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
@@ -412,7 +423,7 @@ fn printModifiedSegment(
 
     if ((deleted_highlighted_length > 10 and deleted_highlighted_length > segment.removed.len / 3 * 2) or (inserted_highlighted_length > 10 and inserted_highlighted_length > segment.inserted.len / 3 * 2)) {
         // the diff is too significant (more than 2/3 of the original text on one side is modified), so skip printing the second layer of diffs.
-        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
     const is_valid_utf_8 = for (char_diff.items) |item| {
@@ -423,7 +434,7 @@ fn printModifiedSegment(
 
     if (!is_valid_utf_8) {
         // utf-8 was cut up, so skip printing the second layer of diffs. ideally we would update the diff cleanup to handle this case instead.
-        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
     try printLinePrefix(writer, config, removed_prefix);
@@ -444,7 +455,7 @@ fn printModifiedSegment(
             .equal => try printSegment(item.text, writer, config, styles.inserted_equal),
         }
     }
-    try writer.writeAll("\n");
+    if (!modified_style.single_line) try writer.writeAll("\n");
 }
 
 pub fn printHunkHeader(writer: anytype, config: DiffConfig, original_line_number: usize, original_line_count: usize, changed_line_number: usize, changed_line_count: usize) !void {

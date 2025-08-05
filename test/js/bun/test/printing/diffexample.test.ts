@@ -277,7 +277,6 @@ test("no color", async () => {
     Expected: ""hello, world!""
     Received: ""¡hello, world""
 
-
           at <anonymous> (FILE:LINE)
     (fail) example 14 - single line diff
     206 | });
@@ -291,7 +290,6 @@ test("no color", async () => {
 
     Expected: "Hello 👋 世界 🌍!"
     Received: "Hello 👋 世界 🌎!"
-
 
           at <anonymous> (FILE:LINE)
     (fail) example 15 - unicode char diff
@@ -395,7 +393,6 @@ test("no color", async () => {
 
     Expected: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999801 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     Received: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999801 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
 
           at <anonymous> (FILE:LINE)
     (fail) example 18 - very long single line string
@@ -789,7 +786,6 @@ test("color", async () => {
     Expected: \x1B[0m\x1B[32m"Hello 👋 世界 🌎"\x1B[0m
     Received: \x1B[0m\x1B[31m"Hello 👋 世界 🌍"\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m"Line 1: 你好\x1B[0m
@@ -818,7 +814,6 @@ test("color", async () => {
 
     Expected: \x1B[0m\x1B[32m"café r\x1B[0m\x1B[32m\x1B[7me\x1B[0m\x1B[32msumé na\x1B[0m\x1B[32m\x1B[7mi\x1B[0m\x1B[32mve"\x1B[0m
     Received: \x1B[0m\x1B[31m"café r\x1B[0m\x1B[31m\x1B[7mé\x1B[0m\x1B[31msumé na\x1B[0m\x1B[31m\x1B[7mï\x1B[0m\x1B[31mve"\x1B[0m
-
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 

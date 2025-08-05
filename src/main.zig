@@ -86,6 +86,6 @@ pub fn eqlBytes(src: []const u8, dest: []const u8) bool {
 const builtin = @import("builtin");
 const std = @import("std");
 
-const bun = @import("bun");
+pub const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;

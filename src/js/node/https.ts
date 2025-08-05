@@ -1,5 +1,6 @@
 // Hardcoded module "node:https"
 const http = require("node:http");
+const tls = require("node:tls");
 const { urlToHttpOptions } = require("internal/url");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -44,11 +45,20 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = http.createConnection;
 
+function createServer(options, callback) {
+  // If SNICallback is provided, use TLS server for proper SNI support
+  if (options && typeof options.SNICallback === "function") {
+    return tls.createServer(options, callback);
+  }
+  // Otherwise use HTTP server (which can handle TLS if cert/key provided)
+  return http.createServer(options, callback);
+}
+
 var https = {
   Agent,
   globalAgent: new Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 }),
   Server: http.Server,
-  createServer: http.createServer,
+  createServer,
   get,
   request,
 };

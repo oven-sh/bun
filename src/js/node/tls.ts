@@ -594,7 +594,6 @@ function Server(options, secureConnectionListener): void {
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
-
       if (typeof options.ciphers !== "undefined") {
         if (typeof options.ciphers !== "string") {
           throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);

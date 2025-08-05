@@ -261,6 +261,150 @@ pub const Report = struct {
         }
     };
 
+    pub const Html = struct {
+        pub fn writeFormat(
+            report: *const Report,
+            base_path: []const u8,
+            writer: anytype,
+        ) !void {
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
+
+            const functions_fraction = report.functionCoverageFraction();
+            const lines_fraction = report.linesCoverageFraction();
+
+            // Write HTML structure for this file's coverage
+            try writer.print(
+                \\    <tr data-file="{s}">
+                \\      <td><a href="#{s}">{s}</a></td>
+                \\      <td class="coverage">{d:.2}%</td>
+                \\      <td class="coverage">{d:.2}%</td>
+                \\      <td class="uncovered-lines">
+            , .{ filename, filename, filename, functions_fraction * 100.0, lines_fraction * 100.0 });
+
+            // Add uncovered line ranges
+            var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
+            defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+            executable_lines_that_havent_been_executed.toggleAll();
+            executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
+
+            var iter = executable_lines_that_havent_been_executed.iterator(.{});
+            var start_of_line_range: usize = 0;
+            var prev_line: usize = 0;
+            var is_first = true;
+
+            while (iter.next()) |next_line| {
+                if (next_line == (prev_line + 1)) {
+                    prev_line = next_line;
+                    continue;
+                } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
+                    start_of_line_range = next_line;
+                    prev_line = next_line;
+                    continue;
+                }
+
+                if (is_first) {
+                    is_first = false;
+                } else {
+                    try writer.writeAll(", ");
+                }
+
+                if (start_of_line_range == prev_line) {
+                    try writer.print("{d}", .{start_of_line_range + 1});
+                } else {
+                    try writer.print("{d}-{d}", .{ start_of_line_range + 1, prev_line + 1 });
+                }
+
+                prev_line = next_line;
+                start_of_line_range = next_line;
+            }
+
+            if (prev_line != start_of_line_range) {
+                if (is_first) {
+                    is_first = false;
+                } else {
+                    try writer.writeAll(", ");
+                }
+
+                if (start_of_line_range == prev_line) {
+                    try writer.print("{d}", .{start_of_line_range + 1});
+                } else {
+                    try writer.print("{d}-{d}", .{ start_of_line_range + 1, prev_line + 1 });
+                }
+            }
+
+            try writer.writeAll("</td>\n    </tr>\n");
+        }
+
+        pub fn writeFileDetail(
+            report: *const Report,
+            base_path: []const u8,
+            source_content: []const u8,
+            writer: anytype,
+        ) !void {
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
+
+            const functions_fraction = report.functionCoverageFraction();  
+            const lines_fraction = report.linesCoverageFraction();
+
+            try writer.print(
+                \\  <div class="file-detail" id="{s}">
+                \\    <h3>{s}</h3>
+                \\    <div class="file-stats">
+                \\      <span>Functions: {d:.2}%</span>
+                \\      <span>Lines: {d:.2}%</span>
+                \\    </div>
+                \\    <pre class="source-code">
+            , .{ filename, filename, functions_fraction * 100.0, lines_fraction * 100.0 });
+
+            // Split source into lines and annotate with coverage
+            var lines = std.mem.split(u8, source_content, "\n");
+            var line_number: u32 = 1;
+            const line_hits = report.line_hits.slice();
+
+            while (lines.next()) |line| {
+                const line_index = line_number - 1;
+                const is_executable = report.executable_lines.isSet(line_index);
+                const is_covered = report.lines_which_have_executed.isSet(line_index);
+                const hit_count = if (line_index < line_hits.len) line_hits[line_index] else 0;
+
+                const css_class = if (!is_executable) 
+                    "line non-executable" 
+                else if (is_covered) 
+                    "line covered" 
+                else 
+                    "line uncovered";
+
+                try writer.print(
+                    \\<span class="{s}" data-line="{d}" data-hits="{d}">
+                , .{ css_class, line_number, hit_count });
+
+                try writer.print("{d: >4} | ", .{line_number});
+                
+                // HTML escape the source line
+                for (line) |char| {
+                    switch (char) {
+                        '<' => try writer.writeAll("&lt;"),
+                        '>' => try writer.writeAll("&gt;"),
+                        '&' => try writer.writeAll("&amp;"),
+                        '"' => try writer.writeAll("&quot;"),
+                        '\'' => try writer.writeAll("&#39;"),
+                        else => try writer.writeByte(char),
+                    }
+                }
+                try writer.writeAll("</span>\n");
+                line_number += 1;
+            }
+
+            try writer.writeAll("    </pre>\n  </div>\n");
+        }
+    };
+
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);

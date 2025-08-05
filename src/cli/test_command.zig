@@ -935,7 +935,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.html) {
             return;
         }
 
@@ -969,18 +969,26 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = if (reporters.text and reporters.lcov)
+        const trace = if (reporters.text and reporters.lcov and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndTextAndHtml")
+        else if (reporters.text and reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageTextAndHtml")
+        else if (reporters.lcov and reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndHtml")
         else if (reporters.text)
             bun.perf.trace("TestCommand.printCodeCoverageText")
         else if (reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else if (reporters.html)
+            bun.perf.trace("TestCommand.printCodeCoverageHtml")
         else
             @compileError("No reporters enabled");
 
         defer trace.end();
 
-        if (comptime !reporters.text and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov and !reporters.html) {
             @compileError("No reporters enabled");
         }
 
@@ -1109,6 +1117,148 @@ pub const CommandLineReporter = struct {
         }
         // --- LCOV ---
 
+        // --- HTML ---
+        var html_name_buf: bun.PathBuffer = undefined;
+        const html_file, const html_name, const html_buffered_writer, const html_writer = brk: {
+            if (comptime !reporters.html) break :brk .{ {}, {}, {}, {} };
+
+            // Ensure the directory exists
+            var fs = bun.jsc.Node.fs.NodeFS{};
+            _ = fs.mkdirRecursive(
+                .{
+                    .path = bun.jsc.Node.PathLike{
+                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                    },
+                    .always_return_none = true,
+                },
+            );
+
+            // Write the index.html file to a temporary file we atomically rename to the final name after it succeeds
+            var base64_bytes: [8]u8 = undefined;
+            var shortname_buf: [512]u8 = undefined;
+            bun.csprng(&base64_bytes);
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".index.html.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            const path = bun.path.joinAbsStringBufZ(relative_dir, &html_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
+            const file = bun.sys.File.openat(
+                .cwd(),
+                path,
+                bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                0o644,
+            );
+
+            switch (file) {
+                .err => |err| {
+                    Output.err(.lcovCoverageError, "Failed to create HTML coverage file", .{});
+                    Output.printError("\n{s}", .{err});
+                    Global.exit(1);
+                },
+                .result => |f| {
+                    const buffered = buffered_writer: {
+                        const writer = f.writer();
+                        // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
+                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        ptr.* = .{
+                            .end = 0,
+                            .unbuffered_writer = writer,
+                        };
+                        break :buffered_writer ptr;
+                    };
+
+                    break :brk .{
+                        f,
+                        path,
+                        buffered,
+                        buffered.writer(),
+                    };
+                },
+            }
+        };
+        errdefer {
+            if (comptime reporters.html) {
+                html_file.close();
+                _ = bun.sys.unlink(
+                    html_name,
+                );
+            }
+        }
+        
+        // Write HTML header
+        if (comptime reporters.html) {
+            try html_writer.writeAll(
+                \\<!DOCTYPE html>
+                \\<html lang="en">
+                \\<head>
+                \\  <meta charset="UTF-8">
+                \\  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                \\  <title>Bun Coverage Report</title>
+                \\  <style>
+                \\    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f8f9fa; }
+                \\    .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                \\    .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+                \\    .stat { background: white; padding: 15px; border-radius: 6px; flex: 1; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                \\    .stat-value { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+                \\    .stat-label { color: #6c757d; font-size: 14px; }
+                \\    .files-table { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                \\    table { width: 100%; border-collapse: collapse; }
+                \\    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; }
+                \\    th { background: #f8f9fa; font-weight: 600; color: #495057; }
+                \\    .coverage { text-align: right; font-weight: 500; }
+                \\    .coverage.high { color: #28a745; }
+                \\    .coverage.medium { color: #ffc107; }
+                \\    .coverage.low { color: #dc3545; }
+                \\    .uncovered-lines { font-family: monospace; font-size: 12px; color: #6c757d; }
+                \\    .file-detail { background: white; margin: 20px 0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                \\    .file-detail h3 { margin: 0; padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; }
+                \\    .file-stats { padding: 10px 20px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; }
+                \\    .file-stats span { margin-right: 20px; font-size: 14px; color: #6c757d; }
+                \\    .source-code { margin: 0; padding: 0; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px; line-height: 1.4; overflow-x: auto; }
+                \\    .line { display: block; padding: 2px 20px; white-space: pre; }
+                \\    .line.covered { background: #d4edda; }
+                \\    .line.uncovered { background: #f8d7da; }
+                \\    .line.non-executable { background: #f8f9fa; color: #6c757d; }
+                \\    .line:hover { background-color: #e9ecef; }
+                \\  </style>
+                \\</head>
+                \\<body>
+                \\  <div class="header">
+                \\    <h1>Bun Coverage Report</h1>
+                \\    <p>Generated on 
+            );
+            
+            // Add timestamp
+            const timestamp = std.time.timestamp();
+            const datetime = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
+            const day_seconds = datetime.getDaySeconds();
+            const epoch_day = datetime.getEpochDay();
+            const year_day = epoch_day.calculateYearDay();
+            const month_day = year_day.calculateMonthDay();
+            
+            try html_writer.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}</p>\n  </div>\n", .{
+                year_day.year, 
+                month_day.month.numeric(), 
+                month_day.day_index + 1,
+                day_seconds.getHoursIntoDay(),
+                day_seconds.getMinutesIntoHour(),
+                day_seconds.getSecondsIntoMinute(),
+            });
+            
+            try html_writer.writeAll(
+                \\  <div class="files-table">
+                \\    <table>
+                \\      <thead>
+                \\        <tr>
+                \\          <th>File</th>
+                \\          <th>Functions</th>
+                \\          <th>Lines</th>
+                \\          <th>Uncovered Lines</th>
+                \\        </tr>
+                \\      </thead>
+                \\      <tbody>
+                \\
+            );
+        }
+        // --- HTML ---
+
         for (byte_ranges) |*entry| {
             // Check if this file should be ignored based on coveragePathIgnorePatterns
             if (opts.ignore_patterns.len > 0) {
@@ -1150,6 +1300,14 @@ pub const CommandLineReporter = struct {
                     &report,
                     relative_dir,
                     lcov_writer,
+                ) catch continue;
+            }
+
+            if (comptime reporters.html) {
+                CodeCoverageReport.Html.writeFormat(
+                    &report,
+                    relative_dir,
+                    html_writer,
                 ) catch continue;
             }
         }
@@ -1214,6 +1372,35 @@ pub const CommandLineReporter = struct {
                 Global.exit(1);
             };
         }
+
+        if (comptime reporters.html) {
+            // Write HTML footer
+            try html_writer.writeAll(
+                \\      </tbody>
+                \\    </table>
+                \\  </div>
+                \\</body>
+                \\</html>
+                \\
+            );
+            
+            try html_buffered_writer.flush();
+            html_file.close();
+            const cwd = bun.FD.cwd();
+            bun.sys.moveFileZ(
+                cwd,
+                html_name,
+                cwd,
+                bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{ opts.reports_directory, "index.html" },
+                    .auto,
+                ),
+            ) catch |err| {
+                Output.err(err, "Failed to save index.html file", .{});
+                Global.exit(1);
+            };
+        }
     }
 };
 
@@ -1259,7 +1446,7 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
-        reporters: Reporters = .{ .text = true, .lcov = false },
+        reporters: Reporters = .{ .text = true, .lcov = false, .html = false },
         reports_directory: string = "coverage",
         fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
@@ -1270,10 +1457,12 @@ pub const TestCommand = struct {
     pub const Reporter = enum {
         text,
         lcov,
+        html,
     };
     const Reporters = struct {
         text: bool,
         lcov: bool,
+        html: bool,
     };
 
     pub const FileReporter = enum {
@@ -1608,8 +1797,10 @@ pub const TestCommand = struct {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {
-                            inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
+                            inline else => |lcov| switch (coverage_options.reporters.html) {
+                                inline else => |html| {
+                                    try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov, .html = html }, colors);
+                                },
                             },
                         },
                     },

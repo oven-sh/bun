@@ -3081,7 +3081,7 @@ test("should handle invalid method", async () => {
 test("multiple request writes should not hang (issue #21620)", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   let responseReceived = false;
-  
+
   await using server = http.createServer((req, res) => {
     let body = "";
     req.on("data", chunk => {
@@ -3098,7 +3098,7 @@ test("multiple request writes should not hang (issue #21620)", async () => {
   const address = server.address() as AddressInfo;
 
   const jsonStr = JSON.stringify({ key: "val", key2: 200 });
-  
+
   const req = http.request(
     {
       hostname: "localhost",
@@ -3108,7 +3108,7 @@ test("multiple request writes should not hang (issue #21620)", async () => {
         "content-type": "application/json",
       },
     },
-    (res) => {
+    res => {
       let data = "";
       res.on("data", chunk => {
         data += chunk.toString();
@@ -3123,7 +3123,7 @@ test("multiple request writes should not hang (issue #21620)", async () => {
           reject(err);
         }
       });
-    }
+    },
   );
 
   req.on("error", reject);
@@ -3155,7 +3155,7 @@ test("multiple request writes should not hang (issue #21620)", async () => {
 test("multiple https request writes should not hang", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   let responseReceived = false;
-  
+
   await using server = https.createServer(COMMON_TLS_CERT, (req, res) => {
     let body = "";
     req.on("data", chunk => {
@@ -3172,7 +3172,7 @@ test("multiple https request writes should not hang", async () => {
   const address = server.address() as AddressInfo;
 
   const jsonStr = JSON.stringify({ key: "val", key2: 200 });
-  
+
   const req = https.request(
     {
       hostname: "localhost",
@@ -3183,7 +3183,7 @@ test("multiple https request writes should not hang", async () => {
       },
       rejectUnauthorized: false, // For test cert
     },
-    (res) => {
+    res => {
       let data = "";
       res.on("data", chunk => {
         data += chunk.toString();
@@ -3198,12 +3198,12 @@ test("multiple https request writes should not hang", async () => {
           reject(err);
         }
       });
-    }
+    },
   );
 
   req.on("error", reject);
 
-  // Add timeout to prevent hanging  
+  // Add timeout to prevent hanging
   const timeout = setTimeout(() => {
     if (!responseReceived) {
       req.destroy();

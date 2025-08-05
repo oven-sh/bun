@@ -2,7 +2,7 @@
  * Regression test for issue #21620 - Multiple data writes on outgoing http/https request cause the connection to hang
  * @see https://github.com/oven-sh/bun/issues/21620
  */
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
@@ -25,13 +25,13 @@ lCECIQDcOTGFE7gU6zW8bV2b1JzG1Hv5jJiO2xON9U3qxnKNZwIhAOKGOLQcHrOO
 hGdJWp5YTJD5K3vxrW6HzfN/Lr8yTpGVAiEA4mD8YjQxuCJ3yDY1zR5U2n7rE5ON
 LYZa5GGl9g5w6YMCIQDH4U+7K3mw7yV3U6gHfLaV0+6nOW9l1lCY2vXzjUr5HQIg
 YMU+J1Y5SBo9PHLLqJQ9E3mH2LZU7q9Z9lkJdA+6TnE=
------END RSA PRIVATE KEY-----`
+-----END RSA PRIVATE KEY-----`,
 };
 
 test("multiple http request writes should not hang (issue #21620)", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   let responseReceived = false;
-  
+
   await using server = http.createServer((req, res) => {
     let body = "";
     req.on("data", chunk => {
@@ -48,7 +48,7 @@ test("multiple http request writes should not hang (issue #21620)", async () => 
   const address = server.address() as AddressInfo;
 
   const jsonStr = JSON.stringify({ key: "val", key2: 200 });
-  
+
   const req = http.request(
     {
       hostname: "localhost",
@@ -58,7 +58,7 @@ test("multiple http request writes should not hang (issue #21620)", async () => 
         "content-type": "application/json",
       },
     },
-    (res) => {
+    res => {
       let data = "";
       res.on("data", chunk => {
         data += chunk.toString();
@@ -73,7 +73,7 @@ test("multiple http request writes should not hang (issue #21620)", async () => 
           reject(err);
         }
       });
-    }
+    },
   );
 
   req.on("error", reject);
@@ -88,7 +88,7 @@ test("multiple http request writes should not hang (issue #21620)", async () => 
 
   // Multiple writes should not cause hanging
   req.write(jsonStr.slice(0, 10));
-  
+
   // Add small delay between writes to trigger the race condition
   setTimeout(() => {
     req.write(jsonStr.slice(10));
@@ -107,7 +107,7 @@ test("multiple http request writes should not hang (issue #21620)", async () => 
 test("multiple https request writes should not hang (issue #21620)", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   let responseReceived = false;
-  
+
   await using server = https.createServer(COMMON_TLS_CERT, (req, res) => {
     let body = "";
     req.on("data", chunk => {
@@ -124,7 +124,7 @@ test("multiple https request writes should not hang (issue #21620)", async () =>
   const address = server.address() as AddressInfo;
 
   const jsonStr = JSON.stringify({ key: "val", key2: 200 });
-  
+
   const req = https.request(
     {
       hostname: "localhost",
@@ -135,7 +135,7 @@ test("multiple https request writes should not hang (issue #21620)", async () =>
       },
       rejectUnauthorized: false, // For test cert
     },
-    (res) => {
+    res => {
       let data = "";
       res.on("data", chunk => {
         data += chunk.toString();
@@ -150,12 +150,12 @@ test("multiple https request writes should not hang (issue #21620)", async () =>
           reject(err);
         }
       });
-    }
+    },
   );
 
   req.on("error", reject);
 
-  // Add timeout to prevent hanging 
+  // Add timeout to prevent hanging
   const timeout = setTimeout(() => {
     if (!responseReceived) {
       req.destroy();
@@ -165,7 +165,7 @@ test("multiple https request writes should not hang (issue #21620)", async () =>
 
   // Multiple writes should not cause hanging
   req.write(jsonStr.slice(0, 10));
-  
+
   // Add small delay between writes to trigger the race condition
   setTimeout(() => {
     req.write(jsonStr.slice(10));

@@ -38,6 +38,7 @@ export const sharedTypes: Record<string, string> = {
   // Common Bun types
   "BunString": "bun.String",
   "JSC::EncodedJSValue": "jsc.JSValue",
+  "EncodedJSValue": "jsc.JSValue",
   "JSC::JSGlobalObject": "jsc.JSGlobalObject",
   "ZigException": "jsc.ZigException",
   "Inspector::InspectorHTTPServerAgent": "HTTPServerAgent.InspectorHTTPServerAgent",

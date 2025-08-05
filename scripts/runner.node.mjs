@@ -270,6 +270,7 @@ const skipArray = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
@@ -478,7 +479,7 @@ async function runTests() {
       console.log("run in", cwd);
       let exiting = false;
 
-      const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
+      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
         cwd, // run in main repo
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
@@ -488,18 +489,22 @@ async function runTests() {
       server.on("exit", (code, signal) => {
         if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
       });
-      process.on("exit", () => {
+      function onBeforeExit() {
         exiting = true;
-        server.kill();
-      });
+        server.off("error");
+        server.off("exit");
+        server.kill?.();
+      }
+      process.once("beforeExit", onBeforeExit);
       const lines = createInterface(server.stdout);
       lines.on("line", line => {
         portResolve({ port: parseInt(line) });
       });
 
-      const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
-      if (typeof result.port != "number") {
-        server.kill();
+      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
+      if (typeof result?.port != "number") {
+        process.off("beforeExit", onBeforeExit);
+        server.kill?.();
         console.warn("ci-remap server did not start:", result);
       } else {
         console.log("crash reports parsed on port", result.port);

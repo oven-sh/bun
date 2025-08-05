@@ -5,6 +5,8 @@ var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(tr
 loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
+https_context_h1: NewHTTPContext(true),
+https_context_h2: NewHTTPContext(true),
 
 queued_tasks: Queue = Queue{},
 
@@ -175,6 +177,14 @@ fn initOnce(opts: *const InitOpts) void {
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
+        .https_context_h1 = .{
+            .us_socket_context = undefined,
+            .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
+        },
+        .https_context_h2 = .{
+            .us_socket_context = undefined,
+            .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
+        },
         .timer = std.time.Timer.start() catch unreachable,
     };
     bun.libdeflate.load();
@@ -210,6 +220,15 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.http_thread.loop = loop;
     bun.http.http_thread.http_context.init();
     bun.http.http_thread.https_context.initWithThreadOpts(&opts) catch |err| opts.onInitError(err, opts);
+    
+    // Initialize H1-only context (http/1.1 only)
+    bun.http.http_thread.https_context_h1.initWithThreadOptsAndProtocol(&opts, .h1) catch |err| opts.onInitError(err, opts);
+    threadlog("Initialized h1 context at {*}", .{&bun.http.http_thread.https_context_h1});
+    
+    // Initialize H2-only context (h2 only)
+    bun.http.http_thread.https_context_h2.initWithThreadOptsAndProtocol(&opts, .h2) catch |err| opts.onInitError(err, opts);
+    threadlog("Initialized h2 context at {*}", .{&bun.http.http_thread.https_context_h2});
+    
     bun.http.http_thread.has_awoken.store(true, .monotonic);
     bun.http.http_thread.processEvents();
 }
@@ -269,20 +288,35 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
         }
     }
+    
+    // Use the appropriate context based on protocol preference
+    const ctx = this.contextWithProtocol(is_ssl, client.protocol);
+    threadlog("Using context for protocol={} ctx={*}, https_context={*}, https_context_h1={*}, https_context_h2={*}", .{client.protocol, ctx, &this.https_context, &this.https_context_h1, &this.https_context_h2});
+    
     if (client.http_proxy) |url| {
         if (url.href.len > 0) {
             // https://github.com/oven-sh/bun/issues/11343
             if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                return try ctx.connect(client, url.hostname, url.getPortAuto());
             }
             return error.UnsupportedProxyProtocol;
         }
     }
-    return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
+    return try ctx.connect(client, client.url.hostname, client.url.getPortAuto());
 }
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
     return if (is_ssl) &this.https_context else &this.http_context;
+}
+
+pub fn contextWithProtocol(this: *@This(), comptime is_ssl: bool, protocol: HTTPClient.HTTPProtocol) *NewHTTPContext(is_ssl) {
+    if (comptime !is_ssl) return &this.http_context;
+    
+    return switch (protocol) {
+        .h1 => &this.https_context_h1,
+        .h2 => &this.https_context_h2,
+        .unspecified => &this.https_context,
+    };
 }
 
 fn drainEvents(this: *@This()) void {
@@ -354,10 +388,12 @@ fn drainEvents(this: *@This()) void {
     }
 
     while (this.queued_tasks.pop()) |http| {
+        // threadlog("Processing task: http.protocol={}, http.client.protocol={}", .{http.protocol, http.client.protocol});
         var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
             .async_http = http.*,
         });
         cloned.async_http.real = http;
+        // threadlog("After clone: cloned.async_http.protocol={}, cloned.async_http.client.protocol={}", .{cloned.async_http.protocol, cloned.async_http.client.protocol});
         cloned.async_http.onStart();
         if (comptime Environment.allow_assert) {
             count += 1;

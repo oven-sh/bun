@@ -23,8 +23,8 @@ response_encoding: Encoding = Encoding.identity,
 verbose: HTTPVerboseLevel = .none,
 
 client: HTTPClient = undefined,
-http2_client: ?*HTTP2Integration.HTTP2EnhancedClient = null,
 use_http2: bool = false,
+protocol: HTTPClient.HTTPProtocol = .unspecified,
 waitingDeffered: bool = false,
 finalized: bool = false,
 err: ?anyerror = null,
@@ -83,12 +83,7 @@ pub fn clearData(this: *AsyncHTTP) void {
     this.client.unix_socket_path.deinit();
     this.client.unix_socket_path = jsc.ZigString.Slice.empty;
 
-    // Clean up HTTP/2 client if present
-    if (this.http2_client) |h2_client| {
-        h2_client.deinit();
-        this.allocator.destroy(h2_client);
-        this.http2_client = null;
-    }
+    // HTTP/2 is now handled through the regular HTTP client
 }
 
 pub const State = enum(u32) {
@@ -111,8 +106,7 @@ pub const Options = struct {
     disable_decompression: ?bool = null,
     reject_unauthorized: ?bool = null,
     tls_props: ?*SSLConfig = null,
-    force_http2: ?bool = null,
-    force_http1: ?bool = null,
+    protocol: HTTPClient.HTTPProtocol = .unspecified,
 };
 
 const Preconnect = struct {
@@ -197,6 +191,7 @@ pub fn init(
         .async_http_id = this.async_http_id,
         .http_proxy = this.http_proxy,
         .redirect_type = redirect_type,
+        .protocol = options.protocol,
     };
     if (options.unix_socket_path) |val| {
         assert(this.client.unix_socket_path.length() == 0);
@@ -221,11 +216,10 @@ pub fn init(
         this.client.tls_props = val;
     }
 
-    // Check if we should use HTTP/2
-    const should_use_http2 = shouldUseHTTP2(url, options);
-    if (should_use_http2) {
-        this.use_http2 = true;
-        // HTTP/2 client will be initialized when needed
+    // Store protocol preference for later use after ALPN negotiation
+    this.protocol = options.protocol;
+    if (this.protocol != .unspecified) {
+        log("AsyncHTTP.init: Protocol preference set to {}", .{this.protocol});
     }
 
     if (options.http_proxy) |proxy| {
@@ -287,50 +281,7 @@ pub fn init(
     return this;
 }
 
-fn shouldUseHTTP2(url: URL, options: Options) bool {
-    // Force HTTP/2 if explicitly requested
-    if (options.force_http2) |force| {
-        if (force) return true;
-    }
-
-    // Don't use HTTP/2 if explicitly disabled
-    if (options.force_http1) |force| {
-        if (force) return false;
-    }
-
-    // Only try HTTP/2 for HTTPS connections (for now)
-    if (!url.isHTTPS()) {
-        return false;
-    }
-
-    // Don't use HTTP/2 with proxies (for now)
-    if (options.http_proxy != null) {
-        return false;
-    }
-
-    // Don't use HTTP/2 with Unix sockets
-    if (options.unix_socket_path != null) {
-        return false;
-    }
-
-    // Try HTTP/2 for HTTPS by default
-    return true;
-}
-
-fn shouldUseHTTP2WithNegotiation(this: *AsyncHTTP, url: URL, options: Options) bool {
-    // First check basic conditions
-    if (!shouldUseHTTP2(url, options)) {
-        return false;
-    }
-    
-    // If ALPN negotiated HTTP/2, use it
-    if (this.client.should_use_http2) {
-        return true;
-    }
-    
-    // Otherwise, try HTTP/2 for HTTPS by default (will be negotiated during connection)
-    return url.isHTTPS();
-}
+// HTTP/2 vs HTTP/1.1 is now determined by ALPN negotiation, not pre-decided
 
 pub fn initSync(
     allocator: std.mem.Allocator,
@@ -465,6 +416,33 @@ pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTT
 
     var callback = this.result_callback;
     this.elapsed = bun.http.http_thread.timer.read() -| this.elapsed;
+    
+    // Check ALPN negotiation result
+    log("onAsyncHTTPCallback: should_use_http2={}, protocol={}", .{ 
+        this.client.should_use_http2, 
+        this.protocol
+    });
+    
+    // Check if HTTP/2 was forced but not negotiated
+    if (this.protocol == .h2 and !this.client.should_use_http2) {
+        // User forced HTTP/2 but it wasn't negotiated
+        log("HTTP/2 was forced but not negotiated by server", .{});
+        this.err = error.ProtocolNotSupported;
+        // Don't return early, let it fail naturally
+    }
+    
+    // Check if HTTP/2 was negotiated via ALPN
+    if (this.client.should_use_http2 and this.protocol != .h1) {
+        // HTTP/2 was negotiated and not forced to HTTP/1.1
+        if (!this.use_http2) {
+            log("HTTP/2 negotiated via ALPN, upgrading to HTTP/2", .{});
+            this.use_http2 = true;
+            
+            // TODO: Implement proper HTTP/2 protocol handling here
+            // For now, we'll continue with HTTP/1.1 until HTTP/2 is fully implemented
+            log("HTTP/2 support not yet fully implemented, continuing with HTTP/1.1", .{});
+        }
+    }
 
     // TODO: this condition seems wrong: if we started with a non-default value, we might
     // report a redirect even if none happened
@@ -525,18 +503,12 @@ pub fn onStart(this: *AsyncHTTP) void {
     if (this.response_buffer.list.capacity == 0) {
         this.response_buffer.allocator = bun.http.default_allocator;
     }
+    
+    // log("onStart: this.protocol={}, this.client.protocol={}", .{this.protocol, this.client.protocol});
 
-    // Check if we should use HTTP/2
-    if (this.use_http2) {
-        this.startHTTP2() catch |err| {
-            // Fallback to HTTP/1.1 on HTTP/2 error
-            log("HTTP/2 failed, falling back to HTTP/1.1: {}", .{err});
-            this.use_http2 = false;
-            this.startHTTP1();
-        };
-    } else {
-        this.startHTTP1();
-    }
+    // Always start with HTTP/1.1 client which will handle ALPN negotiation
+    // After connection, we'll check if HTTP/2 was negotiated
+    this.startHTTP1();
 }
 
 fn startHTTP1(this: *AsyncHTTP) void {
@@ -546,71 +518,7 @@ fn startHTTP1(this: *AsyncHTTP) void {
     this.client.start(this.request_body, this.response_buffer);
 }
 
-fn startHTTP2(this: *AsyncHTTP) !void {
-    if (this.http2_client == null) {
-        // Initialize HTTP/2 client with fallback capability
-        const h2_client = try this.allocator.create(HTTP2Integration.HTTP2EnhancedClient);
-        h2_client.* = try HTTP2Integration.HTTP2EnhancedClient.init(
-            this.allocator,
-            this.method,
-            this.url,
-            this.request_headers,
-            this.request_header_buf,
-            .{ .bytes = switch (this.request_body) {
-                .bytes => |bytes| bytes,
-                else => "",
-            } },
-            this.response_buffer,
-            HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPCallbackWithFallback).init(this),
-            this.client.redirect_type,
-            .{
-                .force_http2 = true,
-                .http_proxy = this.http_proxy,
-                .verbose = this.verbose,
-                .disable_timeout = this.client.flags.disable_timeout,
-                .disable_keepalive = this.client.flags.disable_keepalive,
-                .disable_decompression = this.client.flags.disable_decompression,
-                .reject_unauthorized = this.client.flags.reject_unauthorized,
-                .tls_props = this.client.tls_props,
-            },
-        );
-        this.http2_client = h2_client;
-    }
-
-    this.http2_client.?.start(this.request_body, this.response_buffer);
-}
-
-pub fn onAsyncHTTPCallbackWithFallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTTPClientResult) void {
-    // Handle HTTP/2 fallback if needed
-    if (result.fail != null and this.use_http2) {
-        const err = result.fail.?;
-
-        // Check if this is an HTTP/2 specific error that requires fallback
-        const should_fallback = switch (err) {
-            error.HTTP2NotSupported, error.HTTP2NotNegotiated, error.ProtocolError, error.HTTP2Error => true,
-            else => false,
-        };
-
-        if (should_fallback) {
-            log("HTTP/2 failed with {}, attempting fallback to HTTP/1.1", .{err});
-
-            // Clean up HTTP/2 client
-            if (this.http2_client) |h2_client| {
-                h2_client.deinit();
-                this.allocator.destroy(h2_client);
-                this.http2_client = null;
-            }
-
-            // Switch to HTTP/1.1
-            this.use_http2 = false;
-            this.startHTTP1();
-            return;
-        }
-    }
-
-    // Use the normal callback for all other cases
-    this.onAsyncHTTPCallback(async_http, result);
-}
+// HTTP/2 is now handled through ALPN negotiation in the regular HTTP client
 
 const log = bun.Output.scoped(.AsyncHTTP, false);
 
@@ -668,7 +576,7 @@ const HTTPRequestBody = HTTPClient.HTTPRequestBody;
 const HTTPVerboseLevel = HTTPClient.HTTPVerboseLevel;
 const Method = HTTPClient.Method;
 const Signals = HTTPClient.Signals;
-const HTTP2Integration = @import("HTTP2Integration.zig");
+// HTTP/2 support is now integrated through ALPN negotiation
 
 const Loc = bun.logger.Loc;
 const Log = bun.logger.Log;

@@ -1120,6 +1120,7 @@ pub const FetchTasklet = struct {
                 .reject_unauthorized = fetch_options.reject_unauthorized,
                 .verbose = fetch_options.verbose,
                 .tls_props = fetch_options.ssl_config,
+                .protocol = fetch_options.protocol,
             },
         );
         // enable streaming the write side
@@ -1265,6 +1266,7 @@ pub const FetchTasklet = struct {
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
+        protocol: http.HTTPProtocol = .unspecified,
     };
 
     pub fn queue(
@@ -1306,7 +1308,11 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} has_more={} bytes={}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
+        log("callback success={} has_more={} bytes={}", .{ 
+            result.isSuccess(), 
+            result.has_more, 
+            if (result.body) |body| body.list.items.len else 0 
+        });
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
@@ -1332,7 +1338,9 @@ pub const FetchTasklet = struct {
         task.body_size = result.body_size;
 
         const success = result.isSuccess();
-        task.response_buffer = result.body.?.*;
+        if (result.body) |body| {
+            task.response_buffer = body.*;
+        }
 
         if (task.ignore_data) {
             task.response_buffer.reset();
@@ -1529,6 +1537,7 @@ pub fn Bun__fetch_(
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
     var signal: ?*jsc.WebCore.AbortSignal = null;
+    var protocol: http.HTTPProtocol = .unspecified;
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
@@ -1952,6 +1961,36 @@ pub fn Bun__fetch_(
         }
         break :extract_verbose verbose;
     };
+
+    // httpVersion: 2 | 1.1 | undefined;
+    extract_http_version: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "httpVersion")) |version_value| {
+                    if (version_value.isNumber()) {
+                        const version = version_value.asNumber();
+                        if (version == 2.0) {
+                            protocol = .h2;
+                            break :extract_http_version;
+                        } else if (version == 1.1) {
+                            protocol = .h1;
+                            break :extract_http_version;
+                        }
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+    }
 
     // proxy: string | undefined;
     url_proxy_buffer = extract_proxy: {
@@ -2647,6 +2686,7 @@ pub fn Bun__fetch_(
             .memory_reporter = memory_reporter,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
+            .protocol = protocol,
         },
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

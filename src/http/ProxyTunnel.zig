@@ -42,7 +42,7 @@ fn onOpen(this: *HTTPClient) void {
             }
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
-            ssl_ptr.configureHTTPClient(hostname);
+            ssl_ptr.configureHTTPClient(hostname, .unspecified);
         }
     }
 }

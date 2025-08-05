@@ -144,22 +144,58 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
   });
 
   test("should connect to Node.js HTTP/2 server", async () => {
-    const response = await fetch(`${await getServerUrl()}/`, {
-      verbose: true, // Force HTTP/2
-      // Disable certificate validation for self-signed cert
-      tls: { rejectUnauthorized: false },
+    // Create a simple HTTPS server with HTTP/1.1 only
+    const https = require('https');
+    const testServer = https.createServer({
+      key: tls.key,
+      cert: tls.cert,
+    }, (req, res) => {
+      console.log("Test server received request, headers:", req.headers);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`HTTP version: ${req.httpVersion}`);
     });
+    
+    await new Promise((resolve) => {
+      testServer.listen(0, resolve);
+    });
+    
+    const testPort = (testServer.address() as any).port;
+    console.log("Test server listening on port", testPort);
+    
+    try {
+      // First test without forcing HTTP/2
+      const response1 = await fetch(`https://localhost:${testPort}/`, {
+        tls: { rejectUnauthorized: false },
+      });
+      console.log("Response1 status:", response1.status);
+      console.log("Response1 body:", await response1.text());
+      
+      // Now test with the actual HTTP/2-only server
+      const response = await fetch(`${await getServerUrl()}/`, {
+        httpVersion: 2, // Force HTTP/2
+        // Disable certificate validation for self-signed cert
+        tls: { rejectUnauthorized: false },
+      });
+
+    console.log("Response status:", response.status);
+    console.log("Response headers:", Object.fromEntries(response.headers.entries()));
+    if (!response.ok) {
+      console.log("Response body:", await response.text());
+    }
 
     expect(response.ok).toBe(true);
     expect(response.status).toBe(200);
 
     const text = await response.text();
     expect(text).toBe("Hello HTTP/2 World!");
+    } finally {
+      testServer.close();
+    }
   }, 10000);
 
   test("should handle JSON responses", async () => {
     const response = await fetch(`${await getServerUrl()}/json`, {
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -182,7 +218,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
         "X-Custom-Header": "test-value",
       },
       body: JSON.stringify(testData),
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -223,7 +259,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
 
   test("should handle large responses", async () => {
     const response = await fetch(`${await getServerUrl()}/large`, {
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -237,7 +273,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
 
   test("should handle streaming responses", async () => {
     const response = await fetch(`${await getServerUrl()}/stream`, {
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -253,7 +289,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
     const startTime = Date.now();
 
     const response = await fetch(`${await getServerUrl()}/delay`, {
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -269,7 +305,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
 
   test("should handle HTTP/2 errors", async () => {
     const response = await fetch(`${await getServerUrl()}/error`, {
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 
@@ -290,7 +326,7 @@ describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
 
     const response = await fetch(`${await getServerUrl()}/json`, {
       headers: customHeaders,
-      verbose: true,
+      httpVersion: 2,
       tls: { rejectUnauthorized: false },
     });
 

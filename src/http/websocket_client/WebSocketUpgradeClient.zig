@@ -268,7 +268,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
-                    socket.getNativeHandle().?.configureHTTPClient(this.hostname);
+                    socket.getNativeHandle().?.configureHTTPClient(this.hostname, .unspecified);
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }

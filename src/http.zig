@@ -27,7 +27,13 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
-const log = Output.scoped(.fetch, false);
+pub const HTTPProtocol = enum {
+    unspecified,
+    h1,
+    h2,
+};
+
+const log = Output.scoped(.fetch, true);
 
 pub var temp_hostname: [8192]u8 = undefined;
 
@@ -122,6 +128,7 @@ pub fn onOpen(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) !void {
+    log("onOpen called, is_ssl={}", .{is_ssl});
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -130,7 +137,7 @@ pub fn onOpen(
         }
     }
     client.registerAbortTracker(is_ssl, socket);
-    log("Connected {s} \n", .{client.url.href});
+    log("Connected {s} protocol={}\n", .{client.url.href, client.protocol});
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
@@ -139,6 +146,7 @@ pub fn onOpen(
 
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
+        log("onOpen: isInitFinished={}", .{ssl_ptr.isInitFinished()});
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
@@ -160,7 +168,27 @@ pub fn onOpen(
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
 
-            ssl_ptr.configureHTTPClient(hostname);
+            log("Calling configureHTTPClient with protocol={}", .{client.protocol});
+            ssl_ptr.configureHTTPClient(hostname, client.protocol);
+            
+            // Also set ALPN directly on the SSL object based on protocol
+            switch (client.protocol) {
+                .h1 => {
+                    const alpn = [_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+                    const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
+                    log("Set ALPN on SSL object for HTTP/1.1 only, result={}", .{result});
+                },
+                .h2 => {
+                    const alpn = [_]u8{ 2, 'h', '2' };
+                    const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
+                    log("Set ALPN on SSL object for HTTP/2 only, result={}", .{result});
+                },
+                .unspecified => {
+                    const alpn = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+                    const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
+                    log("Set ALPN on SSL object for HTTP/2 and HTTP/1.1, result={}", .{result});
+                },
+            }
         }
     } else {
         client.firstCall(is_ssl, socket);
@@ -168,6 +196,7 @@ pub fn onOpen(
 }
 
 pub fn checkALPNNegotiation(client: *HTTPClient, ssl_ptr: *BoringSSL.SSL) void {
+    log("checkALPNNegotiation called", .{});
     // Check if HTTP/2 was negotiated via ALPN
     var alpn_selected: [*c]const u8 = undefined;
     var alpn_len: c_uint = undefined;
@@ -497,6 +526,7 @@ unix_socket_path: jsc.ZigString.Slice = jsc.ZigString.Slice.empty,
 negotiated_protocol: []const u8 = "",
 should_use_http2: bool = false,
 http2_attempted: bool = false,
+protocol: HTTPProtocol = .unspecified,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -1045,6 +1075,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         return;
     }
 
+    log("Connecting with protocol={}", .{this.protocol});
     var socket = http_thread.connect(this, is_ssl) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

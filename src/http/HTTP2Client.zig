@@ -401,8 +401,9 @@ fn connect(self: *HTTP2Client) !void {
     // Create a temporary HTTPClient to handle connection establishment
     const is_ssl = self.url.isHTTPS();
     
-    // Create minimal HTTPClient for connection establishment  
-    var temp_client: HTTPClient = HTTPClient{
+    // Create minimal HTTPClient for connection establishment
+    // Initialize with default values to avoid garbage memory
+    var temp_client = HTTPClient{
         .allocator = self.allocator,
         .url = self.url,
         .method = self.method,
@@ -410,6 +411,23 @@ fn connect(self: *HTTP2Client) !void {
         .header_buf = self.header_buf,
         .signals = self.signals,
         .async_http_id = self.async_http_id,
+        .http_proxy = self.http_proxy,
+        .flags = self.flags,
+        .verbose = self.verbose,
+        .tls_props = self.tls_props,
+        .redirect_type = self.redirect_type,
+        .hostname = null,
+        .unix_socket_path = .{},
+        .connected_url = URL{},
+        .decompressor = .{},
+        .state = .none,
+        .request_body = .{ .bytes = "" },
+        .progress_node = null,
+        .aborted = false,
+        .should_use_http2 = false,
+        .allow_retry = true,
+        .cloned_headers_buf = false,
+        .result_callback = undefined,
     };
     
     // Connect with comptime SSL parameter

@@ -47,13 +47,7 @@ const {
 const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
-const {
-  freeParser,
-  parsers,
-  HTTPParser,
-  isLenient,
-  prepareError,
-} = require("node:_http_common");
+const { freeParser, parsers, HTTPParser, isLenient, prepareError } = require("node:_http_common");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -74,7 +68,8 @@ const kLenientOptionalCRLFAfterChunk = 1 << 6;
 const kLenientOptionalCRBeforeLF = 1 << 7;
 const kLenientSpacesAfterChunkSize = 1 << 8;
 
-const kLenientAll = kLenientHeaders |
+const kLenientAll =
+  kLenientHeaders |
   kLenientChunkedLength |
   kLenientTransferEncoding |
   kLenientVersion |
@@ -118,7 +113,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   }
 
   // Handle CONNECT method responses
-  if (req.method === 'CONNECT') {
+  if (req.method === "CONNECT") {
     res.upgrade = true;
     return 2; // Skip body and treat as Upgrade
   }
@@ -127,9 +122,9 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   if (statusIsInformational(res.statusCode)) {
     req.res = null; // Clear res so we can handle the final response
     if (res.statusCode === 100) {
-      req.emit('continue');
+      req.emit("continue");
     }
-    req.emit('information', {
+    req.emit("information", {
       statusCode: res.statusCode,
       statusMessage: res.statusMessage,
       httpVersion: res.httpVersion,
@@ -173,7 +168,7 @@ function socketOnEnd() {
 
   if (!req.res && !req.socket._hadError) {
     req.socket._hadError = true;
-    emitErrorEventNT(req, new ConnResetException('socket hang up'));
+    emitErrorEventNT(req, new ConnResetException("socket hang up"));
   }
   if (parser) {
     parser.finish();
@@ -185,9 +180,9 @@ function socketOnEnd() {
 function socketOnError(err) {
   const socket = this;
   const req = socket._httpMessage;
-  
+
   if (req) {
-    req.emit('error', err);
+    req.emit("error", err);
   }
 }
 
@@ -199,48 +194,49 @@ function socketOnClose() {
   if (parser) {
     freeParser(parser, req, socket);
   }
-  
+
   if (req) {
     if (!req.res || !req.res.complete) {
-      req.emit('error', new ConnResetException('socket hang up'));
+      req.emit("error", new ConnResetException("socket hang up"));
     }
-    req.emit('close');
+    req.emit("close");
   }
 }
 
 // Initialize parser on socket connection (from Node.js implementation)
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
-  const lenient = req.insecureHTTPParser === undefined ? 
-    isLenient() : req.insecureHTTPParser;
-    
+  const lenient = req.insecureHTTPParser === undefined ? isLenient() : req.insecureHTTPParser;
+
   // Initialize parser for response parsing
-  parser.initialize(HTTPParser.RESPONSE,
+  parser.initialize(
+    HTTPParser.RESPONSE,
     undefined, // asyncResource - not implemented
     req.maxHeaderSize || 0,
-    lenient ? kLenientAll : kLenientNone);
-    
+    lenient ? kLenientAll : kLenientNone,
+  );
+
   parser.socket = socket;
   parser.outgoing = req;
   req.parser = parser;
   socket.parser = parser;
   socket._httpMessage = req;
-  
-  if (typeof req.maxHeadersCount === 'number') {
+
+  if (typeof req.maxHeadersCount === "number") {
     parser.maxHeaderPairs = req.maxHeadersCount << 1;
   }
   parser.joinDuplicateHeaders = req.joinDuplicateHeaders;
   parser.onIncoming = parserOnIncomingClient;
 
   // Set up socket event handlers
-  socket.on('data', socketOnData);
-  socket.on('end', socketOnEnd);
-  socket.on('error', socketOnError);
-  socket.on('close', socketOnClose);
+  socket.on("data", socketOnData);
+  socket.on("end", socketOnEnd);
+  socket.on("error", socketOnError);
+  socket.on("close", socketOnClose);
 
   // Emit socket event
   process.nextTick(() => {
-    req.emit('socket', socket);
+    req.emit("socket", socket);
   });
 }
 
@@ -458,11 +454,11 @@ function ClientRequest(input, options, cb) {
     if (socketPath) {
       connectionOptions = { unix: socketPath };
     } else {
-      connectionOptions = { 
+      connectionOptions = {
         hostname: host,
-        port: port
+        port: port,
       };
-      
+
       // Add TLS options for HTTPS
       if (protocol === "https:" && this[kTls]) {
         connectionOptions.tls = { ...this[kTls], serverName: this[kTls].servername };
@@ -474,48 +470,48 @@ function ClientRequest(input, options, cb) {
       const socket = await Bun.connect({
         ...connectionOptions,
         socket: {
-          open: (socket) => {
+          open: socket => {
             // Initialize the HTTP parser
             tickOnSocket(this, socket);
-            
+
             // Send the HTTP request
             const requestLine = `${method} ${path} HTTP/1.1\r\n`;
             const headers = this.getHeaders();
-            let headerString = '';
-            
+            let headerString = "";
+
             for (const [key, value] of Object.entries(headers)) {
               headerString += `${key}: ${value}\r\n`;
             }
-            
+
             // Add Host header if not present
             if (!this.hasHeader("Host")) {
-              headerString += `Host: ${host}${port !== 80 && port !== 443 ? `:${port}` : ''}\r\n`;
+              headerString += `Host: ${host}${port !== 80 && port !== 443 ? `:${port}` : ""}\r\n`;
             }
-            
-            headerString += '\r\n';
-            
+
+            headerString += "\r\n";
+
             const requestHeader = requestLine + headerString;
             socket.write(requestHeader);
-            
+
             // Send request body if present
             if (this[kBodyChunks] && this[kBodyChunks].length > 0) {
               for (const chunk of this[kBodyChunks]) {
                 socket.write(chunk);
               }
             }
-            
+
             // Store socket reference
             this.socket = socket;
             socket._httpMessage = this;
           },
-          
+
           data: socketOnData,
           end: socketOnEnd,
           error: socketOnError,
           close: socketOnClose,
-        }
+        },
       });
-      
+
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
@@ -532,12 +528,14 @@ function ClientRequest(input, options, cb) {
     this[kAbortController] ??= new AbortController();
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
-    connectToServer().catch(err => {
-      if (!!$debug) globalReportError(err);
-      this.emit("error", err);
-    }).finally(() => {
-      process.nextTick(maybeEmitFinish.bind(this));
-    });
+    connectToServer()
+      .catch(err => {
+        if (!!$debug) globalReportError(err);
+        this.emit("error", err);
+      })
+      .finally(() => {
+        process.nextTick(maybeEmitFinish.bind(this));
+      });
   };
 
   // --- For faking the events in the right order ---

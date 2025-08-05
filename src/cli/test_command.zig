@@ -976,7 +976,7 @@ pub const CommandLineReporter = struct {
         else if (reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCov")
         else
-            bun.perf.trace("TestCommand.printCodeCoverage");
+            bun.perf.trace("TestCommand.printCodeCoverageText");
 
         defer trace.end();
 

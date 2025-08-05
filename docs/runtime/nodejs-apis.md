@@ -92,18 +92,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 **AsyncLocalStorage** is fully implemented with comprehensive context propagation. **AsyncResource** and **EventEmitterAsyncResource** have core functionality but lifecycle methods return stubs. **createHook**, **Promise Hooks**, and **Async ID tracking** are not implemented (JSC runtime, not V8). Zero-cost when not in use, optimized for production workloads.
+🟡 **AsyncLocalStorage** is fully implemented. **AsyncResource** and **EventEmitterAsyncResource** have core functionality but lifecycle methods return stubs. **createHook**, **Promise Hooks**, and **Async ID tracking** are not implemented.
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟢 **Mostly Complete** - All core child_process functions (spawn, exec, fork, etc.) are fully implemented with comprehensive stdio, environment, and IPC support.
-
-**Minor limitations:**
-
-- Missing `proc.gid`/`proc.uid` properties (validation exists, implementation needed in Bun.spawn)
-- `Stream` base class not exported (easy fix - add to exports)
-- IPC cannot send socket handles/file descriptors (Node.js advanced feature)
-- Cross-runtime IPC (Node.js ↔ Bun) limited to JSON serialization
+🟢 All core child_process functions (spawn, exec, fork, etc.) are fully implemented. Missing `proc.gid`/`proc.uid` properties, `Stream` base class not exported, and IPC cannot send socket handles/file descriptors.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -123,7 +116,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `syncBuiltinESMExports` (stub implementation), `Module#load()`, and `module.register` (stub implementation). Overriding `require.cache` is fully supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are fully functional (not no-ops). Custom extensions can be registered and work correctly. We recommend using [`Bun.plugin`](https://bun.com/docs/runtime/plugins) instead of `module.register`.
+🟡 Missing `syncBuiltinESMExports`, `Module#load()`, and `module.register`. Overriding `require.cache` is fully supported. `module._extensions`, `module._pathCache`, `module._cache` work correctly and custom extensions can be registered. Use [`Bun.plugin`](https://bun.com/docs/runtime/plugins) instead of `module.register`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
@@ -131,7 +124,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `monitorEventLoopDelay` ([#17650](https://github.com/oven-sh/bun/issues/17650)). `createHistogram` is fully implemented with complete statistical analysis capabilities. Note that `perf_hooks.performance` provides Node.js-specific features like `nodeTiming` and `eventLoopUtilization` that are not available on the global `performance` object.
+🟡 Missing `monitorEventLoopDelay`. `createHistogram` is fully implemented. `perf_hooks.performance` provides Node.js-specific features like `nodeTiming` and `eventLoopUtilization` not available on the global `performance` object.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 

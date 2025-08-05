@@ -1,5 +1,8 @@
 const LinesHits = bun.collections.BabyList(u32);
 
+/// Coverage ignore directive for Istanbul-style ignore comments
+pub const CoverageIgnoreDirective = bun.js_lexer.CoverageIgnoreDirective;
+
 /// Our code coverage currently only deals with lines of code, not statements or branches.
 /// JSC doesn't expose function names in their coverage data, so we don't include that either :(.
 /// Since we only need to store line numbers, our job gets simpler
@@ -359,6 +362,7 @@ pub const ByteRangeMapping = struct {
     line_offset_table: LineOffsetTable.List = .{},
     source_id: i32,
     source_url: bun.jsc.ZigString.Slice,
+    coverage_ignore_directives: std.ArrayListUnmanaged(CoverageIgnoreDirective) = .{},
 
     pub fn isLessThan(_: void, a: ByteRangeMapping, b: ByteRangeMapping) bool {
         return bun.strings.order(a.source_url.slice(), b.source_url.slice()) == .lt;
@@ -368,6 +372,7 @@ pub const ByteRangeMapping = struct {
 
     pub fn deinit(this: *ByteRangeMapping) void {
         this.line_offset_table.deinit(bun.default_allocator);
+        this.coverage_ignore_directives.deinit(bun.default_allocator);
     }
 
     pub threadlocal var map: ?*HashMap = null;
@@ -402,6 +407,26 @@ pub const ByteRangeMapping = struct {
         const hash = bun.hash(slice.slice());
         const entry = map_.getPtr(hash) orelse return null;
         return entry;
+    }
+
+    /// Check if a line should be ignored based on coverage ignore directives
+    fn shouldIgnoreLine(this: *const ByteRangeMapping, line: u32) bool {
+        // Handle "ignore file" directive - if present, ignore entire file
+        for (this.coverage_ignore_directives.items) |directive| {
+            if (directive.kind == .ignore_file) {
+                return true;
+            }
+
+            // Handle "ignore next" directive - ignore the line immediately following the directive
+            if (directive.kind == .ignore_next and line == directive.line + 1) {
+                return true;
+            }
+
+            // TODO: Handle "ignore if" and "ignore else" - these require more complex logic
+            // to understand the structure of if statements
+        }
+
+        return false;
     }
 
     pub fn generateReportFromBlocks(
@@ -468,10 +493,13 @@ pub const ByteRangeMapping = struct {
                     min_line = @min(min_line, line);
                     max_line = @max(max_line, line);
 
-                    executable_lines.set(line);
-                    if (has_executed) {
-                        lines_which_have_executed.set(line);
-                        line_hits_slice[line] += 1;
+                    // Skip lines that should be ignored based on coverage directives
+                    if (!this.shouldIgnoreLine(line)) {
+                        executable_lines.set(line);
+                        if (has_executed) {
+                            lines_which_have_executed.set(line);
+                            line_hits_slice[line] += 1;
+                        }
                     }
                 }
 
@@ -559,10 +587,13 @@ pub const ByteRangeMapping = struct {
 
                         const line: u32 = @as(u32, @intCast(point.original.lines));
 
-                        executable_lines.set(line);
-                        if (has_executed) {
-                            lines_which_have_executed.set(line);
-                            line_hits_slice[line] += 1;
+                        // Skip lines that should be ignored based on coverage directives
+                        if (!this.shouldIgnoreLine(line)) {
+                            executable_lines.set(line);
+                            if (has_executed) {
+                                lines_which_have_executed.set(line);
+                                line_hits_slice[line] += 1;
+                            }
                         }
 
                         min_line = @min(min_line, line);
@@ -690,11 +721,110 @@ pub const ByteRangeMapping = struct {
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {
+        var coverage_ignore_directives = std.ArrayListUnmanaged(CoverageIgnoreDirective){};
+
+        // Parse the source code to extract coverage ignore directives
+        parseIgnoreDirectives(source_contents, &coverage_ignore_directives) catch {};
+
         return ByteRangeMapping{
             .line_offset_table = LineOffsetTable.generate(bun.jsc.VirtualMachine.get().allocator, source_contents, 0),
             .source_id = source_id,
             .source_url = source_url,
+            .coverage_ignore_directives = coverage_ignore_directives,
         };
+    }
+
+    /// Parse coverage ignore directives from source code comments
+    fn parseIgnoreDirectives(source_contents: []const u8, directives: *std.ArrayListUnmanaged(CoverageIgnoreDirective)) !void {
+        const allocator = bun.default_allocator;
+        var line_number: u32 = 0;
+        var i: usize = 0;
+
+        while (i < source_contents.len) {
+            if (source_contents[i] == '\n') {
+                line_number += 1;
+                i += 1;
+                continue;
+            }
+
+            // Look for comment starts
+            if (i + 1 < source_contents.len) {
+                // Single line comment
+                if (source_contents[i] == '/' and source_contents[i + 1] == '/') {
+                    const comment_start = i;
+                    // Find end of line
+                    while (i < source_contents.len and source_contents[i] != '\n') {
+                        i += 1;
+                    }
+                    const comment_text = source_contents[comment_start..i];
+                    try parseIgnoreDirectiveFromComment(comment_text, line_number, directives, allocator);
+                    continue;
+                }
+
+                // Multi-line comment
+                if (source_contents[i] == '/' and source_contents[i + 1] == '*') {
+                    const comment_start = i;
+                    i += 2; // Skip /*
+                    // Find end of comment
+                    while (i + 1 < source_contents.len and !(source_contents[i] == '*' and source_contents[i + 1] == '/')) {
+                        if (source_contents[i] == '\n') {
+                            line_number += 1;
+                        }
+                        i += 1;
+                    }
+                    if (i + 1 < source_contents.len) {
+                        i += 2; // Skip */
+                        const comment_text = source_contents[comment_start..i];
+                        try parseIgnoreDirectiveFromComment(comment_text, line_number, directives, allocator);
+                        continue;
+                    }
+                }
+            }
+
+            i += 1;
+        }
+    }
+
+    /// Parse a single comment for ignore directives
+    fn parseIgnoreDirectiveFromComment(comment_text: []const u8, line_number: u32, directives: *std.ArrayListUnmanaged(CoverageIgnoreDirective), allocator: std.mem.Allocator) !void {
+        // Remove comment prefixes and whitespace
+        const strings = bun.strings;
+        var text = strings.trim(comment_text, " \t\r\n");
+
+        if (strings.hasPrefix(text, "//")) {
+            text = text[2..];
+        } else if (strings.hasPrefix(text, "/*") and strings.hasSuffix(text, "*/")) {
+            text = text[2 .. text.len - 2];
+        }
+
+        text = strings.trim(text, " \t\r\n");
+
+        // Check for "istanbul ignore" prefix
+        if (!strings.hasPrefix(text, "istanbul ignore")) {
+            return;
+        }
+
+        text = text["istanbul ignore".len..];
+        text = strings.trim(text, " \t\r\n");
+
+        // Parse directive type
+        var directive_kind: ?CoverageIgnoreDirective.Kind = null;
+        if (strings.hasPrefix(text, "next")) {
+            directive_kind = .ignore_next;
+        } else if (strings.hasPrefix(text, "if")) {
+            directive_kind = .ignore_if;
+        } else if (strings.hasPrefix(text, "else")) {
+            directive_kind = .ignore_else;
+        } else if (strings.hasPrefix(text, "file")) {
+            directive_kind = .ignore_file;
+        }
+
+        if (directive_kind) |kind| {
+            try directives.append(allocator, .{
+                .kind = kind,
+                .line = line_number,
+            });
+        }
     }
 };
 

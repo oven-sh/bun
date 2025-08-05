@@ -589,3 +589,219 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+test("istanbul ignore next - single line comment", () => {
+  const dir = tempDirWithFiles("cov", {
+    "demo.ts": `
+export function covered() {
+  return "covered";
+}
+
+// istanbul ignore next
+export function ignored() {
+  return "ignored";
+}
+
+export function alsoIgnored() {
+  return "also ignored";
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { covered, ignored, alsoIgnored } from "./demo";
+
+test("should call all functions but ignore specified ones", () => {
+  expect(covered()).toBe("covered");
+  expect(ignored()).toBe("ignored");
+  expect(alsoIgnored()).toBe("also ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // The ignored function should not appear in coverage
+  expect(stderr).toContain("covered");
+  expect(stderr).toContain("alsoIgnored");
+  // Function coverage should be less than 100% due to ignored function
+  expect(stderr).not.toContain("100.00");
+  expect(result.exitCode).toBe(0);
+});
+
+test("istanbul ignore next - multi-line comment", () => {
+  const dir = tempDirWithFiles("cov", {
+    "demo.ts": `
+export function covered() {
+  return "covered";
+}
+
+/* istanbul ignore next */
+export function ignored() {
+  return "ignored";
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { covered, ignored } from "./demo";
+
+test("should call all functions", () => {
+  expect(covered()).toBe("covered");
+  expect(ignored()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // Should show coverage but with the ignored function excluded
+  expect(stderr).toContain("covered");
+  expect(result.exitCode).toBe(0);
+});
+
+test("istanbul ignore file", () => {
+  const dir = tempDirWithFiles("cov", {
+    "ignored-file.ts": `
+/* istanbul ignore file */
+export function shouldBeIgnored() {
+  return "ignored";
+}
+
+export function alsoIgnored() {
+  return "also ignored";
+}
+`,
+    "normal-file.ts": `
+export function shouldBeCovered() {
+  return "covered";
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { shouldBeIgnored, alsoIgnored } from "./ignored-file";
+import { shouldBeCovered } from "./normal-file";
+
+test("should call all functions", () => {
+  expect(shouldBeIgnored()).toBe("ignored");
+  expect(alsoIgnored()).toBe("also ignored");
+  expect(shouldBeCovered()).toBe("covered");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // Should only show coverage for normal-file.ts, not ignored-file.ts
+  expect(stderr).toContain("normal-file.ts");
+  expect(stderr).not.toContain("ignored-file.ts");
+  expect(result.exitCode).toBe(0);
+});
+
+test("istanbul ignore with reason", () => {
+  const dir = tempDirWithFiles("cov", {
+    "demo.ts": `
+export function covered() {
+  return "covered";
+}
+
+// istanbul ignore next: difficult to test in unit tests
+export function ignored() {
+  return "ignored";
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { covered, ignored } from "./demo";
+
+test("should call all functions", () => {
+  expect(covered()).toBe("covered");
+  expect(ignored()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // Should show coverage but with the ignored function excluded
+  expect(stderr).toContain("covered");
+  expect(result.exitCode).toBe(0);
+});
+
+test("istanbul ignore next - lcov reporter", () => {
+  const dir = tempDirWithFiles("cov", {
+    "demo.ts": `
+export function covered() {
+  return "covered";
+}
+
+// istanbul ignore next
+export function ignored() {
+  return "ignored";
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { covered, ignored } from "./demo";
+
+test("should call all functions", () => {
+  expect(covered()).toBe("covered");
+  expect(ignored()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  // Normalize LCOV content for cross-platform consistency
+  lcovContent = normalizeBunSnapshot(lcovContent, dir);
+
+  // Should contain coverage data but with ignored lines excluded
+  expect(lcovContent).toContain("demo.ts");
+  expect(result.exitCode).toBe(0);
+});

@@ -34,6 +34,19 @@ pub const JSXPragma = struct {
     }
 };
 
+pub const CoverageIgnoreDirective = struct {
+    kind: Kind,
+    line: u32,
+    end_line: u32 = 0, // For tracking the end of ignored ranges
+
+    pub const Kind = enum {
+        ignore_next,
+        ignore_if,
+        ignore_else,
+        ignore_file,
+    };
+};
+
 pub const JSONOptions = struct {
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
@@ -150,6 +163,7 @@ fn NewLexer_(
         is_ascii_only: JSONBool = JSONBoolDefault,
         track_comments: bool = false,
         all_comments: std.ArrayList(logger.Range),
+        coverage_ignore_directives: std.ArrayList(CoverageIgnoreDirective),
 
         indent_info: if (json_options.guess_indentation)
             struct {
@@ -247,19 +261,23 @@ fn NewLexer_(
             const all_comments = this.all_comments;
             const comments_to_preserve_before = this.comments_to_preserve_before;
             const temp_buffer_u16 = this.temp_buffer_u16;
+            const coverage_ignore_directives = this.coverage_ignore_directives;
             this.* = original.*;
 
             // make sure pointers are valid
             this.all_comments = all_comments;
             this.comments_to_preserve_before = comments_to_preserve_before;
             this.temp_buffer_u16 = temp_buffer_u16;
+            this.coverage_ignore_directives = coverage_ignore_directives;
 
             bun.debugAssert(all_comments.items.len >= original.all_comments.items.len);
             bun.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
             bun.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
+            bun.debugAssert(coverage_ignore_directives.items.len >= original.coverage_ignore_directives.items.len);
 
             this.all_comments.items.len = original.all_comments.items.len;
             this.comments_to_preserve_before.items.len = original.comments_to_preserve_before.items.len;
+            this.coverage_ignore_directives.items.len = original.coverage_ignore_directives.items.len;
         }
 
         /// Look ahead at the next n codepoints without advancing the iterator.
@@ -286,6 +304,7 @@ fn NewLexer_(
             this.temp_buffer_u16.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
+            this.coverage_ignore_directives.clearAndFree();
         }
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
@@ -1887,6 +1906,11 @@ fn NewLexer_(
                 }) catch unreachable;
             }
 
+            // Scan for Istanbul ignore directives (always active, not just for pragmas)
+            if (comptime !is_json) {
+                _ = lexer.scanIstanbulIgnoreDirective(text, lexer.loc());
+            }
+
             // tsconfig.json doesn't care about annotations
             if (comptime is_json)
                 return;
@@ -2017,6 +2041,58 @@ fn NewLexer_(
 
             return 0;
         }
+
+        /// Scan for Istanbul ignore directives in comment text
+        /// Returns true if an ignore directive was found
+        fn scanIstanbulIgnoreDirective(noalias lexer: *LexerType, comment_text: string, comment_loc: logger.Loc) bool {
+            // Look for "istanbul ignore" pattern in comment text
+            // This handles both "/* istanbul ignore next */" and "// istanbul ignore next" patterns
+            const trimmed = strings.trim(comment_text, " \t\r\n");
+
+            // Skip comment prefix (// or /* and */)
+            var text = trimmed;
+            if (strings.hasPrefix(text, "//")) {
+                text = text[2..];
+            } else if (strings.hasPrefix(text, "/*") and strings.hasSuffix(text, "*/")) {
+                text = text[2 .. text.len - 2];
+            }
+
+            text = strings.trim(text, " \t\r\n");
+
+            // Check for "istanbul ignore" prefix
+            if (!strings.hasPrefix(text, "istanbul ignore")) {
+                return false;
+            }
+
+            text = text["istanbul ignore".len..];
+            text = strings.trim(text, " \t\r\n");
+
+            // Parse the directive type
+            var directive_kind: ?CoverageIgnoreDirective.Kind = null;
+
+            if (strings.hasPrefix(text, "next")) {
+                directive_kind = .ignore_next;
+            } else if (strings.hasPrefix(text, "if")) {
+                directive_kind = .ignore_if;
+            } else if (strings.hasPrefix(text, "else")) {
+                directive_kind = .ignore_else;
+            } else if (strings.hasPrefix(text, "file")) {
+                directive_kind = .ignore_file;
+            }
+
+            if (directive_kind) |kind| {
+                // Convert location to line number (0-based)
+                const line_number = @as(u32, @intCast(lexer.source.lineColFromLoc(comment_loc).line));
+                lexer.coverage_ignore_directives.append(.{
+                    .kind = kind,
+                    .line = line_number,
+                }) catch return false; // Ignore error, just don't track this directive
+                return true;
+            }
+
+            return false;
+        }
+
         // TODO: implement this
         pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
             return text;
@@ -2038,6 +2114,7 @@ fn NewLexer_(
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
                 .all_comments = std.ArrayList(logger.Range).init(allocator),
+                .coverage_ignore_directives = std.ArrayList(CoverageIgnoreDirective).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -2054,6 +2131,7 @@ fn NewLexer_(
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
                 .all_comments = std.ArrayList(logger.Range).init(allocator),
+                .coverage_ignore_directives = std.ArrayList(CoverageIgnoreDirective).init(allocator),
             };
         }
 

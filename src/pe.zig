@@ -664,7 +664,7 @@ pub const PEFile = struct {
         // Build the resource data
         const resource_data = try resource_builder.build(rsrc_section.?.virtual_address);
         defer allocator.free(resource_data);
-        
+
         // Sanity check - resource data shouldn't be unreasonably large
         if (resource_data.len > 10 * 1024 * 1024) { // 10MB limit
             return error.ResourceDataTooLarge;
@@ -758,7 +758,7 @@ pub const PEFile = struct {
 
         // Calculate aligned size
         const aligned_size = alignSize(@intCast(data.len), file_alignment);
-        
+
         var section = initial_section;
 
         // Check if we need to resize the section

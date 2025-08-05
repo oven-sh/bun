@@ -281,7 +281,7 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
   test.skipIf(!hasExiftool)("verifies real ICO file with exiftool", async () => {
     // Real ICO file created with ImageMagick (full multi-size version)
     const realIcoPath = join(import.meta.dir, "real-icon.ico");
-    if (!await Bun.file(realIcoPath).exists()) {
+    if (!(await Bun.file(realIcoPath).exists())) {
       // Skip if real icon file doesn't exist
       return;
     }

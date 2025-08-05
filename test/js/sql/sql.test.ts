@@ -11109,3 +11109,10 @@ describe("should proper handle connection errors", () => {
     expect(result.stderr?.toString()).toBeFalsy();
   });
 });
+
+describe("Misc", () => {
+  test("UnsupportedAdapterError exists", () => {
+    expect(Bun.SQL.UnsupportedAdapterError).toBeDefined();
+    expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toHaveProperty("options");
+  });
+});

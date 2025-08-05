@@ -62,6 +62,7 @@ src/bun.js/api/bun/dns.zig
 src/bun.js/api/bun/h2_frame_parser.zig
 src/bun.js/api/bun/lshpack.zig
 src/bun.js/api/bun/process.zig
+src/bun.js/api/bun/quic_socket.zig
 src/bun.js/api/bun/socket.zig
 src/bun.js/api/bun/socket/Handlers.zig
 src/bun.js/api/bun/socket/Listener.zig
@@ -501,6 +502,7 @@ src/deps/uws/ConnectingSocket.zig
 src/deps/uws/InternalLoopData.zig
 src/deps/uws/ListenSocket.zig
 src/deps/uws/Loop.zig
+src/deps/uws/quic.zig
 src/deps/uws/Request.zig
 src/deps/uws/Response.zig
 src/deps/uws/socket.zig

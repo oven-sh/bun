@@ -55,6 +55,7 @@ set(BUN_DEPENDENCIES
   Mimalloc
   TinyCC
   Zlib
+  Lsquic # QUIC protocol support - depends on BoringSSL and Zlib
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
   Zstd
@@ -834,6 +835,7 @@ target_compile_definitions(${bun} PRIVATE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
   LIBUS_USE_BORINGSSL=1
+  LIBUS_USE_QUIC=1
   WITH_BORINGSSL=1
   STATICALLY_LINKED_WITH_JavaScriptCore=1
   STATICALLY_LINKED_WITH_BMALLOC=1

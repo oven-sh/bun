@@ -157,6 +157,9 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user);
 
+// Extended version for QUIC sockets that need extension data
+struct us_udp_socket_t *us_create_udp_socket_with_ext(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user, int ext_size);
+
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);

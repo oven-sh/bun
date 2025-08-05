@@ -26,6 +26,7 @@ pub const ListenSocket = @import("./uws/ListenSocket.zig").ListenSocket;
 pub const State = @import("./uws/Response.zig").State;
 pub const Loop = @import("./uws/Loop.zig").Loop;
 pub const udp = @import("./uws/udp.zig");
+pub const quic = @import("./uws/quic.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
 
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);

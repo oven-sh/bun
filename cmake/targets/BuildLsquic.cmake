@@ -1,0 +1,31 @@
+register_repository(
+  NAME
+    lsquic
+  REPOSITORY
+    litespeedtech/lsquic
+  COMMIT
+    70486141724f85e97b08f510673e29f399bbae8f
+)
+
+register_cmake_command(
+  TARGET
+    lsquic
+  LIBRARIES
+    lsquic
+  LIB_PATH
+    src/liblsquic
+  ARGS
+    -DSHARED=OFF
+    -DLSQUIC_SHARED_LIB=0
+    -DBORINGSSL_DIR=${VENDOR_PATH}/boringssl
+    -DBORINGSSL_LIB=${BUILD_PATH}/boringssl
+    -DZLIB_INCLUDE_DIR=${VENDOR_PATH}/zlib
+    -DZLIB_LIB=${BUILD_PATH}/zlib/libz.a
+    -DCMAKE_BUILD_TYPE=Release
+  INCLUDES
+    include
+    src/liblsquic
+  DEPENDS
+    BoringSSL
+    Zlib
+)

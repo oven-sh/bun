@@ -241,6 +241,86 @@ const sslOnly = {
 export default [
   generate(true),
   generate(false),
+  // QUIC Socket
+  define({
+    name: "QuicSocket",
+    JSType: "0b11101110",
+    hasPendingActivity: true,
+    noConstructor: true,
+    configurable: false,
+    memoryCost: true,
+    proto: {
+      connect: {
+        fn: "connect",
+        length: 2,
+      },
+      listen: {
+        fn: "listen", 
+        length: 2,
+      },
+      write: {
+        fn: "write",
+        length: 1,
+      },
+      read: {
+        fn: "read",
+        length: 1,
+      },
+      createStream: {
+        fn: "createStream",
+        length: 0,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+      "@@dispose": {
+        fn: "close",
+        length: 0,
+      },
+      ref: {
+        fn: "jsRef",
+        length: 0,
+      },
+      unref: {
+        fn: "jsUnref",
+        length: 0,
+      },
+      serverName: {
+        getter: "getServerName",
+        setter: "setServerName",
+      },
+      connectionId: {
+        getter: "getConnectionId",
+      },
+      streamCount: {
+        getter: "getStreamCount",
+      },
+      isConnected: {
+        getter: "getIsConnected",
+      },
+      isServer: {
+        getter: "getIsServer",
+      },
+      has0RTT: {
+        getter: "getHas0RTT",
+      },
+      stats: {
+        getter: "getStats",
+      },
+      data: {
+        getter: "getData",
+        cache: true,
+        setter: "setData",
+      },
+      readyState: {
+        getter: "getReadyState",
+      },
+    },
+    finalize: true,
+    construct: true,
+    klass: {},
+  }),
   define({
     name: "Listener",
     noConstructor: true,

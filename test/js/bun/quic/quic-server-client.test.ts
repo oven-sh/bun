@@ -1,0 +1,206 @@
+import { test, expect } from "bun:test";
+
+test("QUIC server and client integration", async () => {
+  let serverConnections = 0;
+  let clientConnections = 0;
+  let messagesReceived = 0;
+
+  // Create QUIC server
+  const server = Bun.quic({
+    hostname: "localhost",
+    port: 9443,
+    server: true,
+    open(socket) {
+      console.log("QUIC server ready on port 9443");
+    },
+    connection(socket) {
+      serverConnections++;
+      console.log(`New QUIC connection (${serverConnections})`);
+      
+      // Send welcome message to client
+      socket.write("Welcome to QUIC server!");
+    },
+    message(socket, data) {
+      messagesReceived++;
+      console.log("Server received:", data.toString());
+      
+      // Echo the message back
+      socket.write(`Echo: ${data}`);
+    },
+    close(socket) {
+      console.log("Server connection closed");
+    },
+    error(socket, error) {
+      console.error("Server error:", error);
+    },
+  });
+
+  // Wait for server to be ready
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  // Create QUIC client
+  const client = Bun.quic({
+    hostname: "localhost", 
+    port: 9443,
+    server: false,
+    open(socket) {
+      clientConnections++;
+      console.log("QUIC client connected");
+      
+      // Send test message
+      socket.write("Hello from QUIC client!");
+    },
+    message(socket, data) {
+      console.log("Client received:", data.toString());
+      
+      if (data.toString().includes("Echo:")) {
+        // Test complete, close connection
+        socket.close();
+      }
+    },
+    close(socket) {
+      console.log("Client connection closed");
+    },
+    error(socket, error) {
+      console.error("Client error:", error);
+    },
+  });
+
+  // Wait for communication to complete
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // Verify connections were established
+  expect(serverConnections).toBe(1);
+  expect(clientConnections).toBe(1);
+  expect(messagesReceived).toBeGreaterThan(0);
+
+  // Clean up
+  server.close();
+  client.close();
+});
+
+test("QUIC stream creation and management", async () => {
+  const server = Bun.quic({
+    hostname: "localhost",
+    port: 9444,
+    server: true,
+    connection(socket) {
+      console.log("Server: New connection");
+      
+      // Create multiple streams
+      const stream1 = socket.createStream();
+      const stream2 = socket.createStream();
+      
+      expect(socket.streamCount).toBe(2);
+      expect(stream1).toBeDefined();
+      expect(stream2).toBeDefined();
+      expect(stream1).not.toBe(stream2);
+    },
+    open() {},
+    message() {},
+    close() {},
+    error() {},
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  const client = Bun.quic({
+    hostname: "localhost",
+    port: 9444,
+    server: false,
+    open(socket) {
+      // Client can also create streams
+      const clientStream = socket.createStream();
+      expect(clientStream).toBeDefined();
+      expect(socket.streamCount).toBe(1);
+    },
+    message() {},
+    close() {},
+    error() {},
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  server.close();
+  client.close();
+});
+
+test("QUIC connection states and properties", async () => {
+  const server = Bun.quic({
+    hostname: "localhost",
+    port: 9445,
+    server: true,
+    open() {},
+    connection() {},
+    message() {},
+    close() {},
+    error() {},
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  const client = Bun.quic({
+    hostname: "localhost",
+    port: 9445,
+    server: false,
+    open(socket) {
+      // Test connection properties
+      expect(socket.isServer).toBe(false);
+      expect(socket.readyState).toBe("open");
+      expect(socket.serverName).toBe("localhost");
+      expect(socket.streamCount).toBe(0);
+      
+      // Test stats object
+      const stats = socket.stats;
+      expect(typeof stats).toBe("object");
+      expect(typeof stats.streamCount).toBe("number");
+      expect(typeof stats.isConnected).toBe("boolean");
+      expect(typeof stats.has0RTT).toBe("boolean");
+      expect(typeof stats.bytesSent).toBe("number");
+      expect(typeof stats.bytesReceived).toBe("number");
+    },
+    message() {},
+    close() {},
+    error() {},
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Test server properties
+  expect(server.isServer).toBe(true);
+  expect(server.readyState).toBe("open");
+
+  server.close();
+  client.close();
+  
+  // Test closed state
+  expect(server.readyState).toBe("closed");
+  expect(client.readyState).toBe("closed");
+});
+
+test("QUIC error handling", async () => {
+  let errorReceived = false;
+
+  // Try to connect to non-existent server
+  const client = Bun.quic({
+    hostname: "localhost",
+    port: 9999, // Non-existent port
+    server: false,
+    open() {
+      // Should not be called
+      expect(false).toBe(true);
+    },
+    message() {},
+    close() {},
+    error(socket, error) {
+      errorReceived = true;
+      console.log("Expected error:", error);
+      expect(error).toBeDefined();
+    },
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  expect(errorReceived).toBe(true);
+  client.close();
+});

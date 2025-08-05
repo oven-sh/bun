@@ -17,6 +17,8 @@ typedef struct {
 typedef struct {
     /* Refers to either the shared listen socket or the client UDP socket */
     void *udp_socket;
+    /* LSQUIC connection pointer for this socket */
+    void *lsquic_conn;
 } us_quic_socket_t;
 
 struct us_quic_socket_context_s;

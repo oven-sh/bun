@@ -20,22 +20,85 @@ if(NOT GIT_NAME)
   set(GIT_NAME ${GIT_ORIGINAL_NAME})
 endif()
 
-set(GIT_DOWNLOAD_URL https://github.com/${GIT_REPOSITORY}/archive/${GIT_REF}.tar.gz)
+# Special handling for repositories that need git submodules
+if(GIT_NAME STREQUAL "lsquic")
+  message(STATUS "Using git clone with submodules for ${GIT_REPOSITORY} at ${GIT_REF}...")
+  
+  find_program(GIT_PROGRAM git REQUIRED)
+  
+  # Remove existing directory if it exists
+  if(EXISTS ${GIT_PATH})
+    file(REMOVE_RECURSE ${GIT_PATH})
+  endif()
+  
+  # Clone the repository
+  execute_process(
+    COMMAND
+      ${GIT_PROGRAM} clone https://github.com/${GIT_REPOSITORY}.git ${GIT_PATH}
+    ERROR_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE
+      GIT_ERROR
+    RESULT_VARIABLE
+      GIT_RESULT
+  )
+  
+  if(NOT GIT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Git clone failed: ${GIT_ERROR}")
+  endif()
+  
+  # Checkout the specific commit/tag/branch
+  execute_process(
+    COMMAND
+      ${GIT_PROGRAM} checkout ${GIT_REF}
+    WORKING_DIRECTORY
+      ${GIT_PATH}
+    ERROR_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE
+      GIT_ERROR
+    RESULT_VARIABLE
+      GIT_RESULT
+  )
+  
+  if(NOT GIT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Git checkout failed: ${GIT_ERROR}")
+  endif()
+  
+  # Initialize and update submodules
+  execute_process(
+    COMMAND
+      ${GIT_PROGRAM} submodule update --init --recursive
+    WORKING_DIRECTORY
+      ${GIT_PATH}
+    ERROR_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE
+      GIT_ERROR
+    RESULT_VARIABLE
+      GIT_RESULT
+  )
+  
+  if(NOT GIT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Git submodule init failed: ${GIT_ERROR}")
+  endif()
+  
+else()
+  # Use the original download method for other repositories
+  set(GIT_DOWNLOAD_URL https://github.com/${GIT_REPOSITORY}/archive/${GIT_REF}.tar.gz)
 
-message(STATUS "Cloning ${GIT_REPOSITORY} at ${GIT_REF}...")
-execute_process(
-  COMMAND
-    ${CMAKE_COMMAND}
-      -DDOWNLOAD_URL=${GIT_DOWNLOAD_URL}
-      -DDOWNLOAD_PATH=${GIT_PATH}
-      -DDOWNLOAD_FILTERS=${GIT_FILTERS}
-      -P ${CMAKE_CURRENT_LIST_DIR}/DownloadUrl.cmake
-  ERROR_STRIP_TRAILING_WHITESPACE
-  ERROR_VARIABLE
-    GIT_ERROR
-  RESULT_VARIABLE
-    GIT_RESULT
-)
+  message(STATUS "Cloning ${GIT_REPOSITORY} at ${GIT_REF}...")
+  execute_process(
+    COMMAND
+      ${CMAKE_COMMAND}
+        -DDOWNLOAD_URL=${GIT_DOWNLOAD_URL}
+        -DDOWNLOAD_PATH=${GIT_PATH}
+        -DDOWNLOAD_FILTERS=${GIT_FILTERS}
+        -P ${CMAKE_CURRENT_LIST_DIR}/DownloadUrl.cmake
+    ERROR_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE
+      GIT_ERROR
+    RESULT_VARIABLE
+      GIT_RESULT
+  )
+endif()
 
 if(NOT GIT_RESULT EQUAL 0)
   message(FATAL_ERROR "Clone failed: ${GIT_ERROR}")

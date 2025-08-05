@@ -48,6 +48,7 @@ pub const Classes = struct {
     pub const ResourceUsage = api.Subprocess.ResourceUsage;
     pub const TCPSocket = api.TCPSocket;
     pub const TLSSocket = api.TLSSocket;
+    pub const QuicSocket = api.QuicSocket;
     pub const UDPSocket = api.UDPSocket;
     pub const SocketAddress = api.SocketAddress;
     pub const TextDecoder = webcore.TextDecoder;

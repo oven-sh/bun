@@ -59,6 +59,7 @@
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \
+    macro(quic) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \

@@ -19,6 +19,7 @@
 #include "internal/internal.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 // int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
 //     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
@@ -187,4 +188,73 @@ struct us_udp_socket_t *us_create_udp_socket(
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
 
     return (struct us_udp_socket_t *) udp;
+}
+
+// Extended version for QUIC sockets that need extension data
+struct us_udp_socket_t *us_create_udp_socket_with_ext(
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
+    void (*close_cb)(struct us_udp_socket_t *),
+    const char *host,
+    unsigned short port,
+    int flags,
+    int *err,
+    void *user,
+    int ext_size
+) {
+
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return 0;
+    }
+
+    int fallthrough = 0;
+
+    // Use the provided ext_size instead of hardcoded 0
+    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
+    us_poll_init(p, fd, POLL_TYPE_UDP);
+
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
+
+    /* Get and store the port once */
+    struct bsd_addr_t tmp = {0};
+    bsd_local_addr(fd, &tmp);
+    udp->port = bsd_addr_get_port(&tmp);
+    udp->loop = loop;
+
+    /* There is no udp socket context, only user data */
+    /* This should really be ext like everything else */
+    udp->user = user;
+
+    udp->on_data = data_cb;
+    udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->next = NULL;
+
+    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+
+    return (struct us_udp_socket_t *) udp;
+}
+
+/* Structure to hold allocated UDP packet buffer and its data */
+struct us_udp_packet_buffer_wrapper {
+    struct udp_recvbuf buffer;
+    char data[LIBUS_RECV_BUFFER_LENGTH];
+};
+
+struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
+    /* Allocate wrapper structure to hold both buffer and data */
+    struct us_udp_packet_buffer_wrapper *wrapper = 
+        (struct us_udp_packet_buffer_wrapper *)malloc(sizeof(struct us_udp_packet_buffer_wrapper));
+    
+    if (!wrapper) {
+        return NULL;
+    }
+    
+    /* Setup the receive buffer using the allocated data */
+    bsd_udp_setup_recvbuf(&wrapper->buffer, wrapper->data, LIBUS_RECV_BUFFER_LENGTH);
+    
+    /* Return the buffer part (us_udp_packet_buffer_t is typedef for struct udp_recvbuf) */
+    return (struct us_udp_packet_buffer_t *)&wrapper->buffer;
 }

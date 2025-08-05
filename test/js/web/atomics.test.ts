@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -8,7 +8,7 @@ describe("Atomics", () => {
 
       expect(Atomics.store(view, 0, 42)).toBe(42);
       expect(Atomics.load(view, 0)).toBe(42);
-      
+
       expect(Atomics.store(view, 1, -123)).toBe(-123);
       expect(Atomics.load(view, 1)).toBe(-123);
     });
@@ -19,8 +19,8 @@ describe("Atomics", () => {
 
       Atomics.store(view, 0, 10);
       expect(Atomics.add(view, 0, 5)).toBe(10); // returns old value
-      expect(Atomics.load(view, 0)).toBe(15);   // new value
-      
+      expect(Atomics.load(view, 0)).toBe(15); // new value
+
       expect(Atomics.add(view, 0, -3)).toBe(15);
       expect(Atomics.load(view, 0)).toBe(12);
     });
@@ -31,8 +31,8 @@ describe("Atomics", () => {
 
       Atomics.store(view, 0, 20);
       expect(Atomics.sub(view, 0, 5)).toBe(20); // returns old value
-      expect(Atomics.load(view, 0)).toBe(15);   // new value
-      
+      expect(Atomics.load(view, 0)).toBe(15); // new value
+
       expect(Atomics.sub(view, 0, -3)).toBe(15);
       expect(Atomics.load(view, 0)).toBe(18);
     });
@@ -51,11 +51,11 @@ describe("Atomics", () => {
       const view = new Int32Array(buffer);
 
       Atomics.store(view, 0, 100);
-      
+
       // Successful exchange
       expect(Atomics.compareExchange(view, 0, 100, 200)).toBe(100);
       expect(Atomics.load(view, 0)).toBe(200);
-      
+
       // Failed exchange (expected value doesn't match)
       expect(Atomics.compareExchange(view, 0, 100, 300)).toBe(200);
       expect(Atomics.load(view, 0)).toBe(200); // unchanged
@@ -69,7 +69,7 @@ describe("Atomics", () => {
 
       Atomics.store(view, 0, 0b1111);
       expect(Atomics.and(view, 0, 0b1010)).toBe(0b1111); // returns old value
-      expect(Atomics.load(view, 0)).toBe(0b1010);         // new value
+      expect(Atomics.load(view, 0)).toBe(0b1010); // new value
     });
 
     test("or", () => {
@@ -78,7 +78,7 @@ describe("Atomics", () => {
 
       Atomics.store(view, 0, 0b1010);
       expect(Atomics.or(view, 0, 0b0101)).toBe(0b1010); // returns old value
-      expect(Atomics.load(view, 0)).toBe(0b1111);       // new value
+      expect(Atomics.load(view, 0)).toBe(0b1111); // new value
     });
 
     test("xor", () => {
@@ -87,7 +87,7 @@ describe("Atomics", () => {
 
       Atomics.store(view, 0, 0b1010);
       expect(Atomics.xor(view, 0, 0b1100)).toBe(0b1010); // returns old value
-      expect(Atomics.load(view, 0)).toBe(0b0110);        // new value (1010 ^ 1100 = 0110)
+      expect(Atomics.load(view, 0)).toBe(0b0110); // new value (1010 ^ 1100 = 0110)
     });
   });
 
@@ -97,7 +97,7 @@ describe("Atomics", () => {
       expect(typeof Atomics.isLockFree(2)).toBe("boolean");
       expect(typeof Atomics.isLockFree(4)).toBe("boolean");
       expect(typeof Atomics.isLockFree(8)).toBe("boolean");
-      
+
       // Most platforms support 4-byte atomic operations
       expect(Atomics.isLockFree(4)).toBe(true);
     });
@@ -114,7 +114,7 @@ describe("Atomics", () => {
       const view = new Int32Array(buffer);
 
       Atomics.store(view, 0, 0);
-      
+
       // Should timeout since no one will notify
       const result = Atomics.wait(view, 0, 0, 10); // 10ms timeout
       expect(result).toBe("timed-out");
@@ -125,7 +125,7 @@ describe("Atomics", () => {
       const view = new Int32Array(buffer);
 
       Atomics.store(view, 0, 42);
-      
+
       // Should return immediately since value doesn't match
       const result = Atomics.wait(view, 0, 0, 1000);
       expect(result).toBe("not-equal");
@@ -136,7 +136,7 @@ describe("Atomics", () => {
       const view = new Int32Array(buffer);
 
       Atomics.store(view, 0, 0);
-      
+
       // notify returns number of agents that were woken up
       // Since no one is waiting, should return 0
       const notified = Atomics.notify(view, 0, 1);
@@ -148,11 +148,11 @@ describe("Atomics", () => {
       const view = new Int32Array(buffer);
 
       Atomics.store(view, 0, 0);
-      
+
       const result = Atomics.waitAsync(view, 0, 0, 10);
       expect(typeof result).toBe("object");
       expect(typeof result.async).toBe("boolean");
-      
+
       if (result.async) {
         expect(result.value).toBeInstanceOf(Promise);
       } else {
@@ -198,8 +198,8 @@ describe("Atomics", () => {
 
       expect(Atomics.store(view, 0, 255)).toBe(255);
       expect(Atomics.load(view, 0)).toBe(255);
-      expect(Atomics.and(view, 0, 0x0F)).toBe(255);
-      expect(Atomics.load(view, 0)).toBe(0x0F);
+      expect(Atomics.and(view, 0, 0x0f)).toBe(255);
+      expect(Atomics.load(view, 0)).toBe(0x0f);
     });
 
     test("Uint16Array", () => {
@@ -208,7 +208,7 @@ describe("Atomics", () => {
 
       expect(Atomics.store(view, 0, 65535)).toBe(65535);
       expect(Atomics.load(view, 0)).toBe(65535);
-      expect(Atomics.or(view, 0, 0xFF00)).toBe(65535);
+      expect(Atomics.or(view, 0, 0xff00)).toBe(65535);
       expect(Atomics.load(view, 0)).toBe(65535);
     });
 
@@ -216,11 +216,11 @@ describe("Atomics", () => {
       const buffer = new SharedArrayBuffer(16);
       const view = new Uint32Array(buffer);
 
-      expect(Atomics.store(view, 0, 0xFFFFFFFF)).toBe(0xFFFFFFFF);
-      expect(Atomics.load(view, 0)).toBe(0xFFFFFFFF);
-      expect(Atomics.xor(view, 0, 0x12345678)).toBe(0xFFFFFFFF);
+      expect(Atomics.store(view, 0, 0xffffffff)).toBe(0xffffffff);
+      expect(Atomics.load(view, 0)).toBe(0xffffffff);
+      expect(Atomics.xor(view, 0, 0x12345678)).toBe(0xffffffff);
       // Use >>> 0 to convert to unsigned 32-bit for comparison
-      expect(Atomics.load(view, 0)).toBe((0xFFFFFFFF ^ 0x12345678) >>> 0);
+      expect(Atomics.load(view, 0)).toBe((0xffffffff ^ 0x12345678) >>> 0);
     });
 
     test("BigInt64Array", () => {

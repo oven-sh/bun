@@ -5,13 +5,7 @@ pub fn ParseSuffix(
 ) type {
     return struct {
         const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        const jsx_transform_type = P.jsx_transform_type;
-        const allow_macros = P.allow_macros;
-        const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
         const is_typescript_enabled = P.is_typescript_enabled;
-        const createDefaultName = P.createDefaultName;
-        const track_symbol_usage_during_parse_pass = P.track_symbol_usage_during_parse_pass;
-        const extractDeclsForBinding = P.extractDeclsForBinding;
 
         pub fn parseSuffix(noalias p: *P, _left: Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             var left = _left;

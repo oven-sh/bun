@@ -5,16 +5,6 @@ pub fn CreateBinaryExpressionVisitor(
 ) type {
     return struct {
         const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        const jsx_transform_type = P.jsx_transform_type;
-        const allow_macros = P.allow_macros;
-        const is_typescript_enabled = P.is_typescript_enabled;
-        const createDefaultName = P.createDefaultName;
-        const track_symbol_usage_during_parse_pass = P.track_symbol_usage_during_parse_pass;
-        const extractDeclsForBinding = P.extractDeclsForBinding;
-        const is_jsx_enabled = P.is_jsx_enabled;
-        const only_scan_imports_and_do_not_visit = P.only_scan_imports_and_do_not_visit;
-        const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
-        const isSimpleParameterList = P.isSimpleParameterList;
 
         pub const BinaryExpressionVisitor = struct {
             e: *E.Binary,

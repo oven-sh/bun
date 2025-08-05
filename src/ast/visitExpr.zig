@@ -5,9 +5,9 @@ pub fn VisitExpr(
 ) type {
     return struct {
         const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
+        const jsx_transform_type = P.jsx_transform_type;
         const only_scan_imports_and_do_not_visit = P.only_scan_imports_and_do_not_visit;
 
         // public for JSNode.JSXWriter usage

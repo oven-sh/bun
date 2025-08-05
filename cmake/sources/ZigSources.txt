@@ -49,7 +49,6 @@ src/ast/skipTypescript.zig
 src/ast/Stmt.zig
 src/ast/Symbol.zig
 src/ast/symbols.zig
-src/ast/template.zig
 src/ast/TS.zig
 src/ast/TypeScript.zig
 src/ast/UseDirective.zig
@@ -675,7 +674,6 @@ src/io/source.zig
 src/js_lexer_tables.zig
 src/js_lexer.zig
 src/js_lexer/identifier.zig
-src/js_parser_longest.zig
 src/js_parser.zig
 src/js_printer.zig
 src/jsc_stub.zig

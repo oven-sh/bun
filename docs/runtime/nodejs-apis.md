@@ -214,6 +214,10 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 🟢 Fully implemented.
 
+### [`Atomics`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics)
+
+🟢 Fully implemented.
+
 ### [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
 
 🟢 Fully implemented.

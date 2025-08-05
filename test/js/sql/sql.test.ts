@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunExe, isCI, isLinux, tempDirWithFiles, bunEnv } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new sql(...args);
 

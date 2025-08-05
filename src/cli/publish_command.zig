@@ -1365,7 +1365,7 @@ pub const PublishCommand = struct {
                 };
 
                 // Extract SHA512 hex digest from integrity
-                const integrity_full = try std.fmt.allocPrint(ctx.allocator, "{}", .{bun.fmt.integrity(ctx.integrity, .hex_lower)});
+                const integrity_full = try std.fmt.allocPrint(ctx.allocator, "{}", .{bun.fmt.integrity(ctx.integrity, .full)});
                 defer ctx.allocator.free(integrity_full);
 
                 // Strip "sha512-" prefix to get just the hex digest

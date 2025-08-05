@@ -1,0 +1,15 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 932668e..90be782 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -225,7 +225,9 @@ ELSE()
+         IF(BORINGSSL_LIB_${LIB_NAME})
+             MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+         ELSE()
+-            MESSAGE(FATAL_ERROR "BORINGSSL_LIB_${LIB_NAME} library not found")
++            MESSAGE(WARNING "BORINGSSL_LIB_${LIB_NAME} library not found - will be resolved at link time")
++            # Set to empty string to avoid undefined variable errors
++            SET(BORINGSSL_LIB_${LIB_NAME} "")
+         ENDIF()
+     ENDFOREACH()
+ 

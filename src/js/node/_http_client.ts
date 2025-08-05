@@ -47,6 +47,13 @@ const {
 const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
+const {
+  freeParser,
+  parsers,
+  HTTPParser,
+  isLenient,
+  prepareError,
+} = require("node:_http_common");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -54,6 +61,28 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const fetch = Bun.fetch;
 
 const { URL } = globalThis;
+
+// HTTP parser constants for lenient parsing
+const kLenientNone = 0;
+const kLenientHeaders = 1 << 0;
+const kLenientChunkedLength = 1 << 1;
+const kLenientTransferEncoding = 1 << 2;
+const kLenientVersion = 1 << 3;
+const kLenientDataAfterClose = 1 << 4;
+const kLenientOptionalLFAfterCR = 1 << 5;
+const kLenientOptionalCRLFAfterChunk = 1 << 6;
+const kLenientOptionalCRBeforeLF = 1 << 7;
+const kLenientSpacesAfterChunkSize = 1 << 8;
+
+const kLenientAll = kLenientHeaders |
+  kLenientChunkedLength |
+  kLenientTransferEncoding |
+  kLenientVersion |
+  kLenientDataAfterClose |
+  kLenientOptionalLFAfterCR |
+  kLenientOptionalCRLFAfterChunk |
+  kLenientOptionalCRBeforeLF |
+  kLenientSpacesAfterChunkSize;
 
 // Primordials
 const ObjectAssign = Object.assign;
@@ -65,6 +94,54 @@ function emitErrorEventNT(self, err) {
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
+}
+
+function statusIsInformational(status) {
+  return status >= 100 && status < 200;
+}
+
+// Parser callback for handling incoming responses (similar to Node.js implementation)
+function parserOnIncomingClient(res, shouldKeepAlive) {
+  const socket = this.socket;
+  const req = socket._httpMessage;
+
+  if (req.res) {
+    // We already have a response object, something is wrong
+    socket.destroy();
+    return 0;
+  }
+  req.res = res;
+
+  // Handle upgrade responses
+  if (res.upgrade) {
+    return 2; // Skip body and treat as Upgrade
+  }
+
+  // Handle CONNECT method responses
+  if (req.method === 'CONNECT') {
+    res.upgrade = true;
+    return 2; // Skip body and treat as Upgrade
+  }
+
+  // Handle informational responses (1xx status codes)
+  if (statusIsInformational(res.statusCode)) {
+    req.res = null; // Clear res so we can handle the final response
+    if (res.statusCode === 100) {
+      req.emit('continue');
+    }
+    req.emit('information', {
+      statusCode: res.statusCode,
+      statusMessage: res.statusMessage,
+      httpVersion: res.httpVersion,
+      httpVersionMajor: res.httpVersionMajor,
+      httpVersionMinor: res.httpVersionMinor,
+      headers: res.headers,
+      rawHeaders: res.rawHeaders,
+    });
+    return 1; // Skip body but don't treat as Upgrade
+  }
+
+  return 0; // No special treatment
 }
 
 function ClientRequest(input, options, cb) {
@@ -783,6 +860,10 @@ function ClientRequest(input, options, cb) {
 
   $debug(`new ClientRequest: ${this[kMethod]} ${this[kProtocol]}//${this[kHost]}:${this[kPort]}${this[kPath]}`);
 
+  // Flag to control whether to use parser-based implementation
+  // For now, default to false (use existing fetch implementation) for conservative rollout
+  this._useHttpParser = options._useHttpParser ?? false;
+
   // if (
   //   method === "GET" ||
   //   method === "HEAD" ||
@@ -804,6 +885,12 @@ function ClientRequest(input, options, cb) {
   this[kReusedSocket] = false;
   this[kHost] = host;
   this[kProtocol] = protocol;
+
+  // Initialize parser-related properties
+  if (this._useHttpParser) {
+    this.parser = null;
+    this.socket = null;
+  }
 
   if (options.timeout !== undefined) {
     const timeout = getTimerDuration(options.timeout, "timeout");
@@ -923,6 +1010,44 @@ function ClientRequest(input, options, cb) {
       clearTimeout(timeoutTimer);
       this[kTimeoutTimer] = undefined;
       this.removeAllListeners("timeout");
+    }
+  };
+
+  // Method to initialize HTTP parser when socket is available (Node.js style)
+  this._initParser = function(socket) {
+    if (!this._useHttpParser) return;
+    
+    const parser = parsers.alloc();
+    const lenient = this.insecureHTTPParser === undefined ? 
+      isLenient() : this.insecureHTTPParser;
+      
+    // Initialize parser for response parsing
+    parser.initialize(HTTPParser.RESPONSE,
+      undefined, // asyncResource - not implemented yet
+      this.maxHeaderSize || 0,
+      lenient ? kLenientAll : kLenientNone);
+      
+    parser.socket = socket;
+    parser.outgoing = this;
+    this.parser = parser;
+    socket.parser = parser;
+    socket._httpMessage = this;
+    
+    if (typeof this.maxHeadersCount === 'number') {
+      parser.maxHeaderPairs = this.maxHeadersCount << 1;
+    }
+    parser.joinDuplicateHeaders = this.joinDuplicateHeaders;
+    parser.onIncoming = parserOnIncomingClient;
+  };
+
+  // Method to clean up HTTP parser
+  this._cleanupParser = function(socket) {
+    if (!this._useHttpParser || !this.parser) return;
+    
+    freeParser(this.parser, this, socket);
+    this.parser = null;
+    if (socket) {
+      socket.parser = null;
     }
   };
 }

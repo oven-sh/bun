@@ -309,7 +309,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // if we use .extname we might run into an issue with whether or not the "." is included.
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
-                std.debug.print("EVENT OP: {any}", .{event.op});
 
                 switch (kind) {
                     .file => {

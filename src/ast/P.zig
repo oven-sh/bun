@@ -43,7 +43,7 @@ pub fn NewParser_(
         pub const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
 
-        const skipTypescript_zig = @import("skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const skipTypescript_zig = @import("./skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const skipTypescriptReturnType = skipTypescript_zig.skipTypescriptReturnType;
         pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_zig.skipTypescriptReturnTypeWithMetadata;
         pub const skipTypeScriptType = skipTypescript_zig.skipTypeScriptType;
@@ -63,7 +63,7 @@ pub fn NewParser_(
         pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowArgsWithBacktracking;
         pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
 
-        const parse_zig = @import("parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const parse_zig = @import("./parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const parsePrefix = parse_zig.parsePrefix;
         pub const parseSuffix = parse_zig.parseSuffix;
         pub const parseStmt = parse_zig.parseStmt;
@@ -103,7 +103,7 @@ pub fn NewParser_(
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
 
-        const astVisit = @import("visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const astVisit = @import("./visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const visitStmtsAndPrependTempRefs = astVisit.visitStmtsAndPrependTempRefs;
         pub const recordDeclaredSymbol = astVisit.recordDeclaredSymbol;
         pub const visitExpr = astVisit.visitExpr;
@@ -123,16 +123,16 @@ pub fn NewParser_(
         pub const visitStmts = astVisit.visitStmts;
         pub const visitAndAppendStmt = astVisit.visitAndAppendStmt;
 
-        pub const BinaryExpressionVisitor = @import("visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
+        pub const BinaryExpressionVisitor = @import("./visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
 
-        const maybe = @import("maybe.zig").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const maybe = @import("./maybe.zig").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const maybeRelocateVarsToTopLevel = maybe.maybeRelocateVarsToTopLevel;
         pub const maybeRewritePropertyAccess = maybe.maybeRewritePropertyAccess;
         pub const maybeCommaSpreadError = maybe.maybeCommaSpreadError;
         pub const maybeDefinedHelper = maybe.maybeDefinedHelper;
         pub const checkIfDefinedHelper = maybe.checkIfDefinedHelper;
 
-        const symbols_zig = @import("symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const symbols_zig = @import("./symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const findSymbol = symbols_zig.findSymbol;
         pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
 
@@ -1989,6 +1989,7 @@ pub fn NewParser_(
                 p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
                 p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
                 p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
+                p.jest.expectTypeOf = try p.declareCommonJSSymbol(.unbound, "expectTypeOf");
                 p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
@@ -2631,7 +2632,9 @@ pub fn NewParser_(
                     }) catch unreachable;
                 }
 
-                item_refs.putAssumeCapacity(name, name_loc.*);
+                // No need to add the `default_name` to `item_refs` because
+                // `.scanImportsAndExports(...)` special cases and handles
+                // `default_name` separately
             }
             var end: usize = 0;
 
@@ -6558,7 +6561,7 @@ var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
-// @sortImports
+const string = []const u8;
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
@@ -6571,10 +6574,9 @@ const Output = bun.Output;
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const BindingNodeIndex = js_ast.BindingNodeIndex;

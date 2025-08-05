@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const JSAst = bun.JSAst;
-const Logger = bun.logger;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StringJoiner = bun.StringJoiner;
-const JSPrinter = bun.js_printer;
-const URL = bun.URL;
-const FileSystem = bun.fs.FileSystem;
-
 pub const SourceMap = @This();
 const debug = bun.Output.scoped(.SourceMap, false);
 
@@ -121,16 +109,16 @@ pub fn parseJSON(
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    bun.JSAst.Expr.Data.Store.reset();
-    bun.JSAst.Stmt.Data.Store.reset();
+    bun.ast.Expr.Data.Store.reset();
+    bun.ast.Stmt.Data.Store.reset();
     defer {
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
+    var json = bun.json.parse(&json_src, &log, arena, false) catch {
         return error.InvalidJSON;
     };
 
@@ -507,7 +495,7 @@ pub const Mapping = struct {
         ///
         /// This data is freed after printed on the assumption that printing
         /// errors to the console are rare (this isnt used for error.stack)
-        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
+        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.jsc.ZigString.Slice {
             const bytes = bytes: {
                 if (lookup.prefetched_source_code) |code| {
                     break :bytes code;
@@ -530,7 +518,7 @@ pub const Mapping = struct {
 
                     const code = serialized.sourceFileContents(@intCast(index));
 
-                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
+                    return bun.jsc.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
                 }
 
                 if (provider.getSourceMap(
@@ -563,7 +551,7 @@ pub const Mapping = struct {
                 }
             };
 
-            return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
+            return bun.jsc.ZigString.Slice.init(bun.default_allocator, bytes);
         }
     };
 
@@ -1032,14 +1020,14 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
-fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
     const found = bun.strings.indexOfT(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
-        u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
-        u16 => bun.JSC.ZigString.Slice.init(
+        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.jsc.ZigString.Slice.init(
             alloc,
             bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
         ),
@@ -1100,6 +1088,40 @@ pub fn getSourceMapImpl(
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
+            if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
+                const global = bun.jsc.VirtualMachine.get().global;
+                // If we're using bake's production build the global object will
+                // be Bake::GlobalObject and we can fetch the sourcemap from it,
+                // if not fallback to the normal way
+                if (!BakeGlobalObject__isBakeGlobalObject(global)) {
+                    break :fallback_to_normal;
+                }
+                const data = BakeSourceProvider.getExternal(
+                    provider,
+                    global,
+                    source_filename,
+                );
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        data,
+                        result,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
+                };
+            }
             var load_path_buf: *bun.PathBuffer = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(load_path_buf);
             if (source_filename.len + 4 > load_path_buf.len)
@@ -1129,7 +1151,7 @@ pub fn getSourceMapImpl(
                         source_filename,
                         @errorName(err),
                     }); // Disable the "try using --sourcemap=external" hint
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                    bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                     return null;
                 },
             };
@@ -1141,7 +1163,7 @@ pub fn getSourceMapImpl(
                 @errorName(err),
             });
             // Disable the "try using --sourcemap=external" hint
-            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+            bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
             return null;
         }
 
@@ -1182,11 +1204,24 @@ pub const SourceProviderMap = opaque {
     }
 };
 
+extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.jsc.JSGlobalObject) bool;
+
+extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.jsc.JSGlobalObject) *bun.bake.production.PerThread;
+
 pub const BakeSourceProvider = opaque {
     extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
     pub const getSourceSlice = BakeSourceProvider__getSourceSlice;
     pub fn toSourceContentPtr(this: *BakeSourceProvider) ParsedSourceMap.SourceContentPtr {
         return ParsedSourceMap.SourceContentPtr.fromBakeProvider(this);
+    }
+
+    pub fn getExternal(_: *BakeSourceProvider, global: *bun.jsc.JSGlobalObject, source_filename: []const u8) []const u8 {
+        bun.assert(BakeGlobalObject__isBakeGlobalObject(global));
+        const pt = BakeGlobalObject__getPerThreadData(global);
+        if (pt.source_maps.get(source_filename)) |value| {
+            return pt.bundled_outputs[value.get()].value.asSlice();
+        }
+        return "";
     }
 
     /// The last two arguments to this specify loading hints
@@ -1438,7 +1473,13 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(
+    j: *StringJoiner,
+    allocator: std.mem.Allocator,
+    prev_end_state_: SourceMapState,
+    start_state_: SourceMapState,
+    source_map_: []const u8,
+) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
@@ -1481,15 +1522,9 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
 
-    j.push(
-        appendMappingToBuffer(
-            MutableString.initEmpty(allocator),
-            j.lastByte(),
-            prev_end_state,
-            start_state,
-        ).list.items,
-        allocator,
-    );
+    var str = MutableString.initEmpty(allocator);
+    appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
+    j.push(str.slice(), allocator);
 
     // Then append everything after that without modification.
     j.pushStatic(source_map);
@@ -1514,8 +1549,7 @@ pub fn appendSourceMappingURLRemote(
 }
 
 /// This function is extremely hot.
-pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
-    var buffer = buffer_;
+pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) void {
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
     const vlqs = [_]VLQ{
@@ -1548,8 +1582,6 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
     }
-
-    return buffer;
 }
 
 pub const Chunk = struct {
@@ -1569,22 +1601,28 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
-    pub const empty: Chunk = .{
-        .buffer = MutableString.initEmpty(bun.default_allocator),
-        .mappings_count = 0,
-        .end_state = .{},
-        .final_generated_column = 0,
-        .should_ignore = true,
-    };
+    pub fn initEmpty() Chunk {
+        return .{
+            .buffer = MutableString.initEmpty(bun.default_allocator),
+            .mappings_count = 0,
+            .end_state = .{},
+            .final_generated_column = 0,
+            .should_ignore = true,
+        };
+    }
+
+    pub fn deinit(this: *Chunk) void {
+        this.buffer.deinit();
+    }
 
     pub fn printSourceMapContents(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
-    ) !MutableString {
-        return printSourceMapContentsAtOffset(
+    ) !void {
+        try printSourceMapContentsAtOffset(
             chunk,
             source,
             mutable,
@@ -1597,13 +1635,11 @@ pub const Chunk = struct {
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         offset: usize,
         comptime ascii_only: bool,
-    ) !MutableString {
-        var output = mutable;
-
+    ) !void {
         // attempt to pre-allocate
 
         var filename_buf: bun.PathBuffer = undefined;
@@ -1616,23 +1652,21 @@ pub const Chunk = struct {
             filename = filename_buf[0 .. filename.len + 1];
         }
 
-        output.growIfNeeded(
+        mutable.growIfNeeded(
             filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
-        try output.append("{\n  \"version\":3,\n  \"sources\": [");
+        try mutable.append("{\n  \"version\":3,\n  \"sources\": [");
 
-        output = try JSPrinter.quoteForJSON(filename, output, ascii_only);
+        try JSPrinter.quoteForJSON(filename, mutable, ascii_only);
 
         if (include_sources_contents) {
-            try output.append("],\n  \"sourcesContent\": [");
-            output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+            try mutable.append("],\n  \"sourcesContent\": [");
+            try JSPrinter.quoteForJSON(source.contents, mutable, ascii_only);
         }
 
-        try output.append("],\n  \"mappings\": ");
-        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], output, ascii_only);
-        try output.append(", \"names\": []\n}");
-
-        return output;
+        try mutable.append("],\n  \"mappings\": ");
+        try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], mutable, ascii_only);
+        try mutable.append(", \"names\": []\n}");
     }
 
     // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
@@ -1661,6 +1695,10 @@ pub const Chunk = struct {
                 return this.ctx.getBuffer();
             }
 
+            pub inline fn takeBuffer(this: *Format) MutableString {
+                return this.ctx.takeBuffer();
+            }
+
             pub inline fn getCount(this: Format) usize {
                 return this.ctx.getCount();
             }
@@ -1672,8 +1710,6 @@ pub const Chunk = struct {
         count: usize = 0,
         offset: usize = 0,
         approximate_input_line_count: usize = 0,
-
-        pub const Format = SourceMapFormat(VLQSourceMap);
 
         pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
             var map = VLQSourceMap{
@@ -1699,7 +1735,7 @@ pub const Chunk = struct {
             else
                 0;
 
-            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            appendMappingToBuffer(&this.data, last_byte, prev_state, current_state);
             this.count += 1;
         }
 
@@ -1711,6 +1747,11 @@ pub const Chunk = struct {
             return this.data;
         }
 
+        pub fn takeBuffer(this: *VLQSourceMap) MutableString {
+            defer this.data = .initEmpty(this.data.allocator);
+            return this.data;
+        }
+
         pub fn getCount(this: VLQSourceMap) usize {
             return this.count;
         }
@@ -1719,7 +1760,6 @@ pub const Chunk = struct {
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
             const ThisBuilder = @This();
-            input_source_map: ?*SourceMap = null,
             source_map: SourceMapper,
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
@@ -1750,13 +1790,14 @@ pub const Chunk = struct {
 
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
+                var buffer = b.source_map.getBuffer();
                 if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
-                    b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
-                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
+                    buffer.list.items[0..8].* = @as([8]u8, @bitCast(buffer.list.items.len));
+                    buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                    buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
-                    .buffer = b.source_map.getBuffer(),
+                    .buffer = b.source_map.takeBuffer(),
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,
@@ -1832,17 +1873,7 @@ pub const Chunk = struct {
                 b.last_generated_update = @as(u32, @truncate(output.len));
             }
 
-            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
-                var current_state = current_state_;
-                // If the input file had a source map, map all the way back to the original
-                if (b.input_source_map) |input| {
-                    if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
-                        current_state.source_index = mapping.sourceIndex();
-                        current_state.original_line = mapping.originalLine();
-                        current_state.original_column = mapping.originalColumn();
-                    }
-                }
-
+            pub fn appendMapping(b: *ThisBuilder, current_state: SourceMapState) void {
                 b.appendMappingWithoutRemapping(current_state);
             }
 
@@ -1930,8 +1961,6 @@ pub const DebugIDFormatter = struct {
     }
 };
 
-const assert = bun.assert;
-
 pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
@@ -1939,3 +1968,17 @@ pub const JSSourceMap = @import("./JSSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSPrinter = bun.js_printer;
+const Logger = bun.logger;
+const MutableString = bun.MutableString;
+const StringJoiner = bun.StringJoiner;
+const URL = bun.URL;
+const assert = bun.assert;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;

@@ -127,6 +127,7 @@
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
+#include "JSWasmStreamingCompiler.h"
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
@@ -186,7 +187,7 @@
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
-
+#include <exception>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -1013,6 +1014,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
+        // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
         if (auto queue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();
@@ -1241,8 +1243,8 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -1271,8 +1273,8 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -2059,20 +2061,23 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     ASSERT(callFrame->argumentCount() == 1);
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
-static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments)
+static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGlobalObject* lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments)
 {
-    JSC::VM& vm = lexicalGlobalObject.vm();
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder lock(vm);
 
-    auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
+    auto function = lexicalGlobalObject->get(lexicalGlobalObject, identifier);
+    scope.assertNoExceptionExceptTermination();
+    if (scope.exception()) [[unlikely]]
+        return {};
     ASSERT(function.isCallable());
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto callData = JSC::getCallData(function);
-    auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
+    auto result = JSC::call(lexicalGlobalObject, function, callData, thisValue, arguments);
 #if ASSERT_ENABLED
     if (scope.exception()) [[unlikely]] {
-        Bun__reportError(&lexicalGlobalObject, JSValue::encode(scope.exception()));
+        Bun__reportError(lexicalGlobalObject, JSValue::encode(scope.exception()));
     }
 #endif
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -2085,19 +2090,22 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     if (!readableStream) [[unlikely]]
         return false;
 
-    auto& lexicalGlobalObject = *globalObject;
-    auto* clientData = static_cast<JSVMClientData*>(lexicalGlobalObject.vm().clientData);
+    auto lexicalGlobalObject = globalObject;
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
     auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     MarkedArgumentBuffer arguments;
     arguments.append(readableStream);
     arguments.append(JSC::jsBoolean(true));
     ASSERT(!arguments.hasOverflowed());
     auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
-    if (!returnedValue)
-        return false;
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!returnedValue) return false;
 
-    auto results = Detail::SequenceConverter<IDLAny>::convert(lexicalGlobalObject, *returnedValue);
+    auto results = Detail::SequenceConverter<IDLAny>::convert(*lexicalGlobalObject, *returnedValue);
+    RETURN_IF_EXCEPTION(scope, false);
 
     ASSERT(results.size() == 2);
     *possibleReadableStream1 = JSValue::encode(results[0]);
@@ -3070,6 +3078,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });
 
+    m_wasmStreamingConsumeStreamFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
@@ -3870,7 +3883,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
@@ -4434,6 +4447,62 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     }
 
     return result;
+}
+
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
+
+extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
+{
+    compiler->addBytes(std::span(spanPtr, spanSize));
+}
+
+static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
+{
+    auto globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSLockHolder locker(vm);
+
+    auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, sourceCode);
+
+    // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
+    // executed in a .then(...) callback, throwing is perfectly fine.
+
+    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+        globalObject, JSC::JSValue::encode(source), compiler.ptr()));
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    // We were able to get the slice synchronously.
+    if (readableStreamMaybe.isNull()) {
+        compiler->finalize(globalObject);
+
+        // Apparently rejecting a Promise (done in JSC::Wasm::StreamingCompiler#fail) can throw
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return promise;
+    }
+
+    auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(compiler));
+    auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
+    auto callData = JSC::getCallData(builtin);
+    MarkedArgumentBuffer arguments;
+
+    arguments.append(readableStreamMaybe);
+    JSC::call(globalObject, builtin, callData, wrapper, arguments);
+    scope.assertNoException();
+    return promise;
+}
+
+JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source)
+{
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+}
+
+JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
+{
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)

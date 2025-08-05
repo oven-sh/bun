@@ -883,28 +883,36 @@ export async function describeWithContainer(
     let containerId: string;
     {
       const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start`, () => {});
+        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
         return false;
       }
       containerId = stdout.toString("utf-8").trim();
     }
     let port: number;
     {
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "port", containerId],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port`, () => {});
+        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
         return false;
       }
       const [firstPort] = stdout
@@ -1555,6 +1563,10 @@ export class VerdaccioRegistry {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      env: {
+        ...(bunEnv as any),
+        NODE_NO_WARNINGS: "1",
+      },
     });
 
     this.process.stderr?.on("data", data => {
@@ -1646,16 +1658,17 @@ export class VerdaccioRegistry {
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
-    [install]
-    cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-    `;
+[install]
+cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
+`;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-      `;
+`;
     }
     if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"`;
+      bunfig += `registry = "${this.registryUrl()}"\n`;
     }
+    bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }
@@ -1663,6 +1676,7 @@ export class VerdaccioRegistry {
 type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
+  isolated?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {

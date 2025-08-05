@@ -456,10 +456,9 @@ pub const SkipTypeOptions = enum {
     pub const empty = Bitset.initEmpty();
 };
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.string;
 const strings = bun.strings;
 
 const js_lexer = bun.js_lexer;

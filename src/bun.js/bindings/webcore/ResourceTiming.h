@@ -42,7 +42,7 @@ class SecurityOrigin;
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
 
 class ResourceTiming {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming, ResourceTiming);
 
 public:
     // static ResourceTiming fromMemoryCache(const URL&, const String& initiator const ResourceResponse&, const NetworkLoadMetrics&, const SecurityOrigin&);

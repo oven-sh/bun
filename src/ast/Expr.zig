@@ -64,7 +64,7 @@ pub fn unwrapInlined(expr: Expr) Expr {
 }
 
 pub fn fromBlob(
-    blob: *const JSC.WebCore.Blob,
+    blob: *const jsc.WebCore.Blob,
     allocator: std.mem.Allocator,
     mime_type_: ?MimeType,
     log: *logger.Log,
@@ -96,7 +96,7 @@ pub fn fromBlob(
 
     if (mime_type.category.isTextLike()) {
         var output = MutableString.initEmpty(allocator);
-        output = try JSPrinter.quoteForJSON(bytes, output, true);
+        try JSPrinter.quoteForJSON(bytes, &output, true);
         var list = output.toOwnedSlice();
         // remove the quotes
         if (list.len > 0) {
@@ -108,7 +108,7 @@ pub fn fromBlob(
     return Expr.init(
         E.String,
         E.String{
-            .data = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
+            .data = try jsc.ZigString.init(bytes).toBase64DataURL(allocator),
         },
         loc,
     );
@@ -147,7 +147,7 @@ pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bo
     return false;
 }
 
-pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
     return this.data.toJS(allocator, globalObject);
 }
 
@@ -2514,15 +2514,9 @@ pub const Data = union(Tag) {
                 e.left.data.writeToHasher(hasher, symbol_table);
                 e.right.data.writeToHasher(hasher, symbol_table);
             },
-            .e_class => |e| {
-                _ = e; // autofix
-            },
-            inline .e_new, .e_call => |e| {
-                _ = e; // autofix
-            },
-            .e_function => |e| {
-                _ = e; // autofix
-            },
+            .e_class => {},
+            inline .e_new, .e_call => {},
+            .e_function => {},
             .e_dot => |e| {
                 writeAnyToHasher(hasher, .{ e.optional_chain, e.name.len });
                 e.target.data.writeToHasher(hasher, symbol_table);
@@ -2533,9 +2527,7 @@ pub const Data = union(Tag) {
                 e.target.data.writeToHasher(hasher, symbol_table);
                 e.index.data.writeToHasher(hasher, symbol_table);
             },
-            .e_arrow => |e| {
-                _ = e; // autofix
-            },
+            .e_arrow => {},
             .e_jsx_element => |e| {
                 _ = e; // autofix
             },
@@ -3072,17 +3064,17 @@ pub const Data = union(Tag) {
         return Equality.unknown;
     }
 
-    pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+    pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
         return switch (this) {
             .e_array => |e| e.toJS(allocator, globalObject),
             .e_object => |e| e.toJS(allocator, globalObject),
             .e_string => |e| e.toJS(allocator, globalObject),
-            .e_null => JSC.JSValue.null,
+            .e_null => jsc.JSValue.null,
             .e_undefined => .js_undefined,
             .e_boolean => |boolean| if (boolean.value)
-                JSC.JSValue.true
+                jsc.JSValue.true
             else
-                JSC.JSValue.false,
+                jsc.JSValue.false,
             .e_number => |e| e.toJS(),
             // .e_big_int => |e| e.toJS(ctx, exception),
 
@@ -3097,7 +3089,7 @@ pub const Data = union(Tag) {
             // brk: {
             //     // var node = try allocator.create(Macro.JSNode);
             //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = logger.Loc.Empty });
-            //     // break :brk JSC.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
+            //     // break :brk jsc.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
             // },
 
             else => {
@@ -3201,17 +3193,16 @@ pub fn StoredData(tag: Tag) type {
     };
 }
 
-extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;
-
 fn stringToEquivalentNumberValue(str: []const u8) f64 {
     // +"" -> 0
     if (str.len == 0) return 0;
     if (!bun.strings.isAllASCII(str))
         return std.math.nan(f64);
-    return JSC__jsToNumber(str.ptr, str.len);
+    return bun.cpp.JSC__jsToNumber(str.ptr, str.len);
 }
 
-// @sortImports
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
@@ -3219,19 +3210,17 @@ const std = @import("std");
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-const JSONParser = bun.JSON;
+const JSONParser = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const writeAnyToHasher = bun.writeAnyToHasher;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const ASTMemoryAllocator = js_ast.ASTMemoryAllocator;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

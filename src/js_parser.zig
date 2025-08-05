@@ -929,6 +929,7 @@ pub const MacroState = struct {
 
 pub const Jest = struct {
     expect: Ref = Ref.None,
+    expectTypeOf: Ref = Ref.None,
     describe: Ref = Ref.None,
     @"test": Ref = Ref.None,
     it: Ref = Ref.None,
@@ -1194,26 +1195,19 @@ pub const ParseBindingOptions = struct {
     is_using_statement: bool = false,
 };
 
-// @sortImports
-
-pub const ConvertESMExportsForHmr = @import("ast/ConvertESMExportsForHmr.zig");
-pub const ImportScanner = @import("ast/ImportScanner.zig");
-pub const TypeScript = @import("ast/TypeScript.zig");
-const _runtime = @import("./runtime.zig");
+pub const ConvertESMExportsForHmr = @import("./ast/ConvertESMExportsForHmr.zig");
+pub const ImportScanner = @import("./ast/ImportScanner.zig");
+pub const TypeScript = @import("./ast/TypeScript.zig");
 pub const fs = @import("./fs.zig");
 pub const options = @import("./options.zig");
 pub const renamer = @import("./renamer.zig");
-const Define = @import("./defines.zig").Define;
-pub const KnownGlobal = @import("ast/KnownGlobal.zig").KnownGlobal;
-const ObjectPool = @import("./pool.zig").ObjectPool;
-pub const Parser = @import("ast/Parser.zig").Parser;
-pub const SideEffects = @import("ast/SideEffects.zig").SideEffects;
-pub const foldStringAddition = @import("ast/foldStringAddition.zig").foldStringAddition;
+pub const KnownGlobal = @import("./ast/KnownGlobal.zig").KnownGlobal;
+pub const Parser = @import("./ast/Parser.zig").Parser;
+pub const SideEffects = @import("./ast/SideEffects.zig").SideEffects;
+pub const foldStringAddition = @import("./ast/foldStringAddition.zig").foldStringAddition;
 pub const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
 
-const Index = @import("./ast/base.zig").Index;
 pub const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
 
 pub const importRecord = @import("./import_record.zig");
 pub const ImportKind = importRecord.ImportKind;
@@ -1223,20 +1217,14 @@ pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeNames = _runtime.Runtime.Names;
 
-const NewParser = @import("ast/P.zig").NewParser;
-pub const NewParser_ = @import("ast/P.zig").NewParser_;
+pub const NewParser_ = @import("./ast/P.zig").NewParser_;
 
-const bun = @import("bun");
-const Output = bun.Output;
 pub const StringHashMap = bun.StringHashMap;
-const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
-const assert = bun.assert;
 pub const js_printer = bun.js_printer;
 pub const logger = bun.logger;
-const string = bun.string;
-const strings = bun.strings;
+const string = []const u8;
 
-pub const js_ast = bun.JSAst;
+pub const js_ast = bun.ast;
 pub const B = js_ast.B;
 pub const Binding = js_ast.Binding;
 pub const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -1267,3 +1255,17 @@ pub const AutoHashMap = std.AutoHashMap;
 const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
 const Allocator = std.mem.Allocator;
+
+const _runtime = @import("./runtime.zig");
+const Define = @import("./defines.zig").Define;
+const NewParser = @import("./ast/P.zig").NewParser;
+const ObjectPool = @import("./pool.zig").ObjectPool;
+
+const Index = @import("./ast/base.zig").Index;
+const RefCtx = @import("./ast/base.zig").RefCtx;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
+const assert = bun.assert;
+const strings = bun.strings;

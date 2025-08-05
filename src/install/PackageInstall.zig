@@ -1,35 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const Progress = bun.Progress;
-const install = bun.install;
-const String = bun.Semver.String;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const BuntagHashBuf = install.BuntagHashBuf;
-const buntaghashbuf_make = install.buntaghashbuf_make;
-const Repository = install.Repository;
-const Resolution = install.Resolution;
-const MutableString = bun.MutableString;
-const logger = bun.logger;
-const Npm = install.Npm;
-const initializeStore = install.initializeStore;
-const JSON = bun.JSON;
-const Walker = @import("../walker_skippable.zig");
-const ThreadPool = bun.ThreadPool;
-const JSC = bun.JSC;
-const Syscall = bun.sys;
-const FileSystem = bun.fs.FileSystem;
-const Path = bun.path;
-const PackageID = install.PackageID;
-
 pub const PackageInstall = struct {
     /// TODO: Change to bun.FD.Dir
     cache_dir: std.fs.Dir,
@@ -71,7 +39,7 @@ pub const PackageInstall = struct {
         packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
-    pub const Method = enum {
+    pub const Method = enum(u8) {
         clonefile,
 
         /// Slower than clonefile
@@ -528,7 +496,7 @@ pub const PackageInstall = struct {
         }
     };
 
-    threadlocal var node_fs_for_package_installer: bun.JSC.Node.fs.NodeFS = .{};
+    threadlocal var node_fs_for_package_installer: bun.jsc.Node.fs.NodeFS = .{};
 
     fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
         const destbase = destination_dir;
@@ -741,28 +709,21 @@ pub const PackageInstall = struct {
 
     fn NewTaskQueue(comptime TaskType: type) type {
         return struct {
-            remaining: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-            errored_task: ?*TaskType = null,
             thread_pool: *ThreadPool,
-            wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+            errored_task: std.atomic.Value(?*TaskType) = .init(null),
+            wait_group: bun.threading.WaitGroup = .init(),
 
             pub fn completeOne(this: *@This()) void {
-                if (this.remaining.fetchSub(1, .monotonic) == 1) {
-                    _ = this.wake_value.fetchAdd(1, .monotonic);
-                    bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
-                }
+                this.wait_group.finish();
             }
 
             pub fn push(this: *@This(), task: *TaskType) void {
-                _ = this.remaining.fetchAdd(1, .monotonic);
+                this.wait_group.addOne();
                 this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
             }
 
             pub fn wait(this: *@This()) void {
-                this.wake_value.store(0, .monotonic);
-                while (this.remaining.load(.monotonic) > 0) {
-                    bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
-                }
+                this.wait_group.wait();
             }
         };
     }
@@ -772,12 +733,13 @@ pub const PackageInstall = struct {
         src: [:0]bun.OSPathChar,
         dest: [:0]bun.OSPathChar,
         basename: u16,
-        task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+        task: bun.jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
         err: ?anyerror = null,
 
         pub const Queue = NewTaskQueue(@This());
         var queue: Queue = undefined;
-        pub fn getQueue() *Queue {
+
+        pub fn initQueue() *Queue {
             queue = Queue{
                 .thread_pool = &PackageManager.get().thread_pool,
             };
@@ -808,25 +770,30 @@ pub const PackageInstall = struct {
             });
         }
 
-        pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
-            var iter: *@This() = @fieldParentPtr("task", task);
+        fn runFromThreadPool(task: *bun.jsc.WorkPoolTask) void {
+            var self: *@This() = @fieldParentPtr("task", task);
             defer queue.completeOne();
-            if (iter.run()) |err| {
-                iter.err = err;
-                queue.errored_task = iter;
+            if (self.run()) |err| {
+                self.err = err;
+                // .monotonic is okay because this value isn't read until all the tasks complete.
+                // Use `cmpxchgStrong` to keep only the first error.
+                _ = queue.errored_task.cmpxchgStrong(null, self, .monotonic, .monotonic);
                 return;
             }
-            iter.deinit();
+            self.deinit();
         }
 
-        pub fn deinit(task: *@This()) void {
-            bun.default_allocator.free(task.bytes);
-            bun.destroy(task);
+        /// Don't call this method if the task has been scheduled on a thread pool.
+        /// It will already be called when the task is complete.
+        pub fn deinit(self: *@This()) void {
+            bun.default_allocator.free(self.bytes);
+            self.* = undefined;
+            bun.destroy(self);
         }
 
-        pub const new = bun.TrivialNew(@This());
+        const new = bun.TrivialNew(@This());
 
-        pub fn run(task: *@This()) ?anyerror {
+        fn run(task: *@This()) ?anyerror {
             const src = task.src;
             const dest = task.dest;
 
@@ -902,7 +869,7 @@ pub const PackageInstall = struct {
                 head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue();
+                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.initQueue();
 
                 while (try walker.next().unwrap()) |entry| {
                     if (comptime Environment.isPosix) {
@@ -950,7 +917,8 @@ pub const PackageInstall = struct {
                 if (comptime Environment.isWindows) {
                     queue.wait();
 
-                    if (queue.errored_task) |task| {
+                    // .monotonic is okay because no tasks are running (could be made non-atomic)
+                    if (queue.errored_task.load(.monotonic)) |task| {
                         if (task.err) |err| {
                             return err;
                         }
@@ -1169,9 +1137,9 @@ pub const PackageInstall = struct {
                     pub const new = bun.TrivialNew(@This());
 
                     absolute_path: []const u8,
-                    task: JSC.WorkPoolTask = .{ .callback = &run },
+                    task: jsc.WorkPoolTask = .{ .callback = &run },
 
-                    pub fn run(task: *JSC.WorkPoolTask) void {
+                    pub fn run(task: *jsc.WorkPoolTask) void {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
@@ -1214,8 +1182,8 @@ pub const PackageInstall = struct {
                 var task = UninstallTask.new(.{
                     .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
                 });
+                PackageManager.get().incrementPendingTasks(1);
                 PackageManager.get().thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
-                _ = PackageManager.get().incrementPendingTasks(1);
             },
         }
     }
@@ -1496,3 +1464,38 @@ pub const PackageInstall = struct {
         return this.installWithCopyfile(destination_dir);
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Walker = @import("../walker_skippable.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Path = bun.path;
+const Progress = bun.Progress;
+const Syscall = bun.sys;
+const ThreadPool = bun.ThreadPool;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const FileSystem = bun.fs.FileSystem;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const BuntagHashBuf = install.BuntagHashBuf;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;
+const Repository = install.Repository;
+const Resolution = install.Resolution;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const buntaghashbuf_make = install.buntaghashbuf_make;
+const initializeStore = install.initializeStore;

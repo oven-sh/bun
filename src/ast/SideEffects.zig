@@ -862,17 +862,16 @@ pub const SideEffects = enum(u1) {
     }
 };
 
-// @sortImports
+const string = []const u8;
 
 const options = @import("../options.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

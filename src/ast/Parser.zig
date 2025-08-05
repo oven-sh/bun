@@ -187,7 +187,8 @@ pub const Parser = struct {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         bun.assert(p.symbols.items.len == 0);
-        p.symbols = symbols.listManaged(p.allocator);
+        var symbols_ = symbols;
+        p.symbols = symbols_.listManaged(p.allocator);
 
         try p.prepareForVisitPass();
 
@@ -387,7 +388,7 @@ pub const Parser = struct {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
                     return js_ast.Result{
@@ -1377,7 +1378,7 @@ pub const Parser = struct {
         // p.popScope();
 
         if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
-            const runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            const runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
             if (runtime_transpiler_cache) |cache| {
                 if (p.macro_call_count != 0) {
                     // disable this for:
@@ -1470,7 +1471,7 @@ fn MacroContextType() type {
     return js_ast.Macro.MacroContext;
 }
 
-// @sortImports
+const string = []const u8;
 
 const _runtime = @import("../runtime.zig");
 const Define = @import("../defines.zig").Define;
@@ -1484,15 +1485,13 @@ const RuntimeImports = _runtime.Runtime.Imports;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
-const JSC = bun.JSC;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const options = bun.options;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const E = js_ast.E;

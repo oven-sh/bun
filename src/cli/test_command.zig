@@ -1,38 +1,5 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-
-const FileSystem = @import("../fs.zig").FileSystem;
-const options = @import("../options.zig");
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
-const PathString = bun.PathString;
-const HTTPThread = bun.http.HTTPThread;
-
-const JSC = bun.JSC;
-const jest = JSC.Jest;
-const TestRunner = JSC.Jest.TestRunner;
-const Snapshots = JSC.Snapshot.Snapshots;
-const Test = TestRunner.Test;
-const coverage = bun.sourcemap.coverage;
-const CodeCoverageReport = coverage.Report;
-const uws = bun.uws;
-
-const Scanner = @import("test/Scanner.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
@@ -97,6 +64,11 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
 }
 
 fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+    // When using AI agents, only print failures
+    if (Output.isAIAgent() and status != .fail) {
+        return;
+    }
+
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
@@ -653,51 +625,53 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
-
         const display_label = if (label.len > 0) label else "test";
 
-        const color_code = comptime if (skip) "<d>" else "";
+        // Quieter output when claude code is in use.
+        if (!Output.isAIAgent() or status == .fail) {
+            const color_code = comptime if (skip) "<d>" else "";
 
-        if (Output.enable_ansi_colors_stderr) {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
+            if (Output.enable_ansi_colors_stderr) {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
 
-                writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
+            } else {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    if (scope.label.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
+                    writer.writeAll(scope.label) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
             }
-        } else {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+
+            const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
+
+            if (elapsed_ns > (std.time.ns_per_us * 10)) {
+                writer.print(" {any}", .{
+                    Output.ElapsedFormatter{
+                        .colors = Output.enable_ansi_colors_stderr,
+                        .duration_ns = elapsed_ns,
+                    },
+                }) catch unreachable;
             }
+
+            writer.writeAll("\n") catch unreachable;
         }
-
-        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
-
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
-
-        if (elapsed_ns > (std.time.ns_per_us * 10)) {
-            writer.print(" {any}", .{
-                Output.ElapsedFormatter{
-                    .colors = Output.enable_ansi_colors_stderr,
-                    .duration_ns = elapsed_ns,
-                },
-            }) catch unreachable;
-        }
-
-        writer.writeAll("\n") catch unreachable;
 
         if (file_reporter) |reporter| {
             switch (reporter) {
@@ -844,6 +818,8 @@ pub const CommandLineReporter = struct {
         defer Output.flush();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
+        this.jest.current_file.printIfNeeded();
+
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.failures_to_repeat_buf.items.len;
@@ -958,7 +934,7 @@ pub const CommandLineReporter = struct {
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
-    pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
+    pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
         if (comptime !reporters.text and !reporters.lcov) {
             return;
         }
@@ -987,7 +963,7 @@ pub const CommandLineReporter = struct {
 
     pub fn printCodeCoverage(
         _: *CommandLineReporter,
-        vm: *JSC.VirtualMachine,
+        vm: *jsc.VirtualMachine,
         opts: *TestCommand.CodeCoverageOptions,
         byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
         comptime reporters: TestCommand.Reporters,
@@ -1073,11 +1049,11 @@ pub const CommandLineReporter = struct {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
-            var fs = bun.JSC.Node.fs.NodeFS{};
+            var fs = bun.jsc.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
-                    .path = bun.JSC.Node.PathLike{
-                        .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                    .path = bun.jsc.Node.PathLike{
+                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
                     },
                     .always_return_none = true,
                 },
@@ -1242,7 +1218,7 @@ pub const CommandLineReporter = struct {
 };
 
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
-    var zig_slice: bun.JSC.ZigString.Slice = .{};
+    var zig_slice: bun.jsc.ZigString.Slice = .{};
     defer zig_slice.deinit();
 
     // In this particular case, we don't actually care about non-ascii latin1 characters.
@@ -1258,7 +1234,7 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     }
 
     const ext = std.fs.path.extension(slice);
-    const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
+    const loader_by_ext = jsc.VirtualMachine.get().transpiler.options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
@@ -1319,14 +1295,14 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize(false);
+        bun.jsc.initialize(false);
         HTTPThread.init(&.{});
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
-        JSC.VirtualMachine.isBunTest = true;
+        jsc.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         defer {
@@ -1382,7 +1358,7 @@ pub const TestCommand = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var vm = try JSC.VirtualMachine.init(
+        var vm = try jsc.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,
                 .args = ctx.args,
@@ -1418,7 +1394,7 @@ pub const TestCommand = struct {
 
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
-        JSC.VirtualMachine.is_main_thread_vm = true;
+        jsc.VirtualMachine.is_main_thread_vm = true;
 
         if (ctx.test_options.coverage.enabled) {
             vm.transpiler.options.code_coverage = true;
@@ -1440,7 +1416,7 @@ pub const TestCommand = struct {
         }
 
         if (TZ_NAME.len > 0) {
-            _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
+            _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
         }
 
         // Start the debugger before we scan for files
@@ -1519,8 +1495,8 @@ pub const TestCommand = struct {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-                .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
             }
 
@@ -1530,7 +1506,7 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary().pass > 20) {
+        if (reporter.summary().pass > 20 and !Output.isAIAgent()) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
@@ -1571,16 +1547,24 @@ pub const TestCommand = struct {
         if (test_files.len == 0) {
             failed_to_find_any_tests = true;
 
-            if (ctx.positionals.len == 0) {
-                Output.prettyErrorln(
-                    \\<yellow>No tests found!<r>
-                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                    \\
-                , .{});
+            // "bun test" - positionals[0] == "test"
+            // Therefore positionals starts at [1].
+            if (ctx.positionals.len < 2) {
+                if (Output.isAIAgent()) {
+                    // Be very clear to ai.
+                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    // Be friendlier to humans.
+                    Output.prettyErrorln(
+                        \\<yellow>No tests found!<r>
+                        \\
+                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                        \\
+                    , .{});
+                }
             } else {
                 Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
                 var has_file_like: ?usize = null;
-                Output.prettyError(" ", .{});
                 for (ctx.positionals[1..], 1..) |filter, i| {
                     Output.prettyError(" {s}", .{filter});
 
@@ -1611,10 +1595,12 @@ pub const TestCommand = struct {
                     , .{ ctx.positionals[i], ctx.positionals[i] });
                 }
             }
-            Output.prettyError(
-                \\
-                \\Learn more about the test runner: <magenta>https://bun.com/docs/cli/test<r>
-            , .{});
+            if (!Output.isAIAgent()) {
+                Output.prettyError(
+                    \\
+                    \\Learn more about bun test: <magenta>https://bun.com/docs/cli/test<r>
+                , .{});
+            }
         } else {
             Output.prettyError("\n", .{});
 
@@ -1733,7 +1719,7 @@ pub const TestCommand = struct {
         }
 
         if (vm.hot_reload == .watch) {
-            vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
+            vm.runWithAPILock(jsc.VirtualMachine, vm, runEventLoopForWatch);
         }
         const summary = reporter.summary();
 
@@ -1742,11 +1728,11 @@ pub const TestCommand = struct {
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
         } else {
-            vm.runWithAPILock(JSC.VirtualMachine, vm, JSC.VirtualMachine.globalExit);
+            vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
         }
     }
 
-    fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
+    fn runEventLoopForWatch(vm: *jsc.VirtualMachine) void {
         vm.eventLoop().tickPossiblyForever();
 
         while (true) {
@@ -1761,13 +1747,13 @@ pub const TestCommand = struct {
 
     pub fn runAllTests(
         reporter_: *CommandLineReporter,
-        vm_: *JSC.VirtualMachine,
+        vm_: *jsc.VirtualMachine,
         files_: []const PathString,
         allocator_: std.mem.Allocator,
     ) void {
         const Context = struct {
             reporter: *CommandLineReporter,
-            vm: *JSC.VirtualMachine,
+            vm: *jsc.VirtualMachine,
             files: []const PathString,
             allocator: std.mem.Allocator,
             pub fn begin(this: *@This()) void {
@@ -1801,7 +1787,7 @@ pub const TestCommand = struct {
 
     pub fn run(
         reporter: *CommandLineReporter,
-        vm: *JSC.VirtualMachine,
+        vm: *jsc.VirtualMachine,
         file_name: string,
         _: std.mem.Allocator,
         is_last: bool,
@@ -1825,7 +1811,7 @@ pub const TestCommand = struct {
 
         const file_start = reporter.jest.files.len;
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
-        vm.clearEntryPoint();
+        try vm.clearEntryPoint();
 
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
@@ -1841,12 +1827,7 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
-            }
-            Output.flush();
+            reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;
@@ -1925,9 +1906,9 @@ pub const TestCommand = struct {
 
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
-                vm.clearEntryPoint();
-                var entry = JSC.ZigString.init(file_path);
-                vm.global.deleteModuleRegistryEntry(&entry);
+                try vm.clearEntryPoint();
+                var entry = jsc.ZigString.init(file_path);
+                try vm.global.deleteModuleRegistryEntry(&entry);
             }
 
             if (Output.is_github_action) {
@@ -1962,3 +1943,36 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
 pub fn @"export"() void {
     _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }
+
+const string = []const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const Scanner = @import("./test/Scanner.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const FileSystem = @import("../fs.zig").FileSystem;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const strings = bun.strings;
+const uws = bun.uws;
+const HTTPThread = bun.http.HTTPThread;
+
+const jsc = bun.jsc;
+const jest = jsc.Jest;
+const Snapshots = jsc.Snapshot.Snapshots;
+
+const TestRunner = jsc.Jest.TestRunner;
+const Test = TestRunner.Test;
+
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;

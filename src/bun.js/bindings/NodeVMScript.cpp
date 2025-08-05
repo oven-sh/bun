@@ -122,9 +122,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));

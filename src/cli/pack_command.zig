@@ -1,37 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const libarchive = @import("../libarchive/libarchive.zig").lib;
-const Archive = libarchive.Archive;
-const Expr = bun.js_parser.Expr;
-const Semver = bun.Semver;
-const File = bun.sys.File;
-const FD = bun.FD;
-const strings = bun.strings;
-const glob = bun.glob;
-const PathBuffer = bun.PathBuffer;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const RunCommand = bun.RunCommand;
-const OOM = bun.OOM;
-const js_printer = bun.js_printer;
-const E = bun.js_parser.E;
-const Progress = bun.Progress;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const LogLevel = PackageManager.Options.LogLevel;
-const FileDescriptor = bun.FileDescriptor;
-const Publish = bun.CLI.PublishCommand;
-const Dependency = Install.Dependency;
-const CowString = bun.ptr.CowString;
-
 pub const PackCommand = struct {
     pub const Context = struct {
         manager: *PackageManager,
@@ -63,7 +29,7 @@ pub const PackCommand = struct {
             maybe_integrity: ?[sha.SHA512.digest]u8,
             log_level: LogLevel,
         ) void {
-            if (log_level != .silent) {
+            if (log_level != .silent and log_level != .quiet) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
@@ -93,8 +59,10 @@ pub const PackCommand = struct {
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
-        Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (manager.options.log_level != .silent and manager.options.log_level != .quiet) {
+            Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromCwd(
@@ -2426,7 +2394,7 @@ pub const PackCommand = struct {
         package_json_len: usize,
     ) void {
         const root_dir = bun.FD.fromStdDir(root_dir_std);
-        if (ctx.manager.options.log_level == .silent) return;
+        if (ctx.manager.options.log_level == .silent or ctx.manager.options.log_level == .quiet) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime is_dry_run) {
@@ -2514,14 +2482,14 @@ pub const PackCommand = struct {
 };
 
 pub const bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
-    const JSGlobalObject = JSC.JSGlobalObject;
-    const CallFrame = JSC.CallFrame;
-    const ZigString = JSC.ZigString;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
+    const JSGlobalObject = jsc.JSGlobalObject;
+    const CallFrame = jsc.CallFrame;
+    const ZigString = jsc.ZigString;
     const String = bun.String;
-    const JSArray = JSC.JSArray;
-    const JSObject = JSC.JSObject;
+    const JSArray = jsc.JSArray;
+    const JSObject = jsc.JSObject;
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();
@@ -2620,12 +2588,19 @@ pub const bindings = struct {
                     return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
-                    const pathname = archive_entry.pathname();
+                    const pathname_string = if (bun.Environment.isWindows) blk: {
+                        const pathname_w = archive_entry.pathnameW();
+                        const list = std.ArrayList(u8).init(bun.default_allocator);
+                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch bun.outOfMemory();
+                        defer result.deinit();
+                        break :blk String.cloneUTF8(result.items);
+                    } else String.cloneUTF8(archive_entry.pathname());
+
                     const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.cloneUTF8(pathname),
+                        .pathname = pathname_string,
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2637,8 +2612,10 @@ pub const bindings = struct {
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            return global.throw("failed to read archive entry \"{}\": {s}", .{
-                                bun.fmt.fmtPath(u8, pathname, .{}),
+                            const pathname_utf8 = pathname_string.toUTF8(bun.default_allocator);
+                            defer pathname_utf8.deinit();
+                            return global.throw("failed to read archive entry \"{s}\": {s}", .{
+                                pathname_utf8.slice(),
                                 Archive.errorString(@ptrCast(archive)),
                             });
                         }
@@ -2686,3 +2663,43 @@ pub const bindings = struct {
         return result;
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const std = @import("std");
+
+const libarchive = @import("../libarchive/libarchive.zig").lib;
+const Archive = libarchive.Archive;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FileDescriptor = bun.FileDescriptor;
+const Global = bun.Global;
+const JSON = bun.json;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const Progress = bun.Progress;
+const RunCommand = bun.RunCommand;
+const Semver = bun.Semver;
+const glob = bun.glob;
+const js_printer = bun.js_printer;
+const sha = bun.sha;
+const strings = bun.strings;
+const CowString = bun.ptr.CowString;
+const File = bun.sys.File;
+
+const Command = bun.cli.Command;
+const Publish = bun.cli.PublishCommand;
+
+const Install = bun.install;
+const Dependency = Install.Dependency;
+const Lockfile = Install.Lockfile;
+const PackageManager = Install.PackageManager;
+const LogLevel = PackageManager.Options.LogLevel;
+
+const E = bun.js_parser.E;
+const Expr = bun.js_parser.Expr;

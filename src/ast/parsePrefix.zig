@@ -657,8 +657,6 @@ pub fn ParsePrefix(
     };
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
@@ -666,7 +664,7 @@ const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

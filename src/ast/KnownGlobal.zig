@@ -198,12 +198,11 @@ pub const KnownGlobal = enum {
     }
 };
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.string;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Symbol = js_ast.Symbol;
 

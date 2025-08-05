@@ -434,14 +434,13 @@ pub fn ParseTypescript(
     };
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

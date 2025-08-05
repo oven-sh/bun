@@ -1194,8 +1194,6 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
     }
 }
 
-const us_socket_t = uws.us_socket_t;
-
 const c = struct {
     pub const us_socket_events_t = extern struct {
         on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.C) ?*us_socket_t = null,
@@ -1213,15 +1211,20 @@ const c = struct {
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
+const debug = bun.Output.scoped(.uws, false);
+
+const std = @import("std");
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+const BoringSSL = bun.BoringSSL.c;
+
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
-const Environment = bun.Environment;
-const SocketContext = uws.SocketContext;
-const debug = bun.Output.scoped(.uws, false);
-const std = @import("std");
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const BunSocketContextOptions = uws.SocketContext.BunSocketContextOptions;
-const WindowsNamedPipe = uws.WindowsNamedPipe;
 const UpgradedDuplex = uws.UpgradedDuplex;
-const BoringSSL = bun.BoringSSL.c;
+const WindowsNamedPipe = uws.WindowsNamedPipe;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;
+const us_socket_t = uws.us_socket_t;
+
+const SocketContext = uws.SocketContext;
+const BunSocketContextOptions = uws.SocketContext.BunSocketContextOptions;

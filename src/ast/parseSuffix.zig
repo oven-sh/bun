@@ -793,12 +793,11 @@ pub fn ParseSuffix(
     };
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
-const string = bun.string;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 

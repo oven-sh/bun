@@ -421,6 +421,26 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
+                    // Inline import.meta properties for Bake
+                    if (p.options.framework != null) {
+                        if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
+                            // Inline import.meta.dir
+                            return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
+                        } else if (strings.eqlComptime(name, "file")) {
+                            // Inline import.meta.file (filename only)
+                            return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
+                        } else if (strings.eqlComptime(name, "path")) {
+                            // Inline import.meta.path (full path)
+                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                        } else if (strings.eqlComptime(name, "url")) {
+                            // Inline import.meta.url as file:// URL
+                            const bunstr = bun.String.fromBytes(p.source.path.text);
+                            defer bunstr.deref();
+                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            return p.newExpr(E.String.init(url), name_loc);
+                        }
+                    }
+
                     // Make all property accesses on `import.meta.url` side effect free.
                     return p.newExpr(
                         E.Dot{
@@ -678,18 +698,18 @@ pub fn AstMaybe(
     };
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;

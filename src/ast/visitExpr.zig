@@ -1419,7 +1419,7 @@ pub fn VisitExpr(
                 //
                 // When we see a hook call, we need to hash it, and then mark a flag so that if
                 // it is assigned to a variable, that variable also get's hashed.
-                if (p.options.features.react_fast_refresh) try_record_hook: {
+                if (p.options.features.react_fast_refresh or p.options.features.server_components.isServerSide()) try_record_hook: {
                     const original_name = switch (e_.target.data) {
                         inline .e_identifier,
                         .e_import_identifier,
@@ -1429,7 +1429,33 @@ pub fn VisitExpr(
                         else => break :try_record_hook,
                     };
                     if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
-                    p.handleReactRefreshHookCall(e_, original_name);
+                    if (p.options.features.react_fast_refresh) {
+                        p.handleReactRefreshHookCall(e_, original_name);
+                    } else if (
+                    // If we're here it means we're in server component.
+                    // Error if the user is using the `useState` hook as it
+                    // is disallowed in server components.
+                    //
+                    // We're also specifically checking that the target is
+                    // `.e_import_identifier`.
+                    //
+                    // Why? Because we *don't* want to check for uses of
+                    // `useState` _inside_ React, and we know React uses
+                    // commonjs so it will never be `.e_import_identifier`.
+                    e_.target.data == .e_import_identifier) {
+                        bun.assert(p.options.features.server_components.isServerSide());
+                        if (bun.strings.eqlComptime(original_name, "useState")) {
+                            p.log.addError(
+                                p.source,
+                                expr.loc,
+                                std.fmt.allocPrint(
+                                    p.allocator,
+                                    "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                                    .{},
+                                ) catch bun.outOfMemory(),
+                            ) catch bun.outOfMemory();
+                        }
+                    }
                 }
 
                 // Implement constant folding for 'string'.charCodeAt(n)
@@ -1570,7 +1596,7 @@ pub fn VisitExpr(
 
 var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1578,10 +1604,9 @@ const Output = bun.Output;
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const E = js_ast.E;
 const Expr = js_ast.Expr;

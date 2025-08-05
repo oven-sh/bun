@@ -17,9 +17,9 @@ pub fn Visit(
         const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
         const isSimpleParameterList = P.isSimpleParameterList;
 
-        pub const visitExpr = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
-        pub const visitExprInOut = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
-        pub const visitAndAppendStmt = @import("visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
+        pub const visitExpr = @import("./visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
+        pub const visitExprInOut = @import("./visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
+        pub const visitAndAppendStmt = @import("./visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
 
         pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
@@ -1319,7 +1319,7 @@ pub fn fnBodyContainsUseStrict(body: []Stmt) ?logger.Loc {
     return null;
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1327,10 +1327,9 @@ const Output = bun.Output;
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const BindingNodeIndex = js_ast.BindingNodeIndex;

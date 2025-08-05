@@ -421,15 +421,13 @@ pub fn ParseImportExport(
     };
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
 const logger = bun.logger;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const LocRef = js_ast.LocRef;

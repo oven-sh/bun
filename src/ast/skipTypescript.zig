@@ -1299,14 +1299,13 @@ pub fn SkipTypescript(
     };
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const assert = bun.assert;
 const logger = bun.logger;
-const string = bun.string;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const E = js_ast.E;
 

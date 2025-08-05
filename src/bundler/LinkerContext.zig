@@ -2,6 +2,9 @@ pub const LinkerContext = struct {
     pub const debug = Output.scoped(.LinkerCtx, false);
     pub const CompileResult = bundler.CompileResult;
 
+    pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
+    pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
     allocator: std.mem.Allocator = undefined,
@@ -18,10 +21,6 @@ pub const LinkerContext = struct {
     unbound_module_ref: Ref = Ref.None,
 
     options: LinkerOptions = .{},
-
-    wait_group: ThreadPoolLib.WaitGroup = .{},
-
-    ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
     loop: EventLoop,
 
@@ -76,10 +75,10 @@ pub const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        line_offset_wait_group: sync.WaitGroup = .{},
+        line_offset_wait_group: sync.WaitGroup = .init(),
         line_offset_tasks: []Task = &.{},
 
-        quoted_contents_wait_group: sync.WaitGroup = .{},
+        quoted_contents_wait_group: sync.WaitGroup = .init(),
         quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
@@ -146,18 +145,25 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                quoted_source_contents.* = "";
+                if (quoted_source_contents.*) |slice| {
+                    bun.default_allocator.free(slice);
+                    quoted_source_contents.* = null;
+                }
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
-            const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
+            var mutable = MutableString.initEmpty(bun.default_allocator);
+            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
+            if (quoted_source_contents.*) |slice| {
+                bun.default_allocator.free(slice);
+            }
+            quoted_source_contents.* = mutable.slice();
         }
     };
 
@@ -207,8 +213,6 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.wait_group.init();
-        this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
 
@@ -252,10 +256,8 @@ pub const LinkerContext = struct {
         reachable: []const Index.Int,
     ) void {
         bun.assert(this.options.source_maps != .none);
-        this.source_maps.line_offset_wait_group.init();
-        this.source_maps.quoted_contents_wait_group.init();
-        this.source_maps.line_offset_wait_group.counter = @as(u32, @truncate(reachable.len));
-        this.source_maps.quoted_contents_wait_group.counter = @as(u32, @truncate(reachable.len));
+        this.source_maps.line_offset_wait_group = .initWithCount(reachable.len);
+        this.source_maps.quoted_contents_wait_group = .initWithCount(reachable.len);
         this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
         this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
 
@@ -283,7 +285,7 @@ pub const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @intCast(batch.len)), .monotonic);
         this.parse_graph.pool.worker_pool.schedule(batch);
     }
 
@@ -359,6 +361,36 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
+        // Validate top-level await for all files first, like esbuild does.
+        // This must be done before scanImportsAndExports to ensure async
+        // status is properly propagated through cyclic imports.
+        {
+            const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
+            const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
+            const tla_checks = this.parse_graph.ast.items(.tla_check);
+            const input_files = this.parse_graph.input_files.items(.source);
+            const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
+            const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
+            // Process all files in source index order, like esbuild does
+            var source_index: u32 = 0;
+            while (source_index < this.graph.files.len) : (source_index += 1) {
+
+                // Skip runtime
+                if (source_index == Index.runtime.get()) continue;
+
+                // Skip if not a JavaScript AST
+                if (source_index >= import_records_list.len) continue;
+
+                // Skip CSS files
+                if (css_asts[source_index] != null) continue;
+
+                const import_records = import_records_list[source_index].slice();
+
+                _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
+            }
+        }
+
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
@@ -399,12 +431,12 @@ pub const LinkerContext = struct {
         this.parse_graph.heap.helpCatchMemoryIssues();
     }
 
-    pub const computeChunks = @import("linker_context/computeChunks.zig").computeChunks;
+    pub const computeChunks = @import("./linker_context/computeChunks.zig").computeChunks;
 
-    pub const findAllImportedPartsInJSOrder = @import("linker_context/findAllImportedPartsInJSOrder.zig").findAllImportedPartsInJSOrder;
-    pub const findImportedPartsInJSOrder = @import("linker_context/findAllImportedPartsInJSOrder.zig").findImportedPartsInJSOrder;
-    pub const findImportedFilesInCSSOrder = @import("linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
-    pub const findImportedCSSFilesInJSOrder = @import("linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
+    pub const findAllImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.zig").findAllImportedPartsInJSOrder;
+    pub const findImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.zig").findImportedPartsInJSOrder;
+    pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
+    pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
 
     pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
@@ -435,10 +467,10 @@ pub const LinkerContext = struct {
         return .{ ref, part_index };
     }
 
-    pub const generateCodeForLazyExport = @import("linker_context/generateCodeForLazyExport.zig").generateCodeForLazyExport;
-    pub const scanImportsAndExports = @import("linker_context/scanImportsAndExports.zig").scanImportsAndExports;
-    pub const doStep5 = @import("linker_context/doStep5.zig").doStep5;
-    pub const createExportsForFile = @import("linker_context/doStep5.zig").createExportsForFile;
+    pub const generateCodeForLazyExport = @import("./linker_context/generateCodeForLazyExport.zig").generateCodeForLazyExport;
+    pub const scanImportsAndExports = @import("./linker_context/scanImportsAndExports.zig").scanImportsAndExports;
+    pub const doStep5 = @import("./linker_context/doStep5.zig").doStep5;
+    pub const createExportsForFile = @import("./linker_context/doStep5.zig").createExportsForFile;
 
     pub fn scanCSSImports(
         this: *LinkerContext,
@@ -584,20 +616,18 @@ pub const LinkerContext = struct {
         pub const Map = std.AutoArrayHashMap(Ref, void);
     };
 
-    pub const computeCrossChunkDependencies = @import("linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
+    pub const computeCrossChunkDependencies = @import("./linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
 
     pub const GenerateChunkCtx = struct {
-        wg: *sync.WaitGroup,
         c: *LinkerContext,
         chunks: []Chunk,
         chunk: *Chunk,
     };
 
-    pub const postProcessJSChunk = @import("linker_context/postProcessJSChunk.zig").postProcessJSChunk;
-    pub const postProcessCSSChunk = @import("linker_context/postProcessCSSChunk.zig").postProcessCSSChunk;
-    pub const postProcessHTMLChunk = @import("linker_context/postProcessHTMLChunk.zig").postProcessHTMLChunk;
+    pub const postProcessJSChunk = @import("./linker_context/postProcessJSChunk.zig").postProcessJSChunk;
+    pub const postProcessCSSChunk = @import("./linker_context/postProcessCSSChunk.zig").postProcessCSSChunk;
+    pub const postProcessHTMLChunk = @import("./linker_context/postProcessHTMLChunk.zig").postProcessHTMLChunk;
     pub fn generateChunk(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {
@@ -607,10 +637,9 @@ pub const LinkerContext = struct {
         }
     }
 
-    pub const renameSymbolsInChunk = @import("linker_context/renameSymbolsInChunk.zig").renameSymbolsInChunk;
+    pub const renameSymbolsInChunk = @import("./linker_context/renameSymbolsInChunk.zig").renameSymbolsInChunk;
 
     pub fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         switch (chunk.content) {
@@ -629,13 +658,13 @@ pub const LinkerContext = struct {
         ) catch @panic("TODO: handle error");
     }
 
-    pub const generateChunksInParallel = @import("linker_context/generateChunksInParallel.zig").generateChunksInParallel;
-    pub const generateCompileResultForJSChunk = @import("linker_context/generateCompileResultForJSChunk.zig").generateCompileResultForJSChunk;
-    pub const generateCompileResultForCssChunk = @import("linker_context/generateCompileResultForCssChunk.zig").generateCompileResultForCssChunk;
-    pub const generateCompileResultForHtmlChunk = @import("linker_context/generateCompileResultForHtmlChunk.zig").generateCompileResultForHtmlChunk;
+    pub const generateChunksInParallel = @import("./linker_context/generateChunksInParallel.zig").generateChunksInParallel;
+    pub const generateCompileResultForJSChunk = @import("./linker_context/generateCompileResultForJSChunk.zig").generateCompileResultForJSChunk;
+    pub const generateCompileResultForCssChunk = @import("./linker_context/generateCompileResultForCssChunk.zig").generateCompileResultForCssChunk;
+    pub const generateCompileResultForHtmlChunk = @import("./linker_context/generateCompileResultForHtmlChunk.zig").generateCompileResultForHtmlChunk;
 
-    pub const prepareCssAstsForChunk = @import("linker_context/prepareCssAstsForChunk.zig").prepareCssAstsForChunk;
-    pub const PrepareCssAstTask = @import("linker_context/prepareCssAstsForChunk.zig").PrepareCssAstTask;
+    pub const prepareCssAstsForChunk = @import("./linker_context/prepareCssAstsForChunk.zig").prepareCssAstsForChunk;
+    pub const PrepareCssAstTask = @import("./linker_context/prepareCssAstsForChunk.zig").PrepareCssAstTask;
 
     pub fn generateSourceMapForChunk(
         c: *LinkerContext,
@@ -684,8 +713,8 @@ pub const LinkerContext = struct {
                 }
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
 
             var next_mapping_source_index: i32 = 1;
@@ -705,8 +734,8 @@ pub const LinkerContext = struct {
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
                 quote_buf.appendAssumeCapacity(", ");
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
         }
 
@@ -718,11 +747,11 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index]);
+                j.pushStatic(quoted_source_map_contents[index] orelse "");
             }
         }
         j.pushStatic(
@@ -1152,14 +1181,14 @@ pub const LinkerContext = struct {
         return true;
     }
 
-    pub const convertStmtsForChunk = @import("linker_context/convertStmtsForChunk.zig").convertStmtsForChunk;
-    pub const convertStmtsForChunkForDevServer = @import("linker_context/convertStmtsForChunkForDevServer.zig").convertStmtsForChunkForDevServer;
+    pub const convertStmtsForChunk = @import("./linker_context/convertStmtsForChunk.zig").convertStmtsForChunk;
+    pub const convertStmtsForChunkForDevServer = @import("./linker_context/convertStmtsForChunkForDevServer.zig").convertStmtsForChunkForDevServer;
 
     pub fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
     }
 
-    pub const generateCodeForFileInChunkJS = @import("linker_context/generateCodeForFileInChunkJS.zig").generateCodeForFileInChunkJS;
+    pub const generateCodeForFileInChunkJS = @import("./linker_context/generateCodeForFileInChunkJS.zig").generateCodeForFileInChunkJS;
 
     pub fn printCodeForFileInChunkJS(
         c: *LinkerContext,
@@ -1391,7 +1420,7 @@ pub const LinkerContext = struct {
         hash.write(std.mem.asBytes(&chunk.isolated_hash));
     }
 
-    pub const writeOutputFilesToDisk = @import("linker_context/writeOutputFilesToDisk.zig").writeOutputFilesToDisk;
+    pub const writeOutputFilesToDisk = @import("./linker_context/writeOutputFilesToDisk.zig").writeOutputFilesToDisk;
 
     // Sort cross-chunk exports by chunk name for determinism
     pub fn sortedCrossChunkExportItems(
@@ -1835,7 +1864,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -2392,7 +2421,11 @@ pub const LinkerContext = struct {
             // 4. externals
             return .{ .joiner = j.* };
 
-        var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        var pieces = brk: {
+            errdefer j.deinit();
+            break :brk try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        };
+        errdefer pieces.deinit();
         const complete_output = try j.done(allocator);
         var output = complete_output;
 
@@ -2468,77 +2501,85 @@ pub const LinkerContext = struct {
     }
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const lex = @import("../js_lexer.zig");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const Part = js_ast.Part;
-const js_printer = @import("../js_printer.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-const sourcemap = bun.sourcemap;
-const StringJoiner = bun.StringJoiner;
-const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
+pub const Ref = bun.ast.Ref;
+pub const ThreadPoolLib = bun.ThreadPool;
 pub const Fs = @import("../fs.zig");
-const _resolver = @import("../resolver/resolver.zig");
-const sync = bun.ThreadPool;
-const ImportRecord = bun.ImportRecord;
-const runtime = @import("../runtime.zig");
 
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const Resolver = _resolver.Resolver;
-const Dependency = js_ast.Dependency;
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const EventLoop = bun.JSC.AnyEventLoop;
-const MultiArrayList = bun.MultiArrayList;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const renamer = bun.renamer;
-const JSC = bun.JSC;
+pub const Index = bun.ast.Index;
 const debugTreeShake = Output.scoped(.TreeShake, true);
-const Loc = Logger.Loc;
-const bake = bun.bake;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
-const Graph = bundler.Graph;
-const LinkerGraph = bundler.LinkerGraph;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
-const ImportTracker = bundler.ImportTracker;
-const MangledProps = bundler.MangledProps;
+
+const string = []const u8;
+
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const js_printer = @import("../js_printer.zig");
+const lex = @import("../js_lexer.zig");
+const linker = @import("../linker.zig");
+const runtime = @import("../runtime.zig");
+const std = @import("std");
+
+const Logger = @import("../logger.zig");
+const Loc = Logger.Loc;
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const _resolver = @import("../resolver/resolver.zig");
+const Resolver = _resolver.Resolver;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const MultiArrayList = bun.MultiArrayList;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const StringJoiner = bun.StringJoiner;
+const bake = bun.bake;
+const base64 = bun.base64;
+const renamer = bun.renamer;
+const sourcemap = bun.sourcemap;
+const strings = bun.strings;
+const sync = bun.threading;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const Dependency = js_ast.Dependency;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const Part = js_ast.Part;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+const Symbol = js_ast.Symbol;
+
+const bundler = bun.bundle_v2;
+const AdditionalFile = bundler.AdditionalFile;
+const BundleV2 = bundler.BundleV2;
 const Chunk = bundler.Chunk;
-const ServerComponentBoundary = bundler.ServerComponentBoundary;
-const PartRange = bundler.PartRange;
-const JSMeta = bundler.JSMeta;
-const ExportData = bundler.ExportData;
-const EntryPoint = bundler.EntryPoint;
-const RefImportData = bundler.RefImportData;
-const StableRef = bundler.StableRef;
 const CompileResultForSourceMap = bundler.CompileResultForSourceMap;
 const ContentHasher = bundler.ContentHasher;
+const EntryPoint = bundler.EntryPoint;
+const ExportData = bundler.ExportData;
+const Graph = bundler.Graph;
+const ImportTracker = bundler.ImportTracker;
+const JSMeta = bundler.JSMeta;
+const LinkerGraph = bundler.LinkerGraph;
+const MangledProps = bundler.MangledProps;
+const PartRange = bundler.PartRange;
+const RefImportData = bundler.RefImportData;
+const ServerComponentBoundary = bundler.ServerComponentBoundary;
+const StableRef = bundler.StableRef;
 const WrapKind = bundler.WrapKind;
 const genericPathWithPrettyInitialized = bundler.genericPathWithPrettyInitialized;
-const AdditionalFile = bundler.AdditionalFile;
 const logPartDependencyTree = bundler.logPartDependencyTree;
+
+const jsc = bun.jsc;
+const EventLoop = bun.jsc.AnyEventLoop;

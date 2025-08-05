@@ -1333,14 +1333,12 @@ pub fn ParseStmt(
     };
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const Output = bun.Output;
 const logger = bun.logger;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const Binding = js_ast.Binding;
 const Expr = js_ast.Expr;
 const LocRef = js_ast.LocRef;

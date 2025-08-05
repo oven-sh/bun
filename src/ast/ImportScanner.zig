@@ -505,15 +505,14 @@ pub fn scan(
     return scanner;
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const Binding = js_ast.Binding;
 const Expr = js_ast.Expr;
 const G = js_ast.G;

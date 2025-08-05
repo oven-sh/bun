@@ -88,6 +88,20 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 
+## Build-time constants
+
+Use the `--define` flag to inject build-time constants into your executable, such as version numbers, build timestamps, or configuration values:
+
+```bash
+$ bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/cli.ts --outfile mycli
+```
+
+These constants are embedded directly into your compiled binary at build time, providing zero runtime overhead and enabling dead code elimination optimizations.
+
+{% callout type="info" %}
+For comprehensive examples and advanced patterns, see the [Build-time constants guide](/guides/runtime/build-time-constants).
+{% /callout %}
+
 ## Deploying to production
 
 Compiled executables reduce memory usage and improve Bun's start time.

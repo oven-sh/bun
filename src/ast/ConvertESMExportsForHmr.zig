@@ -500,12 +500,10 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
     ctx.last_part.tag = .none;
 }
 
-// @sortImports
-
 const bun = @import("bun");
 const logger = bun.logger;
 
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;

@@ -1,7 +1,7 @@
 pub fn writeBind(
     name: []const u8,
     cursor_name: bun.String,
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     values_array: JSValue,
     columns_value: JSValue,
     parameter_fields: []const int4,
@@ -115,7 +115,7 @@ pub fn writeBind(
             },
             .timestamp, .timestamptz => {
                 const l = try writer.length();
-                try writer.int8(types.date.fromJS(globalObject, value));
+                try writer.int8(try types.date.fromJS(globalObject, value));
                 try l.writeExcludingSelf();
             },
             .bytea => {
@@ -209,7 +209,7 @@ pub fn writeQuery(
 }
 
 pub fn prepareAndQueryWithSignature(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     query: []const u8,
     array_value: JSValue,
     comptime Context: type,
@@ -230,7 +230,7 @@ pub fn prepareAndQueryWithSignature(
 }
 
 pub fn bindAndExecute(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     statement: *PostgresSQLStatement,
     array_value: JSValue,
     columns_value: JSValue,
@@ -326,8 +326,6 @@ pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, false);
 
-// @sortImports
-
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
@@ -344,5 +342,5 @@ const short = types.short;
 const bun = @import("bun");
 const String = bun.String;
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

@@ -1,3 +1,5 @@
+const P = @This();
+
 const js_parser_jsx = js_parser_features.jsx;
 pub const is_typescript_enabled = js_parser_features.typescript;
 pub const is_jsx_enabled = js_parser_jsx != .none;
@@ -9,12 +11,11 @@ pub const track_symbol_usage_during_parse_pass = only_scan_imports_and_do_not_vi
 const ParsePassSymbolUsageType = if (track_symbol_usage_during_parse_pass) *ScanPassResult.ParsePassSymbolUsageMap else void;
 
 pub const parser_features: ParserFeatures = js_parser_features;
-const P = @This();
 pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
 pub const allow_macros = FeatureFlags.is_macro_enabled;
 const MacroCallCountType = if (allow_macros) u32 else u0;
 
-const skipTypescript_zig = @import("skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+const skipTypescript_zig = @import("./skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
 pub const skipTypescriptReturnType = skipTypescript_zig.skipTypescriptReturnType;
 pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_zig.skipTypescriptReturnTypeWithMetadata;
 pub const skipTypeScriptType = skipTypescript_zig.skipTypeScriptType;
@@ -34,7 +35,7 @@ pub const trySkipTypeScriptArrowReturnTypeWithBacktracking = skipTypescript_zig.
 pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowArgsWithBacktracking;
 pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
 
-const parse_zig = @import("parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+const parse_zig = @import("./parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
 pub const parsePrefix = parse_zig.parsePrefix;
 pub const parseSuffix = parse_zig.parseSuffix;
 pub const parseStmt = parse_zig.parseStmt;
@@ -74,7 +75,7 @@ pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
 pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
 pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
 
-const astVisit = @import("visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+const astVisit = @import("./visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
 pub const visitStmtsAndPrependTempRefs = astVisit.visitStmtsAndPrependTempRefs;
 pub const recordDeclaredSymbol = astVisit.recordDeclaredSymbol;
 pub const visitExpr = astVisit.visitExpr;
@@ -94,9 +95,9 @@ pub const visitClass = astVisit.visitClass;
 pub const visitStmts = astVisit.visitStmts;
 pub const visitAndAppendStmt = astVisit.visitAndAppendStmt;
 
-pub const BinaryExpressionVisitor = @import("visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
+pub const BinaryExpressionVisitor = @import("./visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
 
-const maybe = @import("maybe.zig").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+const maybe = @import("./maybe.zig").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
 pub const maybeRelocateVarsToTopLevel = maybe.maybeRelocateVarsToTopLevel;
 pub const maybeRewritePropertyAccess = maybe.maybeRewritePropertyAccess;
 pub const maybeCommaSpreadError = maybe.maybeCommaSpreadError;

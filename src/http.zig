@@ -1,3 +1,5 @@
+const HTTPClient = @This();
+
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
@@ -436,7 +438,7 @@ proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
+unix_socket_path: jsc.ZigString.Slice = jsc.ZigString.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -452,7 +454,7 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.detachAndDeref();
     }
     this.unix_socket_path.deinit();
-    this.unix_socket_path = JSC.ZigString.Slice.empty;
+    this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -511,7 +513,6 @@ const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
 const chunked_encoded_header = picohttp.Header{ .name = "Transfer-Encoding", .value = "chunked" };
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
-const connection_closing_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
@@ -526,7 +527,7 @@ else
 
 const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = Global.user_agent };
 
-pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
+pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
@@ -542,6 +543,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_encoding = false;
     var override_accept_header = false;
     var override_host_header = false;
+    var override_connection_header = false;
     var override_user_agent = false;
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
@@ -560,8 +562,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 continue;
             },
             hashHeaderConst("Connection") => {
-                if (!this.flags.disable_keepalive) {
-                    continue;
+                override_connection_header = true;
+                const connection_value = this.headerStr(header_values[i]);
+                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                    this.flags.disable_keepalive = true;
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -609,7 +613,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!this.flags.disable_keepalive) {
+    if (!override_connection_header and !this.flags.disable_keepalive) {
         request_headers_buf[header_count] = connection_header;
         header_count += 1;
     }
@@ -682,7 +686,7 @@ pub fn doRedirect(
     }
 
     this.unix_socket_path.deinit();
-    this.unix_socket_path = JSC.ZigString.Slice.empty;
+    this.unix_socket_path = jsc.ZigString.Slice.empty;
     // TODO: what we do with stream body?
     const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
         this.state.original_request_body.bytes
@@ -1281,7 +1285,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else JSC.API.ServerConfig.SSLConfig.zero;
+    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else jsc.API.ServerConfig.SSLConfig.zero;
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 
@@ -1679,7 +1683,7 @@ pub const HTTPClientResult = struct {
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
 
-    pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
+    pub fn abortReason(this: *const HTTPClientResult) ?jsc.CommonAbortReason {
         if (this.isTimeout()) {
             return .Timeout;
         }
@@ -2220,7 +2224,7 @@ pub fn handleResponseMetadata(
                             if (comptime Environment.allow_assert)
                                 assert(string_builder.cap == string_builder.len);
 
-                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            const normalized_url = jsc.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
                             if (normalized_url.tag == .Dead) {
                                 // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
@@ -2264,7 +2268,7 @@ pub fn handleResponseMetadata(
                             if (comptime Environment.allow_assert)
                                 assert(string_builder.cap == string_builder.len);
 
-                            const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
+                            const normalized_url = jsc.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
@@ -2275,7 +2279,7 @@ pub fn handleResponseMetadata(
                         } else {
                             const original_url = this.url;
 
-                            const new_url_ = bun.JSC.URL.join(
+                            const new_url_ = bun.jsc.URL.join(
                                 bun.String.fromBytes(original_url.href),
                                 bun.String.fromBytes(location),
                             );
@@ -2412,8 +2416,6 @@ pub fn handleResponseMetadata(
     }
 }
 
-const assert = bun.assert;
-
 // Exists for heap stats reasons.
 pub const ThreadlocalAsyncHTTP = struct {
     pub const new = bun.TrivialNew(@This());
@@ -2422,33 +2424,8 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const URL = @import("./url.zig").URL;
-
+pub const ETag = @import("./http/ETag.zig");
 pub const Method = @import("./http/Method.zig").Method;
-const Api = @import("./api/schema.zig").Api;
-const HTTPClient = @This();
-const StringBuilder = bun.StringBuilder;
-const posix = std.posix;
-const SOCK = posix.SOCK;
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const BoringSSL = bun.BoringSSL.c;
-const Progress = bun.Progress;
-const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
-const uws = bun.uws;
-const HTTPCertError = @import("./http/HTTPCertError.zig");
-const ProxyTunnel = @import("./http/ProxyTunnel.zig");
 pub const Headers = @import("./http/Headers.zig");
 pub const MimeType = @import("./http/MimeType.zig");
 pub const URLPath = @import("./http/URLPath.zig");
@@ -2465,3 +2442,31 @@ pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
+
+const string = []const u8;
+
+const HTTPCertError = @import("./http/HTTPCertError.zig");
+const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const std = @import("std");
+const URL = @import("./url.zig").URL;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const picohttp = bun.picohttp;
+const strings = bun.strings;
+const uws = bun.uws;
+const Arena = bun.allocators.MimallocArena;
+const BoringSSL = bun.BoringSSL.c;
+const api = bun.schema.api;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
+
+const posix = std.posix;
+const SOCK = posix.SOCK;

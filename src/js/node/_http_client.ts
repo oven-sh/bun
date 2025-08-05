@@ -176,7 +176,9 @@ function ClientRequest(input, options, cb) {
 
     if (!this.finished) {
       send();
-      resolveNextChunk?.(true);
+      process.nextTick(() => {
+        resolveNextChunk?.(true);
+      });
     }
 
     return this;
@@ -339,12 +341,15 @@ function ClientRequest(input, options, cb) {
             while (!self.finished) {
               yield await new Promise(resolve => {
                 resolveNextChunk = end => {
+                  const currentResolve = resolve;
                   resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
+                  process.nextTick(() => {
+                    if (end) {
+                      currentResolve(undefined);
+                    } else {
+                      currentResolve(self[kBodyChunks].shift());
+                    }
+                  });
                 };
               });
 

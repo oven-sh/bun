@@ -3078,6 +3078,155 @@ test("should handle invalid method", async () => {
   await promise;
 });
 
+test("multiple request writes should not hang (issue #21620)", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let responseReceived = false;
+  
+  await using server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ receivedBody: body }));
+    });
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+
+  const jsonStr = JSON.stringify({ key: "val", key2: 200 });
+  
+  const req = http.request(
+    {
+      hostname: "localhost",
+      port: address.port,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+    },
+    (res) => {
+      let data = "";
+      res.on("data", chunk => {
+        data += chunk.toString();
+      });
+      res.on("end", () => {
+        try {
+          const response = JSON.parse(data);
+          expect(response.receivedBody).toBe(jsonStr);
+          responseReceived = true;
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+  );
+
+  req.on("error", reject);
+
+  // Add timeout to prevent hanging
+  const timeout = setTimeout(() => {
+    if (!responseReceived) {
+      req.destroy();
+      reject(new Error("Request timed out - this indicates the hanging bug"));
+    }
+  }, 1000);
+
+  // Multiple writes cause the issue
+  req.write(jsonStr.slice(0, 5));
+  setTimeout(() => {
+    req.write(jsonStr.slice(5));
+    req.end();
+  }, 100);
+
+  try {
+    await promise;
+    clearTimeout(timeout);
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+});
+
+test("multiple https request writes should not hang", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let responseReceived = false;
+  
+  await using server = https.createServer(COMMON_TLS_CERT, (req, res) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ receivedBody: body }));
+    });
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+
+  const jsonStr = JSON.stringify({ key: "val", key2: 200 });
+  
+  const req = https.request(
+    {
+      hostname: "localhost",
+      port: address.port,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      rejectUnauthorized: false, // For test cert
+    },
+    (res) => {
+      let data = "";
+      res.on("data", chunk => {
+        data += chunk.toString();
+      });
+      res.on("end", () => {
+        try {
+          const response = JSON.parse(data);
+          expect(response.receivedBody).toBe(jsonStr);
+          responseReceived = true;
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+  );
+
+  req.on("error", reject);
+
+  // Add timeout to prevent hanging  
+  const timeout = setTimeout(() => {
+    if (!responseReceived) {
+      req.destroy();
+      reject(new Error("HTTPS request timed out - this indicates the hanging bug"));
+    }
+  }, 1000);
+
+  // Multiple writes cause the issue
+  req.write(jsonStr.slice(0, 5));
+  setTimeout(() => {
+    req.write(jsonStr.slice(5));
+    req.end();
+  }, 100);
+
+  try {
+    await promise;
+    clearTimeout(timeout);
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+});
+
 describe("HTTP Server Security Tests - Advanced", () => {
   // Setup and teardown utilities
   let server;

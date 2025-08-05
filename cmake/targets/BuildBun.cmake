@@ -1034,7 +1034,6 @@ if(LINUX)
     --ld-path=${LLD_PROGRAM}
     -fno-pic
     -Wl,-no-pie
-    -Wl,-icf=safe
     -Wl,--as-needed
     -Wl,-z,stack-size=12800000
     -Wl,--compress-debug-sections=zlib
@@ -1060,6 +1059,13 @@ if(LINUX)
       -Wl,--gc-sections
     )
   endif()
+
+  if (NOT DEBUG AND NOT ENABLE_ASAN)
+    target_link_options(${bun} PUBLIC
+      -Wl,-icf=safe
+    )
+  endif()
+
 endif()
 
 # --- Symbols list ---

@@ -277,4 +277,42 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       await Bun.file(exePath).unlink();
     }
   });
+
+  test.skipIf(!hasExiftool)("verifies real ICO file with exiftool", async () => {
+    // Real ICO file created with ImageMagick (full multi-size version)
+    const realIcoPath = join(import.meta.dir, "real-icon.ico");
+    if (!await Bun.file(realIcoPath).exists()) {
+      // Skip if real icon file doesn't exist
+      return;
+    }
+
+    const dir = tempDirWithFiles("exiftool-real-ico", {
+      "index.js": `console.log("Testing real ICO");`,
+      "real.ico": await Bun.file(realIcoPath).bytes(),
+    });
+
+    const exePath = await buildWindowsExecutable(dir, "realico.exe", {
+      "windows-icon": join(dir, "real.ico"),
+      "windows-version": "2.0.0.0",
+      "windows-title": "Real Icon Test",
+    });
+
+    try {
+      await using proc = spawn({
+        cmd: ["exiftool", "-j", exePath],
+        stdout: "pipe",
+      });
+
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      expect(exitCode).toBe(0);
+
+      const metadata = JSON.parse(stdout)[0];
+
+      // Verify version is still set with real icon
+      expect(metadata.FileVersionNumber).toBe("2.0.0.0");
+      expect(metadata.ProductName).toBe("Real Icon Test");
+    } finally {
+      await Bun.file(exePath).unlink();
+    }
+  });
 });

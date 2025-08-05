@@ -484,7 +484,25 @@ pub const PEFile = struct {
 
     /// Write the modified PE file
     pub fn write(self: *const PEFile, writer: anytype) !void {
-        try writer.writeAll(self.data.items);
+        // Find the actual end of file data
+        var file_size = self.data.items.len;
+
+        // Calculate from section headers
+        const sections = self.getSectionHeaders();
+        var actual_end: u32 = 0;
+        for (sections) |*sec| {
+            const sec_end = sec.pointer_to_raw_data + sec.size_of_raw_data;
+            if (sec_end > actual_end) {
+                actual_end = sec_end;
+            }
+        }
+
+        // Use the smaller of the two
+        if (actual_end > 0 and actual_end < file_size) {
+            file_size = actual_end;
+        }
+
+        try writer.writeAll(self.data.items[0..file_size]);
     }
 
     /// Validate the PE file structure
@@ -646,7 +664,11 @@ pub const PEFile = struct {
         // Build the resource data
         const resource_data = try resource_builder.build(rsrc_section.?.virtual_address);
         defer allocator.free(resource_data);
-
+        
+        // Sanity check - resource data shouldn't be unreasonably large
+        if (resource_data.len > 10 * 1024 * 1024) { // 10MB limit
+            return error.ResourceDataTooLarge;
+        }
         // Update the resource section
         try self.updateResourceSection(rsrc_section.?, resource_data);
 
@@ -703,7 +725,7 @@ pub const PEFile = struct {
                     .subtable = subtable,
                 });
             } else {
-                // This is a data entry
+                // This is a data entry - offset points to ResourceDataEntry
                 const data_entry_offset = entry.offset_to_data;
                 if (data_entry_offset + @sizeOf(ResourceDataEntry) > section_data.len) continue;
 
@@ -729,21 +751,116 @@ pub const PEFile = struct {
         }
     }
 
-    fn updateResourceSection(self: *PEFile, section: *SectionHeader, data: []const u8) !void {
-        const optional_header = self.getOptionalHeader();
+    fn updateResourceSection(self: *PEFile, initial_section: *SectionHeader, data: []const u8) !void {
+        // Get values we need before any potential resize
+        const file_alignment = self.getOptionalHeader().file_alignment;
+        const section_alignment = self.getOptionalHeader().section_alignment;
 
         // Calculate aligned size
-        const aligned_size = alignSize(@intCast(data.len), optional_header.file_alignment);
+        const aligned_size = alignSize(@intCast(data.len), file_alignment);
+        
+        var section = initial_section;
 
         // Check if we need to resize the section
         if (aligned_size > section.size_of_raw_data) {
-            // This is complex - would need to move all following sections
-            // For now, just error if the resource data is too large
-            return error.ResourceDataTooLarge;
+            // Need to resize the resource section
+            const old_size = section.size_of_raw_data;
+            const size_increase = aligned_size - old_size;
+
+            // Find the resource section index
+            var rsrc_index: usize = 0;
+            var sections = self.getSectionHeaders();
+            for (sections, 0..) |*sec, i| {
+                if (std.mem.eql(u8, &sec.name, ".rsrc\x00\x00\x00")) {
+                    rsrc_index = i;
+                    break;
+                }
+            }
+
+            // Check if this is the last section
+            if (rsrc_index == sections.len - 1) {
+
+                // Last section - can simply extend the file
+                try self.data.resize(self.data.items.len + size_increase);
+
+                // Re-get pointers after resize as they may have changed
+                sections = self.getSectionHeaders();
+                section = &sections[rsrc_index];
+
+                // Update section header
+                section.size_of_raw_data = aligned_size;
+                section.virtual_size = @intCast(data.len);
+
+                // Update image size in optional header
+                const opt_header = self.getOptionalHeader();
+                opt_header.size_of_image = alignSize(section.virtual_address + section.virtual_size, section_alignment);
+            } else {
+                // Not the last section - need to move all following sections
+                // IMPORTANT: Get values we need before resize, as pointers will be invalidated
+                const move_start = sections[rsrc_index + 1].pointer_to_raw_data;
+
+                // Find the actual end of file data (not just buffer size)
+                var actual_file_end: u32 = 0;
+                for (sections) |*sec| {
+                    const sec_end = sec.pointer_to_raw_data + sec.size_of_raw_data;
+                    if (sec_end > actual_file_end) {
+                        actual_file_end = sec_end;
+                    }
+                }
+
+                const move_size = actual_file_end - move_start;
+                const new_file_size = actual_file_end + size_increase;
+
+                // Only resize to what we actually need
+                if (new_file_size > self.data.items.len) {
+                    try self.data.resize(new_file_size);
+                }
+
+                // Move all data after the resource section
+                if (move_size > 0) {
+
+                    // Validate bounds
+                    if (move_start + move_size > self.data.items.len) {
+                        return error.InvalidBounds;
+                    }
+                    if (move_start + size_increase + move_size > self.data.items.len) {
+                        return error.InvalidBounds;
+                    }
+
+                    // Use safer slicing
+                    const src_slice = self.data.items[move_start .. move_start + move_size];
+                    const dst_slice = self.data.items[move_start + size_increase .. move_start + size_increase + move_size];
+
+                    std.mem.copyBackwards(u8, dst_slice, src_slice);
+                }
+
+                // Re-get section headers after resize and data move
+                sections = self.getSectionHeaders();
+                section = &sections[rsrc_index];
+
+                // Update section header for resource section
+                section.size_of_raw_data = aligned_size;
+                section.virtual_size = @intCast(data.len);
+
+                // Update all following section headers
+                for (sections[rsrc_index + 1 ..]) |*sec| {
+                    sec.pointer_to_raw_data += @intCast(size_increase);
+                }
+
+                // Update image size
+                const last_section = &sections[sections.len - 1];
+                const opt_header = self.getOptionalHeader();
+                opt_header.size_of_image = alignSize(last_section.virtual_address + last_section.virtual_size, section_alignment);
+            }
         }
 
         // Update section data
         const section_offset = section.pointer_to_raw_data;
+
+        if (section_offset + data.len > self.data.items.len) {
+            return error.BufferOverflow;
+        }
+
         @memcpy(self.data.items[section_offset..][0..data.len], data);
 
         // Zero out remaining space
@@ -755,7 +872,7 @@ pub const PEFile = struct {
         section.virtual_size = @intCast(data.len);
 
         // Update data directory
-        optional_header.data_directories[2].size = @intCast(data.len);
+        self.getOptionalHeader().data_directories[2].size = @intCast(data.len);
     }
 };
 
@@ -805,14 +922,23 @@ const ResourceBuilder = struct {
     }
 
     pub fn setIcon(self: *ResourceBuilder, icon_data: []const u8) !void {
-        // Parse ICO file header
+        // Validate minimum size
         if (icon_data.len < @sizeOf(PEFile.IconDirectory)) {
             return error.InvalidIconFile;
         }
 
-        const icon_dir = std.mem.bytesAsValue(PEFile.IconDirectory, icon_data[0..@sizeOf(PEFile.IconDirectory)]).*;
+        // Parse ICO header safely
+        const icon_dir_bytes = icon_data[0..@sizeOf(PEFile.IconDirectory)];
+        const icon_dir = std.mem.bytesAsValue(PEFile.IconDirectory, icon_dir_bytes).*;
+
+        // Validate ICO format
         if (icon_dir.reserved != 0 or icon_dir.type != 1) {
             return error.InvalidIconFormat;
+        }
+
+        // Validate icon count
+        if (icon_dir.count == 0 or icon_dir.count > 256) {
+            return error.InvalidIconCount;
         }
 
         // Get or create RT_ICON table
@@ -826,6 +952,13 @@ const ResourceBuilder = struct {
             }
         }
 
+        // Calculate expected directory size
+        const dir_entries_size = @as(usize, icon_dir.count) * @sizeOf(PEFile.IconDirectoryEntry);
+        const min_size = @sizeOf(PEFile.IconDirectory) + dir_entries_size;
+        if (icon_data.len < min_size) {
+            return error.InvalidIconFile;
+        }
+
         // Read icon entries
         var offset: usize = @sizeOf(PEFile.IconDirectory);
         var group_icon_data = std.ArrayList(u8).init(self.allocator);
@@ -836,19 +969,53 @@ const ResourceBuilder = struct {
 
         var i: usize = 0;
         while (i < icon_dir.count) : (i += 1) {
-            if (offset + @sizeOf(PEFile.IconDirectoryEntry) > icon_data.len) {
-                return error.InvalidIconFile;
+
+            // Entry should be within bounds (already checked above)
+            const entry_start = offset;
+            const entry_end = entry_start + @sizeOf(PEFile.IconDirectoryEntry);
+            if (entry_end > icon_data.len) {
+                return error.CorruptedIconFile;
             }
 
-            const entry = std.mem.bytesAsValue(PEFile.IconDirectoryEntry, icon_data[offset..][0..@sizeOf(PEFile.IconDirectoryEntry)]).*;
-            offset += @sizeOf(PEFile.IconDirectoryEntry);
+            const entry_bytes = icon_data[entry_start..entry_end];
+            const entry = std.mem.bytesAsValue(PEFile.IconDirectoryEntry, entry_bytes).*;
+            offset = entry_end;
 
-            // Read the actual icon image data
-            if (entry.image_offset + entry.bytes_in_res > icon_data.len) {
-                return error.InvalidIconFile;
+            // Validate image data bounds
+            if (entry.bytes_in_res == 0) {
+                return error.InvalidIconSize;
             }
 
-            const image_data = icon_data[entry.image_offset..][0..entry.bytes_in_res];
+            const image_start = @as(usize, entry.image_offset);
+            const image_end = image_start + @as(usize, entry.bytes_in_res);
+            if (image_start >= icon_data.len or image_end > icon_data.len) {
+                return error.InvalidIconOffset;
+            }
+
+            const image_data = icon_data[image_start..image_end];
+
+            // Validate that the image data looks like a valid bitmap
+            // Icons can be PNG or BMP format. BMP starts with BITMAPINFOHEADER
+            if (image_data.len >= 4) {
+                // Check for PNG signature
+                const is_png = std.mem.eql(u8, image_data[0..4], "\x89PNG");
+
+                // If not PNG, validate as BMP
+                if (!is_png) {
+                    // Should have at least BITMAPINFOHEADER (40 bytes)
+                    if (image_data.len < 40) {
+                        return error.InvalidIconImageData;
+                    }
+
+                    // Check BITMAPINFOHEADER size field
+                    const bmp_header_size = std.mem.readInt(u32, image_data[0..4], .little);
+                    if (bmp_header_size != 40 and bmp_header_size != 56 and bmp_header_size != 108 and bmp_header_size != 124) {
+                        // Common BITMAPINFOHEADER sizes
+                        return error.InvalidBitmapHeader;
+                    }
+                }
+            }
+
             const icon_id = first_free_icon_id + @as(u32, @intCast(i));
 
             // Add individual icon to RT_ICON table
@@ -1241,10 +1408,11 @@ const ResourceBuilder = struct {
                 try subdirs.append(.{ .entry = entry, .offset = next_table_offset });
                 next_table_offset += subdir_size;
             } else if (entry.data) |_| {
+                // Calculate offset to the ResourceDataEntry from start of resource section
                 const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len));
                 const dir_entry = PEFile.ResourceDirectoryEntry{
                     .name_or_id = entry.id,
-                    .offset_to_data = data_entry_offset, // No high bit for data entry (only for subdirectories)
+                    .offset_to_data = data_entry_offset, // No high bit for data entry (points to ResourceDataEntry)
                 };
                 try tables.appendSlice(std.mem.asBytes(&dir_entry));
 

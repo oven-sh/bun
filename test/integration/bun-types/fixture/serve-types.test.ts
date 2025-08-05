@@ -225,7 +225,6 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -246,7 +245,6 @@ test(
 
 test(
   "basic unix socket + websocket + upgrade + tls",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -286,7 +284,6 @@ test(
 
 test(
   "basic unix socket + upgrade + cheap request to check upgrade",
-  // @ts-expect-error - TODO Fix this
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
@@ -507,10 +504,11 @@ test("basic websocket upgrade and ws publish/subscribe to topics", {
 
 test(
   "port with unix socket (is a type error)",
-  {
-    unix: `${tmpdirSync()}/bun.sock`,
-    // @ts-expect-error
-    port: 0,
+  // This prettier-ignore exists because between TypeScript 5.8 and 5.9, the location of the error message changed, so
+  // to satisfy both we can just keep what would have been the two erroring lines on the same line
+  // prettier-ignore
+  // @ts-expect-error
+  { unix: `${tmpdirSync()}/bun.sock`, port: 0,
     fetch() {
       return new Response();
     },
@@ -526,10 +524,10 @@ test(
 
 test(
   "port with unix socket with websocket + upgrade (is a type error)",
-  {
-    unix: `${tmpdirSync()}/bun.sock`,
-    // @ts-expect-error
-    port: 0,
+  // Prettier ignore exists for same reason as above
+  // prettier-ignore
+  // @ts-expect-error
+  { unix: `${tmpdirSync()}/bun.sock`, port: 0,
     fetch(req, server) {
       server.upgrade(req);
       if (Math.random() > 0.5) return undefined;

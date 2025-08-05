@@ -884,28 +884,36 @@ export async function describeWithContainer(
     let containerId: string;
     {
       const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start`, () => {});
+        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
         return false;
       }
       containerId = stdout.toString("utf-8").trim();
     }
     let port: number;
     {
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "port", containerId],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port`, () => {});
+        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
         return false;
       }
       const [firstPort] = stdout

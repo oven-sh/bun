@@ -103,9 +103,10 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟢 **Mostly Complete** - All core child_process functions (spawn, exec, fork, etc.) are fully implemented with comprehensive stdio, environment, and IPC support. 
+🟢 **Mostly Complete** - All core child_process functions (spawn, exec, fork, etc.) are fully implemented with comprehensive stdio, environment, and IPC support.
 
-**Minor limitations:** 
+**Minor limitations:**
+
 - Missing `proc.gid`/`proc.uid` properties (validation exists, implementation needed in Bun.spawn)
 - `Stream` base class not exported (easy fix - add to exports)
 - IPC cannot send socket handles/file descriptors (Node.js advanced feature)
@@ -114,9 +115,10 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
 🟡 **Partially implemented with limitations:**
+
 - ✅ Worker process management, IPC communication, and round-robin load balancing
 - ❌ Handle/file descriptor passing not implemented (blocks SCHED_NONE scheduling)
-- ❌ Direct socket sharing unavailable on all platforms  
+- ❌ Direct socket sharing unavailable on all platforms
 - ⚠️ HTTP load balancing requires SO_REUSEPORT (Linux only) or external load balancer
 - ⚠️ Memory management in IPC layer needs optimization
 
@@ -137,9 +139,9 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `syncBuiltinESMExports` (stub implementation), `Module#load()`, and `module.register` (stub implementation). 
+🟡 Missing `syncBuiltinESMExports` (stub implementation), `Module#load()`, and `module.register` (stub implementation).
 
-✅ Overriding `require.cache` is fully supported for ESM & CJS modules. 
+✅ Overriding `require.cache` is fully supported for ESM & CJS modules.
 
 ✅ `module._extensions`, `module._pathCache`, `module._cache` are fully functional (not no-ops). Custom extensions can be registered and work correctly.
 

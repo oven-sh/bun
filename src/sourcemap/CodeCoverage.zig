@@ -349,7 +349,7 @@ pub const Report = struct {
                 filename = bun.path.relative(base_path, filename);
             }
 
-            const functions_fraction = report.functionCoverageFraction();  
+            const functions_fraction = report.functionCoverageFraction();
             const lines_fraction = report.linesCoverageFraction();
 
             try writer.print(
@@ -373,11 +373,11 @@ pub const Report = struct {
                 const is_covered = report.lines_which_have_executed.isSet(line_index);
                 const hit_count = if (line_index < line_hits.len) line_hits[line_index] else 0;
 
-                const css_class = if (!is_executable) 
-                    "line non-executable" 
-                else if (is_covered) 
-                    "line covered" 
-                else 
+                const css_class = if (!is_executable)
+                    "line non-executable"
+                else if (is_covered)
+                    "line covered"
+                else
                     "line uncovered";
 
                 try writer.print(
@@ -385,7 +385,7 @@ pub const Report = struct {
                 , .{ css_class, line_number, hit_count });
 
                 try writer.print("{d: >4} | ", .{line_number});
-                
+
                 // HTML escape the source line
                 for (line) |char| {
                     switch (char) {

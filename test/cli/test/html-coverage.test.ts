@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
-import { readFileSync, existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("HTML coverage reporter", () => {
@@ -55,15 +55,15 @@ test("subtract function", () => {
 
     // Check the HTML content
     const htmlContent = readFileSync(htmlPath, "utf-8");
-    
+
     // Should contain basic HTML structure
     expect(htmlContent).toContain("<!DOCTYPE html>");
     expect(htmlContent).toContain("<title>Bun Coverage Report</title>");
     expect(htmlContent).toContain("<h1>Bun Coverage Report</h1>");
-    
+
     // Should contain the demo.ts file
     expect(htmlContent).toContain("demo.ts");
-    
+
     // Should contain coverage information
     expect(htmlContent).toContain("Functions");
     expect(htmlContent).toContain("Lines");
@@ -92,7 +92,18 @@ test("multiply function", () => {
     });
 
     const result = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter", "text", "--coverage-reporter", "html", "--coverage-reporter", "lcov", "./lib.test.ts"],
+      cmd: [
+        bunExe(),
+        "test",
+        "--coverage",
+        "--coverage-reporter",
+        "text",
+        "--coverage-reporter",
+        "html",
+        "--coverage-reporter",
+        "lcov",
+        "./lib.test.ts",
+      ],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -110,7 +121,7 @@ test("multiply function", () => {
     // Check that all coverage files were created
     expect(existsSync(join(dir, "coverage", "index.html"))).toBe(true);
     expect(existsSync(join(dir, "coverage", "lcov.info"))).toBe(true);
-    
+
     // Check text output contains coverage table
     expect(stderr).toContain("lib.ts");
     expect(stderr).toContain("% Funcs");

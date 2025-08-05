@@ -1173,7 +1173,7 @@ pub const CommandLineReporter = struct {
                 );
             }
         }
-        
+
         // Write HTML header
         if (comptime reporters.html) {
             try html_writer.writeAll(
@@ -1216,7 +1216,7 @@ pub const CommandLineReporter = struct {
                 \\    <h1>Bun Coverage Report</h1>
                 \\    <p>Generated on 
             );
-            
+
             // Add timestamp
             const timestamp = std.time.timestamp();
             const datetime = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
@@ -1224,16 +1224,16 @@ pub const CommandLineReporter = struct {
             const epoch_day = datetime.getEpochDay();
             const year_day = epoch_day.calculateYearDay();
             const month_day = year_day.calculateMonthDay();
-            
+
             try html_writer.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}</p>\n  </div>\n", .{
-                year_day.year, 
-                month_day.month.numeric(), 
+                year_day.year,
+                month_day.month.numeric(),
                 month_day.day_index + 1,
                 day_seconds.getHoursIntoDay(),
                 day_seconds.getMinutesIntoHour(),
                 day_seconds.getSecondsIntoMinute(),
             });
-            
+
             try html_writer.writeAll(
                 \\  <div class="files-table">
                 \\    <table>
@@ -1375,7 +1375,7 @@ pub const CommandLineReporter = struct {
                 \\</html>
                 \\
             );
-            
+
             try html_buffered_writer.flush();
             html_file.close();
             const cwd = bun.FD.cwd();

@@ -903,6 +903,12 @@ extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 export var Bun__reported_memory_size: usize = 0;
 
 pub fn printMetadata(writer: anytype) !void {
+    if (comptime bun.Environment.isDebug) {
+        if (Output.isAIAgent()) {
+            return;
+        }
+    }
+
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
@@ -1629,10 +1635,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             return;
         },
         .linux => {
-            // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperclover): see if zig 0.14 fixes this
-            WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
-            return;
+            if (!bun.Environment.isDebug) {
+                // Linux doesnt seem to be able to decode it's own debug info.
+                // TODO(@paperclover): see if zig 0.14 fixes this
+                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+                return;
+            }
         },
         else => {
             // Assume debug symbol tooling is reliable.
@@ -1682,25 +1690,31 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
     }
 
-    // std.process is used here because bun.spawnSync with libuv does not work within
-    // the crash handler.
-    const proc = std.process.Child.run(.{
-        .allocator = alloc,
-        .argv = argv.items,
-    }) catch {
+    var child = std.process.Child.init(argv.items, alloc);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    child.expand_arg0 = .expand;
+    child.progress_node = std.Progress.Node.none;
+
+    child.spawn() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
         if (bun.Environment.isWindows) {
             stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch return;
         }
         return;
     };
-    if (proc.term != .Exited or proc.term.Exited != 0) {
+
+    const result = child.spawnAndWait() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
+    };
+
+    if (result.term != .Exited or result.term.Exited != 0) {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
     }
-    defer alloc.free(proc.stderr);
-    defer alloc.free(proc.stdout);
-    stderr.writeAll(proc.stdout) catch return;
-    stderr.writeAll(proc.stderr) catch return;
 }
 
 pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimits) void {

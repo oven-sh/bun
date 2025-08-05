@@ -59,8 +59,8 @@ test("my feature", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    proc.stdout.text(),
+    proc.stderr.text(),
     proc.exited,
   ]);
 
@@ -68,6 +68,8 @@ test("my feature", async () => {
   expect(stdout).toBe("hello\n");
 });
 ```
+
+- Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
 
 ## Code Architecture
 
@@ -219,16 +221,16 @@ bun ci
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
-2. **Use `await using`** for proper resource cleanup with Bun APIs (Bun.spawn, Bun.serve, Bun.connect, etc.)
-3. **Follow existing code style** - check neighboring files for patterns
-4. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
-5. **Use absolute paths** - Always use absolute paths in file operations
-6. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-7. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
-8. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
-9. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
-10. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
-11. **Transpiled source** - Find transpiled files in `/tmp/bun-debug-src/` for debugging
+2. **All changes must be tested** - if you're not testing your changes, you're not done.
+3. **Get your tests to pass**. If you didn't run the tests, your code does not work.
+4. **Follow existing code style** - check neighboring files for patterns
+5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
+6. **Use absolute paths** - Always use absolute paths in file operations
+7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
+8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
+9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
+11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 
 ## Key APIs and Features
 

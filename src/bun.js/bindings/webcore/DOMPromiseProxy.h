@@ -35,7 +35,7 @@ namespace WebCore {
 
 template<typename IDLType>
 class DOMPromiseProxy {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMPromiseProxy);
 
 public:
     using Value = typename IDLType::StorageType;
@@ -62,7 +62,7 @@ private:
 
 template<>
 class DOMPromiseProxy<IDLUndefined> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMPromiseProxy<IDLUndefined>);
 
 public:
     DOMPromiseProxy() = default;
@@ -88,7 +88,7 @@ private:
 // FontFace and FontFaceSet.
 template<typename IDLType>
 class DOMPromiseProxyWithResolveCallback {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMPromiseProxyWithResolveCallback);
 
 public:
     using ResolveCallback = Function<typename IDLType::ParameterType()>;

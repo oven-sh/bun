@@ -126,12 +126,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .client => struct {
                 /// Content depends on `flags.kind`
                 /// See function wrappers to safely read into this data
-                content: extern union {
-                    /// Allocated by `dev.allocator`. Access with `.jsCode()`
+                content: union {
+                    /// Access contents with `.jsCode()`.
                     /// When stale, the code is "", otherwise it contains at
                     /// least one non-whitespace character, as empty chunks
                     /// contain at least a function wrapper.
-                    js_code_ptr: [*]const u8,
+                    js_code: struct {
+                        ptr: [*]const u8,
+                        allocator: std.mem.Allocator,
+                    },
                     /// Access with `.cssAssetId()`
                     css_asset_id: u64,
 
@@ -179,18 +182,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    const d = std.debug;
-                    if (!Environment.isDebug) {
-                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 3);
-                        d.assert(@alignOf(@This()) == @alignOf([*]u8));
+                    if (@import("builtin").mode == .ReleaseFast or @import("builtin").mode == .ReleaseSmall) {
+                        bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
+                        bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }
                 }
 
-                fn initJavaScript(code_slice: []const u8, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
+                fn initJavaScript(code_slice: []const u8, code_allocator: std.mem.Allocator, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
                     assert(flags.kind == .js or flags.kind == .asset);
                     assert(flags.source_map_state == std.meta.activeTag(source_map));
                     return .{
-                        .content = .{ .js_code_ptr = code_slice.ptr },
+                        .content = .{ .js_code = .{
+                            .ptr = code_slice.ptr,
+                            .allocator = code_allocator,
+                        } },
                         .code_len = @intCast(code_slice.len),
                         .flags = flags,
                         .source_map = source_map.untag(),
@@ -220,7 +225,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 fn jsCode(file: @This()) []const u8 {
                     assert(file.flags.kind.hasInlinejscodeChunk());
-                    return file.content.js_code_ptr[0..file.code_len];
+                    return file.content.js_code.ptr[0..file.code_len];
+                }
+
+                fn freeJsCode(file: *@This()) void {
+                    assert(file.flags.kind.hasInlinejscodeChunk());
+                    file.content.js_code.allocator.free(file.jsCode());
                 }
 
                 fn cssAssetId(file: @This()) u64 {
@@ -250,7 +260,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn freeFileContent(g: *IncrementalGraph(.client), key: []const u8, file: *File, css: enum { unref_css, ignore_css }) void {
             switch (file.flags.kind) {
                 .js, .asset => {
-                    g.owner().allocator.free(file.jsCode());
+                    file.freeJsCode();
                     switch (file.sourceMap()) {
                         .ref => |ptr| {
                             ptr.derefWithContext(g.owner());
@@ -275,8 +285,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
             /// The file the import statement references.
             imported: FileIndex,
 
+            /// Next edge in the "imports" linked list for the `dependency` file.
+            /// Used to iterate through all files that `dependency` imports.
             next_import: EdgeIndex.Optional,
+
+            /// Next edge in the "dependencies" linked list for the `imported` file.
+            /// Used to iterate through all files that import `imported`.
             next_dependency: EdgeIndex.Optional,
+
+            /// Previous edge in the "dependencies" linked list for the `imported` file.
+            /// Enables bidirectional traversal and efficient removal from the middle of the list.
             prev_dependency: EdgeIndex.Optional,
         };
 
@@ -378,9 +396,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             content: union(enum) {
                 js: struct {
                     code: []const u8,
+                    code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
-                        escaped_source: []u8,
+                        escaped_source: ?[]u8,
                     },
                 },
                 css: u64,
@@ -467,24 +486,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     switch (content) {
                         .css => |css| gop.value_ptr.* = .initCSS(css, flags),
                         .js => |js| {
-                            dev.allocation_scope.assertOwned(js.code);
-
                             // Insert new source map or patch existing empty source map.
                             const source_map: PackedMap.RefOrEmpty = brk: {
                                 if (js.source_map) |source_map| {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
-                                        dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
-                                        dev.allocation_scope.assertOwned(source_map.escaped_source);
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
-                                            source_map.escaped_source,
+                                            source_map.escaped_source.?,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;
                                     take.deinit();
-                                    dev.allocator.free(source_map.escaped_source);
+                                    if (source_map.escaped_source) |escaped_source| {
+                                        bun.default_allocator.free(escaped_source);
+                                    }
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -500,7 +517,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 } };
                             };
 
-                            gop.value_ptr.* = .initJavaScript(js.code, flags, source_map);
+                            gop.value_ptr.* = .initJavaScript(js.code, js.code_allocator, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator, file_index);
@@ -571,7 +588,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (content.js.source_map) |source_map| {
                             var take = source_map.chunk.buffer;
                             take.deinit();
-                            dev.allocator.free(source_map.escaped_source);
+                            if (source_map.escaped_source) |escaped_source| {
+                                bun.default_allocator.free(escaped_source);
+                            }
                         }
                     }
                 },
@@ -656,6 +675,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
             }
 
+            // We need to add this here to not trip up
+            // `checkEdgeRemoval(edge_idx)` (which checks that there no
+            // references to `edge_idx`.
+            //
+            // I don't think `g.first_import.items[file_index]` is ever read
+            // from again in this function, so this is safe.
+            g.first_import.items[file_index.get()] = .none;
+
             // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()[0..quick_lookup_values_to_care_len]) |val| {
                 if (!val.seen) {
@@ -679,25 +706,47 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
+        /// When we delete an edge, we need to delete it by connecting the
+        /// previous dependency (importer) edge to the next depedenency
+        /// (importer) edge.
+        ///
+        /// DO NOT ONLY CALL THIS FUNCTION TO TRY TO DELETE AN EDGE, YOU MUST DELETE
+        /// THE IMPORTS TOO!
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
-            igLog("detach edge={d} | id={d} {} -> id={d} {}", .{
+            const imported = edge.imported.get();
+            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, true);
+            log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
                 bun.fmt.quote(g.bundled_files.keys()[edge.dependency.get()]),
-                edge.imported.get(),
+                imported,
                 bun.fmt.quote(g.bundled_files.keys()[edge.imported.get()]),
+                if (g.first_dep.items[imported].unwrap()) |first_dep| first_dep.get() else 42069000,
             });
+
+            // Delete this edge by connecting the previous dependency to the
+            // next dependency and vice versa
             if (edge.prev_dependency.unwrap()) |prev| {
                 const prev_dependency = &g.edges.items[prev.get()];
                 prev_dependency.next_dependency = edge.next_dependency;
+
+                if (edge.next_dependency.unwrap()) |next| {
+                    const next_dependency = &g.edges.items[next.get()];
+                    next_dependency.prev_dependency = edge.prev_dependency;
+                }
             } else {
+                // If no prev dependency, this better be the first one!
                 assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
-                g.first_dep.items[edge.imported.get()] = .none;
-            }
-            if (edge.next_dependency.unwrap()) |next| {
-                const next_dependency = &g.edges.items[next.get()];
-                next_dependency.prev_dependency = edge.prev_dependency;
+
+                // The edge has no prev dependency, but it *might* have a next dependency!
+                if (edge.next_dependency.unwrap()) |next| {
+                    const next_dependency = &g.edges.items[next.get()];
+                    next_dependency.prev_dependency = .none;
+                    g.first_dep.items[edge.imported.get()] = next.toOptional();
+                } else {
+                    g.first_dep.items[edge.imported.get()] = .none;
+                }
             }
         }
 
@@ -1363,13 +1412,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // TODO: DevServer should get a stdio manager which can process
             // the error list as it changes while also supporting a REPL
             log.print(Output.errorWriter()) catch {};
-            const failure = try SerializedFailure.initFromLog(
-                dev,
-                fail_owner,
-                dev.relativePath(gop.key_ptr.*),
-                log.msgs.items,
-            );
-            defer dev.releaseRelativePathBuf();
+            const failure = failure: {
+                const relative_path_buf = dev.relative_path_buf.lock();
+                defer dev.relative_path_buf.unlock();
+                // this string is just going to be memcpy'd into the log buffer
+                const owner_display_name = dev.relativePath(relative_path_buf, gop.key_ptr.*);
+                break :failure try SerializedFailure.initFromLog(
+                    dev,
+                    fail_owner,
+                    owner_display_name,
+                    log.msgs.items,
+                );
+            };
             const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
@@ -1385,6 +1439,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Disconnect all imports
             var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            g.first_import.items[index.get()] = .none;
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
                 it = dep.next_import.unwrap();
@@ -1582,13 +1637,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.writeAll("}, {\n  main: ");
                         const initial_response_entry_point = options.initial_response_entry_point;
                         if (initial_response_entry_point.len > 0) {
+                            const relative_path_buf = g.owner().relative_path_buf.lock();
+                            defer g.owner().relative_path_buf.unlock();
                             try bun.js_printer.writeJSONString(
-                                g.owner().relativePath(initial_response_entry_point),
+                                g.owner().relativePath(relative_path_buf, initial_response_entry_point),
                                 @TypeOf(w),
                                 w,
                                 .utf8,
                             );
-                            g.owner().releaseRelativePathBuf();
                         } else {
                             try w.writeAll("null");
                         }
@@ -1607,13 +1663,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
+                            const relative_path_buf = g.owner().relative_path_buf.lock();
+                            defer g.owner().relative_path_buf.unlock();
                             try bun.js_printer.writeJSONString(
-                                g.owner().relativePath(options.react_refresh_entry_point),
+                                g.owner().relativePath(relative_path_buf, options.react_refresh_entry_point),
                                 @TypeOf(w),
                                 w,
                                 .utf8,
                             );
-                            g.owner().releaseRelativePathBuf();
                         }
                         try w.writeAll("\n})");
                     },
@@ -1685,10 +1742,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             var source_map_strings = std.ArrayList(u8).init(arena);
             defer source_map_strings.deinit();
 
-            const dev = g.owner();
-            dev.relative_path_buf_lock.lock();
-            defer dev.relative_path_buf_lock.unlock();
-
             const buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
 
@@ -1725,6 +1778,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Disconnect all imports
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                g.first_import.items[file_index.get()] = .none;
                 while (it) |edge_index| {
                     const dep = g.edges.items[edge_index.get()];
                     it = dep.next_import.unwrap();
@@ -1767,6 +1821,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
         fn freeEdge(g: *@This(), edge_index: EdgeIndex) void {
+            igLog("IncrementalGraph(0x{x}, {s}).freeEdge({d})", .{ @intFromPtr(g), @tagName(side), edge_index.get() });
+            defer g.checkEdgeRemoval(edge_index);
             if (Environment.isDebug) {
                 g.edges.items[edge_index.get()] = undefined;
             }
@@ -1778,6 +1834,49 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     // Leak an edge object; Ok since it may get cleaned up by
                     // the next incremental graph garbage-collection cycle.
                 };
+            }
+        }
+
+        /// It is very easy to call `g.freeEdge(idx)` but still keep references
+        /// to the idx around, basically causing use-after-free with more steps
+        /// and no asan to check it since we are dealing with indices and not
+        /// pointers to memory.
+        ///
+        /// So we'll check it manually by making sure there are no references to
+        /// `edge_index` in the graph.
+        fn checkEdgeRemoval(g: *@This(), edge_index: EdgeIndex) void {
+            // Enable this on any builds with asan enabled so we can catch stuff
+            // in CI too
+            const enabled = bun.asan.enabled or bun.Environment.ci_assert;
+            if (comptime !enabled) return;
+
+            for (g.first_dep.items) |maybe_first_dep| {
+                if (maybe_first_dep.unwrap()) |first_dep| {
+                    bun.assert_neql(first_dep.get(), edge_index.get());
+                }
+            }
+
+            for (g.first_import.items) |maybe_first_import| {
+                if (maybe_first_import.unwrap()) |first_import| {
+                    bun.assert_neql(first_import.get(), edge_index.get());
+                }
+            }
+
+            for (g.edges.items) |edge| {
+                const in_free_list = in_free_list: {
+                    for (g.edges_free_list.items) |free_edge_index| {
+                        if (free_edge_index.get() == edge_index.get()) {
+                            break :in_free_list true;
+                        }
+                    }
+                    break :in_free_list false;
+                };
+
+                if (in_free_list) continue;
+
+                bun.assert_neql(edge.prev_dependency.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_import.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_dependency.unwrapGet(), edge_index.get());
             }
         }
 

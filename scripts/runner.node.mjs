@@ -74,7 +74,6 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
-const napiTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
@@ -271,6 +270,7 @@ const skipArray = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
@@ -471,38 +471,45 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
-    // bun install has succeeded
-    const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
-    const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-    console.log("run in", cwd);
-    let exiting = false;
+    // TODO: remove windows exclusion here
+    if (isCI && !isWindows) {
+      // bun install has succeeded
+      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
+      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+      console.log("run in", cwd);
+      let exiting = false;
 
-    const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
-      stdio: ["ignore", "pipe", "inherit"],
-      cwd, // run in main repo
-      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
-    });
-    server.unref();
-    server.on("error", errorResolve);
-    server.on("exit", (code, signal) => {
-      if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
-    });
-    process.on("exit", () => {
-      exiting = true;
-      server.kill();
-    });
-    const lines = createInterface(server.stdout);
-    lines.on("line", line => {
-      portResolve({ port: parseInt(line) });
-    });
+      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
+        stdio: ["ignore", "pipe", "inherit"],
+        cwd, // run in main repo
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      });
+      server.unref();
+      server.on("error", errorResolve);
+      server.on("exit", (code, signal) => {
+        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+      });
+      function onBeforeExit() {
+        exiting = true;
+        server.off("error");
+        server.off("exit");
+        server.kill?.();
+      }
+      process.once("beforeExit", onBeforeExit);
+      const lines = createInterface(server.stdout);
+      lines.on("line", line => {
+        portResolve({ port: parseInt(line) });
+      });
 
-    const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
-    if (typeof result.port != "number") {
-      server.kill();
-      console.warn("ci-remap server did not start:", result);
-    } else {
-      console.log("crash reports parsed on port", result.port);
-      remapPort = result.port;
+      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
+      if (typeof result?.port != "number") {
+        process.off("beforeExit", onBeforeExit);
+        server.kill?.();
+        console.warn("ci-remap server did not start:", result);
+      } else {
+        console.log("crash reports parsed on port", result.port);
+        remapPort = result.port;
+      }
     }
 
     await Promise.all(
@@ -1285,9 +1292,6 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
-  }
-  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
-    return napiTimeout;
   }
   return testTimeout;
 }

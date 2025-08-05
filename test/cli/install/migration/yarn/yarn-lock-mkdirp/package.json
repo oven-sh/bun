@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "mkdirp": "^1.0.2"
+  }
+}

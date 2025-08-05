@@ -22,8 +22,6 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
-
     loop: EventLoop,
 
     /// string buffer containing pre-formatted unique keys
@@ -147,18 +145,25 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *string = &this.graph.files.items(.quoted_source_contents)[source_index];
+            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                quoted_source_contents.* = "";
+                if (quoted_source_contents.*) |slice| {
+                    bun.default_allocator.free(slice);
+                    quoted_source_contents.* = null;
+                }
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
-            const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
+            var mutable = MutableString.initEmpty(bun.default_allocator);
+            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
+            if (quoted_source_contents.*) |slice| {
+                bun.default_allocator.free(slice);
+            }
+            quoted_source_contents.* = mutable.slice();
         }
     };
 
@@ -208,7 +213,6 @@ pub const LinkerContext = struct {
 
         try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
-        this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];
 
@@ -355,6 +359,36 @@ pub const LinkerContext = struct {
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
+        }
+
+        // Validate top-level await for all files first, like esbuild does.
+        // This must be done before scanImportsAndExports to ensure async
+        // status is properly propagated through cyclic imports.
+        {
+            const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
+            const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
+            const tla_checks = this.parse_graph.ast.items(.tla_check);
+            const input_files = this.parse_graph.input_files.items(.source);
+            const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
+            const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
+            // Process all files in source index order, like esbuild does
+            var source_index: u32 = 0;
+            while (source_index < this.graph.files.len) : (source_index += 1) {
+
+                // Skip runtime
+                if (source_index == Index.runtime.get()) continue;
+
+                // Skip if not a JavaScript AST
+                if (source_index >= import_records_list.len) continue;
+
+                // Skip CSS files
+                if (css_asts[source_index] != null) continue;
+
+                const import_records = import_records_list[source_index].slice();
+
+                _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
+            }
         }
 
         try this.scanImportsAndExports();
@@ -679,8 +713,8 @@ pub const LinkerContext = struct {
                 }
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
 
             var next_mapping_source_index: i32 = 1;
@@ -700,8 +734,8 @@ pub const LinkerContext = struct {
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
                 quote_buf.appendAssumeCapacity(", ");
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                try js_printer.quoteForJSON(path.pretty, &quote_buf, false);
+                j.pushStatic(quote_buf.slice()); // freed by arena
             }
         }
 
@@ -713,11 +747,11 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index]);
+                j.pushStatic(quoted_source_map_contents[index] orelse "");
             }
         }
         j.pushStatic(
@@ -2387,7 +2421,11 @@ pub const LinkerContext = struct {
             // 4. externals
             return .{ .joiner = j.* };
 
-        var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        var pieces = brk: {
+            errdefer j.deinit();
+            break :brk try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+        };
+        errdefer pieces.deinit();
         const complete_output = try j.done(allocator);
         var output = complete_output;
 

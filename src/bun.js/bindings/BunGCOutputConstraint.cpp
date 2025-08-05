@@ -23,6 +23,65 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * =========================== DOM GC OUTPUT CONSTRAINTS EXPLANATION ===========================
+ *
+ * What is DOMGCOutputConstraint?
+ * ------------------------------
+ * DOMGCOutputConstraint is a garbage collection marking constraint that ensures certain DOM/WebCore
+ * objects are revisited during garbage collection AFTER JavaScript execution (the "mutator") has
+ * resumed. This is critical for maintaining GC correctness when objects can create new references
+ * or change their reachability graph based on runtime JavaScript state.
+ *
+ * Why do we need this in Bun?
+ * ---------------------------
+ * Even though Bun doesn't have a full DOM implementation like a browser, we still use many WebCore
+ * types that have "volatile" marking behavior - meaning their references to other objects can change
+ * dynamically during JavaScript execution. Without this constraint, we risk:
+ *
+ * 1. Memory leaks - Objects staying alive that should be collected
+ * 2. Premature collection - Objects being freed while still reachable through dynamic references
+ * 3. Use-after-free crashes - Accessing collected objects through untracked references
+ *
+ * How does it work?
+ * -----------------
+ * 1. During GC, objects are marked through their visitChildren/visitAdditionalChildren methods
+ * 2. JavaScript execution resumes (mutator runs)
+ * 3. New references may be created or changed during JS execution
+ * 4. DOMGCOutputConstraint runs and calls visitOutputConstraints on relevant objects
+ * 5. This re-visits the objects to catch any new references created in step 3
+ *
+ * Which Bun objects need this?
+ * ----------------------------
+ * Objects that implement visitOutputConstraints() need this constraint. In Bun, these include:
+ *
+ * - EventTarget & EventEmitter: Dynamic event listener references
+ * - MessagePort & MessageChannel: Cross-context messaging with transferable objects
+ * - PerformanceObserver: Dynamic observer callbacks
+ * - CustomEvent, MessageEvent, ErrorEvent: Event objects with mutable properties
+ * - SQLStatement: Prepared statements with dynamic bindings
+ * - JSMockFunction: Test mocking with dynamic behavior
+ * - Various WebCore types we inherit
+ *
+ * Relevant WebKit files for reference:
+ * ------------------------------------
+ * - Source/WebCore/bindings/js/DOMGCOutputConstraint.cpp (original implementation)
+ * - Source/WebCore/bindings/js/JSEventTargetCustom.cpp (visitAdditionalChildren example)
+ * - Source/WebCore/bindings/js/JSDocumentCustom.cpp (complex marking example)
+ * - Source/WebCore/bindings/js/JSMessagePortCustom.cpp (cross-context references)
+ * - Source/WebCore/dom/EventTarget.idl (JSCustomMarkFunction attribute)
+ * - Source/JavaScriptCore/heap/MarkingConstraint.h (base constraint class)
+ *
+ * The key insight: Any object whose reachability graph can change based on JavaScript execution
+ * state needs output constraints. This is common for objects that:
+ * - Maintain event listeners or callbacks
+ * - Have cross-context or cross-heap references
+ * - Use opaque roots or weak references
+ * - Have mutable properties that affect GC reachability
+ *
+ * =========================================================================================
+ */
+
 #include "config.h"
 
 #include <JavaScriptCore/WeakInlines.h>
@@ -30,107 +89,6 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/MarkingConstraint.h>
-
-// namespace JSC {
-
-// class VisitCounter {
-// public:
-//     VisitCounter() {}
-
-//     VisitCounter(AbstractSlotVisitor& visitor)
-//         : m_visitor(&visitor)
-//         , m_initialVisitCount(visitor.visitCount())
-//     {
-//     }
-
-//     AbstractSlotVisitor& visitor() const { return *m_visitor; }
-
-//     size_t visitCount() const
-//     {
-//         return m_visitor->visitCount() - m_initialVisitCount;
-//     }
-
-// private:
-//     AbstractSlotVisitor* m_visitor { nullptr };
-//     size_t m_initialVisitCount { 0 };
-// };
-
-// static constexpr bool verboseMarkingConstraint = false;
-
-// MarkingConstraint::MarkingConstraint(CString abbreviatedName, CString name, ConstraintVolatility volatility, ConstraintConcurrency concurrency, ConstraintParallelism parallelism)
-//     : m_abbreviatedName(abbreviatedName)
-//     , m_name(WTFMove(name))
-//     , m_volatility(volatility)
-//     , m_concurrency(concurrency)
-//     , m_parallelism(parallelism)
-// {
-// }
-
-// MarkingConstraint::~MarkingConstraint()
-// {
-// }
-
-// void MarkingConstraint::resetStats()
-// {
-//     m_lastVisitCount = 0;
-// }
-
-// void MarkingConstraint::execute(SlotVisitor& visitor)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     VisitCounter visitCounter(visitor);
-//     executeImpl(visitor);
-//     m_lastVisitCount += visitCounter.visitCount();
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in execute)");
-// }
-
-// void MarkingConstraint::executeSynchronously(AbstractSlotVisitor& visitor)
-// {
-//     prepareToExecuteImpl(NoLockingNecessary, visitor);
-//     executeImpl(visitor);
-// }
-
-// double MarkingConstraint::quickWorkEstimate(SlotVisitor&)
-// {
-//     return 0;
-// }
-
-// double MarkingConstraint::workEstimate(SlotVisitor& visitor)
-// {
-//     return lastVisitCount() + quickWorkEstimate(visitor);
-// }
-
-// void MarkingConstraint::prepareToExecute(const AbstractLocker& constraintSolvingLocker, SlotVisitor& visitor)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     dataLogIf(Options::logGC(), abbreviatedName());
-//     VisitCounter visitCounter(visitor);
-//     prepareToExecuteImpl(constraintSolvingLocker, visitor);
-//     m_lastVisitCount = visitCounter.visitCount();
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in prepareToExecute)");
-// }
-
-// void MarkingConstraint::doParallelWork(SlotVisitor& visitor, SharedTask<void(SlotVisitor&)>& task)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     VisitCounter visitCounter(visitor);
-//     task.run(visitor);
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in doParallelWork)");
-//     {
-//         Locker locker { m_lock };
-//         m_lastVisitCount += visitCounter.visitCount();
-//     }
-// }
-
-// void MarkingConstraint::prepareToExecuteImpl(const AbstractLocker&, AbstractSlotVisitor&)
-// {
-// }
-
-// } // namespace JSC
-
 #include "BunGCOutputConstraint.h"
 
 #include "WebCoreJSClientData.h"

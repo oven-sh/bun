@@ -10,29 +10,6 @@ type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => v
  */
 declare function $bundleError(...message: any[]): never;
 
-declare module "bun" {
-  namespace SQL.__internal {
-    type Define<T, K extends keyof T = never> = T & {
-      [Key in K | "adapter"]: NonNullable<T[Key]>;
-    } & {};
-
-    /**
-     * Represents the result of the `parseOptions()` function in the sqlite path
-     */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions>;
-
-    /**
-     * Represents the result of the `parseOptions()` function in the postgres path
-     */
-    type DefinedPostgresOptions = Define<Bun.SQL.PostgresOptions, "max" | "prepare"> & {
-      sslMode: 0 | 1 | 2 | 3 | 4; // keep in sync with SSLMode enum in src/js/sql.ts
-      query: string;
-    };
-
-    type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOptions;
-  }
-}
-
 interface BunFSWatcher {
   /**
    * Stop watching for changes on the given `BunFSWatcher`. Once stopped, the `BunFSWatcher` object is no longer usable.

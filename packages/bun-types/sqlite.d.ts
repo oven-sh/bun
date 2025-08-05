@@ -25,66 +25,6 @@
  */
 declare module "bun:sqlite" {
   /**
-   * Options for {@link Database}
-   */
-  export interface DatabaseOptions {
-    /**
-     * Open the database as read-only (no write operations, no create).
-     *
-     * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-     */
-    readonly?: boolean;
-
-    /**
-     * Allow creating a new database
-     *
-     * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-     */
-    create?: boolean;
-
-    /**
-     * Open the database as read-write
-     *
-     * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-     */
-    readwrite?: boolean;
-
-    /**
-     * When set to `true`, integers are returned as `bigint` types.
-     *
-     * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
-     *
-     * @default false
-     * @since v1.1.14
-     */
-    safeIntegers?: boolean;
-
-    /**
-     * When set to `false` or `undefined`:
-     * - Queries missing bound parameters will NOT throw an error
-     * - Bound named parameters in JavaScript need to exactly match the SQL query.
-     *
-     * @example
-     * ```ts
-     * const db = new Database(":memory:", { strict: false });
-     * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
-     * ```
-     *
-     * When set to `true`:
-     * - Queries missing bound parameters will throw an error
-     * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
-     *
-     * @example
-     * ```ts
-     * const db = new Database(":memory:", { strict: true });
-     * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
-     * ```
-     * @since v1.1.14
-     */
-    strict?: boolean;
-  }
-
-  /**
    * A SQLite3 database
    *
    * @example
@@ -123,7 +63,65 @@ declare module "bun:sqlite" {
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      */
-    constructor(filename?: string, options?: number | DatabaseOptions);
+    constructor(
+      filename?: string,
+      options?:
+        | number
+        | {
+            /**
+             * Open the database as read-only (no write operations, no create).
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
+             */
+            readonly?: boolean;
+            /**
+             * Allow creating a new database
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+             */
+            create?: boolean;
+            /**
+             * Open the database as read-write
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+             */
+            readwrite?: boolean;
+
+            /**
+             * When set to `true`, integers are returned as `bigint` types.
+             *
+             * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+             *
+             * @default false
+             * @since v1.1.14
+             */
+            safeIntegers?: boolean;
+
+            /**
+             * When set to `false` or `undefined`:
+             * - Queries missing bound parameters will NOT throw an error
+             * - Bound named parameters in JavaScript need to exactly match the SQL query.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: false });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
+             * ```
+             *
+             * When set to `true`:
+             * - Queries missing bound parameters will throw an error
+             * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: true });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
+             * ```
+             * @since v1.1.14
+             */
+            strict?: boolean;
+          },
+    );
 
     /**
      * This is an alias of `new Database()`

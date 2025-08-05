@@ -1284,7 +1284,7 @@ interface ImportMeta {
    * )
    * ```
    */
-  readonly main: boolean;
+  main: boolean;
 
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;

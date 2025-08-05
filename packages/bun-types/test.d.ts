@@ -56,6 +56,11 @@ declare module "bun:test" {
      * Restore the previous value of mocks.
      */
     restore(): void;
+
+    /**
+     * Reset all mock function state (calls, results, etc.) without restoring their original implementation.
+     */
+    clearAllMocks(): void;
   };
 
   /**

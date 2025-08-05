@@ -65,7 +65,15 @@ declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
  * Overrides **
  */
 
-interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+class ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  constructor(
+    stream: unknown,
+    underlyingSource: unknown,
+    size: unknown,
+    highWaterMark: unknown,
+    $isReadableStream: typeof $isReadableStream,
+  );
+
   $controlledReadableStream: ReadableStream<R>;
   $underlyingSource: UnderlyingSource;
   $queue: any;
@@ -605,15 +613,6 @@ declare class OutOfMemoryError {
   constructor();
 }
 
-declare class ReadableStreamDefaultController {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
-}
 declare class ReadableByteStreamController {
   constructor(
     stream: unknown,

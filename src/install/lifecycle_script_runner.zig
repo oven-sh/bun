@@ -112,7 +112,8 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    /// Called from multiple threads in the case of isolated installs
+    /// Used to be called from multiple threads during isolated installs; now single-threaded
+    /// TODO: re-evaluate whether some variables still need to be atomic
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
         bun.analytics.Features.lifecycle_scripts += 1;
 

@@ -11,6 +11,8 @@ socket_context: ?*uws.SocketContext = null,
 ssl: bool = false,
 protos: ?[]const u8 = null,
 
+sni_callback: jsc.Strong.Optional = .empty,
+
 strong_data: jsc.Strong.Optional = .empty,
 strong_self: jsc.Strong.Optional = .empty,
 
@@ -305,6 +307,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
     };
 
+    // Set up SNI callback if SSL is enabled and SNI callback is provided
+    if (ssl_enabled and ssl != null and ssl.?.sni_callback.has()) {
+        socket.sni_callback = ssl.?.sni_callback;
+    }
+
     socket.handlers.protect();
 
     if (socket_config.default_data != .zero) {
@@ -322,6 +329,13 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     var this: *Listener = handlers.vm.allocator.create(Listener) catch bun.outOfMemory();
     this.* = socket;
     this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
+
+    // Set up SNI callback in µSockets if SNI callback is provided
+    // TODO: Enable this once the signature issue is resolved
+    if (ssl_enabled and this.sni_callback.has()) {
+        // this.socket_context.?.onServerName(ssl_enabled, sniCallbackBridge);
+        _ = sniCallbackBridge; // Reference to avoid unused function warning
+    }
 
     const this_value = this.toJS(globalObject);
     this.strong_self.set(globalObject, this_value);
@@ -482,6 +496,7 @@ pub fn deinit(this: *Listener) void {
     log("deinit", .{});
     this.strong_self.deinit();
     this.strong_data.deinit();
+    this.sni_callback.deinit();
     this.poll_ref.unref(this.handlers.vm);
     bun.assert(this.listener == .none);
     this.handlers.unprotect();
@@ -830,6 +845,45 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return global.throw("Expected a Listener instance", .{});
 }
 pub const log = Output.scoped(.Listener, false);
+
+// SNI callback bridge function
+export fn sniCallbackBridge(context: ?*uws.SocketContext, hostname: [*c]const u8) callconv(.C) void {
+    if (context == null) return;
+    if (hostname == null) return;
+    
+    // Extract the Listener from the context (stored in the extension area)
+    const socket_context = context.?;
+    const listener_ptr = socket_context.ext(true, *Listener) orelse return;
+    const listener = listener_ptr.*;
+
+    // Get the SNI callback function
+    const sni_callback = listener.sni_callback.get() orelse return;
+    const globalObject = listener.handlers.globalObject;
+    
+    const hostname_str = bun.String.fromBytes(std.mem.span(hostname));
+    const hostname_js = hostname_str.toJS(globalObject);
+    
+    // Create a simple callback function - for now we'll just call the SNI callback synchronously
+    // and handle the result immediately. This is simpler than creating a dynamic JSFunction.
+    // TODO: Handle async callbacks properly
+    
+    // For now, we'll create a placeholder callback that does nothing
+    // The real implementation would need to store the context and handle async callbacks
+    const placeholderCallback = jsc.JSValue.js_undefined;
+    
+    // Call the JavaScript SNI callback with hostname and our callback
+    const args = [_]jsc.JSValue{ hostname_js, placeholderCallback };
+    const result = sni_callback.call(globalObject, .js_undefined, &args) catch |err| {
+        _ = globalObject.takeException(err);
+        return;
+    };
+    
+    // For now, ignore the result. In a full implementation, we would need to:
+    // 1. Handle the async callback properly
+    // 2. Parse the SecureContext result
+    // 3. Add it to the SNI tree
+    _ = result;
+}
 
 fn isValidPipeName(pipe_name: []const u8) bool {
     if (!Environment.isWindows) {

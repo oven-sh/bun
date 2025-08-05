@@ -30,6 +30,8 @@ protos_len: usize = 0,
 client_renegotiation_limit: u32 = 0,
 client_renegotiation_window: u32 = 0,
 
+sni_callback: jsc.Strong.Optional = .empty,
+
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -217,6 +219,8 @@ pub fn deinit(this: *SSLConfig) void {
         bun.default_allocator.free(ca);
         this.ca = null;
     }
+
+    this.sni_callback.deinit();
 }
 
 pub const zero = SSLConfig{};
@@ -601,6 +605,16 @@ pub fn fromJS(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, obj: jsc.JSV
                 any = true;
             } else {
                 return global.throw("Expected lowMemoryMode to be a boolean", .{});
+            }
+        }
+
+        if (try obj.getTruthy(global, "SNICallback")) |sni_callback| {
+            if (sni_callback.isCallable()) {
+                result.sni_callback.set(global, sni_callback);
+                any = true;
+                result.requires_custom_request_ctx = true;
+            } else {
+                return global.throwInvalidArguments("SNICallback must be a function", .{});
             }
         }
     }

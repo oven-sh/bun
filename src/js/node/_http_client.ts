@@ -782,7 +782,7 @@ function ClientRequest(input, options, cb) {
   this[kReusedSocket] = false;
   this[kHost] = host;
   this[kProtocol] = protocol;
-  
+
   // Initialize socket-related properties
   this.socket = null;
   this.parser = null;

@@ -148,7 +148,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Missing `vm.measureMemory`. Some options like `timeout`, `breakOnSigint`, and `cachedData` are partially supported.
+🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Options like `timeout` and `breakOnSigint` are fully supported. Missing `vm.measureMemory` and some `cachedData` functionality.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 

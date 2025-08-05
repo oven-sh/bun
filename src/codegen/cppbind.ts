@@ -1,8 +1,87 @@
-import { SyntaxNode } from "@lezer/common";
-import { parser as cppParser } from "@lezer/cpp";
-import { mkdir } from "fs/promises";
-import { join, relative } from "path";
-import { bannedTypes, sharedTypes, typeDeclarations } from "./shared-types";
+/*
+
+cppbind - C++ to Zig binding generator for Bun
+
+This tool automatically generates Zig bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
+It runs automatically when C++ files change during the build process.
+
+To run manually:
+    bun src/codegen/cppbind src build/debug/codegen
+
+## USAGE
+
+### Basic Export Tags
+
+1. **nothrow** - Function that never throws exceptions:
+   ```cpp
+   extern "C" [[ZIG_EXPORT(nothrow)]] void hello_world() {
+       printf("hello world\n");
+   }
+   ```
+   Zig usage: `bun.cpp.hello_world();`
+
+2. **zero_is_throw** - Function returns JSValue, where .zero indicates an exception:
+   ```cpp
+   extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSValue create_object(JSGlobalObject* globalThis) {
+       auto scope = DECLARE_THROW_SCOPE();
+       // ...
+       RETURN_IF_EXCEPTION(scope, {});
+       return result;
+   }
+   ```
+   Zig usage: `try bun.cpp.create_object(globalThis);`
+
+3. **check_slow** - Function that may throw, performs runtime exception checking:
+   ```cpp
+   extern "C" [[ZIG_EXPORT(check_slow)]] void process_data(JSGlobalObject* globalThis) {
+       auto scope = DECLARE_THROW_SCOPE();
+       // ...
+       RETURN_IF_EXCEPTION(scope, );
+   }
+   ```
+   Zig usage: `try bun.cpp.process_data(globalThis);`
+
+### Parameters
+
+- **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
+  ```cpp
+  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis, 
+                                        [[ZIG_NONNULL]] JSValue* values, 
+                                        size_t count) { ... }
+  ```
+  Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
+
+*/
+
+const start = Date.now();
+let isInstalled = false;
+try {
+  const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
+  isInstalled = true;
+} catch (e) {}
+if (!isInstalled) {
+  if (process.argv.includes("--already-installed")) {
+    console.error("Lezer C++ grammar is not installed. Please run `bun install` to install it.");
+    process.exit(1);
+  }
+  const r = Bun.spawnSync([process.argv[0], "install", "--frozen-lockfile"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.exitCode !== 0) {
+    console.error(r.stdout.toString());
+    console.error(r.stderr.toString());
+    process.exit(r.exitCode ?? 1);
+  }
+
+  const r2 = Bun.spawnSync([...process.argv, "--already-installed"], { stdio: ["inherit", "inherit", "inherit"] });
+  process.exit(r2.exitCode ?? 1);
+}
+
+type SyntaxNode = import("@lezer/common").SyntaxNode;
+const { parser: cppParser } = await import("@lezer/cpp");
+const { mkdir } = await import("fs/promises");
+const { join, relative } = await import("path");
+const { bannedTypes, sharedTypes, typeDeclarations } = await import("./shared-types");
 
 type Point = {
   line: number;
@@ -31,10 +110,17 @@ type CppType =
       position: Srcloc;
       isConst: boolean;
       isMany: boolean;
+      isNonNull: boolean;
     }
   | {
       type: "named";
       name: string;
+      position: Srcloc;
+    }
+  | {
+      type: "fn";
+      parameters: CppParameter[];
+      returnType: CppType;
       position: Srcloc;
     };
 
@@ -227,15 +313,41 @@ function processDeclarator(
   // Recursively peel off pointers
   if (declarator?.name === "PointerDeclarator") {
     if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
-    const isConst = !!declarator.parent?.getChild("const");
+    const isConst = !!declarator.parent?.getChild("const") || rootmostType.type === "fn";
+    const parentAttributes = declarator.parent?.getChildren("Attribute") ?? [];
+    const isNonNull = parentAttributes.some(attr => text(attr.getChild("AttributeName")!, ctx) === "ZIG_NONNULL");
 
     return processDeclarator(ctx, declarator, {
       type: "pointer",
       child: rootmostType,
       position: nodePosition(declarator, ctx),
       isConst,
+      isNonNull,
       isMany: false,
     });
+  } else if (declarator?.name === "ReferenceDeclarator") {
+    throwError(nodePosition(declarator, ctx), "references are not allowed");
+  } else if (declarator?.name === "FunctionDeclarator" && !declarator.getChild("Identifier")) {
+    const lhs = declarator.getChild("ParenthesizedDeclarator");
+    const rhs = declarator.getChild("ParameterList");
+    if (!lhs || !rhs) {
+      throwError(
+        nodePosition(declarator, ctx),
+        "FunctionDeclarator has neither Identifier nor ParenthesizedDeclarator:\n" +
+          prettyPrintLezerNode(declarator, ctx.sourceCode),
+      );
+    }
+    const fnType: CppType = {
+      type: "fn",
+      parameters: [],
+      returnType: rootmostType,
+      position: nodePosition(declarator, ctx),
+    };
+    for (const arg of rhs.getChildren("ParameterDeclaration")) {
+      const paramDeclarator = processDeclarator(ctx, arg);
+      fnType.parameters.push({ type: paramDeclarator.type, name: text(paramDeclarator.final, ctx) });
+    }
+    return processDeclarator(ctx, lhs, fnType);
   }
 
   return { type: rootmostType, final: declarator };
@@ -260,9 +372,6 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
     const paramDeclarator = processDeclarator(ctx, parameter);
     const name = paramDeclarator.final;
 
-    if (name.name === "ReferenceDeclarator") {
-      throwError(nodePosition(name, ctx), "references are not allowed");
-    }
     if (name.name !== "Identifier") {
       throwError(nodePosition(name, ctx), "parameter name is not an identifier: " + name.name);
     }
@@ -305,16 +414,20 @@ for (const line of sharedTypesLines) {
 }
 
 const errorsForTypes: Map<string, PositionedError> = new Map();
-function generateZigType(type: CppType, subLevel?: boolean) {
+function generateZigType(type: CppType, parent: CppType | null) {
   if (type.type === "pointer") {
-    if (type.isMany && type.isConst) return `?[*]const ${generateZigType(type.child, true)}`;
-    if (type.isMany) return `?[*]${generateZigType(type.child, true)}`;
-    if (type.isConst) return `?*const ${generateZigType(type.child, true)}`;
-    return `?*${generateZigType(type.child, true)}`;
+    const optionalChar = type.isNonNull ? "" : "?";
+    const ptrChar = type.isMany ? "[*]" : "*";
+    const constChar = type.isConst ? "const " : "";
+    return `${optionalChar}${ptrChar}${constChar}${generateZigType(type.child, type)}`;
+  }
+  if (type.type === "fn") {
+    return `fn(${type.parameters.map(p => formatZigName(p.name) + ": " + generateZigType(p.type, null)).join(", ")}) callconv(.C) ${generateZigType(type.returnType, null)}`;
   }
   if (type.type === "named" && type.name === "void") {
-    if (subLevel) return "anyopaque";
-    return "void";
+    if (parent?.type === "pointer") return "anyopaque";
+    if (!parent) return "void";
+    throwError(type.position, "void must have a pointer parent or no parent");
   }
   if (type.type === "named") {
     const bannedType = bannedTypes[type.name];
@@ -350,7 +463,7 @@ function generateZigParameterList(parameters: CppParameter[], globalThisArg?: Cp
       if (p === globalThisArg) {
         return `${formatZigName(p.name)}: *jsc.JSGlobalObject`;
       } else {
-        return `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`;
+        return `${formatZigName(p.name)}: ${generateZigType(p.type, null)}`;
       }
     })
     .join(", ");
@@ -526,7 +639,7 @@ function generateZigFn(
   resultSourceLinks: string[],
   cfg: Cfg,
 ): void {
-  const returnType = generateZigType(fn.returnType);
+  const returnType = generateZigType(fn.returnType, null);
   if (resultBindings.length) resultBindings.push("");
   resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
   if (fn.tag === "nothrow") {
@@ -539,7 +652,7 @@ function generateZigFn(
   resultRaw.push(`    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`);
   let globalThisArg: CppParameter | undefined;
   for (const param of fn.parameters) {
-    const type = generateZigType(param.type);
+    const type = generateZigType(param.type, null);
     if (type === "?*jsc.JSGlobalObject") {
       globalThisArg = param;
       break;
@@ -619,6 +732,18 @@ async function main() {
   const rootDir = args[0];
   const dstDir = args[1];
   if (!rootDir || !dstDir) {
+    console.error(
+      String.raw`
+                   _     _           _ 
+                  | |   (_)         | |
+   ___ _ __  _ __ | |__  _ _ __   __| |
+  / __| '_ \| '_ \| '_ \| | '_ \ / _' |
+ | (__| |_) | |_) | |_) | | | | | (_| |
+  \___| .__/| .__/|_.__/|_|_| |_|\__,_|
+      | |   | |                        
+      |_|   |_|                        
+`.slice(1),
+    );
     console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
     process.exit(1);
   }
@@ -676,14 +801,17 @@ async function main() {
   }
 
   const now = Date.now();
-  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 24);
+  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
 
   console.log(
     " ".repeat(sin) +
       (errors.length > 0 ? "✗" : "✓") +
       " cppbind.ts generated bindings to " +
       resultFilePath +
-      (errors.length > 0 ? " with errors" : ""),
+      (errors.length > 0 ? " with errors" : "") +
+      " in " +
+      (now - start) +
+      "ms",
   );
   if (errors.length > 0) {
     process.exit(1);

@@ -439,6 +439,13 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
+        // Add expectTypeOf function
+        module.put(
+            globalObject,
+            ZigString.static("expectTypeOf"),
+            ExpectTypeOf.js.getConstructor(globalObject),
+        );
+
         createMockObjects(globalObject, module);
 
         return module;
@@ -462,6 +469,7 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
+        mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
         const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
@@ -2429,6 +2437,7 @@ const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
+const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;

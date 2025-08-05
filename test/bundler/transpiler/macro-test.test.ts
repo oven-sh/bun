@@ -9,6 +9,9 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
+  simpleTag,
+  interpolateTag,
+  objectTag,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -118,6 +121,15 @@ test("namespace import", () => {
   expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
+test("varables", () => {
+  const a = "A";
+  expect(identity(a)).toBe("A");
+});
+
+test("template string basic", () => {
+  expect(identity(`A`)).toBe("A");
+});
+
 // test("template string ascii", () => {
 //   expect(identity(`A${""}`)).toBe("A");
 // });
@@ -128,4 +140,16 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+test("template literals with macros", () => {
+  expect(simpleTag`World`).toBe("Hello World!");
+  expect(interpolateTag`Alice${100}`).toBe("User Alice has 100 points");
+  expect(objectTag`${{ name: "Bob", age: 25 }}`).toBe("Name: Bob, Age: 25");
+});
+
+test("template literals with namespace import", () => {
+  expect(macros.simpleTag`Test`).toBe("Hello Test!");
+  expect(macros.interpolateTag`Jane${50}`).toBe("User Jane has 50 points");
+  expect(macros.objectTag`${{ name: "Alice", age: 30 }}`).toBe("Name: Alice, Age: 30");
 });

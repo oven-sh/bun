@@ -105,26 +105,6 @@ enum SQLQueryFlags {
   notTagged = 1 << 4,
 }
 
-function getQueryHandle(query: Query<any>) {
-  let handle = query[_handle];
-  if (!handle) {
-    try {
-      query[_handle] = handle = doCreateQuery(
-        query[_strings],
-        query[_values],
-        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
-        query[_poolSize],
-        query[_flags] & SQLQueryFlags.bigint,
-        query[_flags] & SQLQueryFlags.simple,
-      );
-    } catch (err) {
-      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
-      query.reject(err);
-    }
-  }
-  return handle;
-}
-
 enum SQLCommand {
   insert = 0,
   update = 1,
@@ -556,7 +536,7 @@ class SQLiteAdapterImpl implements DatabaseAdapter {
   }
 }
 
-class Query<T = any> extends PublicPromise<T> {
+class Query<Adapter extends DatabaseAdapter<any, any>, T = any> extends PublicPromise<T> {
   [_resolve]: (value: T) => void;
   [_reject]: (reason?: any) => void;
   [_handle];
@@ -568,7 +548,7 @@ class Query<T = any> extends PublicPromise<T> {
   [_flags]: number;
   [_results]: any;
 
-  private adapter: DatabaseAdapter;
+  private adapter: Adapter;
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
@@ -587,8 +567,8 @@ class Query<T = any> extends PublicPromise<T> {
     values: any[],
     flags: number,
     poolSize: number,
-    handler: (query: Query<T>, handle: any) => any,
-    adapter: DatabaseAdapter,
+    handler: (query: Query<Adapter, T>, handle: ReturnType<Adapter["createQueryHandle"]>) => any,
+    adapter: Adapter,
   ) {
     let resolve_: (value: T) => void, reject_: (reason?: any) => void;
     super((resolve, reject) => {
@@ -616,7 +596,7 @@ class Query<T = any> extends PublicPromise<T> {
     this.adapter = adapter;
   }
 
-  private getQueryHandle(): ReturnType<DatabaseAdapter["createQueryHandle"]> {
+  private getQueryHandle(): ReturnType<Adapter["createQueryHandle"]> {
     let handle = this[_handle];
     if (!handle) {
       try {

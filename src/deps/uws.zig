@@ -7,6 +7,7 @@ pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
 pub const Socket = us_socket_t;
 pub const Timer = @import("./uws/Timer.zig").Timer;
 pub const SocketContext = @import("./uws/SocketContext.zig").SocketContext;
+pub const BunSocketContextOptions = SocketContext.BunSocketContextOptions;
 pub const ConnectingSocket = @import("./uws/ConnectingSocket.zig").ConnectingSocket;
 pub const InternalLoopData = @import("./uws/InternalLoopData.zig").InternalLoopData;
 pub const WindowsNamedPipe = @import("./uws/WindowsNamedPipe.zig");

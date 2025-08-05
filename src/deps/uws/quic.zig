@@ -6,12 +6,8 @@ const uws = @import("../uws.zig");
 
 const Loop = uws.Loop;
 
-/// QUIC socket context options for creating contexts
-pub const SocketContextOptions = extern struct {
-    cert_file_name: [*c]const u8,
-    key_file_name: [*c]const u8,
-    passphrase: [*c]const u8,
-};
+/// QUIC socket context options - uses the same options as regular SSL sockets
+pub const SocketContextOptions = uws.BunSocketContextOptions;
 
 /// QUIC socket context - holds shared state and configuration
 pub const SocketContext = opaque {

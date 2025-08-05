@@ -6,6 +6,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include <openssl/ssl.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -69,7 +70,10 @@ struct us_quic_socket_context_s {
     lsquic_engine_t *client_engine;
 
     // we store the options the context was created with here
-    us_quic_socket_context_options_t options;
+    struct us_bun_socket_context_options_t options;
+    
+    // SSL context created from options
+    SSL_CTX *ssl_context;
 
     void(*on_stream_data)(us_quic_stream_t *s, char *data, int length);
     void(*on_stream_end)(us_quic_stream_t *s);
@@ -132,7 +136,7 @@ void on_udp_socket_data_client(struct us_udp_socket_t *s, struct us_udp_packet_b
     // int fd = us_poll_fd((struct us_poll_t *) s);
     //printf("Reading on fd: %d\n", fd);
 
-    //printf("UDP (client) socket got data: %p\n", s);
+    printf("UDP client socket got data: %p, packets: %d\n", s, packets);
 
     /* We need to lookup the context from the udp socket */
     //us_udpus_udp_socket_context(s);
@@ -207,13 +211,23 @@ void on_udp_socket_data_client(struct us_udp_socket_t *s, struct us_udp_packet_b
 
         // Use the peer context from the UDP socket extension area
         struct quic_peer_ctx *peer_ctx = (struct quic_peer_ctx *)((char *)s + sizeof(struct us_udp_socket_t));
-        lsquic_engine_packet_in(context->client_engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) peer_ctx, 0);
-        //printf("Engine returned: %d\n", ret);
+        
+        // Debug print the packet
+        printf("Client processing packet %d: length=%d\n", i, length);
+        
+        int ret = lsquic_engine_packet_in(context->client_engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) peer_ctx, 0);
+        printf("  lsquic_engine_packet_in (client) returned: %d\n", ret);
 
 
     }
 
+    // Process connections after receiving packets to handle state changes
     lsquic_engine_process_conns(context->client_engine);
+    
+    // Also check if we have unsent packets and trigger send
+    if (lsquic_engine_has_unsent_packets(context->client_engine)) {
+        lsquic_engine_send_unsent_packets(context->client_engine);
+    }
 
 }
 
@@ -248,6 +262,7 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
     // process conns now? to accept new connections?
     if (context->engine) {
         printf("Processing server connections on engine: %p\n", context->engine);
+        // Process connections before processing packets to ensure connections are ready
         lsquic_engine_process_conns(context->engine);
     }
 
@@ -418,6 +433,11 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
     int is_client = 0;
     if (lsquic_conn_get_engine(c) == context->client_engine) {
         is_client = 1;
+    } else if (lsquic_conn_get_engine(c) == context->engine) {
+        is_client = 0;
+        printf("SERVER: New incoming connection on server engine\n");
+    } else {
+        printf("ERROR: Unknown engine for connection\n");
     }
 
     us_quic_socket_t *socket = NULL;
@@ -742,6 +762,11 @@ static void on_stream_close (lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
 
 #include "openssl/ssl.h"
 
+// External function from crypto/openssl.c for creating SSL contexts
+extern SSL_CTX *create_ssl_context_from_bun_options(
+    struct us_bun_socket_context_options_t options,
+    enum create_bun_socket_error_t *err);
+
 static char s_alpn[0x100];
 
 int add_alpn (const char *alpn)
@@ -783,20 +808,14 @@ static int select_alpn(SSL *ssl, const unsigned char **out, unsigned char *outle
     }
 }
 
-SSL_CTX *old_ctx;
-
 int server_name_cb(SSL *s, int *al, void *arg) {
-    printf("yolo SNI server_name_cb\n");
+    printf("QUIC SNI server_name_cb\n");
 
-    SSL_set_SSL_CTX(s, old_ctx);
+    const char *servername = SSL_get_servername(s, TLSEXT_NAMETYPE_host_name);
+    printf("SNI hostname: %s\n", servername ? servername : "(none)");
 
-    printf("existing name is: %s\n", SSL_get_servername(s, TLSEXT_NAMETYPE_host_name));
-
-    if (!SSL_get_servername(s, TLSEXT_NAMETYPE_host_name)) {
-        SSL_set_tlsext_host_name(s, "YOLO NAME!");
-        printf("set name is: %s\n", SSL_get_servername(s, TLSEXT_NAMETYPE_host_name));
-    }
-
+    // TODO: Implement proper SNI support for QUIC if needed
+    // For now, we just use the default context
 
     return SSL_TLSEXT_ERR_OK;
 }
@@ -806,11 +825,7 @@ struct ssl_ctx_st *get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     printf("getting ssl ctx now, peer_ctx: %p\n", peer_ctx);
 
     if (!peer_ctx) {
-        printf("WARNING: No peer_ctx in get_ssl_ctx, using cached context\n");
-        if (old_ctx) {
-            return old_ctx;
-        }
-        // Return a default context if none exists
+        printf("ERROR: No peer_ctx in get_ssl_ctx\n");
         return NULL;
     }
 
@@ -818,60 +833,27 @@ struct ssl_ctx_st *get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     struct quic_peer_ctx *qctx = (struct quic_peer_ctx *) peer_ctx;
     if (!qctx || !qctx->context) {
         printf("ERROR: No context found in peer context for SSL\n");
-        return old_ctx;
+        return NULL;
     }
     
     struct us_quic_socket_context_s *context = qctx->context;
 
-    if (old_ctx) {
-        return old_ctx;
+    // Return the SSL context that was created when the QUIC context was initialized
+    if (context->ssl_context) {
+        printf("Returning existing SSL context: %p\n", context->ssl_context);
+        return context->ssl_context;
     }
 
-    // peer_ctx should be the options struct!
-    us_quic_socket_context_options_t *options = &context->options;
-
-
-    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
-
-    old_ctx = ctx;
-
-    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
-
-    //SSL_CTX_set_default_verify_paths(ctx);
-
-    // probably cannot use this when http is in use?
-    // alpn is needed
-    SSL_CTX_set_alpn_select_cb(ctx, select_alpn, NULL);
-
-    // sni is needed
-    SSL_CTX_set_tlsext_servername_callback(ctx, server_name_cb);
- //long SSL_CTX_set_tlsext_servername_arg(SSL_CTX *ctx, void *arg);
-
-    printf("Key: %s\n", options->key_file_name);
-    printf("Cert: %s\n", options->cert_file_name);
-
-    // For testing without certificates, skip SSL for now
-    if (!options->cert_file_name || !options->key_file_name) {
-        printf("WARNING: No certificates provided, returning basic SSL context\n");
-        
-        // Just return the context without certificates for now
-        // This will cause SSL errors but at least won't segfault
-        old_ctx = ctx;
-        return ctx;
-    }
-
-    int a = SSL_CTX_use_certificate_chain_file(ctx, options->cert_file_name);
-    int b = SSL_CTX_use_PrivateKey_file(ctx, options->key_file_name, SSL_FILETYPE_PEM);
-
-    printf("loaded cert and key? %d, %d\n", a, b);
-
-    return ctx;
+    printf("ERROR: No SSL context found in QUIC context\n");
+    return NULL;
 }
 
 SSL_CTX *sni_lookup(void *lsquic_cert_lookup_ctx, const struct sockaddr *local, const char *sni) {
-    printf("simply returning old ctx in sni\n");
-    return old_ctx;
+    printf("QUIC sni_lookup called for: %s\n", sni ? sni : "(null)");
+    
+    // The lsquic_cert_lookup_ctx should be our context
+    // For now, we don't implement SNI - just return NULL to use default
+    return NULL;
 }
 
 int log_buf_cb(void *logger_ctx, const char *buf, size_t len) {
@@ -1136,6 +1118,28 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     // the option is put on the socket context
     context->options = options;
     context->loop = loop;
+    
+    // Create SSL context from the options
+    enum create_bun_socket_error_t ssl_error = CREATE_BUN_SOCKET_ERROR_NONE;
+    context->ssl_context = create_ssl_context_from_bun_options(options, &ssl_error);
+    if (!context->ssl_context) {
+        printf("ERROR: Failed to create SSL context for QUIC, error: %d\n", ssl_error);
+        free(context);
+        return NULL;
+    }
+    
+    // QUIC requires TLS 1.3
+    SSL_CTX_set_min_proto_version(context->ssl_context, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(context->ssl_context, TLS1_3_VERSION);
+    
+    // Set up ALPN for QUIC
+    SSL_CTX_set_alpn_select_cb(context->ssl_context, select_alpn, NULL);
+    
+    // For client connections, set ALPN protocols
+    unsigned char alpn_list[] = "\x02h3";  // Length-prefixed "h3"
+    SSL_CTX_set_alpn_protos(context->ssl_context, alpn_list, sizeof(alpn_list) - 1);
+    
+    printf("Created SSL context for QUIC: %p\n", context->ssl_context);
 
     /* Allocate per thread, UDP packet buffers */
     context->recv_buf = us_create_udp_packet_buffer();
@@ -1171,6 +1175,16 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
 
     add_alpn("h3");
 
+    // Initialize engine settings for server
+    struct lsquic_engine_settings server_settings;
+    lsquic_engine_init_settings(&server_settings, LSENG_SERVER | LSENG_HTTP);
+    
+    // Use default QUIC versions (includes latest stable versions)
+    server_settings.es_versions = LSQUIC_DF_VERSIONS;
+    
+    // Set max packet size for UDP (common QUIC value)
+    server_settings.es_max_udp_payload_size_rx = 1472;
+
     struct lsquic_engine_api engine_api = {
         .ea_packets_out     = send_packets_out,
         .ea_packets_out_ctx = (void *) context,  /* For example */
@@ -1181,11 +1195,13 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
 
         // lookup certificate
         .ea_lookup_cert = sni_lookup,
-        .ea_cert_lu_ctx = 0,
+        .ea_cert_lu_ctx = context,  // Pass context for SSL lookups
 
         // these are zero anyways
         .ea_hsi_ctx = 0,
         .ea_hsi_if = &hset_if,
+        
+        .ea_settings = &server_settings,
     };
 
     ///printf("log: %d\n", lsquic_set_log_level("debug"));
@@ -1200,21 +1216,34 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     /* Create an engine in server mode with HTTP behavior: */
     context->engine = lsquic_engine_new(LSENG_SERVER | LSENG_HTTP, &engine_api);
 
+    // Initialize engine settings for client
+    struct lsquic_engine_settings client_settings;
+    lsquic_engine_init_settings(&client_settings, LSENG_HTTP);
+    
+    // Use default QUIC versions (includes latest stable versions)
+    client_settings.es_versions = LSQUIC_DF_VERSIONS;
+    
+    // Set max packet size for UDP (common QUIC value)
+    client_settings.es_max_udp_payload_size_rx = 1472;
+
     struct lsquic_engine_api engine_api_client = {
         .ea_packets_out     = send_packets_out,
         .ea_packets_out_ctx = (void *) context,  /* For example */
         .ea_stream_if       = &stream_callbacks,
         .ea_stream_if_ctx   = context,
 
-        //.ea_get_ssl_ctx = get_ssl_ctx, // for client?
+        .ea_get_ssl_ctx = get_ssl_ctx, // Client also needs SSL context
 
         // lookup certificate
-        //.ea_lookup_cert = sni_lookup, // for client?
-        //.ea_cert_lu_ctx = 13, // for client?
+        // Client doesn't need SNI lookup callback
+        .ea_lookup_cert = NULL,
+        .ea_cert_lu_ctx = NULL,
 
         // these are zero anyways
         .ea_hsi_ctx = 0,
         .ea_hsi_if = &hset_if,
+        
+        .ea_settings = &client_settings,
     };
 
     context->client_engine = lsquic_engine_new(LSENG_HTTP, &engine_api_client);
@@ -1388,7 +1417,7 @@ us_quic_socket_t *us_quic_socket_context_connect(us_quic_socket_context_t *conte
     // Get the peer context from the UDP socket extension area
     struct quic_peer_ctx *connect_peer_ctx = (struct quic_peer_ctx *)((char *)udp_socket + sizeof(struct us_udp_socket_t));
     
-    void *client = lsquic_engine_connect(context->client_engine, LSQVER_I001, (struct sockaddr *) local_addr, addr, connect_peer_ctx, (lsquic_conn_ctx_t *) quic_socket, "sni", 0, 0, 0, 0, 0);
+    void *client = lsquic_engine_connect(context->client_engine, LSQVER_I001, (struct sockaddr *) local_addr, addr, connect_peer_ctx, (lsquic_conn_ctx_t *) quic_socket, host, 0, 0, 0, 0, 0);
 
     printf("Client: %p\n", client);
 

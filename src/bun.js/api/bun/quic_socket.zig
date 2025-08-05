@@ -102,19 +102,11 @@ pub const QuicSocket = struct {
 
         const loop = uws.Loop.get();
 
-        // Use SSL config if provided, otherwise use defaults
-        var options = uws.quic.SocketContextOptions{
-            .cert_file_name = null,
-            .key_file_name = null,
-            .passphrase = null,
-        };
-
+        // Convert SSLConfig to BunSocketContextOptions
+        var options: uws.BunSocketContextOptions = .{};
+        
         if (this.ssl_config) |ssl| {
-            // The QUIC C layer should use the existing SSL context infrastructure
-            // For now, pass file paths if available
-            options.cert_file_name = ssl.cert_file_name;
-            options.key_file_name = ssl.key_file_name;
-            options.passphrase = ssl.passphrase;
+            options = ssl.asUSockets();
         }
 
         const context = uws.quic.SocketContext.create(loop, options, @sizeOf(*This)) orelse return error.ContextCreationFailed;

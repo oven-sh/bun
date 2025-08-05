@@ -7,11 +7,8 @@
 
 #include "libusockets.h"
 
-typedef struct {
-    const char *cert_file_name;
-    const char *key_file_name;
-    const char *passphrase;
-} us_quic_socket_context_options_t;
+// QUIC uses the same options as regular SSL sockets to support all SSL features
+typedef struct us_bun_socket_context_options_t us_quic_socket_context_options_t;
 
 
 typedef struct {

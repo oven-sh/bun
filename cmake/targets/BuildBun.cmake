@@ -950,7 +950,7 @@ endif()
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
-    /STACK:0x1200000,0x200000
+    /STACK:0x800000,0x200000
     /errorlimit:0
   )
   if(RELEASE)
@@ -976,7 +976,7 @@ if(APPLE)
   target_link_options(${bun} PUBLIC
     -Wl,-ld_new
     -Wl,-no_compact_unwind
-    -Wl,-stack_size,0x1200000
+    -Wl,-stack_size,0x800000
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
   )

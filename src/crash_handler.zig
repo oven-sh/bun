@@ -1711,7 +1711,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         return;
     };
 
-    if (result.term != .Exited or result.term.Exited != 0) {
+    if (result != .Exited or result.Exited != 0) {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
         return;
     }

@@ -400,6 +400,22 @@ fn printModifiedSegment(
     var char_diff = try DMP.default.diff(arena, segment.removed, segment.inserted, true);
     try DMP.diffCleanupSemantic(arena, &char_diff);
 
+    var deleted_highlighted_length: usize = 0;
+    var inserted_highlighted_length: usize = 0;
+    var unhighlighted_length: usize = 0;
+    for (char_diff.items) |item| {
+        switch (item.operation) {
+            .delete => deleted_highlighted_length += item.text.len,
+            .insert => inserted_highlighted_length += item.text.len,
+            .equal => unhighlighted_length += item.text.len,
+        }
+    }
+
+    if ((deleted_highlighted_length > 10 and deleted_highlighted_length > segment.removed.len / 3 * 2) or (inserted_highlighted_length > 10 and inserted_highlighted_length > segment.inserted.len / 3 * 2)) {
+        // the diff is too significant (more than 2/3 of the original text on one side is modified), so skip printing the second layer of diffs.
+        return printModifiedSegmentWithoutDiffdiff(writer, config, segment, removed_prefix, inserted_prefix);
+    }
+
     const is_valid_utf_8 = for (char_diff.items) |item| {
         if (!bun.strings.isValidUTF8(item.text)) {
             break false;

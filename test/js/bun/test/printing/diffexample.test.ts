@@ -754,17 +754,17 @@ test("color", async () => {
     \x1B[32m- \x1B[0m\x1B[32m  "age": \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "age": \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
       \x1B[0m\x1B[2m  "logs": [\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m    "\x1B[0m\x1B[32m\x1B[7mLogged into system",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Accessed dashboard",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Reviewed daily reports",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Updated project status",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Sent status email to team",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7m    "Scheduled follow-up meeting\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m    "\x1B[0m\x1B[31m\x1B[7mEntered the building",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Checked in at reception",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Took elevator to floor 3",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Attended morning meeting",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m    "Started working on project\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Logged into system",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Accessed dashboard",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Reviewed daily reports",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Updated project status",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Sent status email to team",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m    "Scheduled follow-up meeting",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "Entered the building",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "Checked in at reception",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "Took elevator to floor 3",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "Attended morning meeting",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m    "Started working on project",\x1B[0m
       \x1B[0m\x1B[2m  ],\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m  "name": "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "name": "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m

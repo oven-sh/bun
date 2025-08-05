@@ -34,7 +34,7 @@ if(GIT_NAME STREQUAL "lsquic")
   # Clone the repository
   execute_process(
     COMMAND
-      ${GIT_PROGRAM} clone https://github.com/${GIT_REPOSITORY}.git ${GIT_PATH}
+      ${GIT_PROGRAM} clone https://github.com/${GIT_REPOSITORY}.git --depth 1 --shallow-submodules --recurse-submodules --single-branch ${GIT_PATH}
     ERROR_STRIP_TRAILING_WHITESPACE
     ERROR_VARIABLE
       GIT_ERROR

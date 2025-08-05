@@ -315,7 +315,6 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
 /* Let's use this on Windows and macOS where it is not defined (todo: put in bsd.h) */
 #ifndef UIO_MAXIOV
 #define UIO_MAXIOV 1024
-
 #endif
 
 /* Server and client packet out is identical */

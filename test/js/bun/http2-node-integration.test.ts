@@ -2,155 +2,149 @@ import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { spawn } from "bun";
 import * as http2 from "node:http2";
 import * as fs from "node:fs";
+import { tls } from "harness";
 import * as path from "node:path";
 
 describe("HTTP/2 Client with Node.js HTTP/2 Server", () => {
   let server: http2.Http2SecureServer | null = null;
   let serverUrl: string;
-  const port = 8443 + Math.floor(Math.random() * 1000); // Random port to avoid conflicts
 
-  beforeAll(async () => {
-    // Create self-signed certificates for testing
-    const { generateKeyPairSync } = await import("node:crypto");
-    const { publicKey, privateKey } = generateKeyPairSync("rsa", {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: "spki", format: "pem" },
-      privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    });
-
+  async function ensureServer() {
     // Create a temporary certificate (self-signed)
-    const cert = `-----BEGIN CERTIFICATE-----
-MIICpDCCAYwCCQC8w6gKOsrYRDANBgkqhkiG9w0BAQsFADATMREwDwYDVQQDDAhs
-b2NhbGhvc3QwHhcNMjQwMTAxMDAwMDAwWhcNMjUwMTAxMDAwMDAwWjATMREwDwYD
-VQQDDAhsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC0
-test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
------END CERTIFICATE-----`;
 
     // Start HTTP/2 server
-    server = http2.createSecureServer({
-      key: privateKey,
-      cert: cert,
+    var internalServer = http2.createSecureServer({
+      key: tls.key,
+      cert: tls.cert,
       allowHTTP1: false, // Force HTTP/2 only
       rejectUnauthorized: false,
     });
 
-    // Handle streams
-    server.on("stream", (stream, headers) => {
-      const method = headers[":method"];
-      const path = headers[":path"];
+    try {
+      // Handle streams
+      internalServer.on("stream", (stream, headers) => {
+        const method = headers[":method"];
+        const path = headers[":path"];
 
-      // Log the request for debugging
-      console.log(`HTTP/2 Server received: ${method} ${path}`);
+        // Log the request for debugging
+        console.log(`HTTP/2 Server received: ${method} ${path}`);
 
-      // Handle different endpoints
-      if (path === "/json") {
-        stream.respond({
-          "content-type": "application/json",
-          ":status": 200,
-        });
-        stream.end(JSON.stringify({
-          message: "Hello from HTTP/2 server",
-          method,
-          path,
-          protocol: "h2",
-          headers: Object.fromEntries(
-            Object.entries(headers).filter(([key]) => !key.startsWith(":"))
-          ),
-        }));
-      } else if (path === "/echo") {
-        stream.respond({
-          "content-type": "application/json",
-          ":status": 200,
-        });
+        // Handle different endpoints
+        if (path === "/json") {
+          stream.respond({
+            "content-type": "application/json",
+            ":status": 200,
+          });
+          stream.end(
+            JSON.stringify({
+              message: "Hello from HTTP/2 server",
+              method,
+              path,
+              protocol: "h2",
+              headers: Object.fromEntries(Object.entries(headers).filter(([key]) => !key.startsWith(":"))),
+            }),
+          );
+        } else if (path === "/echo") {
+          stream.respond({
+            "content-type": "application/json",
+            ":status": 200,
+          });
 
-        let body = "";
-        stream.on("data", (chunk) => {
-          body += chunk.toString();
-        });
+          let body = "";
+          stream.on("data", chunk => {
+            body += chunk.toString();
+          });
 
-        stream.on("end", () => {
-          stream.end(JSON.stringify({
-            method,
-            path,
-            body,
-            headers: Object.fromEntries(
-              Object.entries(headers).filter(([key]) => !key.startsWith(":"))
-            ),
-          }));
-        });
-      } else if (path === "/delay") {
-        // Simulate network delay
-        setTimeout(() => {
+          stream.on("end", () => {
+            stream.end(
+              JSON.stringify({
+                method,
+                path,
+                body,
+                headers: Object.fromEntries(Object.entries(headers).filter(([key]) => !key.startsWith(":"))),
+              }),
+            );
+          });
+        } else if (path === "/delay") {
+          // Simulate network delay
+          setTimeout(() => {
+            stream.respond({
+              "content-type": "text/plain",
+              ":status": 200,
+            });
+            stream.end("Delayed response");
+          }, 1000);
+        } else if (path === "/large") {
+          // Send a large response to test flow control
+          const largeData = "A".repeat(1024 * 1024); // 1MB of 'A's
+          stream.respond({
+            "content-type": "text/plain",
+            "content-length": largeData.length.toString(),
+            ":status": 200,
+          });
+          stream.end(largeData);
+        } else if (path === "/stream") {
+          // Send a streaming response
           stream.respond({
             "content-type": "text/plain",
             ":status": 200,
           });
-          stream.end("Delayed response");
-        }, 1000);
-      } else if (path === "/large") {
-        // Send a large response to test flow control
-        const largeData = "A".repeat(1024 * 1024); // 1MB of 'A's
-        stream.respond({
-          "content-type": "text/plain",
-          "content-length": largeData.length.toString(),
-          ":status": 200,
-        });
-        stream.end(largeData);
-      } else if (path === "/stream") {
-        // Send a streaming response
-        stream.respond({
-          "content-type": "text/plain",
-          ":status": 200,
-        });
 
-        let count = 0;
-        const interval = setInterval(() => {
-          if (count >= 5) {
-            clearInterval(interval);
-            stream.end("\\nEnd of stream\\n");
-          } else {
-            stream.write(`Chunk ${count}\\n`);
-            count++;
-          }
-        }, 100);
-      } else if (path === "/error") {
-        stream.respond({ ":status": 500 });
-        stream.end("Internal Server Error");
-      } else {
-        stream.respond({
-          "content-type": "text/plain",
-          ":status": 200,
-        });
-        stream.end("Hello HTTP/2 World!");
-      }
-    });
-
-    // Start server
-    await new Promise<void>((resolve, reject) => {
-      server!.listen(port, "localhost", (err?: Error) => {
-        if (err) reject(err);
-        else {
-          serverUrl = `https://localhost:${port}`;
-          console.log(`HTTP/2 test server started on ${serverUrl}`);
-          resolve();
+          let count = 0;
+          const interval = setInterval(() => {
+            if (count >= 5) {
+              clearInterval(interval);
+              stream.end("\\nEnd of stream\\n");
+            } else {
+              stream.write(`Chunk ${count}\\n`);
+              count++;
+            }
+          }, 100);
+        } else if (path === "/error") {
+          stream.respond({ ":status": 500 });
+          stream.end("Internal Server Error");
+        } else {
+          stream.respond({
+            "content-type": "text/plain",
+            ":status": 200,
+          });
+          stream.end("Hello HTTP/2 World!");
         }
       });
-    });
-  }, 30000);
 
-  afterAll(async () => {
-    if (server) {
-      await new Promise<void>((resolve) => {
-        server!.close(() => {
-          console.log("HTTP/2 test server closed");
-          resolve();
+      // Start server
+      await new Promise<void>((resolve, reject) => {
+        internalServer!.listen(0, "localhost", (err?: Error) => {
+          if (err) reject(err);
+          else {
+            serverUrl = `https://localhost:${(internalServer.address() as any).port}`;
+            server = internalServer;
+            console.log(`HTTP/2 test server started on ${serverUrl}`);
+            resolve();
+          }
         });
       });
+    } catch (e) {
+      internalServer.close();
+      throw e;
     }
-  }, 10000);
+  }
+
+  async function getServerUrl() {
+    if (!server) {
+      await ensureServer();
+    }
+    return serverUrl;
+  }
+
+  afterAll(() => {
+    if (server) {
+      server.close();
+    }
+  });
 
   test("should connect to Node.js HTTP/2 server", async () => {
-    const response = await fetch(`${serverUrl}/`, {
+    const response = await fetch(`${await getServerUrl()}/`, {
       verbose: true, // Force HTTP/2
       // Disable certificate validation for self-signed cert
       tls: { rejectUnauthorized: false },
@@ -164,7 +158,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   }, 10000);
 
   test("should handle JSON responses", async () => {
-    const response = await fetch(`${serverUrl}/json`, {
+    const response = await fetch(`${await getServerUrl()}/json`, {
       verbose: true,
       tls: { rejectUnauthorized: false },
     });
@@ -181,7 +175,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   test("should handle POST requests with body", async () => {
     const testData = { test: "data", timestamp: Date.now() };
 
-    const response = await fetch(`${serverUrl}/echo`, {
+    const response = await fetch(`${await getServerUrl()}/echo`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -204,9 +198,9 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
 
   test("should handle multiple concurrent requests", async () => {
     const requests = [
-      fetch(`${serverUrl}/json`, { verbose: true, tls: { rejectUnauthorized: false } }),
-      fetch(`${serverUrl}/`, { verbose: true, tls: { rejectUnauthorized: false } }),
-      fetch(`${serverUrl}/json`, { verbose: true, tls: { rejectUnauthorized: false } }),
+      fetch(`${await getServerUrl()}/json`, { verbose: true, tls: { rejectUnauthorized: false } }),
+      fetch(`${await getServerUrl()}/`, { verbose: true, tls: { rejectUnauthorized: false } }),
+      fetch(`${await getServerUrl()}/json`, { verbose: true, tls: { rejectUnauthorized: false } }),
     ];
 
     const responses = await Promise.all(requests);
@@ -228,7 +222,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   }, 15000);
 
   test("should handle large responses", async () => {
-    const response = await fetch(`${serverUrl}/large`, {
+    const response = await fetch(`${await getServerUrl()}/large`, {
       verbose: true,
       tls: { rejectUnauthorized: false },
     });
@@ -242,7 +236,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   }, 15000);
 
   test("should handle streaming responses", async () => {
-    const response = await fetch(`${serverUrl}/stream`, {
+    const response = await fetch(`${await getServerUrl()}/stream`, {
       verbose: true,
       tls: { rejectUnauthorized: false },
     });
@@ -258,7 +252,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   test("should handle delayed responses", async () => {
     const startTime = Date.now();
 
-    const response = await fetch(`${serverUrl}/delay`, {
+    const response = await fetch(`${await getServerUrl()}/delay`, {
       verbose: true,
       tls: { rejectUnauthorized: false },
     });
@@ -274,7 +268,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
   }, 10000);
 
   test("should handle HTTP/2 errors", async () => {
-    const response = await fetch(`${serverUrl}/error`, {
+    const response = await fetch(`${await getServerUrl()}/error`, {
       verbose: true,
       tls: { rejectUnauthorized: false },
     });
@@ -294,7 +288,7 @@ test-certificate-content-here-this-is-a-dummy-cert-for-testing-purposes
       "Authorization": "Bearer fake-token",
     };
 
-    const response = await fetch(`${serverUrl}/json`, {
+    const response = await fetch(`${await getServerUrl()}/json`, {
       headers: customHeaders,
       verbose: true,
       tls: { rejectUnauthorized: false },

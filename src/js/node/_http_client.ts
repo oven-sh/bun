@@ -106,6 +106,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     return 0;
   }
   req.res = res;
+  res.req = req;
 
   // Handle upgrade responses
   if (res.upgrade) {
@@ -135,6 +136,14 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     });
     return 1; // Skip body but don't treat as Upgrade
   }
+
+  // Emit the response event
+  process.nextTick(() => {
+    if (!req.aborted && !req.emit("response", res)) {
+      // If no listeners, dump the response
+      res._dump();
+    }
+  });
 
   return 0; // No special treatment
 }
@@ -166,15 +175,14 @@ function socketOnEnd() {
   const req = socket._httpMessage;
   const parser = socket.parser;
 
-  if (!req.res && !req.socket._hadError) {
-    req.socket._hadError = true;
+  if (!req.res && !req._hadError) {
+    req._hadError = true;
     emitErrorEventNT(req, new ConnResetException("socket hang up"));
   }
   if (parser) {
     parser.finish();
     freeParser(parser, req, socket);
   }
-  socket.destroy();
 }
 
 function socketOnError(err) {
@@ -227,12 +235,6 @@ function tickOnSocket(req, socket) {
   }
   parser.joinDuplicateHeaders = req.joinDuplicateHeaders;
   parser.onIncoming = parserOnIncomingClient;
-
-  // Set up socket event handlers
-  socket.on("data", socketOnData);
-  socket.on("end", socketOnEnd);
-  socket.on("error", socketOnError);
-  socket.on("close", socketOnClose);
 
   // Emit socket event
   process.nextTick(() => {
@@ -505,10 +507,18 @@ function ClientRequest(input, options, cb) {
             socket._httpMessage = this;
           },
 
-          data: socketOnData,
-          end: socketOnEnd,
-          error: socketOnError,
-          close: socketOnClose,
+          data: (socket, data) => {
+            socketOnData.$call(socket, data);
+          },
+          end: socket => {
+            socketOnEnd.$call(socket);
+          },
+          error: (socket, error) => {
+            socketOnError.$call(socket, error);
+          },
+          close: socket => {
+            socketOnClose.$call(socket);
+          },
         },
       });
 
@@ -519,9 +529,6 @@ function ClientRequest(input, options, cb) {
       return false;
     }
   };
-
-  let onEnd = () => {};
-  let handleResponse: (() => void) | undefined = () => {};
 
   const send = () => {
     this.finished = true;
@@ -775,6 +782,11 @@ function ClientRequest(input, options, cb) {
   this[kReusedSocket] = false;
   this[kHost] = host;
   this[kProtocol] = protocol;
+  
+  // Initialize socket-related properties
+  this.socket = null;
+  this.parser = null;
+  this._hadError = false;
 
   if (options.timeout !== undefined) {
     const timeout = getTimerDuration(options.timeout, "timeout");

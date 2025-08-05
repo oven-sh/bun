@@ -295,7 +295,6 @@ fn printDiffFooter(writer: anytype, config: DiffConfig, removed_diff_lines: usiz
     try writer.writeAll("Received");
     try writer.print("  {s}{d}", .{ styles.inserted_line.prefix.msg, inserted_diff_lines });
     if (config.enable_ansi_colors) try writer.writeAll(colors.reset);
-    try writer.writeAll("\n");
 }
 
 const PrefixStyle = struct {

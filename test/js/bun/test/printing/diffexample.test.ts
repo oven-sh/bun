@@ -47,7 +47,6 @@ test("no color", async () => {
     - Expected  - 2
     + Received  + 2
 
-
           at <anonymous> (FILE:LINE)
     (fail) example 1
      6 | test("example 2", () => {
@@ -73,7 +72,6 @@ test("no color", async () => {
 
     - Expected  - 2
     + Received  + 3
-
 
           at <anonymous> (FILE:LINE)
     (fail) example 2
@@ -141,7 +139,6 @@ test("no color", async () => {
     - Expected  - 4
     + Received  + 3
 
-
           at <anonymous> (FILE:LINE)
     (fail) example 3 - very long string with few changes
     (todo) example 4 - ansi colors don't get printed to console
@@ -199,7 +196,6 @@ test("no color", async () => {
 
     - Expected  - 4
     + Received  + 3
-
 
           at <anonymous> (FILE:LINE)
     (fail) example 12 - large multiline diff
@@ -267,7 +263,6 @@ test("no color", async () => {
     - Expected  - 14
     + Received  + 9
 
-
           at <anonymous> (FILE:LINE)
     (fail) example 13 - simple multiline diff with sections
     200 | });
@@ -320,7 +315,6 @@ test("no color", async () => {
 
     - Expected  - 2
     + Received  + 4
-
 
           at <anonymous> (FILE:LINE)
     (fail) example 16 - indentation change diff
@@ -388,7 +382,6 @@ test("no color", async () => {
     - Expected  - 3
     + Received  + 4
 
-
           at <anonymous> (FILE:LINE)
     (fail) example 17 - very long string
     262 | });
@@ -435,7 +428,6 @@ test("no color", async () => {
     - Expected  - 1
     + Received  + 2
 
-
           at <anonymous> (FILE:LINE)
     (fail) has end newline vs doesn't
     281 |   const received = new Float64Array(length);
@@ -466,7 +458,6 @@ test("no color", async () => {
 
     - Expected  - 1
     + Received  + 1
-
 
           at <anonymous> (FILE:LINE)
     (fail) extremely float64array
@@ -684,7 +675,6 @@ test("no color", async () => {
     - Expected  - 99
     + Received  + 99
 
-
           at <anonymous> (FILE:LINE)
     (fail) completely different long value does not truncate
 
@@ -747,7 +737,6 @@ test("color", async () => {
     \x1B[32m- Expected  - 2\x1B[0m
     \x1B[31m+ Received  + 2\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m{\x1B[0m
@@ -773,7 +762,6 @@ test("color", async () => {
     \x1B[32m- Expected  - 8\x1B[0m
     \x1B[31m+ Received  + 7\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
     \x1B[33m@@ -1,7 +1,7 @@\x1B[0m
@@ -796,7 +784,6 @@ test("color", async () => {
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
     Expected: \x1B[0m\x1B[32m"Hello 👋 世界 🌎"\x1B[0m
@@ -813,7 +800,6 @@ test("color", async () => {
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m{\x1B[0m
@@ -827,7 +813,6 @@ test("color", async () => {
 
     \x1B[32m- Expected  - 2\x1B[0m
     \x1B[31m+ Received  + 2\x1B[0m
-
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
@@ -845,7 +830,6 @@ test("color", async () => {
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
 
-
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m{\x1B[0m
@@ -857,7 +841,6 @@ test("color", async () => {
 
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
-
 
     "
   `);

@@ -226,6 +226,91 @@ pub const AnyStaticRoute = union(enum) {
     }
 };
 
+// SNI Callback support
+const SNICallbackContext = struct {
+    callback: JSC.Strong.Optional,
+    globalThis: *JSC.JSGlobalObject,
+    
+    pub fn deinit(this: *SNICallbackContext) void {
+        this.callback.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+// SNI callback bridge function
+export fn sniCallbackBridge(s: *uws.us_internal_ssl_socket_t, hostname: [*c]const u8, result_cb: uws.us_sni_result_cb, ctx: ?*anyopaque) callconv(.C) void {
+    const callback_ctx: *SNICallbackContext = @ptrCast(@alignCast(ctx orelse return));
+    const globalThis = callback_ctx.globalThis;
+    const sni_callback = callback_ctx.callback.get() orelse return;
+    
+    if (hostname == null) return;
+    
+    // Convert hostname to JavaScript string
+    const hostname_str = bun.String.fromBytes(std.mem.span(hostname));
+    const hostname_js = hostname_str.toJS(globalThis);
+    
+    // Create result callback function that will be called from JavaScript
+    const ResultCallback = struct {
+        socket: *uws.us_internal_ssl_socket_t,
+        result_cb_fn: uws.us_sni_result_cb,
+        
+        pub fn callback(this: *@This(), globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const args = callFrame.arguments(2);
+            
+            // First argument should be error (or null)  
+            const error_arg = if (args.len > 0) args.ptr[0] else .js_null;
+            // Second argument should be SecureContext (or null/undefined)
+            const secure_context_arg = if (args.len > 1) args.ptr[1] else .js_null;
+            
+            var result = uws.us_tagged_ssl_sni_result{
+                .tag = @intFromEnum(uws.us_ssl_sni_result_type.US_SSL_SNI_RESULT_NONE),
+                .val = undefined,
+            };
+            
+            if (!error_arg.isNull() and !error_arg.isUndefined()) {
+                // Error case - return NONE result
+            } else if (!secure_context_arg.isNull() and !secure_context_arg.isUndefined()) {
+                // Try to parse as SSL options - in a real implementation we'd handle SecureContext  
+                // For now, we'll just return NONE to indicate no certificate available
+                // TODO: Implement proper SecureContext parsing
+            }
+            
+            // Call the native result callback
+            if (this.result_cb_fn) |cb| {
+                cb(this.socket, result);
+            }
+            
+            return .js_undefined;
+        }
+    };
+    
+    // Create the callback context
+    const result_callback_ctx = bun.default_allocator.create(ResultCallback) catch return;
+    result_callback_ctx.* = .{
+        .socket = s,
+        .result_cb_fn = result_cb,
+    };
+    
+    // Create JavaScript callback function
+    const js_callback = JSC.JSFunction.create(globalThis, "sniResultCallback", 2, ResultCallback.callback, .{ .ctx = result_callback_ctx });
+    
+    // Call the JavaScript SNI callback with hostname and our result callback
+    const args = [_]JSC.JSValue{ hostname_js, js_callback };
+    _ = sni_callback.call(globalThis, .js_undefined, &args) catch |err| {
+        _ = globalThis.takeException(err);
+        // On error, call result callback with NONE
+        if (result_cb) |cb| {
+            const error_result = uws.us_tagged_ssl_sni_result{
+                .tag = @intFromEnum(uws.us_ssl_sni_result_type.US_SSL_SNI_RESULT_NONE),
+                .val = undefined,
+            };
+            cb(s, error_result);
+        }
+        bun.default_allocator.destroy(result_callback_ctx);
+        return;
+    };
+}
+
 pub const ServerConfig = struct {
     address: union(enum) {
         tcp: struct {
@@ -480,6 +565,8 @@ pub const ServerConfig = struct {
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
 
+        sni_callback: JSC.Strong.Optional = .empty,
+
         const log = Output.scoped(.SSLConfig, false);
 
         pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
@@ -641,6 +728,8 @@ pub const ServerConfig = struct {
                 bun.default_allocator.free(ca);
                 this.ca = null;
             }
+
+            this.sni_callback.deinit();
         }
 
         pub const zero = SSLConfig{};
@@ -1033,6 +1122,16 @@ pub const ServerConfig = struct {
                         any = true;
                     } else {
                         return global.throw("Expected lowMemoryMode to be a boolean", .{});
+                    }
+                }
+
+                if (try obj.getTruthy(global, "SNICallback")) |sni_callback| {
+                    if (sni_callback.isCallable()) {
+                        result.sni_callback.set(global, sni_callback);
+                        any = true;
+                        result.requires_custom_request_ctx = true;
+                    } else {
+                        return global.throwInvalidArguments("SNICallback must be a function", .{});
                     }
                 }
             }
@@ -7520,6 +7619,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             // Ensure the routes are set for that domain name.
                             this.setRoutes();
                         }
+                    }
+                }
+
+                // Set up dynamic SNI callback if provided
+                if (ssl_config.sni_callback.has()) {
+                    // Get the SSL context from the app to set up the callback
+                    const ssl_context = app.getNativeHandle();
+                    if (ssl_context) |ctx| {
+                        const internal_ctx: *uws.us_internal_ssl_socket_context_t = @ptrCast(@alignCast(ctx));
+                        
+                        // Create callback context
+                        const callback_ctx = bun.default_allocator.create(SNICallbackContext) catch bun.outOfMemory();
+                        callback_ctx.* = .{
+                            .callback = ssl_config.sni_callback,
+                            .globalThis = globalThis,
+                        };
+                        
+                        // Set up the SNI callback
+                        uws.us_internal_ssl_socket_context_add_sni_callback(internal_ctx, sniCallbackBridge, callback_ctx);
                     }
                 }
             } else {

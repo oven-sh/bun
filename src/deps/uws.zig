@@ -2651,6 +2651,38 @@ pub const create_bun_socket_error_t = enum(c_int) {
 
 pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t, err: ?*create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 
+// SNI callback types and functions
+pub const us_ssl_sni_result_type = enum(u8) {
+    // no cert or error
+    US_SSL_SNI_RESULT_NONE = 0,
+    // we need to parse a new SSL_CTX
+    US_SSL_SNI_RESULT_OPTIONS = 1,
+    // most optimal case
+    US_SSL_SNI_RESULT_SSL_CONTEXT = 2,
+};
+
+pub const us_ssl_sni_result_union = extern union {
+    options: us_bun_socket_context_options_t,
+    ssl_context: *BoringSSL.SSL_CTX,
+};
+
+pub const us_tagged_ssl_sni_result = extern struct {
+    tag: u8,
+    val: us_ssl_sni_result_union,
+};
+
+// Forward declaration of ssl socket structs
+pub const us_internal_ssl_socket_t = opaque {};
+pub const us_internal_ssl_socket_context_t = opaque {};
+
+// SNI callback function types  
+pub const us_sni_result_cb = ?*const fn (*us_internal_ssl_socket_t, us_tagged_ssl_sni_result) callconv(.C) void;
+pub const us_sni_callback = ?*const fn (*us_internal_ssl_socket_t, [*c]const u8, us_sni_result_cb, ?*anyopaque) callconv(.C) void;
+
+// SNI callback functions
+pub extern fn us_internal_ssl_socket_context_add_sni_callback(context: *us_internal_ssl_socket_context_t, cb: us_sni_callback, ctx: ?*anyopaque) void;
+pub extern fn us_internal_ssl_socket_context_sni_result(s: *us_internal_ssl_socket_t, result: us_tagged_ssl_sni_result) void;
+
 pub const create_bun_socket_error_t = enum(i32) {
     none = 0,
     load_ca_file,

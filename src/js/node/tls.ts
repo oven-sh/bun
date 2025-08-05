@@ -515,6 +515,7 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  this.SNICallback = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -601,6 +602,12 @@ function Server(options, secureConnectionListener): void {
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
+
+      if (typeof options.SNICallback === "function") {
+        this.SNICallback = options.SNICallback;
+      } else if (options.SNICallback !== undefined) {
+        throw $ERR_INVALID_ARG_TYPE("options.SNICallback", "function", options.SNICallback);
+      }
     }
   };
 
@@ -627,6 +634,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        SNICallback: this.SNICallback,
       },
       SocketClass,
     ];

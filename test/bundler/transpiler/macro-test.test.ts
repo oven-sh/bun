@@ -8,10 +8,10 @@ import defaultMacro, {
   identity,
   identity as identity1,
   identity as identity2,
-  ireturnapromise,
-  simpleTag,
   interpolateTag,
+  ireturnapromise,
   objectTag,
+  simpleTag,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };

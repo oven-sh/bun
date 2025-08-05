@@ -1,6 +1,6 @@
-import { $, randomUUIDv7, sql, SQL } from "bun";
+import { $, env, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunExe, isCI, isLinux, tempDirWithFiles, bunRun, bunEnv } from "harness";
 import path from "path";
 const postgres = (...args) => new sql(...args);
 
@@ -11096,3 +11096,16 @@ CREATE TABLE ${table_name} (
     });
   });
 }
+
+describe("should proper handle connection errors", () => {
+  test("should not crash if connection fails", async () => {
+    const result = Bun.spawnSync([bunExe(), path.join(import.meta.dirname, "socket.fail.fixture.ts")], {
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    expect(result.stderr?.toString()).toBeFalsy();
+  });
+});

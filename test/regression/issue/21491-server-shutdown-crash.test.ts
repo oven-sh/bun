@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("server shutdown does not crash with SIGINT", async () => {

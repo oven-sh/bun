@@ -1534,7 +1534,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     ws.handler.app = null;
                 }
                 this.flags.terminated = true;
-                this.app.?.close();
+                if (this.app) |app| {
+                    app.close();
+                }
             }
         }
 
@@ -1565,13 +1567,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // Therefore, we split it into two tasks.
                 this.flags.terminated = true;
                 const task = bun.default_allocator.create(jsc.AnyTask) catch unreachable;
-                task.* = jsc.AnyTask.New(App, App.close).init(this.app.?);
+                task.* = jsc.AnyTask.New(ThisServer, safeCloseApp).init(this);
                 this.vm.enqueueTask(jsc.Task.init(task));
             }
 
             const task = bun.default_allocator.create(jsc.AnyTask) catch unreachable;
             task.* = jsc.AnyTask.New(ThisServer, deinit).init(this);
             this.vm.enqueueTask(jsc.Task.init(task));
+        }
+
+        fn safeCloseApp(this: *ThisServer) void {
+            httplog("safeCloseApp", .{});
+            if (this.app) |app| {
+                app.close();
+            }
         }
 
         fn notifyInspectorServerStopped(this: *ThisServer) void {

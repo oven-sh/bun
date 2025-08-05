@@ -969,22 +969,14 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
-        const trace = if (reporters.text and reporters.lcov and reporters.html)
-            bun.perf.trace("TestCommand.printCodeCoverageLCovAndTextAndHtml")
-        else if (reporters.text and reporters.lcov)
+        const trace = if (reporters.text and reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
-        else if (reporters.text and reporters.html)
-            bun.perf.trace("TestCommand.printCodeCoverageTextAndHtml")
-        else if (reporters.lcov and reporters.html)
-            bun.perf.trace("TestCommand.printCodeCoverageLCovAndHtml")
         else if (reporters.text)
             bun.perf.trace("TestCommand.printCodeCoverageText")
         else if (reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCov")
-        else if (reporters.html)
-            bun.perf.trace("TestCommand.printCodeCoverageHtml")
         else
-            @compileError("No reporters enabled");
+            bun.perf.trace("TestCommand.printCodeCoverage");
 
         defer trace.end();
 

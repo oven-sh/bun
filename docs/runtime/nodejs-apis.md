@@ -92,14 +92,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟢 **AsyncLocalStorage** - Full implementation with comprehensive context propagation
-🟡 **AsyncResource** - Core functionality implemented; lifecycle methods return stubs  
-🟡 **EventEmitterAsyncResource** - Implemented with proper context tracking
-🔴 **createHook/Async Hooks** - Stubs only; shows warnings but never calls hooks
-🔴 **Promise Hooks** - Not available (JSC runtime, not V8)
-🔴 **Async ID tracking** - executionAsyncId/triggerAsyncId return 0
-
-**Performance**: Zero-cost when not in use, optimized for production workloads.
+🟡 **AsyncLocalStorage** is fully implemented with comprehensive context propagation. **AsyncResource** and **EventEmitterAsyncResource** have core functionality but lifecycle methods return stubs. **createHook**, **Promise Hooks**, and **Async ID tracking** are not implemented (JSC runtime, not V8). Zero-cost when not in use, optimized for production workloads.
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
@@ -114,16 +107,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟡 **Partially implemented with limitations:**
-
-- ✅ Worker process management, IPC communication, and round-robin load balancing
-- ❌ Handle/file descriptor passing not implemented (blocks SCHED_NONE scheduling)
-- ❌ Direct socket sharing unavailable on all platforms
-- ⚠️ HTTP load balancing requires SO_REUSEPORT (Linux only) or external load balancer
-- ⚠️ Memory management in IPC layer needs optimization
-
-**Works for:** Basic clustering, message passing, process management  
-**Doesn't work for:** High-performance socket sharing, Windows/macOS HTTP clustering
+🟡 Worker process management, IPC communication, and round-robin load balancing are implemented. Handle/file descriptor passing not implemented (blocks SCHED_NONE scheduling). Direct socket sharing unavailable on all platforms. HTTP load balancing requires SO_REUSEPORT (Linux only) or external load balancer. Works for basic clustering, message passing, process management but not high-performance socket sharing or Windows/macOS HTTP clustering.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
@@ -139,13 +123,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `syncBuiltinESMExports` (stub implementation), `Module#load()`, and `module.register` (stub implementation).
-
-✅ Overriding `require.cache` is fully supported for ESM & CJS modules.
-
-✅ `module._extensions`, `module._pathCache`, `module._cache` are fully functional (not no-ops). Custom extensions can be registered and work correctly.
-
-⚠️ `module.register` exists but is not implemented - we recommend using a [`Bun.plugin`](https://bun.com/docs/runtime/plugins) in the meantime.
+🟡 Missing `syncBuiltinESMExports` (stub implementation), `Module#load()`, and `module.register` (stub implementation). Overriding `require.cache` is fully supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are fully functional (not no-ops). Custom extensions can be registered and work correctly. We recommend using [`Bun.plugin`](https://bun.com/docs/runtime/plugins) instead of `module.register`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 

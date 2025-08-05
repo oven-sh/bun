@@ -1,5 +1,3 @@
-import type * as BunTypes from "bun";
-
 const enum QueryStatus {
   active = 1 << 1,
   cancelled = 1 << 2,
@@ -107,7 +105,7 @@ enum SQLQueryFlags {
   notTagged = 1 << 4,
 }
 
-function getQueryHandle(query) {
+function getQueryHandle(query: Query<any>) {
   let handle = query[_handle];
   if (!handle) {
     try {
@@ -251,7 +249,11 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-function normalizeQuery(strings, values, binding_idx = 1) {
+function normalizeQuery(
+  strings: string | TemplateStringsArray,
+  values: unknown[],
+  binding_idx = 1,
+): [string, unknown[]] {
   if (typeof strings === "string") {
     // identifier or unsafe query
     return [strings, values || []];
@@ -427,26 +429,168 @@ function normalizeQuery(strings, values, binding_idx = 1) {
   return [query, binding_values];
 }
 
-class Query extends PublicPromise {
-  [_resolve];
-  [_reject];
+interface DatabaseAdapter<Options, Connection> {
+  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
+  createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any;
+
+  connect(onConnected: (err: null, connection: Connection) => void, reserved?: boolean): void;
+  connect(onConnected: (err: Error, connection: null) => void, reserved?: boolean): void;
+
+  release(connection: Connection, connectingEvent?: boolean): void;
+  close(options?: { timeout?: number }): Promise<void>;
+  flush(): void;
+  isConnected(): boolean;
+
+  init(options: Options): void;
+}
+
+class PostgresAdapterImpl
+  implements DatabaseAdapter<Bun.SQL.__internal.DefinedPostgresOptions, PooledPostgresConnection>
+{
+  private pool: PostgresConnectionPool | null = null;
+  private options: Bun.SQL.__internal.DefinedPostgresOptions;
+
+  init(options: Bun.SQL.__internal.DefinedPostgresOptions): void {
+    this.options = options;
+    this.pool = new PostgresConnectionPool(options);
+  }
+
+  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]] {
+    return normalizeQuery(strings, values);
+  }
+
+  createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any {
+    if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
+      if (poolSize !== 1) {
+        const upperCaseSqlString = sqlString.toUpperCase().trim();
+        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
+          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+        }
+      }
+    }
+
+    return createQuery(
+      sqlString,
+      values,
+      new SQLResultArray(),
+      undefined,
+      !!(flags & SQLQueryFlags.bigint),
+      !!(flags & SQLQueryFlags.simple),
+    );
+  }
+
+  connect(onConnected: (err: Error | null, connection: any) => void, reserved: boolean = false): void {
+    if (!this.pool) throw new Error("Adapter not initialized");
+    this.pool.connect(onConnected, reserved);
+  }
+
+  release(connection: any, connectingEvent: boolean = false): void {
+    if (!this.pool) throw new Error("Adapter not initialized");
+    this.pool.release(connection, connectingEvent);
+  }
+
+  async close(options?: { timeout?: number }): Promise<void> {
+    if (!this.pool) throw new Error("Adapter not initialized");
+    return this.pool.close(options);
+  }
+
+  flush(): void {
+    if (!this.pool) throw new Error("Adapter not initialized");
+    this.pool.flush();
+  }
+
+  isConnected(): boolean {
+    if (!this.pool) return false;
+    return this.pool.isConnected();
+  }
+}
+
+// SQLite adapter implementation
+class SQLiteAdapterImpl implements DatabaseAdapter {
+  private connection: any = null;
+  private options: any;
+
+  init(options: any): void {
+    this.options = options;
+    // SQLite doesn't need connection pooling like PostgreSQL
+    // Initialize single connection here when ready
+  }
+
+  normalizeQuery(strings: any, values: any): [string, any[]] {
+    throw new Error("SQLite queries not yet implemented");
+  }
+
+  createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
+    // SQLite-specific query creation - placeholder for now
+    // TODO: Implement SQLite query creation when sqlite.zig is ready
+    throw new Error("SQLite queries not yet implemented");
+  }
+
+  connect(onConnected: (err: Error | null, connection: any) => void, reserved: boolean = false): void {
+    // SQLite doesn't typically need connection pooling
+    if (this.connection) {
+      onConnected(null, this.connection);
+    } else {
+      onConnected(new Error("SQLite connection not initialized"), null);
+    }
+  }
+
+  release(connection: any, connectingEvent: boolean = false): void {
+    // SQLite doesn't need to release connections back to a pool
+  }
+
+  async close(options?: { timeout?: number }): Promise<void> {
+    // Close the SQLite database connection
+    if (this.connection) {
+      // TODO: Implement SQLite close
+      this.connection = null;
+    }
+  }
+
+  flush(): void {
+    // SQLite flush implementation if needed
+  }
+
+  isConnected(): boolean {
+    return !!this.connection;
+  }
+}
+
+class Query<T = any> extends PublicPromise<T> {
+  [_resolve]: (value: T) => void;
+  [_reject]: (reason?: any) => void;
   [_handle];
   [_handler];
   [_queryStatus] = 0;
   [_strings];
   [_values];
+  [_poolSize]: number;
+  [_flags]: number;
+  [_results]: any;
+
+  private adapter: DatabaseAdapter;
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
-    const active = (status & QueryStatus.active) != 0;
-    const cancelled = (status & QueryStatus.cancelled) != 0;
-    const executed = (status & QueryStatus.executed) != 0;
-    const error = (status & QueryStatus.error) != 0;
-    return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
+
+    let query = "";
+    if ((status & QueryStatus.active) != 0) query += "active ";
+    if ((status & QueryStatus.cancelled) != 0) query += "cancelled ";
+    if ((status & QueryStatus.executed) != 0) query += "executed ";
+    if ((status & QueryStatus.error) != 0) query += "error ";
+
+    return `Query { ${query} }`;
   }
 
-  constructor(strings, values, flags, poolSize, handler) {
-    var resolve_, reject_;
+  constructor(
+    strings: string | TemplateStringsArray,
+    values: any[],
+    flags: number,
+    poolSize: number,
+    handler: (query: Query<T>, handle: any) => any,
+    adapter: DatabaseAdapter,
+  ) {
+    let resolve_: (value: T) => void, reject_: (reason?: any) => void;
     super((resolve, reject) => {
       resolve_ = resolve;
       reject_ = reject;
@@ -458,8 +602,8 @@ class Query extends PublicPromise {
         strings = escapeIdentifier(strings);
       }
     }
-    this[_resolve] = resolve_;
-    this[_reject] = reject_;
+    this[_resolve] = resolve_!;
+    this[_reject] = reject_!;
     this[_handle] = null;
     this[_handler] = handler;
     this[_queryStatus] = 0;
@@ -469,6 +613,21 @@ class Query extends PublicPromise {
     this[_flags] = flags;
 
     this[_results] = null;
+    this.adapter = adapter;
+  }
+
+  private getQueryHandle(): ReturnType<DatabaseAdapter["createQueryHandle"]> {
+    let handle = this[_handle];
+    if (!handle) {
+      try {
+        const [sqlString, final_values] = this.adapter.normalizeQuery(this[_strings], this[_values]);
+        this[_handle] = handle = this.adapter.createQueryHandle(sqlString, final_values, this[_flags], this[_poolSize]);
+      } catch (err) {
+        this[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
+        this.reject(err);
+      }
+    }
+    return handle;
   }
 
   async [_run](async: boolean) {
@@ -483,7 +642,7 @@ class Query extends PublicPromise {
     }
     this[_queryStatus] |= QueryStatus.executed;
 
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
 
     if (async) {
@@ -520,19 +679,19 @@ class Query extends PublicPromise {
     return (this[_queryStatus] & QueryStatus.cancelled) !== 0;
   }
 
-  resolve(x) {
+  resolve(x: T) {
     this[_queryStatus] &= ~QueryStatus.active;
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.done();
     return this[_resolve](x);
   }
 
-  reject(x) {
+  reject(x: any) {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
     if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
-      const handle = getQueryHandle(this);
+      const handle = this.getQueryHandle();
       if (!handle) return this[_reject](x);
       handle.done();
     }
@@ -548,7 +707,7 @@ class Query extends PublicPromise {
     this[_queryStatus] |= QueryStatus.cancelled;
 
     if (status & QueryStatus.executed) {
-      const handle = getQueryHandle(this);
+      const handle = this.getQueryHandle();
       handle.cancel();
     }
 
@@ -561,7 +720,7 @@ class Query extends PublicPromise {
   }
 
   raw() {
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.setMode(SQLQueryResultMode.raw);
     return this;
@@ -573,7 +732,7 @@ class Query extends PublicPromise {
   }
 
   values() {
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.setMode(SQLQueryResultMode.values);
     return this;
@@ -607,6 +766,7 @@ class Query extends PublicPromise {
     return super.finally.$apply(this, arguments);
   }
 }
+
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
@@ -708,8 +868,8 @@ enum PooledConnectionFlags {
   preReserved = 1 << 2,
 }
 
-class PooledConnection {
-  pool: ConnectionPool;
+class PooledPostgresConnection {
+  pool: PostgresConnectionPool;
   connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
@@ -773,7 +933,7 @@ class PooledConnection {
 
     this.pool.release(this, true);
   }
-  constructor(connectionInfo, pool: ConnectionPool) {
+  constructor(connectionInfo, pool: PostgresConnectionPool) {
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
@@ -846,11 +1006,12 @@ class PooledConnection {
     return true;
   }
 }
-class ConnectionPool {
-  connectionInfo: any;
 
-  connections: PooledConnection[];
-  readyConnections: Set<PooledConnection>;
+class PostgresConnectionPool {
+  options: Bun.SQL.__internal.DefinedPostgresOptions;
+
+  connections: Array<PooledPostgresConnection | null>;
+  readyConnections: Set<PooledPostgresConnection>;
   waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   reservedQueue: Array<(err: Error | null, result: any) => void> = [];
 
@@ -858,9 +1019,10 @@ class ConnectionPool {
   closed: boolean = false;
   totalQueries: number = 0;
   onAllQueriesFinished: (() => void) | null = null;
-  constructor(connectionInfo) {
-    this.connectionInfo = connectionInfo;
-    this.connections = new Array(connectionInfo.max);
+
+  constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
+    this.options = options;
+    this.connections = new Array<PooledPostgresConnection | null>(options.max);
     this.readyConnections = new Set();
   }
 
@@ -896,7 +1058,7 @@ class ConnectionPool {
     }
   }
 
-  release(connection: PooledConnection, connectingEvent: boolean = false) {
+  release(connection: PooledPostgresConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
       connection.queryCount--;
       this.totalQueries--;
@@ -960,6 +1122,9 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
+        if (!connection) {
+          continue;
+        }
         if (connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
@@ -984,6 +1149,9 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
+        if (!connection) {
+          continue;
+        }
         if (connection.state === PooledConnectionState.connected) {
           return true;
         }
@@ -999,6 +1167,9 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
+        if (!connection) {
+          continue;
+        }
         if (connection.state === PooledConnectionState.connected) {
           connection.connection?.flush();
         }
@@ -1023,6 +1194,9 @@ class ConnectionPool {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
+        if (!connection) {
+          continue;
+        }
         switch (connection.state) {
           case PooledConnectionState.pending:
             {
@@ -1101,7 +1275,10 @@ class ConnectionPool {
    * @param {function} onConnected - The callback function to be called when the connection is established.
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
    */
-  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
+  connect(
+    onConnected: (err: Error | null, result: PooledPostgresConnection | null) => void,
+    reserved: boolean = false,
+  ) {
     if (this.closed) {
       return onConnected(connectionClosedError(), null);
     }
@@ -1118,6 +1295,9 @@ class ConnectionPool {
         const pollSize = this.connections.length;
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
+          if (!connection) {
+            continue;
+          }
           // we need a new connection and we have some connections that can retry
           if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
@@ -1165,18 +1345,18 @@ class ConnectionPool {
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      const firstConnection = new PooledConnection(this.connectionInfo, this);
+      const firstConnection = new PooledPostgresConnection(this.options, this);
       this.connections[0] = firstConnection;
       if (reserved) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
       }
       for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = new PooledConnection(this.connectionInfo, this);
+        this.connections[i] = new PooledPostgresConnection(this.options, this);
       }
       return;
     }
     if (reserved) {
-      let connectionWithLeastQueries: PooledConnection | null = null;
+      let connectionWithLeastQueries: PooledPostgresConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
@@ -1305,38 +1485,94 @@ class SQLHelper {
   }
 }
 
-function decodeIfValid(value) {
+function decodeIfValid(value: string | null | undefined) {
   if (value) {
     return decodeURIComponent(value);
   }
+
   return null;
 }
-function loadOptions(o: Bun.SQL.Options) {
-  var hostname,
-    port,
-    username,
-    password,
-    database,
+
+/** Finds what is definitely a valid sqlite string, where there is no ambiguity with sqlite and another database adapter */
+function parseDefinitelySqliteUrl(value: string | URL): string | null {
+  const str = value instanceof URL ? value.toString() : value;
+
+  // ':memory:' is a sqlite url
+  if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
+
+  if (str.startsWith("sqlite://")) return new URL(str).pathname;
+  if (str.startsWith("sqlite:")) return str.slice(7); // "sqlite:".length
+
+  // We can't guarantee this is exclusively an sqlite url here
+  // even if it *could* be
+  return null;
+}
+
+function parseOptions(
+  stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
+  definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
+): Bun.SQL.__internal.DefinedOptions {
+  let [stringOrUrl, options]: [string | URL | null, Bun.SQL.Options] =
+    typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL
+      ? [stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty]
+      : stringOrUrlOrOptions
+        ? [null, { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }]
+        : [null, definitelyOptionsButMaybeEmpty];
+
+  if (options.adapter === undefined && stringOrUrl !== null) {
+    const sqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
+
+    if (sqliteUrl !== null) {
+      return {
+        ...options,
+        adapter: "sqlite",
+        filename: sqliteUrl,
+      };
+    }
+  }
+
+  if (options.adapter === "sqlite") {
+    return {
+      ...options,
+      adapter: "sqlite",
+      filename: options.filename || stringOrUrl || ":memory:",
+    };
+  }
+
+  if (options.adapter !== undefined && options.adapter !== "postgres" && options.adapter !== "postgresql") {
+    options.adapter satisfies never; // This will type error if we support a new adapter in the future, which will let us know to update this check
+    throw new UnsupportedAdapterError(options);
+  }
+
+  // TODO: Better typing for these vars
+  let hostname: any,
+    port: number,
+    username: string,
+    password: string,
+    database: any,
     tls,
-    url,
-    query,
-    adapter,
-    idleTimeout,
-    connectionTimeout,
-    maxLifetime,
-    onconnect,
-    onclose,
-    max,
-    bigint,
-    path;
+    url: URL,
+    query: string,
+    adapter: NonNullable<Bun.SQL.Options["adapter"]>,
+    idleTimeout: number | null,
+    connectionTimeout: number | null,
+    maxLifetime: number | null,
+    onconnect: (client: Bun.SQL) => void,
+    onclose: (client: Bun.SQL) => void,
+    max: number | null,
+    bigint: any,
+    path: string | string[];
+
   let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
-  if (o === undefined || (typeof o === "string" && o.length === 0)) {
+  if (stringOrUrl === undefined || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
     let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+
     if (!urlString) {
       urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+
       if (urlString) {
         sslMode = SSLMode.require;
       }
@@ -1344,31 +1580,29 @@ function loadOptions(o: Bun.SQL.Options) {
 
     if (urlString) {
       url = new URL(urlString);
-      o = {};
     }
-  } else if (o && typeof o === "object") {
-    if (o instanceof URL) {
-      url = o;
-    } else if (o?.url) {
-      const _url = o.url;
+  } else if (stringOrUrl && typeof stringOrUrl === "object") {
+    if (stringOrUrl instanceof URL) {
+      url = stringOrUrl;
+    } else if (options?.url) {
+      const _url = options.url;
       if (typeof _url === "string") {
         url = new URL(_url);
       } else if (_url && typeof _url === "object" && _url instanceof URL) {
         url = _url;
       }
     }
-    if (o?.tls) {
+    if (options?.tls) {
       sslMode = SSLMode.require;
-      tls = o.tls;
+      tls = options.tls;
     }
-  } else if (typeof o === "string") {
-    url = new URL(o);
+  } else if (typeof stringOrUrl === "string") {
+    url = new URL(stringOrUrl);
   }
-  o ||= {};
   query = "";
 
   if (url) {
-    ({ hostname, port, username, password, adapter } = o);
+    ({ hostname, port, username, password, adapter } = options);
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
@@ -1396,20 +1630,22 @@ function loadOptions(o: Bun.SQL.Options) {
     }
     query = query.trim();
   }
-  hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
+  hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
 
-  port ||= Number(o.port || env.PGPORT || 5432);
+  port ||= Number(options.port || env.PGPORT || 5432);
 
-  path ||= o.path || "";
+  path ||= options.path || "";
   // add /.s.PGSQL.${port} if it doesn't exist
   if (path && path?.indexOf("/.s.PGSQL.") === -1) {
     path = `${path}/.s.PGSQL.${port}`;
   }
 
-  username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
-  password ||= o.password || o.pass || env.PGPASSWORD || "";
-  const connection = o.connection;
+  username ||=
+    options.username || options.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
+  database ||=
+    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
+  password ||= options.password || options.pass || env.PGPASSWORD || "";
+  const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {
       if (connection[key] !== undefined) {
@@ -1417,26 +1653,26 @@ function loadOptions(o: Bun.SQL.Options) {
       }
     }
   }
-  tls ||= o.tls || o.ssl;
-  adapter ||= o.adapter || "postgres";
-  max = o.max;
+  tls ||= options.tls || options.ssl;
+  adapter ||= options.adapter || "postgres";
+  max = options.max;
 
-  idleTimeout ??= o.idleTimeout;
-  idleTimeout ??= o.idle_timeout;
-  connectionTimeout ??= o.connectionTimeout;
-  connectionTimeout ??= o.connection_timeout;
-  connectionTimeout ??= o.connectTimeout;
-  connectionTimeout ??= o.connect_timeout;
-  maxLifetime ??= o.maxLifetime;
-  maxLifetime ??= o.max_lifetime;
-  bigint ??= o.bigint;
+  idleTimeout ??= options.idleTimeout;
+  idleTimeout ??= options.idle_timeout;
+  connectionTimeout ??= options.connectionTimeout;
+  connectionTimeout ??= options.connection_timeout;
+  connectionTimeout ??= options.connectTimeout;
+  connectionTimeout ??= options.connect_timeout;
+  maxLifetime ??= options.maxLifetime;
+  maxLifetime ??= options.max_lifetime;
+  bigint ??= options.bigint;
   // we need to explicitly set prepare to false if it is false
-  if (o.prepare === false) {
+  if (options.prepare === false) {
     prepare = false;
   }
 
-  onconnect ??= o.onconnect;
-  onclose ??= o.onclose;
+  onconnect ??= options.onconnect;
+  onclose ??= options.onclose;
   if (onconnect !== undefined) {
     if (!$isCallable(onconnect)) {
       throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
@@ -1509,31 +1745,40 @@ function loadOptions(o: Bun.SQL.Options) {
     throw $ERR_INVALID_ARG_VALUE("port", port, "must be a non-negative integer between 1 and 65535");
   }
 
-  switch (adapter) {
-    case "postgres":
-    case "postgresql":
-      adapter = "postgres";
-      break;
-    default:
-      throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
-  }
-  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter, prepare, bigint };
+  const ret: Bun.SQL.__internal.DefinedPostgresOptions = {
+    adapter: "postgres",
+    hostname,
+    port,
+    username,
+    password,
+    database,
+    tls,
+    prepare,
+    bigint,
+    sslMode,
+    query,
+    max: max || 10,
+  };
+
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;
   }
+
   if (connectionTimeout != null) {
     ret.connectionTimeout = connectionTimeout;
   }
+
   if (maxLifetime != null) {
     ret.maxLifetime = maxLifetime;
   }
+
   if (onconnect !== undefined) {
     ret.onconnect = onconnect;
   }
+
   if (onclose !== undefined) {
     ret.onclose = onclose;
   }
-  ret.max = max || 10;
 
   return ret;
 }
@@ -1549,14 +1794,49 @@ function assertValidTransactionName(name: string) {
   }
 }
 
-function SQL(o, e = {}) {
-  if (typeof o === "string" || o instanceof URL) {
-    o = { ...e, url: o };
-  }
-  var connectionInfo = loadOptions(o);
-  var pool = new ConnectionPool(connectionInfo);
+class UnsupportedAdapterError extends Error {
+  public options: Bun.SQL.Options;
 
-  function onQueryDisconnected(err) {
+  constructor(options: Bun.SQL.Options) {
+    super(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite"`);
+    this.options = options;
+  }
+}
+
+function createPool(options: Bun.SQL.__internal.DefinedOptions) {
+  switch (options.adapter) {
+    case "postgres": {
+      return new PostgresConnectionPool(options);
+    }
+
+    case "sqlite": {
+      return new SQLiteConnectionPool(options);
+    }
+
+    default: {
+      options satisfies never;
+      throw new UnsupportedAdapterError(options);
+    }
+  }
+}
+
+const SQL: typeof Bun.SQL = function SQL(
+  stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
+  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
+): Bun.SQL {
+  const resolvedOptions = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+
+  switch (resolvedOptions.adapter) {
+    case "postgres":
+      break;
+    default: {
+      throw new UnsupportedAdapterError(resolvedOptions);
+    }
+  }
+
+  const pool = new PostgresConnectionPool(resolvedOptions);
+
+  function onQueryDisconnected(this: PooledPostgresConnection, err) {
     // connection closed mid query this will not be called if the query finishes first
     const query = this;
     if (err) {
@@ -1584,6 +1864,7 @@ function SQL(o, e = {}) {
     pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
     handle.run(pooledConnection.connection, query);
   }
+
   function queryFromPoolHandler(query, handle, err) {
     if (err) {
       // fail to create query
@@ -1596,13 +1877,14 @@ function SQL(o, e = {}) {
 
     pool.connect(onQueryConnected.bind(query, handle));
   }
+
   function queryFromPool(strings, values) {
     try {
       return new Query(
         strings,
         values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
-        connectionInfo.max,
+        resolvedOptions.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
+        resolvedOptions.max,
         queryFromPoolHandler,
       );
     } catch (err) {
@@ -1612,11 +1894,11 @@ function SQL(o, e = {}) {
 
   function unsafeQuery(strings, values) {
     try {
-      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
+      let flags = resolvedOptions.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler);
+      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1646,10 +1928,10 @@ function SQL(o, e = {}) {
       const query = new Query(
         strings,
         values,
-        connectionInfo.bigint
+        resolvedOptions.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        connectionInfo.max,
+        resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
       transactionQueries.add(query);
@@ -1660,7 +1942,7 @@ function SQL(o, e = {}) {
   }
   function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
-      let flags = connectionInfo.bigint
+      let flags = resolvedOptions.bigint
         ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
         : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
 
@@ -1671,7 +1953,7 @@ function SQL(o, e = {}) {
         strings,
         values,
         flags,
-        connectionInfo.max,
+        resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
       transactionQueries.add(query);
@@ -1710,13 +1992,14 @@ function SQL(o, e = {}) {
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function reserved_sql(strings, ...values) {
+    function reserved_sql(strings: string | TemplateStringsArray, ...values: unknown[]) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
         return Promise.reject(connectionClosedError());
       }
+
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -1725,19 +2008,21 @@ function SQL(o, e = {}) {
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
       }
+
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
-    reserved_sql.unsafe = (string, args = []) => {
+
+    reserved_sql.unsafe = (string: string, args: unknown[] = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
-    reserved_sql.file = async (path: string, args = []) => {
+
+    reserved_sql.file = async (path: string, args: unknown[] = []) => {
       return await Bun.file(path)
         .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
+        .then(text => unsafeQueryFromTransaction(text, args, pooledConnection, state.queries));
     };
+
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
@@ -1746,7 +2031,7 @@ function SQL(o, e = {}) {
     };
 
     reserved_sql.commitDistributed = async function (name: string) {
-      const adapter = connectionInfo.adapter;
+      const adapter = resolvedOptions.adapter;
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
@@ -1758,12 +2043,12 @@ function SQL(o, e = {}) {
         case "sqlite":
           throw Error(`SQLite dont support distributed transactions.`);
         default:
-          throw Error(`Unsupported adapter: ${adapter}.`);
+          throw new UnsupportedAdapterError(resolvedOptions);
       }
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
       assertValidTransactionName(name);
-      const adapter = connectionInfo.adapter;
+      const adapter = resolvedOptions.adapter;
       switch (adapter) {
         case "postgres":
           return await reserved_sql.unsafe(`ROLLBACK PREPARED '${name}'`);
@@ -1774,7 +2059,7 @@ function SQL(o, e = {}) {
         case "sqlite":
           throw Error(`SQLite dont support distributed transactions.`);
         default:
-          throw Error(`Unsupported adapter: ${adapter}.`);
+          throw new UnsupportedAdapterError(resolvedOptions);
       }
     };
 
@@ -1952,7 +2237,7 @@ function SQL(o, e = {}) {
 
     let savepoints = 0;
     let transactionSavepoints = new Set();
-    const adapter = connectionInfo.adapter;
+    const adapter = resolvedOptions.adapter;
     let BEGIN_COMMAND: string = "BEGIN";
     let ROLLBACK_COMMAND: string = "ROLLBACK";
     let COMMIT_COMMAND: string = "COMMIT";
@@ -1995,7 +2280,7 @@ function SQL(o, e = {}) {
           pool.release(pooledConnection);
 
           // TODO: use ERR_
-          return reject(new Error(`Unsupported adapter: ${adapter}.`));
+          return reject(new UnsupportedAdapterError(resolvedOptions));
       }
     } else {
       // normal transaction
@@ -2027,7 +2312,7 @@ function SQL(o, e = {}) {
         default:
           pool.release(pooledConnection);
           // TODO: use ERR_
-          return reject(new Error(`Unsupported adapter: ${adapter}.`));
+          return reject(new UnsupportedAdapterError(resolvedOptions));
       }
     }
     const onClose = onTransactionDisconnected.bind(state);
@@ -2090,7 +2375,7 @@ function SQL(o, e = {}) {
         case "sqlite":
           throw Error(`SQLite dont support distributed transactions.`);
         default:
-          throw Error(`Unsupported adapter: ${adapter}.`);
+          throw new UnsupportedAdapterError(resolvedOptions);
       }
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
@@ -2105,7 +2390,7 @@ function SQL(o, e = {}) {
         case "sqlite":
           throw Error(`SQLite dont support distributed transactions.`);
         default:
-          throw Error(`Unsupported adapter: ${adapter}.`);
+          throw new UnsupportedAdapterError(resolvedOptions);
       }
     };
     // begin is not allowed on a transaction we need to use savepoint() instead
@@ -2275,7 +2560,8 @@ function SQL(o, e = {}) {
       }
     }
   }
-  function sql(strings, ...values) {
+
+  function sql(strings: TemplateStringsArray | object, ...values: unknown[]) {
     if ($isArray(strings)) {
       // detect if is tagged template
       if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -2288,9 +2574,10 @@ function SQL(o, e = {}) {
     return queryFromPool(strings, values);
   }
 
-  sql.unsafe = (string, args = []) => {
+  sql.unsafe = (string: string, args = []) => {
     return unsafeQuery(string, args);
   };
+
   sql.file = async (path: string, args = []) => {
     return await Bun.file(path)
       .text()
@@ -2298,6 +2585,7 @@ function SQL(o, e = {}) {
         return unsafeQuery(text, args);
       });
   };
+
   sql.reserve = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
@@ -2307,12 +2595,14 @@ function SQL(o, e = {}) {
     pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
     return promiseWithResolvers.promise;
   };
+
   sql.rollbackDistributed = async function (name: string) {
     if (pool.closed) {
       throw connectionClosedError();
     }
+
     assertValidTransactionName(name);
-    const adapter = connectionInfo.adapter;
+    const adapter = resolvedOptions.adapter;
     switch (adapter) {
       case "postgres":
         return await sql.unsafe(`ROLLBACK PREPARED '${name}'`);
@@ -2331,8 +2621,10 @@ function SQL(o, e = {}) {
     if (pool.closed) {
       throw connectionClosedError();
     }
+
     assertValidTransactionName(name);
-    const adapter = connectionInfo.adapter;
+    const adapter = resolvedOptions.adapter;
+
     switch (adapter) {
       case "postgres":
         return await sql.unsafe(`COMMIT PREPARED '${name}'`);
@@ -2351,6 +2643,7 @@ function SQL(o, e = {}) {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
     }
+
     let callback = fn;
 
     if (typeof name !== "string") {
@@ -2360,7 +2653,9 @@ function SQL(o, e = {}) {
     if (!$isCallable(callback)) {
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
+
     const { promise, resolve, reject } = Promise.withResolvers();
+
     // lets just reuse the same code path as the transaction begin
     pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), true);
     return promise;
@@ -2370,6 +2665,7 @@ function SQL(o, e = {}) {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
     }
+
     let callback = fn;
     let options: string | undefined = options_or_fn as unknown as string;
     if ($isCallable(options_or_fn)) {
@@ -2378,13 +2674,17 @@ function SQL(o, e = {}) {
     } else if (typeof options_or_fn !== "string") {
       return Promise.reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
     }
+
     if (!$isCallable(callback)) {
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
+
     const { promise, resolve, reject } = Promise.withResolvers();
     pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), true);
+
     return promise;
   };
+
   sql.connect = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
@@ -2394,13 +2694,18 @@ function SQL(o, e = {}) {
       return Promise.resolve(sql);
     }
 
-    let { resolve, reject, promise } = Promise.withResolvers();
-    const onConnected = (err, connection) => {
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    const onConnected = (err: unknown, connection: PooledPostgresConnection | null) => {
       if (err) {
         return reject(err);
       }
+
       // we are just measuring the connection here lets release it
-      pool.release(connection);
+      if (connection) {
+        pool.release(connection);
+      }
+
       resolve(sql);
     };
 
@@ -2416,17 +2721,20 @@ function SQL(o, e = {}) {
   sql[Symbol.asyncDispose] = () => sql.close();
 
   sql.flush = () => pool.flush();
-  sql.options = connectionInfo;
+  sql.options = resolvedOptions;
 
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
-  return sql;
-}
 
-var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
+  return sql satisfies Bun.SQL;
+};
 
-function resetDefaultSQL(sql) {
+SQL.UnsupportedAdapterError = UnsupportedAdapterError;
+
+var lazyDefaultSQL: Bun.SQL;
+
+function resetDefaultSQL(sql: Bun.SQL) {
   lazyDefaultSQL = sql;
   // this will throw "attempt to assign to readonly property"
   // Object.assign(defaultSQLObject, lazyDefaultSQL);
@@ -2439,28 +2747,33 @@ function ensureDefaultSQL() {
   }
 }
 
-var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, ...values) {
+const defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
+
   if (!lazyDefaultSQL) {
     resetDefaultSQL(SQL(undefined));
   }
+
   return lazyDefaultSQL(strings, ...values);
-} as typeof BunTypes.SQL;
+} as Bun.SQL;
 
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.reserve(...args);
 };
+
 defaultSQLObject.commitDistributed = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.commitDistributed(...args);
 };
+
 defaultSQLObject.rollbackDistributed = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.rollbackDistributed(...args);
 };
+
 defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.beginDistributed(...args);
@@ -2481,19 +2794,21 @@ defaultSQLObject.file = (filename: string, ...args) => {
   return lazyDefaultSQL.file(filename, ...args);
 };
 
-defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
+defaultSQLObject.transaction = defaultSQLObject.begin = function (...args) {
   ensureDefaultSQL();
   return lazyDefaultSQL.begin(...args);
-} as (typeof BunTypes.SQL)["begin"];
+};
 
-defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
+defaultSQLObject.end = defaultSQLObject.close = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.close(...args);
 };
-defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
+
+defaultSQLObject.flush = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
 };
+
 //define lazy properties
 defineProperties(defaultSQLObject, {
   options: {
@@ -2510,12 +2825,10 @@ defineProperties(defaultSQLObject, {
   },
 });
 
-var exportsObject = {
+export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,
   SQL,
   Query,
   postgres: SQL,
 };
-
-export default exportsObject;

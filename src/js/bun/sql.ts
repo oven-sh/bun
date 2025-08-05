@@ -409,12 +409,15 @@ function normalizeQuery(
   return [query, binding_values];
 }
 
+type OnConnected<Connection> = (
+  ...args: [error: null, connection: Connection] | [error: Error, connection: null]
+) => void;
+
 interface DatabaseAdapter<Options, Connection> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
   createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any;
 
-  connect(onConnected: (err: null, connection: Connection) => void, reserved?: boolean): void;
-  connect(onConnected: (err: Error, connection: null) => void, reserved?: boolean): void;
+  connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
 
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
@@ -459,7 +462,7 @@ class PostgresAdapterImpl
     );
   }
 
-  connect(onConnected: (err: Error | null, connection: any) => void, reserved: boolean = false): void {
+  connect(onConnected: OnConnected<PooledPostgresConnection>, reserved: boolean = false): void {
     if (!this.pool) throw new Error("Adapter not initialized");
     this.pool.connect(onConnected, reserved);
   }
@@ -1255,10 +1258,7 @@ class PostgresConnectionPool {
    * @param {function} onConnected - The callback function to be called when the connection is established.
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
    */
-  connect(
-    onConnected: (err: Error | null, result: PooledPostgresConnection | null) => void,
-    reserved: boolean = false,
-  ) {
+  connect(onConnected: OnConnected<PooledPostgresConnection>, reserved = false): void {
     if (this.closed) {
       return onConnected(connectionClosedError(), null);
     }

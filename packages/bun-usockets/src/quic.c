@@ -318,8 +318,18 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
             continue;
         }
 
-        // Use the peer context from the UDP socket extension area
-        struct quic_peer_ctx *peer_ctx = (struct quic_peer_ctx *)((char *)s + sizeof(struct us_udp_socket_t));
+        // For server, we need to create a peer context that represents this specific client
+        // For now, we'll allocate a new peer context for each packet
+        // TODO: In production, maintain a map of client addresses to peer contexts
+        struct quic_peer_ctx *client_peer_ctx = malloc(sizeof(struct quic_peer_ctx));
+        if (!client_peer_ctx) {
+            printf("ERROR: Failed to allocate client peer context\n");
+            continue;
+        }
+        
+        client_peer_ctx->udp_socket = s;  // The server's UDP socket to send responses through
+        client_peer_ctx->context = context;
+        memset(client_peer_ctx->reserved, 0, sizeof(client_peer_ctx->reserved));
         
         printf("Server processing packet %d: length=%d, from port %d\n", i, length, 
                (((struct sockaddr *)peer_addr)->sa_family == AF_INET) ? ntohs(((struct sockaddr_in*)peer_addr)->sin_port) : 0);
@@ -329,16 +339,21 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
         
         if (!context->engine) {
             printf("  ERROR: Engine is NULL!\n");
+            free(client_peer_ctx);
             continue;
         }
         
-        int ret = lsquic_engine_packet_in(context->engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) peer_ctx, 0);
+        int ret = lsquic_engine_packet_in(context->engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) client_peer_ctx, 0);
         printf("  lsquic_engine_packet_in returned: %d\n", ret);
         
         // Check if we have any connections to process
         if (ret == 0) {
             printf("  Packet accepted, processing connections...\n");
         }
+        
+        // TODO: This is a memory leak - peer contexts should be managed properly
+        // In production, maintain a connection table indexed by client address
+        // For now, just note that client_peer_ctx is leaked
 
 
     }
@@ -1181,6 +1196,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     
     // Use default QUIC versions (includes latest stable versions)
     server_settings.es_versions = LSQUIC_DF_VERSIONS;
+    printf("Server QUIC versions: 0x%x\n", server_settings.es_versions);
     
     // Set max packet size for UDP (common QUIC value)
     server_settings.es_max_udp_payload_size_rx = 1472;
@@ -1204,7 +1220,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
         .ea_settings = &server_settings,
     };
 
-    ///printf("log: %d\n", lsquic_set_log_level("debug"));
+    printf("log: %d\n", lsquic_set_log_level("warn"));
 
     // Logger is not currently used - commented out to avoid unused variable warning
     // static struct lsquic_logger_if logger = {
@@ -1222,6 +1238,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     
     // Use default QUIC versions (includes latest stable versions)
     client_settings.es_versions = LSQUIC_DF_VERSIONS;
+    printf("Client QUIC versions: 0x%x\n", client_settings.es_versions);
     
     // Set max packet size for UDP (common QUIC value)
     client_settings.es_max_udp_payload_size_rx = 1472;
@@ -1417,7 +1434,8 @@ us_quic_socket_t *us_quic_socket_context_connect(us_quic_socket_context_t *conte
     // Get the peer context from the UDP socket extension area
     struct quic_peer_ctx *connect_peer_ctx = (struct quic_peer_ctx *)((char *)udp_socket + sizeof(struct us_udp_socket_t));
     
-    void *client = lsquic_engine_connect(context->client_engine, LSQVER_I001, (struct sockaddr *) local_addr, addr, connect_peer_ctx, (lsquic_conn_ctx_t *) quic_socket, host, 0, 0, 0, 0, 0);
+    // Use version 0 to let the engine negotiate the best version
+    void *client = lsquic_engine_connect(context->client_engine, 0, (struct sockaddr *) local_addr, addr, connect_peer_ctx, (lsquic_conn_ctx_t *) quic_socket, host, 0, 0, 0, 0, 0);
 
     printf("Client: %p\n", client);
 

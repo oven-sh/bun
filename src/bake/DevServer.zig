@@ -2733,12 +2733,62 @@ pub fn handleParseTaskFailure(
             .server, .ssr => dev.server_graph.onFileDeleted(abs_path, bv2),
             .client => dev.client_graph.onFileDeleted(abs_path, bv2),
         }
+        dev.handleEntrypointNotFound(abs_path, graph);
     } else {
         switch (graph) {
             .server => try dev.server_graph.insertFailure(.abs_path, abs_path, log, false),
             .ssr => try dev.server_graph.insertFailure(.abs_path, abs_path, log, true),
             .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
         }
+    }
+}
+
+/// We rely a lot on the files we parse in the bundle graph to know which files
+/// to add to the watcher.
+///
+/// There is one wrinkle with this:
+///
+/// If an entrypoint is deleted it will never get parsed and then never will be
+/// watched
+///
+/// So if we get `error.FileNotFound` on an entrypoint, we'll manually add it to
+/// the watcher to pick up if it got changed again.
+fn handleEntrypointNotFound(dev: *DevServer, abs_path: []const u8, graph_kind: bake.Graph) void {
+    switch (graph_kind) {
+        .server, .ssr => {
+            const graph = &dev.server_graph;
+            const index = graph.bundled_files.getIndex(abs_path) orelse return;
+            const loader = bun.options.Loader.fromString(abs_path) orelse bun.options.Loader.file;
+            const file = &graph.bundled_files.values()[index];
+            if (file.is_route) {
+                _ = dev.bun_watcher.addFile(
+                    bun.invalid_fd,
+                    abs_path,
+                    bun.hash32(abs_path),
+                    loader,
+                    bun.invalid_fd,
+                    null,
+                    true,
+                );
+            }
+        },
+        .client => {
+            const graph = &dev.client_graph;
+            const index = graph.bundled_files.getIndex(abs_path) orelse return;
+            const loader = bun.options.Loader.fromString(abs_path) orelse bun.options.Loader.file;
+            const file = &graph.bundled_files.values()[index];
+            if (file.flags.is_html_route or file.flags.is_hmr_root) {
+                _ = dev.bun_watcher.addFile(
+                    bun.invalid_fd,
+                    abs_path,
+                    bun.hash32(abs_path),
+                    loader,
+                    bun.invalid_fd,
+                    null,
+                    true,
+                );
+            }
+        },
     }
 }
 

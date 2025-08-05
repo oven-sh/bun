@@ -88,6 +88,11 @@ pub const SocketContext = opaque {
 pub const ListenSocket = opaque {
     // Listen sockets are created by SocketContext.listen()
     // and typically don't need many methods beyond what's inherited
+    
+    /// Get the port number this listen socket is bound to
+    pub fn getPort(this: *ListenSocket) c_int {
+        return us_quic_listen_socket_get_port(this);
+    }
 };
 
 /// QUIC socket - represents a QUIC connection
@@ -156,6 +161,7 @@ extern fn us_quic_stream_is_client(stream: *Stream) c_int;
 extern fn us_quic_stream_shutdown(stream: *Stream) c_int;
 extern fn us_quic_stream_shutdown_read(stream: *Stream) c_int;
 extern fn us_quic_stream_close(stream: *Stream) void;
+extern fn us_quic_listen_socket_get_port(listen_socket: *ListenSocket) c_int;
 
 // Socket functions
 extern fn us_quic_socket_create_stream(socket: *Socket, ext_size: c_int) void;

@@ -296,6 +296,9 @@ export default [
       streamCount: {
         getter: "getStreamCount",
       },
+      port: {
+        getter: "getPort",
+      },
       isConnected: {
         getter: "getIsConnected",
       },

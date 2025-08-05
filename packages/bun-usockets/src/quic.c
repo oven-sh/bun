@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #endif
 
 #include <stdio.h>
@@ -52,6 +53,8 @@ struct sockaddr_in server_addr = {
     // used in process_quic
     lsquic_engine_t *global_engine;
     lsquic_engine_t *global_client_engine;
+    // Temporary hack to track the listen socket for server connections
+    struct us_udp_socket_t *global_listen_socket = NULL;
 
 /* Socket context */
 struct us_quic_socket_context_s {
@@ -221,8 +224,7 @@ void on_udp_socket_data_wrapper(struct us_udp_socket_t *s, void *buf, int packet
 
 void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int packets) {
 
-
-    //printf("UDP socket got data: %p\n", s);
+    printf("UDP server socket got data: %p, packets: %d\n", s, packets);
 
     /* We need to lookup the context from the udp socket */
     //us_udpus_udp_socket_context(s);
@@ -245,6 +247,7 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
 
     // process conns now? to accept new connections?
     if (context->engine) {
+        printf("Processing server connections on engine: %p\n", context->engine);
         lsquic_engine_process_conns(context->engine);
     }
 
@@ -302,8 +305,25 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
 
         // Use the peer context from the UDP socket extension area
         struct quic_peer_ctx *peer_ctx = (struct quic_peer_ctx *)((char *)s + sizeof(struct us_udp_socket_t));
-        lsquic_engine_packet_in(context->engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) peer_ctx, 0);
-        //printf("Engine returned: %d\n", ret);
+        
+        printf("Server processing packet %d: length=%d, from port %d\n", i, length, 
+               (((struct sockaddr *)peer_addr)->sa_family == AF_INET) ? ntohs(((struct sockaddr_in*)peer_addr)->sin_port) : 0);
+        
+        printf("  Calling lsquic_engine_packet_in with engine=%p, payload=%p, length=%d\n", 
+               context->engine, payload, length);
+        
+        if (!context->engine) {
+            printf("  ERROR: Engine is NULL!\n");
+            continue;
+        }
+        
+        int ret = lsquic_engine_packet_in(context->engine, (const unsigned char *)payload, length, (struct sockaddr *) &local_addr, peer_addr, (void *) peer_ctx, 0);
+        printf("  lsquic_engine_packet_in returned: %d\n", ret);
+        
+        // Check if we have any connections to process
+        if (ret == 0) {
+            printf("  Packet accepted, processing connections...\n");
+        }
 
 
     }
@@ -319,12 +339,21 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
 
 /* Server and client packet out is identical */
 int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_specs) {
+    printf("send_packets_out called with %u packets\n", n_specs);
 #ifndef _WIN32
     // For now, send packets one by one using regular sendto
     // TODO: Optimize with proper batch sending using uSockets API
     int sent = 0;
     for (unsigned i = 0; i < n_specs; i++) {
-        struct us_udp_socket_t *socket = (struct us_udp_socket_t *) specs[i].peer_ctx;
+        // peer_ctx is actually a quic_peer_ctx structure, not a UDP socket directly
+        struct quic_peer_ctx *peer_ctx = (struct quic_peer_ctx *) specs[i].peer_ctx;
+        printf("  Packet %u: peer_ctx=%p\n", i, peer_ctx);
+        if (!peer_ctx || !peer_ctx->udp_socket) {
+            printf("ERROR: No UDP socket in peer context for packet %u (peer_ctx=%p)\n", i, peer_ctx);
+            continue;
+        }
+        
+        struct us_udp_socket_t *socket = peer_ctx->udp_socket;
         int fd = us_poll_fd((struct us_poll_t *) socket);
         
         // Combine all iovecs into a single buffer for simple sending
@@ -344,6 +373,13 @@ int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_
                     offset += specs[i].iov[j].iov_len;
                 }
                 
+                // Debug: print destination address
+                if (specs[i].dest_sa->sa_family == AF_INET) {
+                    struct sockaddr_in *sin = (struct sockaddr_in *)specs[i].dest_sa;
+                    printf("  Sending %zu bytes to %s:%d\n", total_len,
+                           inet_ntoa(sin->sin_addr), ntohs(sin->sin_port));
+                }
+                
                 ssize_t ret = sendto(fd, buffer, total_len, MSG_DONTWAIT, 
                                    specs[i].dest_sa, 
                                    (specs[i].dest_sa->sa_family == AF_INET) ? 
@@ -355,6 +391,7 @@ int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         return sent;
                     }
+                    printf("  sendto error: %s\n", strerror(errno));
                     return -1;
                 }
             }
@@ -370,23 +407,63 @@ int send_packets_out(void *ctx, const struct lsquic_out_spec *specs, unsigned n_
 lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
     us_quic_socket_context_t *context = stream_if_ctx;
 
-    printf("Context is: %p\n", context);
+    printf("on_new_conn - Context: %p, is_client: %d\n", context, 
+           (context && lsquic_conn_get_engine(c) == context->client_engine) ? 1 : 0);
 
     if (!context) {
         printf("ERROR: No context in on_new_conn\n");
         return NULL;
     }
 
-    /* For client connections, the context should already be the us_quic_socket_t */
-    us_quic_socket_t *socket = (us_quic_socket_t *) lsquic_conn_get_ctx(c);
-    if (!socket) {
-        printf("ERROR: No socket found in connection context\n");
-        return NULL;
-    }
-
     int is_client = 0;
     if (lsquic_conn_get_engine(c) == context->client_engine) {
         is_client = 1;
+    }
+
+    us_quic_socket_t *socket = NULL;
+    
+    if (is_client) {
+        /* For client connections, the context should already be the us_quic_socket_t */
+        socket = (us_quic_socket_t *) lsquic_conn_get_ctx(c);
+        if (!socket) {
+            printf("ERROR: No socket found in client connection context\n");
+            return NULL;
+        }
+        printf("Client socket retrieved: %p, lsquic_conn in socket: %p, connection c: %p\n", 
+               socket, socket->lsquic_conn, c);
+        /* Update the lsquic_conn if it's different or null */
+        if (socket->lsquic_conn != c) {
+            printf("Updating socket's lsquic_conn from %p to %p\n", socket->lsquic_conn, c);
+            socket->lsquic_conn = c;
+        }
+    } else {
+        /* For server connections, we need to create a new socket structure */
+        socket = malloc(sizeof(us_quic_socket_t) + 256); // Use default ext_size for now
+        if (!socket) {
+            printf("ERROR: Failed to allocate server QUIC socket\n");
+            return NULL;
+        }
+        
+        /* Initialize the socket structure */
+        memset(socket, 0, sizeof(us_quic_socket_t) + 256);
+        socket->lsquic_conn = c;
+        
+        /* For server, we need to get the UDP socket from the context */
+        /* Use the global listen socket for server connections */
+        socket->udp_socket = global_listen_socket;
+        
+        /* Set the socket as the connection context */
+        lsquic_conn_set_ctx(c, (lsquic_conn_ctx_t *) socket);
+        
+        /* IMPORTANT: For server connections, we need to properly set up the extension data
+           to point to the JavaScript QuicSocket context. For now, we'll use the context's
+           extension data which should contain the QuicSocket pointer */
+        void *context_ext_ptr = us_quic_socket_context_ext(context);
+        if (context_ext_ptr) {
+            /* Copy the extension data pointer to the new socket's extension area */
+            void *socket_ext = (char *)socket + sizeof(us_quic_socket_t);
+            memcpy(socket_ext, context_ext_ptr, sizeof(void *));
+        }
     }
 
     if (context->on_open) {
@@ -774,6 +851,16 @@ struct ssl_ctx_st *get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     printf("Key: %s\n", options->key_file_name);
     printf("Cert: %s\n", options->cert_file_name);
 
+    // For testing without certificates, skip SSL for now
+    if (!options->cert_file_name || !options->key_file_name) {
+        printf("WARNING: No certificates provided, returning basic SSL context\n");
+        
+        // Just return the context without certificates for now
+        // This will cause SSL errors but at least won't segfault
+        old_ctx = ctx;
+        return ctx;
+    }
+
     int a = SSL_CTX_use_certificate_chain_file(ctx, options->cert_file_name);
     int b = SSL_CTX_use_PrivateKey_file(ctx, options->key_file_name, SSL_FILETYPE_PEM);
 
@@ -999,7 +1086,10 @@ int hsi_process_header(void *hdr_set, struct lsxpack_header *hdr) {
 //extern us_quic_socket_context_t *context;
 
 void timer_cb(struct us_timer_t *t) {
-    //printf("Processing conns from timer\n");
+    static int count = 0;
+    if (count++ < 10) {
+        printf("Timer tick %d - processing connections\n", count);
+    }
     lsquic_engine_process_conns(global_engine);
     lsquic_engine_process_conns(global_client_engine);
 
@@ -1146,6 +1236,9 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
 us_quic_listen_socket_t *us_quic_socket_context_listen(us_quic_socket_context_t *context, const char *host, int port, int ext_size) {
     /* We literally do create a listen socket */
     int err = 0;
+    
+    printf("Creating QUIC listen socket on %s:%d\n", host, port);
+    
     // For QUIC sockets, we need to create a UDP socket with extension space to avoid buffer overflows
     // when lsquic tries to access extension data
     struct us_udp_socket_t *socket = us_create_udp_socket_with_ext(context->loop, on_udp_socket_data_wrapper, on_udp_socket_writable, NULL, host, port, 0, &err, context, sizeof(struct quic_peer_ctx));
@@ -1157,10 +1250,49 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(us_quic_socket_context_t 
         peer_ctx->udp_socket = socket;
         peer_ctx->context = context;
         memset(peer_ctx->reserved, 0, sizeof(peer_ctx->reserved));
+        
+        // Temporary hack: store the listen socket globally for server connections
+        global_listen_socket = socket;
+        
+        // Get the actual port if it was 0
+        if (port == 0) {
+            struct sockaddr_storage addr;
+            socklen_t addr_len = sizeof(addr);
+            int fd = us_poll_fd((struct us_poll_t *)socket);
+            if (getsockname(fd, (struct sockaddr *)&addr, &addr_len) == 0) {
+                if (addr.ss_family == AF_INET) {
+                    struct sockaddr_in *sin = (struct sockaddr_in *)&addr;
+                    printf("Server listening on actual port: %d\n", ntohs(sin->sin_port));
+                }
+            }
+        }
+    } else {
+        printf("ERROR: Failed to create UDP listen socket, error: %d\n", err);
     }
     
     return (us_quic_listen_socket_t *) socket;
     //return NULL;
+}
+
+int us_quic_listen_socket_get_port(us_quic_listen_socket_t *listen_socket) {
+    if (!listen_socket) return 0;
+    
+    struct us_udp_socket_t *udp_socket = (struct us_udp_socket_t *)listen_socket;
+    struct sockaddr_storage addr;
+    socklen_t addr_len = sizeof(addr);
+    int fd = us_poll_fd((struct us_poll_t *)udp_socket);
+    
+    if (getsockname(fd, (struct sockaddr *)&addr, &addr_len) == 0) {
+        if (addr.ss_family == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)&addr;
+            return ntohs(sin->sin_port);
+        } else if (addr.ss_family == AF_INET6) {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&addr;
+            return ntohs(sin6->sin6_port);
+        }
+    }
+    
+    return 0;
 }
 
 /* A client connection is its own UDP socket, while a server connection makes use of the shared listen UDP socket */
@@ -1168,17 +1300,25 @@ us_quic_socket_t *us_quic_socket_context_connect(us_quic_socket_context_t *conte
     printf("Connecting..\n");
 
 
-    // localhost 9004 ipv4
+    // Resolve the hostname and port
     struct sockaddr_storage storage = {0};
-    // struct sockaddr_in *addr = (struct sockaddr_in *) &storage;
-    // addr->sin_addr.s_addr = 16777343;
-    // addr->sin_port = htons(9004);
-    // addr->sin_family = AF_INET;
-
-    struct sockaddr_in6 *addr = (struct sockaddr_in6 *) &storage;
-    addr->sin6_addr.s6_addr[15] = 1;
-    addr->sin6_port = htons(9004);
-    addr->sin6_family = AF_INET6;
+    struct sockaddr *addr = (struct sockaddr *)&storage;
+    
+    // For now, support IPv4 only (can be extended to support IPv6)
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+    addr4->sin_family = AF_INET;
+    addr4->sin_port = htons(port);
+    
+    // Simple hostname resolution - for now just handle localhost/127.0.0.1
+    if (strcmp(host, "localhost") == 0 || strcmp(host, "127.0.0.1") == 0) {
+        addr4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    } else {
+        // For other hosts, try to parse as IP address
+        if (inet_pton(AF_INET, host, &addr4->sin_addr) != 1) {
+            printf("ERROR: Failed to parse host address: %s\n", host);
+            return NULL;
+        }
+    }
 
     // Create the UDP socket binding to ephemeral port
     int err = 0;
@@ -1230,7 +1370,25 @@ us_quic_socket_t *us_quic_socket_context_connect(us_quic_socket_context_t *conte
     quic_socket->udp_socket = udp_socket;
     quic_socket->lsquic_conn = NULL; // Will be set after connection is created
     
-    void *client = lsquic_engine_connect(context->client_engine, LSQVER_I001, (struct sockaddr *) local_addr, (struct sockaddr *) addr, udp_socket, (lsquic_conn_ctx_t *) quic_socket, "sni", 0, 0, 0, 0, 0);
+    char addr_str[INET6_ADDRSTRLEN];
+    int dest_port = 0;
+    
+    if (addr->sa_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)addr;
+        inet_ntop(AF_INET, &sin->sin_addr, addr_str, sizeof(addr_str));
+        dest_port = ntohs(sin->sin_port);
+    } else if (addr->sa_family == AF_INET6) {
+        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
+        inet_ntop(AF_INET6, &sin6->sin6_addr, addr_str, sizeof(addr_str));
+        dest_port = ntohs(sin6->sin6_port);
+    }
+    
+    printf("Client connecting to: %s:%d\n", addr_str, dest_port);
+    
+    // Get the peer context from the UDP socket extension area
+    struct quic_peer_ctx *connect_peer_ctx = (struct quic_peer_ctx *)((char *)udp_socket + sizeof(struct us_udp_socket_t));
+    
+    void *client = lsquic_engine_connect(context->client_engine, LSQVER_I001, (struct sockaddr *) local_addr, addr, connect_peer_ctx, (lsquic_conn_ctx_t *) quic_socket, "sni", 0, 0, 0, 0, 0);
 
     printf("Client: %p\n", client);
 

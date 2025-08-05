@@ -30,6 +30,7 @@ pub const QuicSocket = struct {
     server_name: ?[]const u8 = null,
     connection_id: ?[]const u8 = null,
     stream_count: u32 = 0,
+    ssl_config: ?SSLConfig = null,
 
     has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
@@ -78,6 +79,10 @@ pub const QuicSocket = struct {
         if (this.connection_id) |conn_id| {
             bun.default_allocator.free(conn_id);
         }
+
+        if (this.ssl_config) |*ssl| {
+            ssl.deinit();
+        }
     }
 
     // Initialize a new QUIC socket
@@ -97,12 +102,20 @@ pub const QuicSocket = struct {
 
         const loop = uws.Loop.get();
 
-        // For now, create context without TLS certificates (would need to be configured)
-        const options = uws.quic.SocketContextOptions{
+        // Use SSL config if provided, otherwise use defaults
+        var options = uws.quic.SocketContextOptions{
             .cert_file_name = null,
             .key_file_name = null,
             .passphrase = null,
         };
+
+        if (this.ssl_config) |ssl| {
+            // The QUIC C layer should use the existing SSL context infrastructure
+            // For now, pass file paths if available
+            options.cert_file_name = ssl.cert_file_name;
+            options.key_file_name = ssl.key_file_name;
+            options.passphrase = ssl.passphrase;
+        }
 
         const context = uws.quic.SocketContext.create(loop, options, @sizeOf(*This)) orelse return error.ContextCreationFailed;
 
@@ -168,6 +181,26 @@ pub const QuicSocket = struct {
         this.listen_socket = listen_socket;
 
         log("QUIC listening on {s}:{}", .{ hostname, port });
+        
+        // Call the open handler for server listen sockets
+        if (this.handlers) |handlers| {
+            if (handlers.onOpen != .zero) {
+                const vm = handlers.vm;
+                const event_loop = vm.eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
+
+                // Ensure this_value is initialized
+                if (this.this_value == .zero) {
+                    this.this_value = this.toJS(handlers.globalObject);
+                }
+
+                _ = handlers.onOpen.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
+                    const exception = handlers.globalObject.takeException(err);
+                    this.callErrorHandler(exception);
+                };
+            }
+        }
     }
 
     // Close the QUIC connection
@@ -198,8 +231,10 @@ pub const QuicSocket = struct {
         if (this.current_stream == null) {
             if (this.socket) |socket| {
                 socket.createStream(0); // No extra data needed for stream extension
-                // Wait a moment for the stream to be created via callback
-                // In a real implementation, this might need to be asynchronous
+                // For now, return 0 bytes written since stream creation is async
+                // The user should retry the write after the stream is created
+                log("Stream not ready yet, creating new stream", .{});
+                return 0;
             } else {
                 return error.NoSocket;
             }
@@ -213,7 +248,7 @@ pub const QuicSocket = struct {
             return @intCast(bytes_written);
         }
 
-        return error.NoStream;
+        return 0; // Stream not ready yet
     }
 
     // Read data from the QUIC connection
@@ -323,7 +358,6 @@ pub const QuicSocket = struct {
                 error.SocketClosed => globalThis.throw("Socket is closed", .{}),
                 error.NotConnected => globalThis.throw("Socket is not connected", .{}),
                 error.NoSocket => globalThis.throw("No socket available", .{}),
-                error.NoStream => globalThis.throw("No stream available", .{}),
                 error.WriteFailed => globalThis.throw("Write operation failed", .{}),
             };
         };
@@ -428,6 +462,14 @@ pub const QuicSocket = struct {
         }
     }
 
+    pub fn getPort(this: *This, _: *jsc.JSGlobalObject) jsc.JSValue {
+        if (this.listen_socket) |listen_socket| {
+            const port = listen_socket.getPort();
+            return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(port)));
+        }
+        return jsc.JSValue.jsNumber(0);
+    }
+
     pub fn jsRef(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         this.poll_ref.ref(globalObject.bunVM());
         return .js_undefined;
@@ -450,8 +492,17 @@ pub const QuicSocket = struct {
         else
             false;
 
+        // Parse SSL/TLS configuration if provided
+        var ssl_config: ?SSLConfig = null;
+        if (try options.getTruthy(globalThis, "tls")) |tls_options| {
+            const vm = globalThis.bunVM();
+            ssl_config = try SSLConfig.fromJS(vm, globalThis, tls_options);
+        }
+        errdefer if (ssl_config) |*ssl| ssl.deinit();
+
         // Create handlers from options
         const handlers = QuicHandlers.fromJS(globalThis, options, is_server) catch {
+            if (ssl_config) |*ssl| ssl.deinit();
             return globalThis.throw("Invalid QUIC handlers", .{});
         };
 
@@ -464,8 +515,11 @@ pub const QuicSocket = struct {
         const this = QuicSocket.init(bun.default_allocator, handlers_ptr) catch {
             handlers_ptr.unprotect();
             bun.default_allocator.destroy(handlers_ptr);
+            if (ssl_config) |*ssl| ssl.deinit();
             return globalThis.throw("Failed to create QUIC socket", .{});
         };
+        
+        this.ssl_config = ssl_config;
 
         // Configure from options
         if (try options.get(globalThis, "hostname")) |hostname_val| {
@@ -503,37 +557,72 @@ pub const QuicSocket = struct {
 
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
-        const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        
+        // For client connections and server listen sockets, the ext_data contains pointer to QuicSocket
+        // For server-accepted connections, we need to handle differently
+        if (is_client != 0) {
+            // Client connection
+            const this_ptr: **This = @ptrCast(@alignCast(ext_data));
+            const this: *This = this_ptr.*;
 
-        this.socket = socket;
-        this.flags.is_connected = true;
-        this.has_pending_activity.store(true, .release);
+            this.socket = socket;
+            this.flags.is_connected = true;
+            this.has_pending_activity.store(true, .release);
 
-        log("QUIC socket opened (client: {})", .{is_client != 0});
+            log("QUIC client socket opened", .{});
 
-        // Call appropriate JavaScript handlers
-        if (this.handlers) |handlers| {
-            const vm = handlers.vm;
-            const event_loop = vm.eventLoop();
-            event_loop.enter();
-            defer event_loop.exit();
+            // Call onOpen handler for client
+            if (this.handlers) |handlers| {
+                const vm = handlers.vm;
+                const event_loop = vm.eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
 
-            // For server mode, when a client connects, call onConnection handler
-            if (this.flags.is_server and is_client == 0) {
-                if (handlers.onConnection != .zero) {
-                    _ = handlers.onConnection.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
-                        this.callErrorHandler(handlers.globalObject.takeException(err));
-                        return;
+                // Ensure this_value is initialized
+                if (this.this_value == .zero) {
+                    this.this_value = this.toJS(handlers.globalObject);
+                }
+
+                if (handlers.onOpen != .zero) {
+                    _ = handlers.onOpen.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
+                        const exception = handlers.globalObject.takeException(err);
+                        this.callErrorHandler(exception);
                     };
                 }
             }
+        } else {
+            // Server connection - this is a new incoming connection
+            // For now, we'll handle this as a server-side connection event
+            // In a full implementation, we'd create a new QuicSocket for each connection
+            const this_ptr: **This = @ptrCast(@alignCast(ext_data));
+            const this: *This = this_ptr.*;
             
-            // Call onOpen handler for all cases (server startup and client connection)
-            if (handlers.onOpen != .zero) {
-                _ = handlers.onOpen.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
-                    this.callErrorHandler(handlers.globalObject.takeException(err));
-                };
+            log("QUIC server accepted new connection", .{});
+            
+            // For server, mark as connected and call connection handler
+            if (this.handlers) |handlers| {
+                const vm = handlers.vm;
+                const event_loop = vm.eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
+
+                // Create a new QuicSocket for this connection
+                // For now, we'll use the same socket instance (simplified approach)
+                this.socket = socket;
+                this.flags.is_connected = true;
+                
+                // Ensure this_value is initialized
+                if (this.this_value == .zero) {
+                    this.this_value = this.toJS(handlers.globalObject);
+                }
+                
+                if (handlers.onConnection != .zero) {
+                    _ = handlers.onConnection.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
+                        const exception = handlers.globalObject.takeException(err);
+                        this.callErrorHandler(exception);
+                        return;
+                    };
+                }
             }
         }
     }
@@ -561,7 +650,8 @@ pub const QuicSocket = struct {
                 defer event_loop.exit();
 
                 _ = handlers.onClose.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
-                    this.callErrorHandler(handlers.globalObject.takeException(err));
+                    const exception = handlers.globalObject.takeException(err);
+                    this.callErrorHandler(exception);
                 };
             }
         }
@@ -614,7 +704,8 @@ pub const QuicSocket = struct {
                     return;
                 };
                 _ = handlers.onMessage.call(handlers.globalObject, this.this_value, &.{ this.this_value, array_buffer }) catch |err| {
-                    this.callErrorHandler(handlers.globalObject.takeException(err));
+                    const exception = handlers.globalObject.takeException(err);
+                    this.callErrorHandler(exception);
                 };
             }
         }
@@ -700,6 +791,7 @@ const SocketAddress = @import("./socket/SocketAddress.zig");
 const Handlers = @import("./socket/Handlers.zig");
 const uws = @import("../../../deps/uws.zig");
 const log = bun.Output.scoped(.QuicSocket, false);
+const SSLConfig = @import("../server/SSLConfig.zig");
 
 // QUIC-specific handlers that use different callback names than regular sockets
 pub const QuicHandlers = struct {

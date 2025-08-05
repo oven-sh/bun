@@ -1,4 +1,8 @@
 import { test, expect } from "bun:test";
+import { tls } from "harness";
+
+// Disable TLS verification for testing
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 test("QUIC server and client integration", async () => {
   let serverConnections = 0;
@@ -10,6 +14,11 @@ test("QUIC server and client integration", async () => {
     hostname: "localhost",
     port: 9443,
     server: true,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open(socket) {
       console.log("QUIC server ready on port 9443");
     },
@@ -43,6 +52,11 @@ test("QUIC server and client integration", async () => {
     hostname: "localhost", 
     port: 9443,
     server: false,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open(socket) {
       clientConnections++;
       console.log("QUIC client connected");

@@ -29,9 +29,9 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
-    ZigString string;
-    JSC::JSValue value;
-    BunLoaderType loader;
+    ZigString string = ZigStringEmpty;
+    JSC::JSValue value = JSValue();
+    BunLoaderType loader = BunLoaderTypeNone;
 };
 
 union OnLoadResultValue {
@@ -42,9 +42,9 @@ union OnLoadResultValue {
 };
 
 struct OnLoadResult {
-    OnLoadResultValue value;
-    OnLoadResultType type;
-    bool wasMock;
+    OnLoadResultValue value = { .sourceText = {} };
+    OnLoadResultType type = OnLoadResultTypeError;
+    bool wasMock = false;
 };
 
 extern "C" bool isBunTest;

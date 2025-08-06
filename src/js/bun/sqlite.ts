@@ -298,7 +298,7 @@ class Statement {
 var cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
-  constructor(filenameGiven: string | URL | undefined, options?: SqliteTypes.DatabaseOptions) {
+  constructor(filenameGiven: string | URL | undefined, options?: SqliteTypes.DatabaseOptions | number) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {

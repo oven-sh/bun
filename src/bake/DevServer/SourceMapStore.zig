@@ -93,9 +93,6 @@ pub const Entry = struct {
         var source_map_strings = std.ArrayList(u8).init(arena);
         defer source_map_strings.deinit();
 
-        dev.relative_path_buf_lock.lock();
-        defer dev.relative_path_buf_lock.unlock();
-
         const buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(buf);
 

@@ -13,8 +13,7 @@ fn mimalloc_free(
     // but its good to have that assertion
     // let's only enable it in debug mode
     if (comptime Environment.isDebug) {
-        assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-        if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
+        if (mimalloc.mustUseAlignedAlloc(alignment))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
         else
             mimalloc.mi_free_size(buf.ptr, buf.len);
@@ -25,12 +24,11 @@ fn mimalloc_free(
 
 const MimallocAllocator = struct {
     pub const supports_posix_memalign = true;
-
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
 
-        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+        const ptr: ?*anyopaque = if (mimalloc.mustUseAlignedAlloc(alignment))
             mimalloc.mi_malloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_malloc(len);
@@ -84,7 +82,7 @@ const ZAllocator = struct {
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
-        const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+        const ptr = if (mimalloc.mustUseAlignedAlloc(alignment))
             mimalloc.mi_zalloc_aligned(len, alignment.toByteUnits())
         else
             mimalloc.mi_zalloc(len);
@@ -148,7 +146,6 @@ const Environment = @import("../env.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const assert = bun.assert;
 const mimalloc = bun.mimalloc;
 
 const mem = @import("std").mem;

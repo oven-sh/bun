@@ -198,6 +198,8 @@
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
+#include "sqlite/JSNodeSQLiteDatabaseSync.h"
+#include "sqlite/JSNodeSQLiteStatementSync.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -3480,6 +3482,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
+        });
+
+    m_JSNodeSQLiteDatabaseSyncClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSNodeSQLiteDatabaseSyncClassStructure(init);
+        });
+
+    m_JSNodeSQLiteStatementSyncClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSNodeSQLiteStatementSyncClassStructure(init);
         });
 
     m_JSFFIFunctionStructure.initLater(

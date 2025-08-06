@@ -36,6 +36,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "../modules/_NativeModule.h"
+#include "../modules/NodeSQLiteModule.h"
 
 #include "JSCommonJSExtensions.h"
 

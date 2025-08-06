@@ -218,6 +218,14 @@ public:
     JSC::Structure* JSBufferSubclassStructure() const { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
     JSC::Structure* JSResizableOrGrowableSharedBufferSubclassStructure() const { return m_JSResizableOrGrowableSharedBufferSubclassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSNodeSQLiteDatabaseSyncStructure() const { return m_JSNodeSQLiteDatabaseSyncClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSNodeSQLiteDatabaseSyncConstructor() const { return m_JSNodeSQLiteDatabaseSyncClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSNodeSQLiteDatabaseSyncPrototype() const { return m_JSNodeSQLiteDatabaseSyncClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSNodeSQLiteStatementSyncStructure() const { return m_JSNodeSQLiteStatementSyncClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSNodeSQLiteStatementSyncConstructor() const { return m_JSNodeSQLiteStatementSyncClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSNodeSQLiteStatementSyncPrototype() const { return m_JSNodeSQLiteStatementSyncClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* JSCryptoKeyStructure() const { return m_JSCryptoKey.getInitializedOnMainThread(this); }
 
     JSC::Structure* ArrayBufferSinkStructure() const { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
@@ -534,6 +542,8 @@ public:
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
+    V(public, LazyClassStructure, m_JSNodeSQLiteDatabaseSyncClassStructure)                                  \
+    V(public, LazyClassStructure, m_JSNodeSQLiteStatementSyncClassStructure)                                 \
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \

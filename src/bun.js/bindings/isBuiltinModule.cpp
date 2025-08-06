@@ -49,6 +49,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "path/posix"_s,
     "path/win32"_s,
     "perf_hooks"_s,
+    "sqlite"_s,
     "stream/web"_s,
     "util/types"_s,
     "_http_agent"_s,

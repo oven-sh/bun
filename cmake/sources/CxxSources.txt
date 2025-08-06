@@ -191,6 +191,8 @@ src/bun.js/bindings/Serialization.cpp
 src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSync.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSync.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 src/bun.js/bindings/Strong.cpp
 src/bun.js/bindings/Uint8Array.cpp
@@ -481,6 +483,7 @@ src/bun.js/bindings/ZigGeneratedCode.cpp
 src/bun.js/bindings/ZigGlobalObject.cpp
 src/bun.js/bindings/ZigSourceProvider.cpp
 src/bun.js/modules/NodeModuleModule.cpp
+src/bun.js/modules/NodeSQLiteModule.cpp
 src/bun.js/modules/NodeTTYModule.cpp
 src/bun.js/modules/NodeUtilTypesModule.cpp
 src/bun.js/modules/ObjectModule.cpp

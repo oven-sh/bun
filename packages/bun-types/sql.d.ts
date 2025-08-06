@@ -422,6 +422,8 @@ declare module "bun" {
      *
      * @param name - The name of the distributed transaction
      *
+     * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
+     *
      * @example
      * ```ts
      * await sql.commitDistributed("my_distributed_transaction");
@@ -433,6 +435,8 @@ declare module "bun" {
      * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      *
      * @param name - The name of the distributed transaction
+     *
+     * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
      *
      * @example
      * ```ts
@@ -478,6 +482,8 @@ declare module "bun" {
     /**
      * Flushes any pending operations
      *
+     * @throws {Error} If the adapter does not support flushing (e.g., SQLite)
+     *
      * @example
      * ```ts
      * sql.flush();
@@ -490,6 +496,8 @@ declare module "bun" {
      *
      * This can be used for running queries on an isolated connection.
      * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
+     *
+     * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)
      *
      * @example
      * ```ts
@@ -636,6 +644,8 @@ declare module "bun" {
      * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
      * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
      * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     *
+     * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
      *
      * @example
      * await sql.beginDistributed("numbers", async sql => {

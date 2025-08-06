@@ -724,6 +724,14 @@ describe("Bun.sql SQLite support", () => {
 
       await sql.close();
     });
+
+    test("flush throws for SQLite", async () => {
+      const sql = new SQL("sqlite://:memory:");
+
+      expect(() => sql.flush()).toThrow("SQLite doesn't support flush() - queries are executed synchronously");
+
+      await sql.close();
+    });
   });
 
   describe("Performance & Edge Cases", () => {

@@ -1019,9 +1019,8 @@ class SQLiteConnection {
   }
 
   release() {
-    // SQLite doesn't actually close the db on release
-    // It's shared across all connections
-    // Just clear the callbacks
+    // SQLite doesn't have connection pooling, so "release" just cleans up callbacks
+    // The database connection remains open and shared
     for (const callback of this.closeCallbacks) {
       callback();
     }
@@ -1143,8 +1142,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   flush(): void {
-    // SQLite doesn't buffer queries like PostgreSQL
-    // Nothing to flush for SQLite
+    throw new Error("SQLite doesn't support flush() - queries are executed synchronously");
   }
 
   isConnected(): boolean {

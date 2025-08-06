@@ -476,7 +476,7 @@ class Database {
     return createChangesObject();
   }
 
-  prepare(query, params, flags) {
+  prepare(query: string, params: any[], flags: number = 0) {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

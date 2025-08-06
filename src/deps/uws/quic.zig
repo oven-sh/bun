@@ -75,6 +75,10 @@ pub const SocketContext = opaque {
         us_quic_socket_context_on_close(this, callback);
     }
 
+    pub fn onConnection(this: *SocketContext, callback: *const fn (*Socket) callconv(.C) void) void {
+        us_quic_socket_context_on_connection(this, callback);
+    }
+
     pub fn onStreamWritable(this: *SocketContext, callback: *const fn (*Stream) callconv(.C) void) void {
         us_quic_socket_context_on_stream_writable(this, callback);
     }
@@ -175,4 +179,5 @@ extern fn us_quic_socket_context_on_stream_open(context: *SocketContext, callbac
 extern fn us_quic_socket_context_on_stream_close(context: *SocketContext, callback: *const fn (*Stream) callconv(.C) void) void;
 extern fn us_quic_socket_context_on_open(context: *SocketContext, callback: *const fn (*Socket, c_int) callconv(.C) void) void;
 extern fn us_quic_socket_context_on_close(context: *SocketContext, callback: *const fn (*Socket) callconv(.C) void) void;
+extern fn us_quic_socket_context_on_connection(context: *SocketContext, callback: *const fn (*Socket) callconv(.C) void) void;
 extern fn us_quic_socket_context_on_stream_writable(context: *SocketContext, callback: *const fn (*Stream) callconv(.C) void) void;

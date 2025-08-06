@@ -7,24 +7,42 @@
 
 #include "libusockets.h"
 
-// QUIC uses the same options as regular SSL sockets to support all SSL features
-typedef struct us_bun_socket_context_options_t us_quic_socket_context_options_t;
-
-
-typedef struct {
-    /* Refers to either the shared listen socket or the client UDP socket */
-    void *udp_socket;
-    /* LSQUIC connection pointer for this socket */
-    void *lsquic_conn;
-} us_quic_socket_t;
-
+// Forward declarations
 struct us_quic_socket_context_s;
-struct us_quic_listen_socket_s;
 struct us_quic_stream_s;
 
 typedef struct us_quic_socket_context_s us_quic_socket_context_t;
-typedef struct us_quic_listen_socket_s us_quic_listen_socket_t;
 typedef struct us_quic_stream_s us_quic_stream_t;
+
+// QUIC uses the same options as regular SSL sockets to support all SSL features
+typedef struct us_bun_socket_context_options_t us_quic_socket_context_options_t;
+
+/* Socket that handles UDP transport and QUIC connections */
+typedef struct us_quic_socket_s {
+    struct us_udp_socket_t *udp_socket;     /* UDP socket for I/O */
+    us_quic_socket_context_t *context;      /* Reference to context */
+    
+    struct us_quic_socket_s *next;          /* For deferred free list */
+    int is_closed;                          /* Marked for cleanup */
+    int is_client;                          /* 1 = client, 0 = server/listen */
+    
+    /* Extension data follows */
+} us_quic_socket_t;
+
+/* Individual QUIC connection (multiplexed over socket) */
+typedef struct us_quic_connection_s {
+    us_quic_socket_t *socket;               /* Parent socket for I/O */
+    void *lsquic_conn;                      /* Opaque QUIC connection */
+    void *peer_ctx;                         /* For lsquic callbacks */
+    
+    struct us_quic_connection_s *next;      /* For deferred free list */
+    int is_closed;                          /* Marked for cleanup */
+    
+    /* Extension data follows */
+} us_quic_connection_t;
+
+/* Listen socket is just an alias - same structure */
+typedef struct us_quic_socket_s us_quic_listen_socket_t;
 
 
 void *us_quic_stream_ext(us_quic_stream_t *s);
@@ -56,6 +74,7 @@ void us_quic_socket_context_on_stream_open(us_quic_socket_context_t *context, vo
 void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *context, void(*on_stream_close)(us_quic_stream_t *s));
 void us_quic_socket_context_on_open(us_quic_socket_context_t *context, void(*on_open)(us_quic_socket_t *s, int is_client));
 void us_quic_socket_context_on_close(us_quic_socket_context_t *context, void(*on_close)(us_quic_socket_t *s));
+void us_quic_socket_context_on_connection(us_quic_socket_context_t *context, void(*on_connection)(us_quic_socket_t *s));
 void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *context, void(*on_stream_writable)(us_quic_stream_t *s));
 
 

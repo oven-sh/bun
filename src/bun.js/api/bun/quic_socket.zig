@@ -106,7 +106,10 @@ pub const QuicSocket = struct {
         var options: uws.BunSocketContextOptions = .{};
         
         if (this.ssl_config) |ssl| {
+            log("QuicSocket: Using SSL config", .{});
             options = ssl.asUSockets();
+        } else {
+            log("QuicSocket: No SSL config", .{});
         }
 
         const context = uws.quic.SocketContext.create(loop, options, @sizeOf(*This)) orelse return error.ContextCreationFailed;
@@ -114,19 +117,23 @@ pub const QuicSocket = struct {
         this.socket_context = context;
 
         // Set up callbacks
-        context.onOpen(onSocketOpen);
-        context.onClose(onSocketClose);
-        context.onStreamOpen(onStreamOpen);
-        context.onStreamData(onStreamData);
-        context.onStreamClose(onStreamClose);
-        context.onStreamEnd(onStreamEnd);
-        context.onStreamWritable(onStreamWritable);
+        context.onOpen(&onSocketOpen);
+        context.onClose(&onSocketClose);
+        context.onConnection(&onSocketConnection);
+        context.onStreamOpen(&onStreamOpen);
+        context.onStreamData(&onStreamData);
+        context.onStreamClose(&onStreamClose);
+        context.onStreamEnd(&onStreamEnd);
+        context.onStreamWritable(&onStreamWritable);
 
         // Store reference to this instance in context extension data
         const ext_data = context.ext();
         if (ext_data) |ext| {
             const this_ptr: **This = @ptrCast(@alignCast(ext));
             this_ptr.* = this;
+            log("Stored QuicSocket instance {*} in context ext data at {*}", .{ this, ext });
+        } else {
+            log("ERROR: No extension data in context!", .{});
         }
 
         log("QUIC socket context created", .{});
@@ -174,6 +181,11 @@ pub const QuicSocket = struct {
 
         log("QUIC listening on {s}:{}", .{ hostname, port });
         
+        // Mark server as connected (listening) after successful bind
+        if (this.flags.is_server) {
+            this.flags.is_connected = true;
+        }
+        
         // Call the open handler for server listen sockets
         if (this.handlers) |handlers| {
             if (handlers.onOpen != .zero) {
@@ -216,18 +228,23 @@ pub const QuicSocket = struct {
 
     // Write data to the QUIC connection
     pub fn writeImpl(this: *This, data: []const u8) !usize {
+        log("writeImpl called, socket={any}, is_closed={}, is_connected={}", .{ this.socket, this.flags.is_closed, this.flags.is_connected });
+        
         if (this.flags.is_closed) return error.SocketClosed;
         if (!this.flags.is_connected) return error.NotConnected;
 
         // Ensure we have a stream to write to
         if (this.current_stream == null) {
+            log("No current stream, need to create one", .{});
             if (this.socket) |socket| {
+                log("Calling createStream on socket {any}", .{socket});
                 socket.createStream(0); // No extra data needed for stream extension
                 // For now, return 0 bytes written since stream creation is async
                 // The user should retry the write after the stream is created
                 log("Stream not ready yet, creating new stream", .{});
                 return 0;
             } else {
+                log("No socket available", .{});
                 return error.NoSocket;
             }
         }
@@ -325,6 +342,7 @@ pub const QuicSocket = struct {
     }
 
     pub fn write(this: *This, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        log("write() called on QuicSocket, this={x}", .{@intFromPtr(this)});
         const args = callframe.arguments();
         if (args.len < 1) return globalThis.throw("write requires data", .{});
 
@@ -546,9 +564,18 @@ pub const QuicSocket = struct {
     // uSockets callback handlers
     fn onSocketOpen(socket: *uws.quic.Socket, is_client: c_int) callconv(.C) void {
         jsc.markBinding(@src());
+        log("onSocketOpen called: socket={*}, is_client={}", .{ socket, is_client });
 
-        const context = socket.context() orelse return;
-        const ext_data = context.ext() orelse return;
+        const context = socket.context() orelse {
+            log("ERROR: No context for socket", .{});
+            return;
+        };
+        const ext_data = context.ext() orelse {
+            log("ERROR: No ext data in context", .{});
+            return;
+        };
+        
+        log("Got ext_data at {*}", .{ext_data});
         
         // For client connections and server listen sockets, the ext_data contains pointer to QuicSocket
         // For server-accepted connections, we need to handle differently
@@ -556,6 +583,7 @@ pub const QuicSocket = struct {
             // Client connection
             const this_ptr: **This = @ptrCast(@alignCast(ext_data));
             const this: *This = this_ptr.*;
+            log("Retrieved QuicSocket instance: {*}, handlers={*}", .{ this, this.handlers });
 
             this.socket = socket;
             this.flags.is_connected = true;
@@ -565,6 +593,13 @@ pub const QuicSocket = struct {
 
             // Call onOpen handler for client
             if (this.handlers) |handlers| {
+                log("Found handlers, checking onOpen callback...", .{});
+                if (handlers.onOpen != .zero) {
+                    log("onOpen handler is set, calling JavaScript callback", .{});
+                } else {
+                    log("WARNING: onOpen handler is .zero!", .{});
+                }
+                
                 const vm = handlers.vm;
                 const event_loop = vm.eventLoop();
                 event_loop.enter();
@@ -573,14 +608,20 @@ pub const QuicSocket = struct {
                 // Ensure this_value is initialized
                 if (this.this_value == .zero) {
                     this.this_value = this.toJS(handlers.globalObject);
+                    log("Created this_value for JavaScript", .{});
                 }
 
                 if (handlers.onOpen != .zero) {
+                    log("About to call JavaScript onOpen handler", .{});
                     _ = handlers.onOpen.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
+                        log("ERROR: Exception calling onOpen handler", .{});
                         const exception = handlers.globalObject.takeException(err);
                         this.callErrorHandler(exception);
                     };
+                    log("JavaScript onOpen handler called successfully", .{});
                 }
+            } else {
+                log("ERROR: No handlers found on QuicSocket instance!", .{});
             }
         } else {
             // Server connection - this is a new incoming connection
@@ -593,28 +634,63 @@ pub const QuicSocket = struct {
             
             // For server, mark as connected and call connection handler
             if (this.handlers) |handlers| {
+                log("Server connection: checking handlers", .{});
+                if (handlers.onConnection != .zero) {
+                    log("onConnection handler is set", .{});
+                } else {
+                    log("WARNING: onConnection handler is .zero!", .{});
+                }
+                
+                // Server listen socket opened
+                // Store the socket but don't call onConnection here
+                // onConnection will be called when clients connect via onSocketConnection
+                this.socket = socket;
+                log("Server listen socket opened and ready", .{});
+            }
+        }
+    }
+
+    fn onSocketConnection(socket: *uws.quic.Socket) callconv(.C) void {
+        jsc.markBinding(@src());
+        log("onSocketConnection called: socket={*}", .{socket});
+        
+        const context = socket.context() orelse {
+            log("ERROR: No context for connection socket", .{});
+            return;
+        };
+        const ext_data = context.ext() orelse {
+            log("ERROR: No ext_data for connection context", .{});
+            return;
+        };
+        const this_ptr: **This = @ptrCast(@alignCast(ext_data));
+        const this: *This = this_ptr.*;
+
+        log("QuicSocket instance retrieved: {*}, handlers: {*}", .{ this, this.handlers });
+
+        // Ensure this_value is initialized
+        if (this.this_value == .zero) {
+            this.this_value = this.toJS(this.handlers.?.globalObject);
+        }
+
+        // Call JavaScript onConnection handler for server-side connections
+        if (this.handlers) |handlers| {
+            if (handlers.onConnection != .zero) {
+                log("Calling JavaScript onConnection handler", .{});
                 const vm = handlers.vm;
                 const event_loop = vm.eventLoop();
                 event_loop.enter();
                 defer event_loop.exit();
-
-                // Create a new QuicSocket for this connection
-                // For now, we'll use the same socket instance (simplified approach)
-                this.socket = socket;
-                this.flags.is_connected = true;
                 
-                // Ensure this_value is initialized
-                if (this.this_value == .zero) {
-                    this.this_value = this.toJS(handlers.globalObject);
-                }
-                
-                if (handlers.onConnection != .zero) {
-                    _ = handlers.onConnection.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
-                        const exception = handlers.globalObject.takeException(err);
-                        this.callErrorHandler(exception);
-                        return;
-                    };
-                }
+                // For now pass the same socket instance - TODO: create new QuicSocket for connection
+                _ = handlers.onConnection.call(handlers.globalObject, this.this_value, &.{this.this_value}) catch |err| {
+                    log("ERROR: Exception calling onConnection handler", .{});
+                    const exception = handlers.globalObject.takeException(err);
+                    this.callErrorHandler(exception);
+                    return;
+                };
+                log("onConnection handler called successfully", .{});
+            } else {
+                log("No onConnection handler registered", .{});
             }
         }
     }
@@ -652,9 +728,20 @@ pub const QuicSocket = struct {
     fn onStreamOpen(stream: *uws.quic.Stream, is_client: c_int) callconv(.C) void {
         jsc.markBinding(@src());
 
-        const socket = stream.socket() orelse return;
-        const context = socket.context() orelse return;
-        const ext_data = context.ext() orelse return;
+        log("onStreamOpen called, stream={any}, is_client={}", .{ stream, is_client });
+
+        const socket = stream.socket() orelse {
+            log("ERROR: No socket for stream", .{});
+            return;
+        };
+        const context = socket.context() orelse {
+            log("ERROR: No context for socket", .{});
+            return;
+        };
+        const ext_data = context.ext() orelse {
+            log("ERROR: No ext_data for context", .{});
+            return;
+        };
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
         const this: *This = this_ptr.*;
 

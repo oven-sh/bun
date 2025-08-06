@@ -1,4 +1,8 @@
 import { test, expect } from "bun:test";
+import { tls } from "harness";
+
+// Disable TLS verification for testing
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 test("QUIC large data transfer", async () => {
   let dataReceived = "";
@@ -8,6 +12,11 @@ test("QUIC large data transfer", async () => {
     hostname: "localhost",
     port: 9446,
     server: true,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     connection(socket) {
       // Send large data to client
       socket.write(testData);
@@ -24,6 +33,11 @@ test("QUIC large data transfer", async () => {
     hostname: "localhost",
     port: 9446,
     server: false,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open() {},
     message(socket, data) {
       dataReceived += data.toString();
@@ -54,6 +68,11 @@ test("QUIC multiple concurrent streams", async () => {
     hostname: "localhost",
     port: 9447,
     server: true,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     connection(socket) {
       // Create multiple streams
       for (let i = 0; i < streamCount; i++) {
@@ -81,6 +100,11 @@ test("QUIC multiple concurrent streams", async () => {
     hostname: "localhost",
     port: 9447,
     server: false,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open(socket) {
       // Client also creates streams
       for (let i = 0; i < streamCount; i++) {
@@ -111,6 +135,11 @@ test("QUIC connection statistics", async () => {
     hostname: "localhost",
     port: 9448,
     server: true,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     connection(socket) {
       // Send some data to generate stats
       socket.write("Hello statistics!");
@@ -127,6 +156,11 @@ test("QUIC connection statistics", async () => {
     hostname: "localhost",
     port: 9448,
     server: false,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open(socket) {
       // Send data back
       socket.write("Stats response!");
@@ -165,6 +199,11 @@ test("QUIC 0-RTT connection support", async () => {
     hostname: "localhost",
     port: 9449,
     server: true,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     connection(socket) {
       console.log("Server: 0-RTT support:", socket.has0RTT);
     },
@@ -180,6 +219,11 @@ test("QUIC 0-RTT connection support", async () => {
     hostname: "localhost",
     port: 9449,
     server: false,
+    tls: {
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.ca,
+    },
     open(socket) {
       has0RTTSupport = socket.has0RTT;
       console.log("Client: 0-RTT support:", has0RTTSupport);

@@ -81,13 +81,13 @@ const {
 } = $zig("postgres.zig", "createBinding") as {
   init: () => void;
   createConnection: (
-    hostname: string,
+    hostname: string | undefined,
     port: number,
     username: string,
     password: string,
     databae: string,
     sslmode: Postgres.SSLMode,
-    tls: object,
+    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
@@ -1462,7 +1462,7 @@ class PooledPostgresConnection {
   }
 }
 
-async function createConnection(options, onConnected, onClose) {
+async function createConnection(options: Bun.SQL.__internal.DefinedPostgresOptions, onConnected, onClose) {
   const {
     hostname,
     port,
@@ -1475,10 +1475,13 @@ async function createConnection(options, onConnected, onClose) {
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
     prepare = true,
+
+    // @ts-expect-error Path is not specified in the types right now
     path,
   } = options;
 
-  let password = options.password;
+  let password: string | Bun.MaybePromise<string> | (() => Bun.MaybePromise<string>) | undefined = options.password;
+
   try {
     if (typeof password === "function") {
       password = password();
@@ -1486,6 +1489,7 @@ async function createConnection(options, onConnected, onClose) {
         password = await password;
       }
     }
+
     return createPostgresConnection(
       hostname,
       Number(port),

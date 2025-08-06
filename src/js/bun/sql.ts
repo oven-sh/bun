@@ -1948,7 +1948,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   const adapter = createAdapter(resolvedOptions);
 
-  function onQueryDisconnected(this: Query<typeof adapter, any>, err: Error | null) {
+  function onQueryDisconnected<T>(this: Query<T>, err: Error | null) {
     // connection closed mid query this will not be called if the query finishes first
     const query = this;
     if (err) {
@@ -1961,8 +1961,8 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onQueryConnected(
-    this: Query<typeof adapter, any>,
+  function onQueryConnected<T>(
+    this: Query<T>,
     handle: ReturnType<typeof adapter.createQueryHandle>,
     err: Error | null,
     connection: any,

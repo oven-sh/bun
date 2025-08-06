@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("comma operator should strip 'this' binding in function calls", async () => {
   const dir = tempDirWithFiles("comma-operator-test", {
@@ -30,11 +30,7 @@ cool.logValue();
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
@@ -43,6 +39,6 @@ cool.logValue();
   const lines = stdout.trim().split("\n");
   expect(lines).toHaveLength(3);
   expect(lines[0]).toBe("beans");
-  expect(lines[1]).toBe("undefined"); 
+  expect(lines[1]).toBe("undefined");
   expect(lines[2]).toBe("undefined");
 });

@@ -25,7 +25,7 @@ describe("S3 contentLength option in presign (Issue #18240)", () => {
   it("should support ContentLength option (AWS SDK style)", () => {
     const url = s3Client.presign("test/abc", {
       expiresIn: 3600,
-      method: "PUT", 
+      method: "PUT",
       ContentLength: 200, // AWS SDK style
     });
 
@@ -69,16 +69,16 @@ describe("S3 contentLength option in presign (Issue #18240)", () => {
 
   it("should match the exact use case from issue #18240", () => {
     // This is the exact code snippet from the GitHub issue
-    const url = s3Client.presign('test/abc', {
+    const url = s3Client.presign("test/abc", {
       expiresIn: 3600, // 1 hour
-      method: 'PUT',
-      ContentLength: 200 // THIS IS NOW WORKING
+      method: "PUT",
+      ContentLength: 200, // THIS IS NOW WORKING
     });
 
     expect(url).toBeDefined();
     expect(typeof url).toBe("string");
     expect(url.includes("Content-Length=200")).toBe(true);
-    
+
     // Verify other required AWS S3 signature components are present
     expect(url.includes("X-Amz-Expires=3600")).toBe(true);
     expect(url.includes("X-Amz-Algorithm=AWS4-HMAC-SHA256")).toBe(true);

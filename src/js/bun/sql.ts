@@ -1073,11 +1073,10 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       flags,
       run: (connection, query) => {
         try {
-          // Extract command from SQL query
           const commandMatch = sqlString.trim().match(/^(\w+)/);
           const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
 
-          let result;
+          let result: unknown[];
           let changes = 0;
 
           // For data modification statements without RETURNING, use run() to get changes count
@@ -1090,7 +1089,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             result = [];
           } else {
             // Use all() for SELECT or queries with RETURNING clause
-            result = values?.length ? statement.all(...values) : statement.all();
+            result = statement.all(...values);
 
             // For INSERT/UPDATE/DELETE with RETURNING, count the returned rows
             if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
@@ -1098,7 +1097,6 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             }
           }
 
-          // Create SQLResultArray with command and count properties
           const resultArray = new SQLResultArray();
           if (Array.isArray(result)) {
             resultArray.push(...result);
@@ -1106,7 +1104,6 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
 
           resultArray.command = cmd;
 
-          // Set count appropriately
           if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
             resultArray.count = changes;
           } else {
@@ -1124,7 +1121,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     };
   }
 
-  connect(onConnected: OnConnected<SQLiteConnection>, reserved: boolean = false): void {
+  connect(onConnected: OnConnected<SQLiteConnection>, _reserved: boolean = false): void {
     // SQLite doesn't need connection pooling - return the single connection
     if (this.db) {
       onConnected(null, new SQLiteConnection(this.db));
@@ -1133,12 +1130,12 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     }
   }
 
-  release(connection: SQLiteConnection, connectingEvent: boolean = false): void {
+  release(connection: SQLiteConnection, _connectingEvent: boolean = false): void {
     connection.release();
   }
 
-  async close(options?: { timeout?: number }): Promise<void> {
-    // Close the SQLite database connection
+  async close(_options?: { timeout?: number }): Promise<void> {
+    // SQLite close is synchronous, so timeout is not applicable
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -1146,14 +1143,15 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   flush(): void {
-    // SQLite flush implementation if needed
+    // SQLite doesn't buffer queries like PostgreSQL
+    // Nothing to flush for SQLite
   }
 
   isConnected(): boolean {
     return !!this.db;
   }
 
-  reserve<T>(sql: Bun.SQL, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
+  reserve<T>(_sql: Bun.SQL, _onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
     // SQLite doesn't use connection pooling, so reserve doesn't make sense
     return Promise.reject(new Error("SQLite doesn't support connection reservation (no connection pool)"));
   }
@@ -1190,19 +1188,21 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return "ROLLBACK";
   }
 
-  getBeforeCommitOrRollbackCommand(distributedName?: string): string | null {
-    return null; // SQLite doesn't need this
+  getBeforeCommitOrRollbackCommand(_distributedName?: string): string | null {
+    // SQLite doesn't require any command before COMMIT or ROLLBACK
+    // (PostgreSQL needs this for distributed transactions)
+    return null;
   }
 
   supportsDistributedTransactions(): boolean {
     return false;
   }
 
-  async commitDistributed(name: string, sql: any): Promise<any> {
+  async commitDistributed(_name: string, _sql: any): Promise<any> {
     throw new Error("SQLite doesn't support distributed transactions");
   }
 
-  async rollbackDistributed(name: string, sql: any): Promise<any> {
+  async rollbackDistributed(_name: string, _sql: any): Promise<any> {
     throw new Error("SQLite doesn't support distributed transactions");
   }
 }

@@ -64,6 +64,12 @@ if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
+# Enable SIMD optimizations when not building for baseline (older CPUs)
+if(NOT ENABLE_BASELINE)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
+endif()
+
 if(DEBUG)
   if (ENABLE_ASAN)
     set(MIMALLOC_LIBRARY mimalloc-asan-debug)

@@ -1174,6 +1174,10 @@ pub const CommandLineReporter = struct {
             }
         }
 
+        // Collect sidebar items for HTML reporter
+        var sidebar_items = if (comptime reporters.html) std.ArrayList(CodeCoverageReport.Html.SidebarItem).init(bun.default_allocator);
+        defer if (comptime reporters.html) sidebar_items.deinit();
+
         // Write HTML header
         if (comptime reporters.html) {
             try CodeCoverageReport.Html.writeHeader(html_writer.any());
@@ -1233,15 +1237,81 @@ pub const CommandLineReporter = struct {
                     html_writer.any(),
                 ) catch continue;
 
-                // Generate separate HTML file for this source file
+                // Collect sidebar item for this file
+                var filename = report.source_url.byteSlice();
+                if (relative_dir.len > 0) {
+                    filename = std.fs.path.relative(std.heap.page_allocator, relative_dir, filename) catch filename;
+                }
+
+                // Generate HTML filename (same logic as in Html.writeFormat)
+                var html_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+                var safe_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+                var safe_len: usize = 0;
+                for (filename) |char| {
+                    if (char == '/' or char == '\\') {
+                        safe_filename_buf[safe_len] = '_';
+                    } else {
+                        safe_filename_buf[safe_len] = char;
+                    }
+                    safe_len += 1;
+                }
+                const safe_filename = safe_filename_buf[0..safe_len];
+                const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{safe_filename}) catch filename;
+
+                // Store filename strings in allocator so they remain valid
+                const stored_filename = try bun.default_allocator.dupe(u8, filename);
+                const stored_html_filename = try bun.default_allocator.dupe(u8, html_filename);
+
+                try sidebar_items.append(.{
+                    .filename = stored_filename,
+                    .html_filename = stored_html_filename,
+                    .coverage = report.linesCoverageFraction(),
+                });
+            }
+        }
+
+        // Generate detail files with sidebar for HTML reporter
+        if (comptime reporters.html) {
+            // Now generate all detail files with the complete sidebar
+            var i: usize = 0;
+            for (byte_ranges) |*entry| {
+                // Check if this file should be ignored (same logic as above)
+                if (opts.ignore_patterns.len > 0) {
+                    const utf8 = entry.source_url.slice();
+                    const relative_path = bun.path.relative(relative_dir, utf8);
+
+                    var should_ignore = false;
+                    for (opts.ignore_patterns) |pattern| {
+                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                            should_ignore = true;
+                            break;
+                        }
+                    }
+
+                    if (should_ignore) {
+                        continue;
+                    }
+                }
+
+                var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+                defer report.deinit(bun.default_allocator);
+
                 const source_path = report.source_url.slice();
                 CodeCoverageReport.Html.createDetailFile(
                     &report,
                     relative_dir,
                     opts.reports_directory,
                     source_path,
-                    &.{}, // Empty slice for now - sidebar feature can be added later
+                    sidebar_items.items,
                 ) catch continue;
+
+                i += 1;
+            }
+
+            // Free the allocated strings
+            for (sidebar_items.items) |item| {
+                bun.default_allocator.free(item.filename);
+                bun.default_allocator.free(item.html_filename);
             }
         }
 

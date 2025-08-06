@@ -31,7 +31,7 @@ pub fn writeFormat(
     // Write HTML structure for this file's coverage
     try writer.print(
         \\    <tr data-file="{s}">
-        \\      <td><a href="{s}">{s}</a></td>
+        \\      <td><a href="./{s}">{s}</a></td>
         \\      <td class="coverage {s}">{d:.2}%</td>
         \\      <td class="coverage {s}">{d:.2}%</td>
         \\      <td class="uncovered-lines">
@@ -105,7 +105,7 @@ pub fn writeDetailedFileWithTree(
     report: *const Report,
     base_path: []const u8,
     source_path: []const u8,
-    all_reports: ?[]const Report,
+    sidebar_items: ?[]const SidebarItem,
     writer: anytype,
 ) !void {
     var filename = report.source_url.byteSlice();
@@ -178,46 +178,24 @@ pub fn writeDetailedFileWithTree(
         \\    <div class="file-tree">
     );
 
-    // Add file tree items if we have all reports
-    if (all_reports) |reports| {
-        for (reports) |*r| {
-            var tree_filename = r.source_url.byteSlice();
-            if (base_path.len > 0) {
-                tree_filename = std.fs.path.relative(std.heap.page_allocator, base_path, tree_filename) catch tree_filename;
-            }
-
-            // Generate HTML filename
-            var html_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-            var safe_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-
-            var safe_len: usize = 0;
-            for (tree_filename) |char| {
-                if (char == '/' or char == '\\') {
-                    safe_filename_buf[safe_len] = '_';
-                } else {
-                    safe_filename_buf[safe_len] = char;
-                }
-                safe_len += 1;
-            }
-            const safe_filename = safe_filename_buf[0..safe_len];
-            const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{safe_filename}) catch tree_filename;
-
-            const coverage = r.linesCoverageFraction();
-            const coverage_class = if (coverage >= 0.8) "good" else if (coverage >= 0.5) "medium" else "bad";
-            const is_active = std.mem.eql(u8, tree_filename, filename);
+    // Add file tree items if we have sidebar items
+    if (sidebar_items) |items| {
+        for (items) |item| {
+            const coverage_class = if (item.coverage >= 0.8) "good" else if (item.coverage >= 0.5) "medium" else "bad";
+            const is_active = std.mem.eql(u8, item.filename, filename);
 
             try writer.print(
-                \\      <a href="{s}" class="file-tree-item{s}">
+                \\      <a href="./{s}" class="file-tree-item{s}">
                 \\        <span class="file-name">{s}</span>
                 \\        <span class="coverage-badge {s}">{d:.0}%</span>
                 \\      </a>
                 \\
             , .{
-                html_filename,
+                item.html_filename,
                 if (is_active) " active" else "",
-                std.fs.path.basename(tree_filename),
+                std.fs.path.basename(item.filename),
                 coverage_class,
-                coverage * 100.0,
+                item.coverage * 100.0,
             });
         }
     }
@@ -227,7 +205,7 @@ pub fn writeDetailedFileWithTree(
         \\  </div>
         \\  <div class="main-content">
         \\    <div class="header">
-        \\      <a href="index.html" class="back-link">← Back to summary</a>
+        \\      <a href="./index.html" class="back-link">← Back to summary</a>
         \\      <h1>Coverage Report</h1>
     );
     try writer.print("      <div class=\"path\">{s}</div>\n", .{filename});
@@ -326,6 +304,13 @@ const std = @import("std");
 const Output = bun.Output;
 const Global = bun.Global;
 
+/// Simplified sidebar data - only what's needed for the file tree
+pub const SidebarItem = struct {
+    filename: []const u8,
+    html_filename: []const u8,
+    coverage: f64,
+};
+
 pub fn writeHeader(writer: std.io.AnyWriter) !void {
     try writer.writeAll(
         \\<!DOCTYPE html>
@@ -408,13 +393,26 @@ pub fn createDetailFile(
     relative_dir: []const u8,
     reports_directory: []const u8,
     source_path: []const u8,
-    all_reports: []const Report,
+    sidebar_items: []const SidebarItem,
 ) !void {
     const relative_source_path = if (relative_dir.len > 0) bun.path.relative(relative_dir, source_path) else source_path;
 
-    // Create HTML filename for this source file
+    // Create HTML filename for this source file using the same logic as in writeFormat
     var detail_html_name_buf: bun.PathBuffer = undefined;
-    const detail_html_filename = std.fmt.bufPrint(&detail_html_name_buf, "{s}.html", .{bun.path.basename(relative_source_path)}) catch return;
+    var safe_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+    // Replace slashes with underscores in the filename
+    var safe_len: usize = 0;
+    for (relative_source_path) |char| {
+        if (char == '/' or char == '\\') {
+            safe_filename_buf[safe_len] = '_';
+        } else {
+            safe_filename_buf[safe_len] = char;
+        }
+        safe_len += 1;
+    }
+    const safe_filename = safe_filename_buf[0..safe_len];
+    const detail_html_filename = std.fmt.bufPrint(&detail_html_name_buf, "{s}.html", .{safe_filename}) catch return;
 
     // Write directly to final path
     const detail_path = bun.path.joinAbsStringBufZ(relative_dir, &detail_html_name_buf, &.{ reports_directory, detail_html_filename }, .auto);
@@ -442,7 +440,7 @@ pub fn createDetailFile(
                 report,
                 relative_dir,
                 source_path,
-                all_reports,
+                sidebar_items,
                 detail_writer,
             ) catch return;
 

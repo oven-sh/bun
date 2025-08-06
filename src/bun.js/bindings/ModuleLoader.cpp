@@ -299,38 +299,42 @@ OnLoadResult handleOnLoadResultNotPromise(MarkedArgumentBuffer& arguments, Zig::
     if (scope.exception()) [[unlikely]] {
         RELEASE_AND_RETURN(scope, toErrorResult(scope.exception()));
     }
-    if (contentsValue) {
-        if (contentsValue.isString()) {
-            if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
-                arguments.append(contentsValue);
-                return {
-                    .value = { .sourceText = { .string = Zig::toZigString(contentsJSString, globalObject), .value = contentsValue, .loader = loader } },
-                    .type = OnLoadResultTypeCode,
-                    .wasMock = false,
-                };
-            }
-        } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(contentsValue)) {
-            arguments.append(contentsValue);
-            return {
-                .value = { .sourceText = { .string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() }, .value = contentsValue, .loader = loader } },
-                .type = OnLoadResultTypeCode,
-                .wasMock = false,
-            };
-        }
-    }
-
-    if (contentsValue.isEmpty()) [[unlikely]] {
+    if (!contentsValue || contentsValue.isUndefinedOrNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         const auto result = toErrorResult(scope.exception());
         scope.clearException();
         return result;
     }
 
-    return {
-        .value = { .sourceText = { .string = ZigStringEmpty, .value = contentsValue, .loader = loader } },
-        .type = OnLoadResultTypeCode,
-        .wasMock = false,
-    };
+    if (contentsValue.isString()) {
+        if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
+            arguments.append(contentsValue);
+            return {
+                .value = { .sourceText = { .string = Zig::toZigString(contentsJSString, globalObject), .value = contentsValue, .loader = loader } },
+                .type = OnLoadResultTypeCode,
+                .wasMock = false,
+            };
+        } else {
+            // String conversion failed
+            throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+            const auto result = toErrorResult(scope.exception());
+            scope.clearException();
+            return result;
+        }
+    } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(contentsValue)) {
+        arguments.append(contentsValue);
+        return {
+            .value = { .sourceText = { .string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() }, .value = contentsValue, .loader = loader } },
+            .type = OnLoadResultTypeCode,
+            .wasMock = false,
+        };
+    } else {
+        // contentsValue exists but is not a string or ArrayBufferView
+        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+        const auto result = toErrorResult(scope.exception());
+        scope.clearException();
+        return result;
+    }
 }
 
 static OnLoadResult handleOnLoadResult(MarkedArgumentBuffer& arguments, Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)

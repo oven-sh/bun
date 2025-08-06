@@ -698,7 +698,7 @@ describe("Bun.sql SQLite support", () => {
         await sql`SELECT * FROM test`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("closed");
+        expect(err.message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
       }
     });
 

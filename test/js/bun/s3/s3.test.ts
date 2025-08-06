@@ -180,7 +180,7 @@ describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => 
 
     {
       const client = new Bun.S3Client({
-        bucket: "bucket", 
+        bucket: "bucket",
         accessKeyId: "test",
         secretAccessKey: "test",
         region: "us-east-1",
@@ -459,16 +459,16 @@ for (let credentials of allCredentials) {
               const testContent = "Test data for S3Client";
               const contentLength = testContent.length;
               const uploadFilename = bucketInName ? `${S3Bucket}/${randomUUID()}-s3client` : `${randomUUID()}-s3client`;
-              
+
               {
                 const presignedUrl = bucket.presign(uploadFilename, {
                   method: "PUT",
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
+
                 expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
-                
+
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
                   body: testContent,
@@ -476,23 +476,23 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect(response.status).toBe(200);
-                
+
                 const file = bucket.file(uploadFilename, options);
                 const downloaded = await file.text();
                 expect(downloaded).toBe(testContent);
-                
+
                 await file.unlink();
               }
-              
+
               {
                 const presignedUrl = bucket.presign(uploadFilename + "-less", {
-                  method: "PUT", 
+                  method: "PUT",
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
+
                 const shortContent = "Short";
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
@@ -501,18 +501,19 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect([400, 403]).toContain(response.status);
               }
-              
+
               {
                 const presignedUrl = bucket.presign(uploadFilename + "-more", {
                   method: "PUT",
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
-                const longContent = "This content is definitely much longer than the expected 23 bytes and should cause a failure";
+
+                const longContent =
+                  "This content is definitely much longer than the expected 23 bytes and should cause a failure";
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
                   body: longContent,
@@ -520,7 +521,7 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect([400, 403]).toContain(response.status);
               }
             });
@@ -800,7 +801,7 @@ for (let credentials of allCredentials) {
               const testContent = "Hello, Bun!";
               const contentLength = testContent.length;
               const uploadFilename = tmp_filename + "-contentlength-test";
-              
+
               {
                 const s3file = s3(uploadFilename, options);
                 const presignedUrl = s3file.presign({
@@ -808,9 +809,9 @@ for (let credentials of allCredentials) {
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
+
                 expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
-                
+
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
                   body: testContent,
@@ -818,23 +819,23 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect(response.status).toBe(200);
-                
+
                 const downloaded = await s3file.text();
                 expect(downloaded).toBe(testContent);
-                
+
                 await s3file.unlink();
               }
-              
+
               {
                 const s3file = s3(uploadFilename + "-less", options);
                 const presignedUrl = s3file.presign({
-                  method: "PUT", 
+                  method: "PUT",
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
+
                 const shortContent = "Short";
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
@@ -843,10 +844,10 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect([400, 403]).toContain(response.status);
               }
-              
+
               {
                 const s3file = s3(uploadFilename + "-more", options);
                 const presignedUrl = s3file.presign({
@@ -854,7 +855,7 @@ for (let credentials of allCredentials) {
                   expiresIn: 3600,
                   contentLength: contentLength,
                 });
-                
+
                 const longContent = "This is a much longer content than expected";
                 const response = await fetch(presignedUrl, {
                   method: "PUT",
@@ -863,24 +864,24 @@ for (let credentials of allCredentials) {
                     "Content-Type": "text/plain",
                   },
                 });
-                
+
                 expect([400, 403]).toContain(response.status);
               }
             });
 
             it("should work with ContentLength (AWS SDK style) restrictions", async () => {
-              const testData = Buffer.alloc(100, 'x');
+              const testData = Buffer.alloc(100, "x");
               const uploadFilename = tmp_filename + "-aws-style";
-              
+
               const s3file = s3(uploadFilename, options);
               const presignedUrl = s3file.presign({
                 method: "PUT",
                 expiresIn: 3600,
                 ContentLength: 100,
               });
-              
+
               expect(presignedUrl.includes("Content-Length=100")).toBe(true);
-              
+
               const response = await fetch(presignedUrl, {
                 method: "PUT",
                 body: testData,
@@ -888,12 +889,12 @@ for (let credentials of allCredentials) {
                   "Content-Type": "application/octet-stream",
                 },
               });
-              
+
               expect(response.status).toBe(200);
-              
+
               const stat = await s3file.stat();
               expect(stat.size).toBe(100);
-              
+
               await s3file.unlink();
             });
 

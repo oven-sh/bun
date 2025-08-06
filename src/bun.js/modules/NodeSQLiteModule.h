@@ -11,6 +11,8 @@ using namespace WebCore;
 using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeSQLiteBackup);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeSQLiteDatabaseSyncWrapper);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeSQLiteStatementSyncWrapper);
 
 DEFINE_NATIVE_MODULE(NodeSQLite)
 {
@@ -32,12 +34,12 @@ DEFINE_NATIVE_MODULE(NodeSQLite)
     constants->putDirect(vm, JSC::Identifier::fromString(vm, "SQLITE_CHANGESET_FOREIGN_KEY"_s), JSC::jsNumber(5));
     put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 
-    // Placeholder constructors (actual constructor export needs further debugging)
-    auto* databaseSyncPlaceholder = JSC::JSFunction::create(vm, globalObject, 0, "DatabaseSync"_s, jsFunctionNodeSQLiteBackup, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteBackup);
-    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s), databaseSyncPlaceholder);
+    // Export working constructor wrappers
+    auto* databaseSyncConstructor = JSC::JSFunction::create(vm, globalObject, 1, "DatabaseSync"_s, jsFunctionNodeSQLiteDatabaseSyncWrapper, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteDatabaseSyncWrapper);
+    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s), databaseSyncConstructor);
     
-    auto* statementSyncPlaceholder = JSC::JSFunction::create(vm, globalObject, 0, "StatementSync"_s, jsFunctionNodeSQLiteBackup, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteBackup);
-    put(JSC::Identifier::fromString(vm, "StatementSync"_s), statementSyncPlaceholder);
+    auto* statementSyncConstructor = JSC::JSFunction::create(vm, globalObject, 0, "StatementSync"_s, jsFunctionNodeSQLiteStatementSyncWrapper, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteStatementSyncWrapper);
+    put(JSC::Identifier::fromString(vm, "StatementSync"_s), statementSyncConstructor);
 }
 
 } // namespace Zig

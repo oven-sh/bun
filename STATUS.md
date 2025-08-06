@@ -49,11 +49,15 @@ This document tracks the implementation of `node:sqlite` support in Bun to match
 
 ## ⚠️ Known Issues
 
-### 1. Constructor Export Issue (In Progress)
-- **Problem**: Direct export of `zigGlobalObject->JSNodeSQLiteDatabaseSyncConstructor()` causes `putDirectCustomAccessor` assertion failure
-- **Current Workaround**: Using placeholder functions instead of actual constructors  
-- **Root Cause**: Likely related to LazyClassStructure initialization timing or property conflicts
-- **Investigation Needed**: Constructor export mechanism requires deeper JSC debugging
+### 1. Constructor Export Issue (Blocked - LazyClassStructure Issue)
+- **Problem**: Any attempt to access LazyClassStructure methods (like `JSNodeSQLiteDatabaseSyncStructure()`) during module initialization causes `putDirectCustomAccessor` assertion failure
+- **Root Cause**: Conflict between LazyClassStructure initialization timing and native module export system
+- **Attempts Made**: 
+  - Direct constructor export via `globalObject->JSNodeSQLiteDatabaseSyncConstructor()` ❌
+  - Manual constructor creation via wrapper functions ❌ 
+  - Both approaches trigger the same assertion in `JSObject::putDirectCustomAccessor`
+- **Workaround**: Using placeholder functions that return error messages
+- **Investigation Needed**: Deep JSC/LazyClassStructure timing issue requiring core JSC knowledge
 
 ### 2. Method Implementation (Placeholder)
 - **DatabaseSync Methods**: `open`, `close`, `prepare`, `exec` implemented but need testing
@@ -136,10 +140,12 @@ bun bd
 
 ## 📝 Notes
 
-- **Completion Status**: ~70% - Core infrastructure complete, needs constructor debugging
-- **Time Invested**: Significant time spent understanding JSC patterns and Bun architecture  
-- **Key Learning**: Bun's module system is sophisticated but well-documented through existing examples
-- **Biggest Challenge**: JSC LazyClassStructure and constructor export timing issues
+- **Completion Status**: ~75% - Core infrastructure complete, constructor issue identified and documented
+- **Time Invested**: Significant time spent understanding JSC patterns, native module system, and LazyClassStructure
+- **Key Learning**: Bun's LazyClassStructure system conflicts with native module exports during initialization
+- **Biggest Challenge**: JSC timing issue between LazyClassStructure and native module property registration
+- **Current State**: Module loads successfully, basic API structure works, constructor instantiation blocked by JSC assertion
+- **Path Forward**: Requires either JSC expert knowledge or alternative approach avoiding LazyClassStructure during module init
 
 ---
 

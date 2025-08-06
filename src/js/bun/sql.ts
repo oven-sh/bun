@@ -952,15 +952,14 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
-    if (poolSize !== undefined && poolSize !== 1) {
-      throw new Error("SQLite does not support pooling, poolSize must be 1, or not defined.");
-    }
+    // SQLite doesn't support pooling, so we ignore the poolSize parameter
 
     if (!this.db) {
       throw new Error("SQLite database not initialized");
     }
 
-    const statement = this.db.prepare(sqlString, values, flags);
+    // Prepare the statement with empty params array and flags
+    const statement = this.db.prepare(sqlString, [], flags || 0);
 
     return {
       statement,
@@ -968,11 +967,19 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       flags,
       run: (connection, query) => {
         try {
+          // Execute the statement with the values
+          console.log("[SQLite] About to call statement.all with values:", values);
           const result = values?.length ? statement.all(...values) : statement.all();
+          console.log("[SQLite] Got result:", result);
           query.resolve(result);
+          console.log("[SQLite] Called query.resolve");
         } catch (err) {
+          console.log("[SQLite] Error in run:", err);
           query.reject(err);
         }
+      },
+      done: () => {
+        // No-op for SQLite - PostgreSQL uses this for cleanup
       },
     };
   }
@@ -2650,17 +2657,17 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.reserve = () => {
-    if (pool.closed) {
+    if (adapter.closed) {
       return Promise.reject(connectionClosedError());
     }
 
     const promiseWithResolvers = Promise.withResolvers();
-    pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
+    adapter.connect(onReserveConnected.bind(promiseWithResolvers), true);
     return promiseWithResolvers.promise;
   };
 
   sql.rollbackDistributed = async function (name: string) {
-    if (pool.closed) {
+    if (adapter.closed) {
       throw connectionClosedError();
     }
 
@@ -2681,7 +2688,7 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.commitDistributed = async function (name: string) {
-    if (pool.closed) {
+    if (adapter.closed) {
       throw connectionClosedError();
     }
 
@@ -2703,7 +2710,7 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.beginDistributed = (name: string, fn: TransactionCallback) => {
-    if (pool.closed) {
+    if (adapter.closed) {
       return Promise.reject(connectionClosedError());
     }
 
@@ -2720,12 +2727,12 @@ const SQL: typeof Bun.SQL = function SQL(
     const { promise, resolve, reject } = Promise.withResolvers();
 
     // lets just reuse the same code path as the transaction begin
-    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), true);
+    adapter.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), true);
     return promise;
   };
 
   sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
-    if (pool.closed) {
+    if (adapter.closed) {
       return Promise.reject(connectionClosedError());
     }
 
@@ -2743,17 +2750,17 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     const { promise, resolve, reject } = Promise.withResolvers();
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), true);
+    adapter.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), true);
 
     return promise;
   };
 
   sql.connect = () => {
-    if (pool.closed) {
+    if (adapter.closed) {
       return Promise.reject(connectionClosedError());
     }
 
-    if (pool.isConnected()) {
+    if (adapter.isConnected()) {
       return Promise.resolve(sql);
     }
 
@@ -2766,24 +2773,24 @@ const SQL: typeof Bun.SQL = function SQL(
 
       // we are just measuring the connection here lets release it
       if (connection) {
-        pool.release(connection);
+        adapter.release(connection);
       }
 
       resolve(sql);
     };
 
-    pool.connect(onConnected);
+    adapter.connect(onConnected);
 
     return promise;
   };
 
   sql.close = async (options?: { timeout?: number }) => {
-    await pool.close(options);
+    await adapter.close(options);
   };
 
   sql[Symbol.asyncDispose] = () => sql.close();
 
-  sql.flush = () => pool.flush();
+  sql.flush = () => adapter.flush();
   sql.options = resolvedOptions;
 
   sql.transaction = sql.begin;

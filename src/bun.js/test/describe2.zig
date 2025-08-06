@@ -1,11 +1,10 @@
 const js_fns = struct {
-    pub fn describe(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    pub fn describe(bunTest: *BunTest, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const name, const callback = callframe.argumentsAsArray(2);
-        const jest: *BunTest = void;
 
-        switch (jest.stage) {
+        switch (bunTest.phase) {
             .scheduling => {
-                return try jest.scheduling.executeOrEnqueueDescribeCallback(globalThis, name, callback);
+                return try bunTest.scheduling.executeOrEnqueueDescribeCallback(globalThis, name, callback);
             },
             .execution => {
                 return globalThis.throw("Cannot call describe() inside a test", .{});
@@ -14,9 +13,9 @@ const js_fns = struct {
     }
 };
 
+/// this will be a JSValue (returned by `Bun.jest(...)`)
 const BunTest = struct {
     gpa: *std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
 
     phase: enum {
         scheduling,
@@ -24,9 +23,17 @@ const BunTest = struct {
     },
     scheduling: Scheduling,
     execution: TestExecution,
+
+    fn ref(this: *BunTest) *const anyopaque {
+        // TODO jsvalue(this).protect()
+    }
+    fn unref(this: *BunTest) void {
+        // TODO jsvalue(this).unprotect()
+    }
 };
 
 const NameAndCallback = struct {
+    active_scope: *DescribeScope,
     name: jsc.Strong,
     callback: jsc.Strong,
     fn deinit(this: *NameAndCallback) void {
@@ -38,11 +45,11 @@ const Scheduling = struct {
     /// if 'describe()' returns a promise, set this to true
     should_enqueue_describes: bool = false,
     locked: bool = false, // set to true after scheduling phase ends
+    describe_callback_queue: std.ArrayList(NameAndCallback),
 
     root_scope: *DescribeScope,
-    // unfortunately we need to use async context to store the active scope
-    // that's because `describe(async () => { describe(async () => {}) }); describe(async () => {})` needs to work.
     active_scope: *DescribeScope,
+    _previous_scope: ?*DescribeScope,
 
     pub fn deinit(this: *Scheduling) void {
         this.root_scope.deinitTree();
@@ -53,12 +60,17 @@ const Scheduling = struct {
         return globalThis.Promise.resolve(.undefined); // TODO: return a promise that resolves when the describe queue is drained
     }
 
+    fn bunTest(this: *Scheduling) *BunTest {
+        return @fieldParentPtr("scheduling", this);
+    }
+
     pub fn executeOrEnqueueDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) !jsc.JSValue {
         bun.assert(!this.locked);
         if (this.should_enqueue_describes) {
             try this.describe_callback_queue.append(.{
+                .active_scope = this.active_scope,
                 .name = .create(name, globalThis),
-                .callback = .create(callback, globalThis),
+                .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
             });
             return this.drainedPromise(globalThis);
         } else {
@@ -66,49 +78,45 @@ const Scheduling = struct {
         }
     }
 
-    // no here's a problem
-    // describe(async () => {
-    //    describe(async () => {
-    //    })
-    // })
-    // describe(async () => {
-    // })
+    pub fn callDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) !jsc.JSValue {
+        const buntest = this.bunTest();
 
-    pub fn callDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) !jsc.JSValue {
-        const name_str = name.asString() orelse return globalThis.throw("describe() must be called with a string", .{});
-        defer name.ensureStillAlive();
-        const callback_fn = callback.get();
-
-        const current_scope = this.active_scope;
-        const new_scope = bun.create(this.arena.allocator(), DescribeScope, .init(this.gpa, current_scope));
-        try current_scope.entries.append(.{ .describe = new_scope });
+        const previous_scope = active_scope;
+        const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, previous_scope));
+        new_scope.name = .create(name, globalThis);
+        try previous_scope.entries.append(.{ .describe = new_scope });
 
         this.active_scope = new_scope;
         const result = try callback.call(globalThis, .{});
 
-        if (result.asPromise()) |promise| {
+        if (result.asPromise()) |_| {
             this.should_enqueue_describes = true;
-            // TODO: promise.then(describeCallbackThen)
+            bun.assert(this._previous_scope == null);
+            this._previous_scope = previous_scope;
+            result.then(globalThis, buntest.ref(), describeCallbackThen, describeCallbackThen);
             return this.drainedPromise(globalThis);
         } else {
-            try this.describeCallbackCompleted(globalThis);
+            try this.describeCallbackCompleted(globalThis, previous_scope);
             return .undefined;
         }
     }
-    pub fn describeCallbackThen(this: *Scheduling, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue) !jsc.JSValue {
-        try this.describeCallbackCompleted(globalThis);
-        return callback;
+    pub fn describeCallbackThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        var buntest: *BunTest = callframe.this().asPromisePtr(@This());
+        defer buntest.deref();
+
+        const this = &buntest.scheduling;
+
+        try this.describeCallbackCompleted(globalThis, this._previous_scope.?);
+        return .undefined;
     }
-    pub fn describeCallbackCompleted(this: *Scheduling, globalThis: *jsc.JSGlobalObject) !void {
-        try this.current_schedule.append(.{
-            .exit_describe = .{},
-        });
+    pub fn describeCallbackCompleted(this: *Scheduling, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) !void {
+        this.active_scope = previous_scope;
 
         if (this.describe_callback_queue.length > 0) {
             bun.assert(this.should_enqueue_describes);
             const first = this.describe_callback_queue.orderedRemove(0);
             defer first.deinit();
-            try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get());
+            try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get(), previous_scope);
         }
     }
 };
@@ -116,6 +124,7 @@ const Scheduling = struct {
 const DescribeScope = struct {
     parent: ?*DescribeScope,
     entries: std.ArrayList(TestScheduleEntry2),
+    name: jsc.Strong,
 
     fn init(gpa: *std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
@@ -123,11 +132,12 @@ const DescribeScope = struct {
             .parent = parent,
         };
     }
-    fn deinit(this: *DescribeScope) void {
+    fn deinit(this: *DescribeScope, buntest: *BunTest) void {
         for (this.entries.items) |entry| {
-            entry.deinit();
+            entry.deinit(buntest);
         }
         this.entries.deinit();
+        this.name.deinit();
     }
 };
 const TestScheduleEntry2 = union(enum) {
@@ -142,13 +152,17 @@ const TestScheduleEntry2 = union(enum) {
         },
         callback: jsc.Strong,
     },
-    fn deinit(this: *TestScheduleEntry2) void {
+    fn deinit(
+        this: *TestScheduleEntry2,
+        buntest: *BunTest,
+    ) void {
         switch (this.*) {
             .describe => |*describe| {
-                describe.deinit();
+                describe.deinit(buntest);
+                buntest.gpa.destroy(describe);
             },
             .callback => |*callback| {
-                callback.deinit();
+                callback.callback.deinit();
             },
         }
     }

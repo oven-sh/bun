@@ -354,11 +354,22 @@ void on_udp_socket_data(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t
         // TODO: This is a memory leak - peer contexts should be managed properly
         // In production, maintain a connection table indexed by client address
         // For now, just note that client_peer_ctx is leaked
+        
+        // IMPORTANT: Call process_conns after accepting the packet
+        if (ret == 0) {
+            lsquic_engine_process_conns(context->engine);
+        }
 
 
     }
 
     lsquic_engine_process_conns(context->engine);
+    
+    // Check if the server has packets to send
+    if (lsquic_engine_has_unsent_packets(context->engine)) {
+        printf("Server has unsent packets, sending...\n");
+        lsquic_engine_send_unsent_packets(context->engine);
+    }
 
 }
 
@@ -452,7 +463,8 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
         is_client = 0;
         printf("SERVER: New incoming connection on server engine\n");
     } else {
-        printf("ERROR: Unknown engine for connection\n");
+        printf("ERROR: Unknown engine for connection - conn engine: %p, server: %p, client: %p\n",
+               lsquic_conn_get_engine(c), context->engine, context->client_engine);
     }
 
     us_quic_socket_t *socket = NULL;
@@ -483,8 +495,10 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
         memset(socket, 0, sizeof(us_quic_socket_t) + 256);
         socket->lsquic_conn = c;
         
-        /* For server, we need to get the UDP socket from the context */
-        /* Use the global listen socket for server connections */
+        /* For server connections, each connection needs its own socket instance
+           but they all share the same underlying UDP socket for I/O.
+           The UDP socket is stored in the global_listen_socket.
+           Each connection has its own us_quic_socket_t that references this shared UDP socket. */
         socket->udp_socket = global_listen_socket;
         
         /* Set the socket as the connection context */
@@ -538,6 +552,7 @@ void on_conn_closed(lsquic_conn_t *c) {
 }
 
 lsquic_stream_ctx_t *on_new_stream(void *stream_if_ctx, lsquic_stream_t *s) {
+    printf("on_new_stream called, stream=%p, context=%p\n", s, stream_if_ctx);
 
     /* In true usockets style we always want read */
     lsquic_stream_wantread(s, 1);
@@ -567,12 +582,20 @@ lsquic_stream_ctx_t *on_new_stream(void *stream_if_ctx, lsquic_stream_t *s) {
     memset(ext, 0, ext_size);
 
     int is_client = 0;
-    if (lsquic_conn_get_engine(lsquic_stream_conn(s)) == context->client_engine) {
+    lsquic_conn_t *conn = lsquic_stream_conn(s);
+    if (!conn) {
+        printf("ERROR: No connection for stream\n");
+        free(ext);
+        return NULL;
+    }
+    if (lsquic_conn_get_engine(conn) == context->client_engine) {
         is_client = 1;
     }
 
     // luckily we can set the ext before we return
     lsquic_stream_set_ctx(s, ext);
+    
+    printf("on_new_stream: is_client=%d, on_stream_open=%p\n", is_client, context->on_stream_open);
     
     if (context->on_stream_open) {
         context->on_stream_open((us_quic_stream_t *) s, is_client);
@@ -647,7 +670,13 @@ int us_quic_stream_is_client(us_quic_stream_t *s) {
 }
 
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {
-    return (us_quic_socket_t *) lsquic_stream_conn((lsquic_stream_t *) s);
+    lsquic_conn_t *conn = lsquic_stream_conn((lsquic_stream_t *) s);
+    if (!conn) {
+        return NULL;
+    }
+    
+    // The connection context contains the socket
+    return (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
 }
 
 //#include <errno.h>
@@ -682,8 +711,10 @@ static void on_read(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
     } else if (nr == -1) {
         if (errno != EWOULDBLOCK) {
             // error handling should not be needed if we use lsquic correctly
-            printf("UNHANDLED ON_READ ERROR\n");
-            exit(0);
+            printf("UNHANDLED ON_READ ERROR: errno=%d (%s)\n", errno, strerror(errno));
+            // Don't exit, just stop reading from this stream
+            lsquic_stream_wantread(s, 0);
+            return;
         }
         // if we for some reason could not read even though we were told to read, we just ignore it
         // this should not really happen but whatever
@@ -867,7 +898,18 @@ SSL_CTX *sni_lookup(void *lsquic_cert_lookup_ctx, const struct sockaddr *local, 
     printf("QUIC sni_lookup called for: %s\n", sni ? sni : "(null)");
     
     // The lsquic_cert_lookup_ctx should be our context
-    // For now, we don't implement SNI - just return NULL to use default
+    if (!lsquic_cert_lookup_ctx) {
+        printf("ERROR: No cert lookup context in sni_lookup\n");
+        return NULL;
+    }
+    
+    us_quic_socket_context_t *context = (us_quic_socket_context_t *)lsquic_cert_lookup_ctx;
+    if (context->ssl_context) {
+        printf("SNI lookup returning SSL context: %p\n", context->ssl_context);
+        return context->ssl_context;
+    }
+    
+    printf("ERROR: No SSL context in sni_lookup\n");
     return NULL;
 }
 
@@ -1147,6 +1189,31 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
     SSL_CTX_set_min_proto_version(context->ssl_context, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(context->ssl_context, TLS1_3_VERSION);
     
+    // Set QUIC-specific SSL options
+    SSL_CTX_set_options(context->ssl_context, SSL_OP_NO_TICKET);  // QUIC handles session tickets
+    SSL_CTX_set_options(context->ssl_context, SSL_OP_NO_RENEGOTIATION);  // No renegotiation in QUIC
+    
+    // Set SSL mode for QUIC
+    SSL_CTX_set_mode(context->ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    
+    // Disable session caching for now
+    SSL_CTX_set_session_cache_mode(context->ssl_context, SSL_SESS_CACHE_OFF);
+    
+    // For testing, disable certificate verification if NODE_TLS_REJECT_UNAUTHORIZED=0
+    const char* reject_unauthorized = getenv("NODE_TLS_REJECT_UNAUTHORIZED");
+    if (reject_unauthorized && strcmp(reject_unauthorized, "0") == 0) {
+        SSL_CTX_set_verify(context->ssl_context, SSL_VERIFY_NONE, NULL);
+        printf("QUIC: Certificate verification disabled for testing\n");
+    }
+    
+    // Set session ID context for server mode (required for QUIC)
+    const unsigned char session_id_context[] = "QUIC";
+    SSL_CTX_set_session_id_context(context->ssl_context, session_id_context, 
+                                    sizeof(session_id_context) - 1);
+    
+    // Initialize ALPN before setting callbacks
+    add_alpn("h3");
+    
     // Set up ALPN for QUIC
     SSL_CTX_set_alpn_select_cb(context->ssl_context, select_alpn, NULL);
     
@@ -1187,19 +1254,16 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
         .hsi_process_header = hsi_process_header
     };
 
-
-    add_alpn("h3");
-
     // Initialize engine settings for server
     struct lsquic_engine_settings server_settings;
-    lsquic_engine_init_settings(&server_settings, LSENG_SERVER | LSENG_HTTP);
+    lsquic_engine_init_settings(&server_settings, LSENG_SERVER);
     
     // Use default QUIC versions (includes latest stable versions)
     server_settings.es_versions = LSQUIC_DF_VERSIONS;
     printf("Server QUIC versions: 0x%x\n", server_settings.es_versions);
     
-    // Set max packet size for UDP (common QUIC value)
-    server_settings.es_max_udp_payload_size_rx = 1472;
+    // Set max packet size for UDP (0 means use default)
+    server_settings.es_max_udp_payload_size_rx = 0;
 
     struct lsquic_engine_api engine_api = {
         .ea_packets_out     = send_packets_out,
@@ -1220,28 +1284,28 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
         .ea_settings = &server_settings,
     };
 
-    printf("log: %d\n", lsquic_set_log_level("warn"));
+    printf("log: %d\n", lsquic_set_log_level("info"));
 
-    // Logger is not currently used - commented out to avoid unused variable warning
-    // static struct lsquic_logger_if logger = {
-    //     .log_buf = log_buf_cb,
-    // };
+    // Initialize the logger to get better debugging info
+    static struct lsquic_logger_if logger = {
+        .log_buf = log_buf_cb,
+    };
 
-    //lsquic_logger_init(&logger, 0, LLTS_NONE);
+    lsquic_logger_init(&logger, 0, LLTS_NONE);
 
-    /* Create an engine in server mode with HTTP behavior: */
-    context->engine = lsquic_engine_new(LSENG_SERVER | LSENG_HTTP, &engine_api);
+    /* Create an engine in server mode: */
+    context->engine = lsquic_engine_new(LSENG_SERVER, &engine_api);
 
     // Initialize engine settings for client
     struct lsquic_engine_settings client_settings;
-    lsquic_engine_init_settings(&client_settings, LSENG_HTTP);
+    lsquic_engine_init_settings(&client_settings, 0);
     
     // Use default QUIC versions (includes latest stable versions)
     client_settings.es_versions = LSQUIC_DF_VERSIONS;
     printf("Client QUIC versions: 0x%x\n", client_settings.es_versions);
     
-    // Set max packet size for UDP (common QUIC value)
-    client_settings.es_max_udp_payload_size_rx = 1472;
+    // Set max packet size for UDP (0 means use default)
+    client_settings.es_max_udp_payload_size_rx = 0;
 
     struct lsquic_engine_api engine_api_client = {
         .ea_packets_out     = send_packets_out,
@@ -1263,7 +1327,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(struct us_loop_t *loop, 
         .ea_settings = &client_settings,
     };
 
-    context->client_engine = lsquic_engine_new(LSENG_HTTP, &engine_api_client);
+    context->client_engine = lsquic_engine_new(0, &engine_api_client);
 
     printf("Engine: %p\n", context->engine);
     printf("Client Engine: %p\n", context->client_engine);

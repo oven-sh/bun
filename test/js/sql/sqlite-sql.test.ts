@@ -703,14 +703,10 @@ describe("Bun.sql SQLite support", () => {
       }
     });
 
-    test("reserve returns same instance for SQLite", async () => {
+    test("reserve throws for SQLite", async () => {
       const sql = new SQL("sqlite://:memory:");
 
-      const reserved1 = await sql.reserve();
-      const reserved2 = await sql.reserve();
-
-      expect(reserved1).toBeInstanceOf(SQL);
-      expect(reserved2).toBeInstanceOf(SQL);
+      await expect(sql.reserve()).rejects.toThrow("SQLite doesn't support connection reservation (no connection pool)");
 
       await sql.close();
     });

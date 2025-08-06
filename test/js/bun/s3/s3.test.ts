@@ -158,6 +158,39 @@ describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => 
       const url = new URL(presigned);
       expect(url.hostname).toBe("bucket.s3.us-east-1.amazonaws.com");
     }
+
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-west-2",
+      });
+      const presigned = client.presign("filename.txt", {
+        expiresIn: 3600,
+        method: "PUT",
+        contentLength: 200,
+      });
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-west-2.amazonaws.com");
+      expect(presigned.includes("Content-Length=200")).toBe(true);
+      expect(presigned.includes("X-Amz-Expires=3600")).toBe(true);
+    }
+
+    {
+      const client = new Bun.S3Client({
+        bucket: "bucket", 
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      });
+      const presigned = client.presign("filename.txt", {
+        ContentLength: 10000,
+      });
+      const url = new URL(presigned);
+      expect(presigned.includes("Content-Length=10000")).toBe(true);
+    }
   });
 
   it("inspect", () => {
@@ -1223,6 +1256,36 @@ for (let credentials of allCredentials) {
               expiresIn: 10,
             });
             expect(url).toBeDefined();
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+          it("should work with contentLength", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              contentLength: 200,
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("Content-Length=200")).toBe(true);
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+          it("should work with ContentLength (AWS SDK style)", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              ContentLength: 10000,
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("Content-Length=10000")).toBe(true);
             expect(url.includes("X-Amz-Expires=10")).toBe(true);
             expect(url.includes("X-Amz-Date")).toBe(true);
             expect(url.includes("X-Amz-Signature")).toBe(true);

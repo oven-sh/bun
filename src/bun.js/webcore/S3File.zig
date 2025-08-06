@@ -467,6 +467,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
 
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
+    var content_length: ?i64 = null;
 
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
         .credentials = this.store.?.data.s3.getCredentials().*,
@@ -487,6 +488,21 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
                 if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
                 expires = @intCast(expires_);
             }
+            if (try options.getOptional(globalThis, "contentLength", i64)) |content_length_| {
+                if (content_length_ < 0) {
+                    return globalThis.throwInvalidArguments("contentLength must be a positive number", .{});
+                }
+                content_length = content_length_;
+            }
+            // Also support "ContentLength" for AWS SDK compatibility
+            if (content_length == null) {
+                if (try options.getOptional(globalThis, "ContentLength", i64)) |content_length_| {
+                    if (content_length_ < 0) {
+                        return globalThis.throwInvalidArguments("ContentLength must be a positive number", .{});
+                    }
+                    content_length = content_length_;
+                }
+            }
         }
         credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
     }
@@ -495,6 +511,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
     const result = credentialsWithOptions.credentials.signRequest(.{
         .path = path,
         .method = method,
+        .content_length = content_length,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
     }, false, .{ .expires = expires }) catch |sign_err| {

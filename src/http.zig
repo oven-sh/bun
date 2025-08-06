@@ -128,7 +128,7 @@ pub fn onOpen(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) !void {
-    log("onOpen called, is_ssl={}", .{is_ssl});
+    log("HTTPClient.onOpen called in http.zig, is_ssl={}, client.protocol={}", .{is_ssl, client.protocol});
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -171,22 +171,23 @@ pub fn onOpen(
             log("Calling configureHTTPClient with protocol={}", .{client.protocol});
             ssl_ptr.configureHTTPClient(hostname, client.protocol);
             
-            // Also set ALPN directly on the SSL object based on protocol
+            // Override ALPN on the SSL object directly to ensure it's set correctly
+            // This is necessary because uSockets might set its own ALPN during SSL context creation
             switch (client.protocol) {
                 .h1 => {
                     const alpn = [_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
                     const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
-                    log("Set ALPN on SSL object for HTTP/1.1 only, result={}", .{result});
+                    log("Override ALPN on SSL object for HTTP/1.1 only, result={}", .{result});
                 },
                 .h2 => {
                     const alpn = [_]u8{ 2, 'h', '2' };
                     const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
-                    log("Set ALPN on SSL object for HTTP/2 only, result={}", .{result});
+                    log("Override ALPN on SSL object for HTTP/2 only, result={}", .{result});
                 },
                 .unspecified => {
                     const alpn = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
                     const result = BoringSSL.SSL_set_alpn_protos(ssl_ptr, &alpn, alpn.len);
-                    log("Set ALPN on SSL object for HTTP/2 and HTTP/1.1, result={}", .{result});
+                    log("Override ALPN on SSL object for HTTP/2 and HTTP/1.1, result={}", .{result});
                 },
             }
         }

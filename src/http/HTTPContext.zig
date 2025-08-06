@@ -79,6 +79,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -101,7 +102,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 };
             }
             this.us_socket_context = socket.?;
-            this.sslCtx().setup();
 
             HTTPSocket.configure(
                 this.us_socket_context,
@@ -111,15 +111,24 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             );
         }
 
+        // Static ALPN protocol arrays - these need to be static so they remain valid
+        // after the function returns (since SSL_CTX keeps a pointer to them)
+        const alpn_h2 = [_]u8{ 2, 'h', '2' };
+        const alpn_h1 = [_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        const alpn_both = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        
         pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            var opts: uws.SocketContext.BunSocketContextOptions = .{
+            
+            const opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
+                .alpn_protocols = &alpn_both,
+                .alpn_protocols_len = alpn_both.len,
             };
 
             try this.initWithOpts(&opts);
@@ -129,14 +138,32 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            const opts: uws.SocketContext.BunSocketContextOptions = .{
+            
+            var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
             };
+            
+            // Set ALPN based on protocol preference
+            switch (protocol) {
+                .h1 => {
+                    opts.alpn_protocols = &alpn_h1;
+                    opts.alpn_protocols_len = alpn_h1.len;
+                },
+                .h2 => {
+                    opts.alpn_protocols = &alpn_h2;
+                    opts.alpn_protocols_len = alpn_h2.len;
+                },
+                .unspecified => {
+                    // Prefer h2 but allow fallback to h1
+                    opts.alpn_protocols = &alpn_both;
+                    opts.alpn_protocols_len = alpn_both.len;
+                },
+            }
 
-            // Create SSL context without calling setup yet
+            // Create SSL context with ALPN configured
             var err: uws.create_bun_socket_error_t = .none;
             const socket = uws.SocketContext.createSSLContext(bun.http.http_thread.loop.loop, @sizeOf(usize), opts, &err);
             if (socket == null) {
@@ -149,44 +176,15 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
             this.us_socket_context = socket.?;
             
-            // Configure ALPN at the SSL context level based on protocol (before setup)
-            const ssl_ctx = this.sslCtx();
-            log("Configuring ALPN for protocol={} on SSL_CTX={*}", .{protocol, ssl_ctx});
-            switch (protocol) {
-                .h1 => {
-                    // Only HTTP/1.1
-                    const alpn = [_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-                    const result = BoringSSL.SSL_CTX_set_alpn_protos(ssl_ctx, &alpn, alpn.len);
-                    bun.assert(result == 0);
-                    log("Configured SSL context for HTTP/1.1 only, result={}", .{result});
-                },
-                .h2 => {
-                    // Only HTTP/2
-                    const alpn = [_]u8{ 2, 'h', '2' };
-                    const result = BoringSSL.SSL_CTX_set_alpn_protos(ssl_ctx, &alpn, alpn.len);
-                    bun.assert(result == 0);
-                    log("Configured SSL context for HTTP/2 only, result={}, ssl_ctx={*}", .{result, ssl_ctx});
-                },
-                .unspecified => {
-                    // Both HTTP/2 and HTTP/1.1 (default)
-                    const alpn = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-                    const result = BoringSSL.SSL_CTX_set_alpn_protos(ssl_ctx, &alpn, alpn.len);
-                    bun.assert(result == 0);
-                    log("Configured SSL context for HTTP/2 and HTTP/1.1, result={}", .{result});
-                },
-            }
-            
-            // Now setup the SSL context after ALPN is configured
-            ssl_ctx.setup();
-            
             // Configure the socket handler
-            log("Configuring socket handler for protocol={}", .{protocol});
+            log("Configuring socket handler for protocol={}, us_socket_context={*}", .{protocol, this.us_socket_context});
             HTTPSocket.configure(
                 this.us_socket_context,
                 false,
                 anyopaque,
                 Handler,
             );
+            log("Socket handler configured", .{});
         }
 
         pub fn init(this: *@This()) void {
@@ -205,8 +203,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 const alpn = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
                 const result = BoringSSL.SSL_CTX_set_alpn_protos(ssl_ctx, &alpn, alpn.len);
                 bun.assert(result == 0);
-                
-                this.sslCtx().setup();
             } else {
                 this.us_socket_context = uws.SocketContext.createNoSSLContext(bun.http.http_thread.loop.loop, @sizeOf(usize)).?;
             }
@@ -267,16 +263,16 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                log("onOpen called, socket={*}", .{socket.socket});
+                log("onOpen called", .{});
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    if (client.onOpen(comptime ssl, socket)) |_| {
-                        return;
-                    } else |_| {
-                        log("Unable to open socket", .{});
+                    log("Calling client.onOpen with ssl={}, client.protocol={}", .{ssl, client.protocol});
+                    client.onOpen(comptime ssl, socket) catch |err| {
+                        log("Unable to open socket: {}", .{err});
                         terminateSocket(socket);
                         return;
-                    }
+                    };
+                    return;
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -556,7 +552,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             if (comptime ssl) {
-                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}, ssl_ctx={*}", .{hostname, port, this, ssl, this.us_socket_context, this.sslCtx()});
+                const ssl_ctx = this.sslCtx();
+                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}, ssl_ctx={*}", .{hostname, port, this, ssl, this.us_socket_context, ssl_ctx});
             } else {
                 log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}", .{hostname, port, this, ssl, this.us_socket_context});
             }
@@ -568,7 +565,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 false,
             );
             client.allow_retry = false;
-            // log("Socket connected, socket={any}", .{socket.socket});
+            log("Socket connected, us_socket_context={*}", .{this.us_socket_context});
             return socket;
         }
     };

@@ -237,6 +237,9 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* ALPN protocols - null-terminated list of protocol names */
+    const unsigned char *alpn_protocols;
+    unsigned int alpn_protocols_len;
 };
 
 /* Return 15-bit timestamp for this context */

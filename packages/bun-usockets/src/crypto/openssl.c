@@ -1264,6 +1264,16 @@ SSL_CTX *create_ssl_context_from_bun_options(
       }
     }
   }
+  
+  /* Set ALPN protocols if provided */
+  if (options.alpn_protocols && options.alpn_protocols_len > 0) {
+    if (SSL_CTX_set_alpn_protos(ssl_context, options.alpn_protocols, options.alpn_protocols_len) != 0) {
+      /* SSL_CTX_set_alpn_protos returns 0 on success */
+      free_ssl_context(ssl_context);
+      return NULL;
+    }
+  }
+  
   if (options.dh_params_file_name) {
     /* Set up ephemeral DH parameters. */
     DH *dh_2048 = NULL;

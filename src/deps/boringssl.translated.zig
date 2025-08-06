@@ -19047,20 +19047,14 @@ pub const SSL = opaque {
     }
 
     pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8, protocol: bun.http.HTTPProtocol) void {
-        _ = protocol; // TODO: Use protocol parameter or remove it
+        _ = protocol; // Protocol-specific configuration is done at SSL_CTX level
         if (hostname.len > 0) ssl.setHostname(hostname);
-        _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
-        _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
-
-        // Don't set ALPN here - it should inherit from the SSL context
-        // const alpns = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        // const result = SSL_set_alpn_protos(ssl, &alpns, alpns.len);
-        // bun.Output.scoped(.SSLConfig, true)("SSL_set_alpn_protos result={} for ssl={*}", .{result, ssl});
-        // bun.assert(result == 0);
+        
+        // Note: Don't clear/set SSL_OP_LEGACY_SERVER_CONNECT as it might affect ALPN
+        // The SSL context already has ALPN configured based on protocol
         
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
-
         SSL_set_enable_ech_grease(ssl, 1);
     }
     

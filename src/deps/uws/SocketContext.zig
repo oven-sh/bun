@@ -240,6 +240,8 @@ pub const SocketContext = opaque {
         request_cert: i32 = 0,
         client_renegotiation_limit: u32 = 3,
         client_renegotiation_window: u32 = 600,
+        alpn_protocols: ?[*]const u8 = null,
+        alpn_protocols_len: u32 = 0,
 
         pub fn createSSLContext(options: BunSocketContextOptions, err: *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX {
             return c.create_ssl_context_from_bun_options(options, err);

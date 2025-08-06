@@ -598,6 +598,20 @@ pub const Value = union(Tag) {
             }
         }
 
+        if (value.as(bun.jsc.API.HTMLBundle)) |html_bundle| {
+            const html_bundle_bytes = std.mem.asBytes(&html_bundle);
+            return Body.Value{
+                .InternalBlob = .{
+                    .bytes = std.ArrayList(u8){
+                        .items = bun.default_allocator.dupe(u8, html_bundle_bytes) catch bun.outOfMemory(),
+                        .capacity = html_bundle_bytes.len,
+                        .allocator = bun.default_allocator,
+                    },
+                    .was_string = false,
+                },
+            };
+        }
+
         value.ensureStillAlive();
 
         if (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {

@@ -69,11 +69,18 @@ pub const Route = struct {
         method: bun.http.Method.Set,
     } = .any,
 
+    /// Custom headers & status code to apply to the HTML response
+    custom_headers: ?bun.http.Headers = null,
+    custom_status: ?u16 = null,
+
     pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
         cost += @sizeOf(Route);
         cost += this.pending_responses.items.len * @sizeOf(PendingResponse);
         cost += this.state.memoryCost();
+        if (this.custom_headers) |headers| {
+            cost += headers.memoryCost();
+        }
         return cost;
     }
 
@@ -92,6 +99,9 @@ pub const Route = struct {
         this.pending_responses.deinit(bun.default_allocator);
         this.bundle.deref();
         this.state.deinit();
+        if (this.custom_headers) |*headers| {
+            headers.deinit();
+        }
         bun.destroy(this);
     }
 
@@ -415,6 +425,19 @@ pub const Route = struct {
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
                 const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
+
+                if (this.custom_headers) |*custom_headers| {
+                    const entries = custom_headers.entries.slice();
+                    const names = entries.items(.name);
+                    const values = entries.items(.value);
+                    for (names, values) |name_ptr, value_ptr| {
+                        html_route_clone.headers.append(custom_headers.asStr(name_ptr), custom_headers.asStr(value_ptr)) catch bun.outOfMemory();
+                    }
+                }
+                if (this.custom_status) |status| {
+                    html_route_clone.status_code = status;
+                }
+
                 this.state = .{ .html = html_route_clone };
 
                 if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {

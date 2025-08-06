@@ -188,6 +188,44 @@ pub const AnyRoute = union(enum) {
     }
 
     pub fn htmlRouteFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
+        if (argument.as(jsc.WebCore.Response)) |response| {
+            if (response.body.value == .InternalBlob and !response.body.value.InternalBlob.was_string) {
+                const bytes = response.body.value.InternalBlob.bytes.items;
+                if (bytes.len == @sizeOf(*HTMLBundle)) {
+                    const html_bundle_ptr = @as(**HTMLBundle, @ptrCast(@alignCast(bytes.ptr))).*;
+                    const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle_ptr) catch bun.outOfMemory();
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = HTMLBundle.Route.init(html_bundle_ptr);
+                        const route = entry.value_ptr.*;
+
+                        if (response.init.headers) |headers| {
+                            route.data.custom_headers = bun.http.Headers.from(headers, bun.default_allocator, .{}) catch bun.outOfMemory();
+                        }
+
+                        const status = response.statusCode();
+                        if (status != 200) {
+                            route.data.custom_status = status;
+                        }
+
+                        return .{ .html = route };
+                    } else {
+                        const route = entry.value_ptr.dupeRef();
+
+                        if (response.init.headers) |headers| {
+                            route.data.custom_headers = bun.http.Headers.from(headers, bun.default_allocator, .{}) catch bun.outOfMemory();
+                        }
+
+                        const status = response.statusCode();
+                        if (status != 200) {
+                            route.data.custom_status = status;
+                        }
+
+                        return .{ .html = route };
+                    }
+                }
+            }
+        }
+
         if (argument.as(HTMLBundle)) |html_bundle| {
             const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
             if (!entry.found_existing) {

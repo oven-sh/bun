@@ -26,7 +26,7 @@ function throwNotImplemented(feature: string, issue?: number, extra?: string): n
   throw new NotImplementedError(feature, issue, extra);
 }
 
-function hideFromStack(...fns) {
+function hideFromStack(...fns: Function[]) {
   for (const fn of fns) {
     Object.defineProperty(fn, "name", {
       value: "::bunternal::",

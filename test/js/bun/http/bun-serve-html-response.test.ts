@@ -61,7 +61,8 @@ console.log(server.port);
   proc.kill();
 });
 
-test("many static routes with custom headers/status", async () => {
+// todo: add build support for this
+test.each(["runtime" /*"build"*/])("many static routes with custom headers/status (%s)", async runtime => {
   const dir = tempDirWithFiles("html-response-static", {
     "index.html": /*html*/ `<!DOCTYPE html>
 <html>
@@ -95,7 +96,7 @@ const server = Bun.serve({
       status: 201,
       headers: {
         "X-Custom": "custom-value",
-        "X-Test": "test-value"
+        "X-Test": "test-value",
       }
     }),
     "/home": new Response(html),
@@ -116,12 +117,30 @@ console.log(server.port);
 `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.ts"],
-    env: bunEnv,
-    cwd: dir,
-    stdout: "pipe",
-  });
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  if (runtime === "runtime") {
+    proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+    });
+  } else {
+    const buildProc = Bun.spawn({
+      cmd: [bunExe(), "build", "server.ts", "--outdir", "dist", "--target", "bun", "--splitting"],
+      env: bunEnv,
+      cwd: dir,
+    });
+    await buildProc.exited;
+    buildProc.kill();
+
+    proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: dir + "/dist",
+      stdout: "pipe",
+    });
+  }
 
   const reader = proc.stdout.getReader();
   const { value } = await reader.read();
@@ -239,4 +258,66 @@ console.log(server.port);
   }
 
   proc.kill();
+});
+
+test("HTMLBundle in Response error conditions", async () => {
+  const dir = tempDirWithFiles("html-response-errors", {
+    "index.html": /*html*/ `<\!DOCTYPE html>
+<html>
+<head>
+  <title>Test Page</title>
+</head>
+<body>
+  <h1>Error Test</h1>
+</body>
+</html>`,
+    "test.ts": `
+import html from "./index.html";
+const response = new Response(html);
+
+const tests = [
+  () => response.text(),
+  () => response.blob(),
+  () => response.json(),
+  () => response.arrayBuffer(),
+  () => response.formData(),
+  () => Bun.write("output.html", response.body),
+  () => Bun.spawn({
+    cmd: ["echo", "test"],
+    stdin: response.body
+  })
+];
+
+for (let i = 0; i < tests.length; i++) {
+  try {
+    const result = await tests[i]();
+    console.log(\`FAIL: Test \${i} should have thrown\`);
+  } catch (e) {
+    if (e.toString().includes("HTMLBundle")) {
+      console.log(\`PASS: Test \${i} threw as expected\`);
+    } else {
+      console.log(\`HALF PASS: Test \${i} should have thrown better error message\`);
+    }
+  }
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+  });
+
+  expect(await proc.stdout.text()).toMatchInlineSnapshot(`
+    "PASS: Test 0 threw as expected
+    PASS: Test 1 threw as expected
+    PASS: Test 2 threw as expected
+    PASS: Test 3 threw as expected
+    PASS: Test 4 threw as expected
+    PASS: Test 5 threw as expected
+    PASS: Test 6 threw as expected
+    "
+  `);
 });

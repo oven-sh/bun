@@ -49,11 +49,11 @@ test("subtract function", () => {
 
     expect(exitCode).toBe(0);
 
-    // Check that the HTML file was created
+    // Check that the index.html file was created
     const htmlPath = join(dir, "coverage", "index.html");
     expect(existsSync(htmlPath)).toBe(true);
 
-    // Check the HTML content
+    // Check the index HTML content
     const htmlContent = readFileSync(htmlPath, "utf-8");
 
     // Should contain basic HTML structure
@@ -61,8 +61,9 @@ test("subtract function", () => {
     expect(htmlContent).toContain("<title>Bun Coverage Report</title>");
     expect(htmlContent).toContain("<h1>Bun Coverage Report</h1>");
 
-    // Should contain the demo.ts file
+    // Should contain the demo.ts file with link to detail page
     expect(htmlContent).toContain("demo.ts");
+    expect(htmlContent).toContain("demo.ts.html");
 
     // Should contain coverage information
     expect(htmlContent).toContain("Functions");
@@ -72,6 +73,28 @@ test("subtract function", () => {
     // Should have CSS styling
     expect(htmlContent).toContain(".coverage");
     expect(htmlContent).toContain("font-family");
+
+    // Check that the detail HTML file was created for demo.ts
+    const detailHtmlPath = join(dir, "coverage", "demo.ts.html");
+    expect(existsSync(detailHtmlPath)).toBe(true);
+
+    // Check the detail HTML content
+    const detailHtmlContent = readFileSync(detailHtmlPath, "utf-8");
+
+    // Should contain detailed coverage view
+    expect(detailHtmlContent).toContain("<!DOCTYPE html>");
+    expect(detailHtmlContent).toContain("Coverage: demo.ts");
+    expect(detailHtmlContent).toContain("Back to summary");
+    
+    // Should show the source code with coverage highlighting
+    expect(detailHtmlContent).toContain("export function add");
+    expect(detailHtmlContent).toContain("export function subtract");
+    expect(detailHtmlContent).toContain("export function uncoveredFunction");
+    
+    // Should have line numbers and coverage indicators
+    expect(detailHtmlContent).toContain("line covered");
+    expect(detailHtmlContent).toContain("line uncovered");
+    expect(detailHtmlContent).toContain("line-number");
   });
 
   it("should generate HTML coverage alongside other reporters", async () => {

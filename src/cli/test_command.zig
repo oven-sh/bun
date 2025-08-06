@@ -1296,11 +1296,55 @@ pub const CommandLineReporter = struct {
             }
 
             if (comptime reporters.html) {
+                // Write entry to index.html
                 CodeCoverageReport.Html.writeFormat(
                     &report,
                     relative_dir,
                     html_writer,
                 ) catch continue;
+
+                // Generate separate HTML file for this source file
+                const source_path = report.source_url.slice();
+                const relative_source_path = if (relative_dir.len > 0) bun.path.relative(relative_dir, source_path) else source_path;
+                
+                // Create HTML filename for this source file
+                var detail_html_name_buf: bun.PathBuffer = undefined;
+                const detail_html_filename = std.fmt.bufPrint(&detail_html_name_buf, "{s}.html", .{bun.path.basename(relative_source_path)}) catch continue;
+                
+                // Write directly to final path
+                const detail_path = bun.path.joinAbsStringBufZ(relative_dir, &detail_html_name_buf, &.{ opts.reports_directory, detail_html_filename }, .auto);
+                
+                const detail_file = bun.sys.File.openat(
+                    .cwd(),
+                    detail_path,
+                    bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                    0o644,
+                );
+
+                switch (detail_file) {
+                    .err => |err| {
+                        _ = err;
+                        // Log error but continue with other files
+                        continue;
+                    },
+                    .result => |f| {
+                        defer f.close();
+                        
+                        // Create buffered writer for detail file
+                        var detail_buffered_writer = std.io.bufferedWriter(f.writer());
+                        const detail_writer = detail_buffered_writer.writer();
+                        
+                        // Write detailed coverage HTML for this source file
+                        CodeCoverageReport.Html.writeDetailedFile(
+                            &report,
+                            relative_dir,
+                            source_path,
+                            detail_writer,
+                        ) catch continue;
+                        
+                        detail_buffered_writer.flush() catch continue;
+                    },
+                }
             }
         }
 

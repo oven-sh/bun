@@ -2865,6 +2865,30 @@ console.log(foo, array);
       // check("let x = arg0?.[foo]; (0, x)()", "let x = arg0?.[foo];\nx();");
     });
 
+    it("comma operator transforms", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
+      // Comma operator should be optimized when not used as call target
+      expectPrinted("(0, 1)", "1");
+      expectPrinted("(0, foo)", "foo");
+      expectPrinted("(sideEffect(), foo)", "(sideEffect(), foo)");
+
+      // Comma operator should preserve 'this' binding semantics when used as call target
+      expectPrinted("(0, obj.method)()", "(0, obj.method)()");
+      expectPrinted("(0, obj[key])()", "(0, obj[key])()");
+      expectPrinted("(0, obj?.method)()", "(0, obj?.method)()");
+      expectPrinted("(0, obj?.[key])()", "(0, obj?.[key])()");
+      
+      // Side effects should still be preserved in call context
+      expectPrinted("(sideEffect(), obj.method)()", "(sideEffect(), obj.method)()");
+      
+      // Non-method calls should still be optimized even in call context
+      expectPrinted("(0, func)()", "func()");
+      expectPrinted("(0, getValue())()", "getValue()()");
+    });
+
     it("constant folding", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

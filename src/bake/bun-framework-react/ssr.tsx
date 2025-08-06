@@ -56,6 +56,12 @@ export function renderToHtml(
       // with `use`, and then returning the parsed React component for the UI.
       const Root: any = () => React.use(promise);
 
+      // If the signal is already aborted, we should not proceed
+      if (signal.aborted) {
+        controller.close();
+        return Promise.resolve();
+      }
+
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
       let pipe: (stream: any) => void;
@@ -64,6 +70,13 @@ export function renderToHtml(
         onError(error) {
           if (!signal.aborted) {
             console.error(error);
+            // Abort the rendering and close the stream
+            signal.aborted = true;
+            abort();
+            if (signal.abort) signal.abort();
+            if (stream) {
+              stream.controller.close();
+            }
           }
         },
       }));
@@ -133,18 +146,28 @@ class RscInjectionStream extends EventEmitter {
   /** Resolved when all data is written */
   finished: Promise<void>;
   finalize: () => void;
+  reject: (err: any) => void;
 
   constructor(rscPayload: Readable, controller: ReadableStreamDirectController) {
     super();
     this.controller = controller;
 
-    const { resolve, promise } = Promise.withResolvers<void>();
+    const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
     this.finalize = resolve;
+    this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
     rscPayload.on("end", () => {
       this.rscHasEnded = true;
+    });
+    rscPayload.on("error", err => {
+      console.error("RSC payload stream error in RscInjectionStream:", err);
+      this.rscHasEnded = true;
+      // Close the controller
+      controller.close();
+      // Reject the promise instead of resolving it
+      this.reject(err);
     });
   }
 

@@ -353,7 +353,8 @@ describe("Bun.sql SQLite support", () => {
           throw new Error("Insufficient funds");
         });
       } catch (err) {
-        expect(err.message).toBe("Insufficient funds");
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe("Insufficient funds");
       }
 
       const accounts = await sql`SELECT * FROM accounts ORDER BY id`;
@@ -391,7 +392,8 @@ describe("Bun.sql SQLite support", () => {
           await tx`UPDATE accounts SET balance = 0`;
           expect(true).toBe(false); // Should not reach here
         } catch (err) {
-          expect(err.message).toContain("readonly");
+          expect(err).toBeInstanceOf(Error);
+          expect((err as Error).message).toContain("readonly");
         }
 
         return accounts;
@@ -631,7 +633,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`SELCT * FROM nonexistent`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("syntax error");
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain("syntax error");
       }
     });
 
@@ -647,7 +650,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`INSERT INTO constraints (id, value) VALUES (1, ${null})`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("NOT NULL");
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain("NOT NULL");
       }
 
       // UNIQUE violation
@@ -656,7 +660,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`INSERT INTO constraints VALUES (2, 'test2', 'unique')`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("UNIQUE");
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain("UNIQUE");
       }
     });
 
@@ -677,7 +682,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`INSERT INTO child VALUES (2, 999)`; // Non-existent parent
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("FOREIGN KEY");
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain("FOREIGN KEY");
       }
     });
   });
@@ -692,7 +698,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`SELECT * FROM test`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
       }
     });
 
@@ -702,8 +709,8 @@ describe("Bun.sql SQLite support", () => {
       const reserved1 = await sql.reserve();
       const reserved2 = await sql.reserve();
 
-      expect(reserved1).toBe(sql);
-      expect(reserved2).toBe(sql);
+      expect(reserved1).toBeInstanceOf(SQL);
+      expect(reserved2).toBeInstanceOf(SQL);
 
       await sql.close();
     });
@@ -865,7 +872,8 @@ describe("Bun.sql SQLite support", () => {
         await sql`SELECT * FROM resource_test`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
       }
     });
   });

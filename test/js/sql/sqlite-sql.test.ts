@@ -519,23 +519,17 @@ describe("Bun.sql SQLite support", () => {
     });
 
     test("Full-text search (FTS5)", async () => {
-      // Check if FTS5 is available
-      try {
-        await sql`CREATE VIRTUAL TABLE docs USING fts5(title, content)`;
+      await sql`CREATE VIRTUAL TABLE docs USING fts5(title, content)`;
 
-        await sql`INSERT INTO docs VALUES
+      await sql`INSERT INTO docs VALUES
           ('First Document', 'This is the content of the first document'),
           ('Second Document', 'This document contains different content'),
           ('Third Document', 'Another document with unique text')`;
 
-        const results = await sql`SELECT * FROM docs WHERE docs MATCH 'content'`;
-        expect(results).toHaveLength(2);
+      const results = await sql`SELECT * FROM docs WHERE docs MATCH 'content'`;
+      expect(results).toHaveLength(2);
 
-        await sql`DROP TABLE docs`;
-      } catch (err) {
-        // FTS5 might not be available in all SQLite builds
-        console.log("FTS5 not available:", err.message);
-      }
+      await sql`DROP TABLE docs`;
     });
 
     test("JSON functions", async () => {
@@ -871,7 +865,7 @@ describe("Bun.sql SQLite support", () => {
         await sql`SELECT * FROM resource_test`;
         expect(true).toBe(false);
       } catch (err) {
-        expect(err.message).toContain("closed");
+        expect(err.message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
       }
     });
   });

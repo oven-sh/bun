@@ -1008,11 +1008,10 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
           } else {
             // Use all() for SELECT or queries with RETURNING clause
             result = values?.length ? statement.all(...values) : statement.all();
-            // For INSERT/UPDATE/DELETE with RETURNING, get changes from last run
+            // For INSERT/UPDATE/DELETE with RETURNING, we still need the changes count
+            // SQLite doesn't provide this directly with all(), so we need to count the results
             if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
-              // We need to get changes another way for RETURNING queries
-              // In Bun's SQLite, we can check the database's changes property
-              changes = this.db.changes || 0;
+              changes = Array.isArray(result) ? result.length : 0;
             }
           }
 

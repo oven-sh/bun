@@ -126,7 +126,13 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         // When before the first generated line, remap to the HMR runtime
         const generated_mappings = result.mappings.generated();
-        if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+        if (generated_mappings.len <= 1 or
+            // TODO: I don't understand this condition.
+            //       Why `.oneBased()`?
+            //       Why `generated_mappings[1], shouldn't
+            //       `generated_mappings[0]` correspond to the first line?
+            frame.position.line.oneBased() < generated_mappings[1].lines)
+        {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;

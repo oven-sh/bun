@@ -13,7 +13,6 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as child_process from "node:child_process";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -1757,26 +1756,4 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
       .replaceAll(Bun.revision, "<revision>")
       .trim()
   );
-}
-
-try {
-  beforeAll(() => {
-    console.log("Initial RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
-    console.log("Initial committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
-  });
-
-  afterAll(() => {
-    console.log("Final RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MiB");
-    console.log("Final committed:", Math.round((100 * getCommitted()) / 1024 ** 2) / 100, "GiB");
-  });
-} catch (e) {}
-
-function getCommitted() {
-  let child;
-  if (process.platform === "win32") {
-    child = child_process.spawnSync("wmic", ["process", "where", `processid=${process.pid}`, "get", "PageFileUsage"]);
-  } else {
-    child = child_process.spawnSync("ps", ["-o", "vsz", "-p", process.pid.toString()]);
-  }
-  return parseInt(child.stdout.toString().split("\n")[1].trim());
 }

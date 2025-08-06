@@ -2887,6 +2887,11 @@ console.log(foo, array);
       // Non-method calls should still be optimized even in call context
       expectPrinted("(0, func)()", "func()");
       expectPrinted("(0, getValue())()", "getValue()()");
+      
+      // Non-call target with function call as second value should be optimized
+      expectPrinted("(0, obj.method)", "obj.method");
+      expectPrinted("(0, obj[key])", "obj[key]");  
+      expectPrinted("(0, func())", "func()");
     });
 
     it("constant folding", () => {

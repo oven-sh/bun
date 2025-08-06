@@ -1284,7 +1284,7 @@ interface ImportMeta {
    * )
    * ```
    */
-  readonly main: boolean;
+  main: boolean;
 
   /**
    * Import multiple modules using glob patterns.

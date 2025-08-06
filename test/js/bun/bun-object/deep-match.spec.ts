@@ -66,7 +66,6 @@ describe("Bun.deepMatch", () => {
       new Map([ ["foo", 1] ]),
       new Map([ ["foo", 1] ]),
     ],
-
     // Sets
     [new Set(), new Set()],
     [
@@ -100,39 +99,51 @@ describe("Bun.deepMatch", () => {
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
 
-    // Maps
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    // ],
+    // Maps - subset should not be contained in object
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+      new Map<number, number>([ [1, 2], [2, 3] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+    ],
+    [
+      new Map([ ["foo", 1] ]),
+      new Map([ ["bar", 1] ]),
+    ],
+    [
+      new Map([ ["foo", 1] ]),
+      new Map([ ["foo", 2] ]),
+    ],
 
-    // Sets
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([4, 5, 6]),
-    // ],
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([1, 2]),
-    // ],
-    // [
-    //   new Set([1, 2]),
-    //   new Set([1, 2, 3]),
-    // ],
-    // [
-    //   new Set(["a", "b", "c"]),
-    //   new Set(["a", "b", "d"]),
-    // ],
+    // Maps with different sizes (even if one is subset of another)
+    [
+      new Map([ ["foo", 1] ]),
+      new Map([ ["foo", 1], ["bar", 2] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+    ],
+
+    // Sets with different contents or sizes
+    [
+      new Set([1, 2, 3]),
+      new Set([4, 5, 6]),
+    ],
+    [
+      new Set([1, 2, 3]),
+      new Set([1, 2]),
+    ],
+    [
+      new Set([1, 2]),
+      new Set([1, 2, 3]),
+    ],
+    [
+      new Set(["a", "b", "c"]),
+      new Set(["a", "b", "d"]),
+    ],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });

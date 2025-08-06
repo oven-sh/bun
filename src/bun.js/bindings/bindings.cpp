@@ -1599,6 +1599,104 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
+    // Special handling for Maps and Sets
+    JSCell* objCell = objValue.asCell();
+    JSCell* subsetCell = subsetValue.asCell();
+    uint8_t objType = objCell->type();
+    uint8_t subsetType = subsetCell->type();
+    
+    if (subsetType == JSSetType) {
+        if (objType != JSSetType) {
+            return false;
+        }
+        JSSet* objSet = jsCast<JSSet*>(objCell);
+        JSSet* subsetSet = jsCast<JSSet*>(subsetCell);
+        
+        // For Maps and Sets, require exact equality (same size and contents)
+        // This matches the behavior expected in the issue
+        if (objSet->size() != subsetSet->size()) {
+            return false;
+        }
+        
+        // All elements in subset should exist in obj
+        auto iter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), subsetSet, IterationKind::Keys);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        JSValue key;
+        while (iter->next(globalObject, key)) {
+            bool has = objSet->has(globalObject, key);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (has) {
+                continue;
+            }
+            // We couldn't find the key in the target set. This may be a false positive due to how
+            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            auto objIter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), objSet, IterationKind::Keys);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            JSValue objKey;
+            bool foundMatchingKey = false;
+            while (objIter->next(globalObject, objKey)) {
+                bool equal = JSC::sameValue(globalObject, key, objKey);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (equal) {
+                    foundMatchingKey = true;
+                    break;
+                }
+            }
+            if (!foundMatchingKey) {
+                return false;
+            }
+        }
+        return true;
+    } else if (subsetType == JSMapType) {
+        if (objType != JSMapType) {
+            return false;
+        }
+        JSMap* objMap = jsCast<JSMap*>(objCell);
+        JSMap* subsetMap = jsCast<JSMap*>(subsetCell);
+        
+        // For Maps and Sets, require exact equality (same size and contents)
+        // This matches the behavior expected in the issue
+        if (objMap->size() != subsetMap->size()) {
+            return false;
+        }
+        
+        // All key-value pairs in subset should exist in obj
+        auto iter = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), subsetMap, IterationKind::Entries);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        JSValue subsetKey, subsetValue;
+        while (iter->nextKeyValue(globalObject, subsetKey, subsetValue)) {
+            JSValue objValue = objMap->get(globalObject, subsetKey);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (objValue.isUndefined()) {
+                // We couldn't find the key in the target map. This may be a false positive due to
+                // how JSValues are represented in JSC, so we need to fall back to a linear search
+                // to be sure.
+                auto objIter = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), objMap, IterationKind::Entries);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                JSValue objKey;
+                bool foundMatchingKey = false;
+                while (objIter->nextKeyValue(globalObject, objKey, objValue)) {
+                    bool keysEqual = JSC::sameValue(globalObject, subsetKey, objKey);
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    if (keysEqual) {
+                        foundMatchingKey = true;
+                        break;
+                    }
+                }
+                if (!foundMatchingKey) {
+                    return false;
+                }
+                // Compare both values below.
+            }
+            bool valuesEqual = JSC::sameValue(globalObject, subsetValue, objValue);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!valuesEqual) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     PropertyNameArray subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);

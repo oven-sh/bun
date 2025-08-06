@@ -311,8 +311,15 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     const unsigned char* s = src;
 
     auto rc = lshpack_dec_decode(&self->dec, &s, s + src_len, &hdr);
-    if (rc != 0)
-        return 0;
+    if (rc != 0) {
+        // For now, handle specific errors more gracefully
+        // LSHPACK_ERR_BAD_DATA (-1), LSHPACK_ERR_TOO_LARGE (-2), LSHPACK_ERR_MORE_BUF (-3)
+        
+        // Return a special error value that encodes the lshpack error
+        // We use SIZE_MAX to indicate errors, with the low bits containing the error code
+        // This allows the Zig code to distinguish between different error types
+        return SIZE_MAX - (size_t)(-rc);  // Convert negative error to positive offset from SIZE_MAX
+    }
 
     output->name = lsxpack_header_get_name(&hdr);
     output->name_len = hdr.name_len;

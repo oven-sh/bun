@@ -30,6 +30,18 @@ pub const HPACK = extern struct {
     pub fn decode(self: *HPACK, src: []const u8) !DecodeResult {
         var header: lshpack_header = .{};
         const offset = lshpack_wrapper_decode(self, src.ptr, src.len, &header);
+        
+        // Check for error codes returned by the C++ wrapper
+        if (offset >= std.math.maxInt(usize) - 10) {
+            const error_code = std.math.maxInt(usize) - offset;
+            return switch (error_code) {
+                1 => error.BadHPACKData,      // LSHPACK_ERR_BAD_DATA
+                2 => error.HPACKHeaderTooLarge,  // LSHPACK_ERR_TOO_LARGE  
+                3 => error.HPACKNeedMoreBuffer,  // LSHPACK_ERR_MORE_BUF
+                else => error.UnableToDecode,
+            };
+        }
+        
         if (offset == 0) return error.UnableToDecode;
         if (header.name_len == 0) return error.EmptyHeaderName;
 
@@ -63,4 +75,5 @@ extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize,
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
 
 const bun = @import("bun");
+const std = @import("std");
 const mimalloc = bun.mimalloc;

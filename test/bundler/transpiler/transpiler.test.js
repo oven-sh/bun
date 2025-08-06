@@ -2880,10 +2880,10 @@ console.log(foo, array);
       expectPrinted("(0, obj[key])()", "(0, obj[key])()");
       expectPrinted("(0, obj?.method)()", "(0, obj?.method)()");
       expectPrinted("(0, obj?.[key])()", "(0, obj?.[key])()");
-      
+
       // Side effects should still be preserved in call context
       expectPrinted("(sideEffect(), obj.method)()", "(sideEffect(), obj.method)()");
-      
+
       // Non-method calls should still be optimized even in call context
       expectPrinted("(0, func)()", "func()");
       expectPrinted("(0, getValue())()", "getValue()()");

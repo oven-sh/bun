@@ -106,6 +106,11 @@ pub const Socket = opaque {
     pub fn createStream(this: *Socket, ext_size: c_int) void {
         us_quic_socket_create_stream(this, ext_size);
     }
+
+    /// Close this QUIC socket and connection
+    pub fn close(this: *Socket) void {
+        us_quic_socket_close(this);
+    }
 };
 
 /// QUIC stream - represents a single stream within a QUIC connection
@@ -165,6 +170,7 @@ extern fn us_quic_listen_socket_get_port(listen_socket: *ListenSocket) c_int;
 
 // Socket functions
 extern fn us_quic_socket_create_stream(socket: *Socket, ext_size: c_int) void;
+extern fn us_quic_socket_close(socket: *Socket) void;
 
 // Header functions
 extern fn us_quic_socket_context_set_header(context: *SocketContext, index: c_int, key: [*c]const u8, key_length: c_int, value: [*c]const u8, value_length: c_int) void;

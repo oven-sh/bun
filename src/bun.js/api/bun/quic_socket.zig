@@ -17,8 +17,10 @@ pub const QuicSocket = struct {
     socket: ?*uws.quic.Socket = null,
     socket_context: ?*uws.quic.SocketContext = null,
     listen_socket: ?*uws.quic.ListenSocket = null,
-    // Current stream for simple operations (will expand to support multiple streams)
-    current_stream: ?*uws.quic.Stream = null,
+    // Stream management - now supports multiple concurrent streams
+    streams: std.HashMap(u64, *uws.quic.Stream, std.hash_map.AutoContext(u64), std.hash_map.default_max_load_percentage),
+    stream_allocator: std.mem.Allocator,
+    next_stream_id: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     flags: Flags = .{},
     ref_count: RefCount,
@@ -66,10 +68,22 @@ pub const QuicSocket = struct {
             handlers.unprotect();
             bun.default_allocator.destroy(handlers);
         }
+        
+        // Clean up stream map
+        this.streams.deinit();
 
         // Close QUIC socket if still open
         if (this.socket != null and !this.flags.is_closed) {
             this.closeImpl();
+        }
+
+        // Clear the extension data pointer to prevent callbacks from accessing freed memory
+        if (this.socket_context) |context| {
+            if (context.ext()) |ext_data| {
+                const this_ptr: **This = @ptrCast(@alignCast(ext_data));
+                this_ptr.* = null; // Nullify the pointer
+                log("Cleared QuicSocket extension data pointer during deinit", .{});
+            }
         }
 
         if (this.server_name) |server_name| {
@@ -91,6 +105,8 @@ pub const QuicSocket = struct {
         this.* = This{
             .ref_count = RefCount.init(),
             .handlers = handlers,
+            .streams = std.HashMap(u64, *uws.quic.Stream, std.hash_map.AutoContext(u64), std.hash_map.default_max_load_percentage).init(allocator),
+            .stream_allocator = allocator,
         };
         handlers.protect();
         return this;
@@ -213,13 +229,16 @@ pub const QuicSocket = struct {
         this.flags.is_closed = true;
         this.has_pending_activity.store(false, .release);
 
-        // Close current stream if exists
-        if (this.current_stream) |stream| {
-            stream.close();
-            this.current_stream = null;
+        // Close all streams
+        this.closeAllStreams();
+
+        // Close the underlying QUIC socket/connection
+        if (this.socket) |socket| {
+            socket.close();
+            log("Closed underlying QUIC socket", .{});
         }
 
-        // Close socket (this will be handled by uSockets cleanup)
+        // Clear socket references
         this.socket = null;
         this.listen_socket = null;
 
@@ -228,36 +247,38 @@ pub const QuicSocket = struct {
 
     // Write data to the QUIC connection
     pub fn writeImpl(this: *This, data: []const u8) !usize {
-        log("writeImpl called, socket={any}, is_closed={}, is_connected={}", .{ this.socket, this.flags.is_closed, this.flags.is_connected });
+        log("writeImpl called, socket={any}, is_closed={}, is_connected={}, stream_count={}", .{ this.socket, this.flags.is_closed, this.flags.is_connected, this.streams.count() });
         
         if (this.flags.is_closed) return error.SocketClosed;
         if (!this.flags.is_connected) return error.NotConnected;
 
-        // Ensure we have a stream to write to
-        if (this.current_stream == null) {
-            log("No current stream, need to create one", .{});
-            if (this.socket) |socket| {
-                log("Calling createStream on socket {any}", .{socket});
-                socket.createStream(0); // No extra data needed for stream extension
-                // For now, return 0 bytes written since stream creation is async
-                // The user should retry the write after the stream is created
-                log("Stream not ready yet, creating new stream", .{});
-                return 0;
-            } else {
-                log("No socket available", .{});
-                return error.NoSocket;
+        // If we have any stream, use the first available one
+        if (this.streams.count() > 0) {
+            var iterator = this.streams.iterator();
+            if (iterator.next()) |entry| {
+                const stream = entry.value_ptr.*;
+                log("Writing to existing stream: {*}", .{stream});
+                const bytes_written = stream.write(data);
+                if (bytes_written < 0) {
+                    log("Stream write failed: {}", .{bytes_written});
+                    return error.WriteFailed;
+                }
+                log("Successfully wrote {} bytes to stream", .{bytes_written});
+                return @intCast(bytes_written);
             }
         }
 
-        if (this.current_stream) |stream| {
-            const bytes_written = stream.write(data);
-            if (bytes_written < 0) {
-                return error.WriteFailed;
-            }
-            return @intCast(bytes_written);
+        // No streams available, try to create one
+        log("No streams available, attempting to create one", .{});
+        if (this.socket) |socket| {
+            log("Creating new stream for write", .{});
+            socket.createStream(0);
+            // Stream creation is asynchronous - the onStreamOpen callback will be called
+            // For now, return 0 to indicate the write should be retried
+            return 0;
         }
 
-        return 0; // Stream not ready yet
+        return error.NoSocket;
     }
 
     // Read data from the QUIC connection
@@ -272,19 +293,81 @@ pub const QuicSocket = struct {
         return 0;
     }
 
-    // Create a new QUIC stream
-    pub fn createStreamImpl(this: *This) !u32 {
+    // Create a new QUIC stream with specific ID
+    pub fn createStreamImpl(this: *This) !u64 {
         if (this.flags.is_closed) return error.SocketClosed;
         if (!this.flags.is_connected) return error.NotConnected;
 
         if (this.socket) |socket| {
-            socket.createStream(@sizeOf(*uws.quic.Stream));
-            this.stream_count += 1;
-            log("QUIC stream #{} created", .{this.stream_count});
-            return this.stream_count;
+            log("Creating new QUIC stream", .{});
+            socket.createStream(0); // Let lsquic manage the stream
+            // The stream will be added to our management in the onStreamOpen callback
+            // Return a placeholder ID for now
+            const stream_id = this.allocateStreamId();
+            log("QUIC stream creation initiated, allocated ID {}", .{stream_id});
+            return stream_id;
         }
 
         return error.NoSocket;
+    }
+    
+    // Allocate next stream ID according to QUIC spec
+    fn allocateStreamId(this: *This) u64 {
+        const current = this.next_stream_id.load(.acquire);
+        var next_id: u64 = undefined;
+        
+        if (this.flags.is_server) {
+            // Server-initiated streams: 1, 5, 9, 13, ...
+            next_id = if (current == 0) 1 else current + 4;
+        } else {
+            // Client-initiated streams: 0, 4, 8, 12, ...
+            next_id = if (current == 0) 0 else current + 4;
+        }
+        
+        this.next_stream_id.store(next_id + 4, .release);
+        return next_id;
+    }
+    
+    // Get a stream by ID
+    pub fn getStreamById(this: *This, stream_id: u64) ?*uws.quic.Stream {
+        return this.streams.get(stream_id);
+    }
+    
+    // Close a specific stream
+    pub fn closeStreamById(this: *This, stream_id: u64) void {
+        if (this.streams.get(stream_id)) |stream| {
+            stream.close();
+            _ = this.streams.remove(stream_id);
+            this.stream_count = @intCast(this.streams.count());
+            log("Closed stream ID {}, remaining streams: {}", .{ stream_id, this.stream_count });
+        }
+    }
+    
+    // Close all streams
+    fn closeAllStreams(this: *This) void {
+        log("Closing {} streams", .{this.streams.count()});
+        
+        var iterator = this.streams.iterator();
+        while (iterator.next()) |entry| {
+            entry.value_ptr.*.close();
+        }
+        
+        this.streams.clearAndFree();
+        this.stream_count = 0;
+    }
+    
+    // Add a stream to our management
+    fn addStream(this: *This, stream_id: u64, stream: *uws.quic.Stream) !void {
+        try this.streams.put(stream_id, stream);
+        this.stream_count = @intCast(this.streams.count());
+        log("Added stream ID {} to management (total: {})", .{ stream_id, this.stream_count });
+    }
+    
+    // Remove a stream from our management
+    fn removeStream(this: *This, stream_id: u64) void {
+        _ = this.streams.remove(stream_id);
+        this.stream_count = @intCast(this.streams.count());
+        log("Removed stream ID {} from management (remaining: {})", .{ stream_id, this.stream_count });
     }
 
     // Get connection statistics
@@ -394,6 +477,37 @@ pub const QuicSocket = struct {
 
         return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(stream_id)));
     }
+    
+    pub fn getStream(this: *This, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments();
+        if (args.len < 1) return globalThis.throw("getStream requires stream ID", .{});
+        
+        const stream_id_js = args.ptr[0];
+        if (!stream_id_js.isNumber()) return globalThis.throw("stream ID must be a number", .{});
+        
+        const stream_id = stream_id_js.to(u64);
+        
+        if (this.getStreamById(stream_id)) |stream| {
+            _ = stream; // Suppress unused variable warning
+            // For now, return the stream ID since we don't have a Stream JS wrapper
+            return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(stream_id)));
+        }
+        
+        return jsc.JSValue.jsNull();
+    }
+    
+    pub fn closeStream(this: *This, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments();
+        if (args.len < 1) return globalThis.throw("closeStream requires stream ID", .{});
+        
+        const stream_id_js = args.ptr[0];
+        if (!stream_id_js.isNumber()) return globalThis.throw("stream ID must be a number", .{});
+        
+        const stream_id = stream_id_js.to(u64);
+        
+        this.closeStreamById(stream_id);
+        return .js_undefined;
+    }
 
     pub fn close(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         this.closeImpl();
@@ -422,7 +536,23 @@ pub const QuicSocket = struct {
     }
 
     pub fn getStreamCount(this: *This, _: *jsc.JSGlobalObject) jsc.JSValue {
-        return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(this.stream_count)));
+        // Return actual count from our stream map
+        const actual_count = this.streams.count();
+        return jsc.JSValue.jsNumber(@as(f64, @floatFromInt(actual_count)));
+    }
+    
+    pub fn getStreamIds(this: *This, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        const stream_ids = jsc.JSValue.createEmptyArray(globalThis, this.streams.count());
+        
+        var i: u32 = 0;
+        var iterator = this.streams.iterator();
+        while (iterator.next()) |entry| {
+            const stream_id = entry.key_ptr.*;
+            stream_ids.putIndex(globalThis, i, jsc.JSValue.jsNumber(@as(f64, @floatFromInt(stream_id))));
+            i += 1;
+        }
+        
+        return stream_ids;
     }
 
     pub fn getIsConnected(this: *This, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -582,7 +712,10 @@ pub const QuicSocket = struct {
         if (is_client != 0) {
             // Client connection
             const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-            const this: *This = this_ptr.*;
+            const this: *This = this_ptr.* orelse {
+                log("ERROR: QuicSocket instance has been freed, ignoring onSocketOpen", .{});
+                return;
+            };
             log("Retrieved QuicSocket instance: {*}, handlers={*}", .{ this, this.handlers });
 
             this.socket = socket;
@@ -628,7 +761,10 @@ pub const QuicSocket = struct {
             // For now, we'll handle this as a server-side connection event
             // In a full implementation, we'd create a new QuicSocket for each connection
             const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-            const this: *This = this_ptr.*;
+            const this: *This = this_ptr.* orelse {
+                log("ERROR: QuicSocket instance has been freed, ignoring server onSocketOpen", .{});
+                return;
+            };
             
             log("QUIC server accepted new connection", .{});
             
@@ -663,9 +799,17 @@ pub const QuicSocket = struct {
             return;
         };
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("ERROR: QuicSocket instance has been freed, ignoring onSocketConnection", .{});
+            return;
+        };
 
         log("QuicSocket instance retrieved: {*}, handlers: {*}", .{ this, this.handlers });
+
+        // For server connections, set the socket for this connection
+        // This allows server-side writes to work properly
+        this.socket = socket;
+        this.flags.is_connected = true;
 
         // Ensure this_value is initialized
         if (this.this_value == .zero) {
@@ -701,7 +845,10 @@ pub const QuicSocket = struct {
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("QuicSocket instance has been freed, skipping onSocketClose callback", .{});
+            return;
+        };
 
         this.flags.is_connected = false;
         this.flags.is_closed = true;
@@ -743,9 +890,20 @@ pub const QuicSocket = struct {
             return;
         };
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("ERROR: QuicSocket instance has been freed, ignoring onStreamOpen", .{});
+            return;
+        };
 
-        this.current_stream = stream;
+        // Get the real stream ID from lsquic - this requires calling the C function
+        // For now we'll let the C code manage streams and just track that streams exist
+        const stream_id: u64 = @intFromPtr(stream); // Use pointer as temporary unique ID
+        
+        // Add stream to our management
+        this.addStream(stream_id, stream) catch |err| {
+            log("ERROR: Failed to add stream to management: {any}", .{err});
+            return;
+        };
         
         // Mark connection as established when first stream opens successfully
         if (!this.flags.is_connected) {
@@ -753,7 +911,7 @@ pub const QuicSocket = struct {
             log("QUIC connection now established after stream open", .{});
         }
 
-        log("QUIC stream opened (client: {})", .{is_client != 0});
+        log("QUIC stream ID {} opened (client: {})", .{ stream_id, is_client != 0 });
     }
 
     fn onStreamData(stream: *uws.quic.Stream, data: [*c]u8, length: c_int) callconv(.C) void {
@@ -763,7 +921,10 @@ pub const QuicSocket = struct {
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("QuicSocket instance has been freed, ignoring onStreamData", .{});
+            return;
+        };
 
         if (length <= 0) return;
 
@@ -797,13 +958,36 @@ pub const QuicSocket = struct {
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("QuicSocket instance has been freed, ignoring onStreamClose", .{});
+            return;
+        };
 
-        if (this.current_stream == stream) {
-            this.current_stream = null;
+        // Find and remove the stream from our management using pointer comparison
+        var found_stream_id: ?u64 = null;
+        var iterator = this.streams.iterator();
+        while (iterator.next()) |entry| {
+            if (entry.value_ptr.* == stream) {
+                found_stream_id = entry.key_ptr.*;
+                break;
+            }
         }
-
-        log("QUIC stream closed", .{});
+        
+        if (found_stream_id) |stream_id| {
+            this.removeStream(stream_id);
+            log("QUIC stream ID {} closed", .{stream_id});
+        } else {
+            // If we can't find by pointer, at least decrement our count
+            if (this.streams.count() > 0) {
+                log("QUIC stream closed but not found in our table, forcing cleanup", .{});
+                // Remove any one entry to keep counts in sync - not ideal but better than leaking
+                var iter = this.streams.iterator();
+                if (iter.next()) |entry| {
+                    const orphan_id = entry.key_ptr.*;
+                    this.removeStream(orphan_id);
+                }
+            }
+        }
     }
 
     fn onStreamEnd(stream: *uws.quic.Stream) callconv(.C) void {
@@ -813,7 +997,10 @@ pub const QuicSocket = struct {
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("QuicSocket instance has been freed, ignoring onStreamEnd", .{});
+            return;
+        };
 
         _ = this; // Use this if needed for future functionality
 
@@ -827,7 +1014,10 @@ pub const QuicSocket = struct {
         const context = socket.context() orelse return;
         const ext_data = context.ext() orelse return;
         const this_ptr: **This = @ptrCast(@alignCast(ext_data));
-        const this: *This = this_ptr.*;
+        const this: *This = this_ptr.* orelse {
+            log("QuicSocket instance has been freed, ignoring onStreamWritable", .{});
+            return;
+        };
 
         _ = this; // Use this if needed for future functionality
 

@@ -1,6 +1,6 @@
 pub const JSString = opaque {
     extern fn JSC__JSString__toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject;
-    extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void;
+    extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void;
     extern fn JSC__JSString__eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool;
     extern fn JSC__JSString__iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void;
     extern fn JSC__JSString__length(this: *const JSString) usize;
@@ -14,7 +14,7 @@ pub const JSString = opaque {
         return JSC__JSString__toObject(this, global);
     }
 
-    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void {
+    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void {
         return JSC__JSString__toZigString(this, global, zig_str);
     }
 
@@ -22,8 +22,8 @@ pub const JSString = opaque {
         std.mem.doNotOptimizeAway(this);
     }
 
-    pub fn getZigString(this: *JSString, global: *JSGlobalObject) JSC.ZigString {
-        var out = JSC.ZigString.init("");
+    pub fn getZigString(this: *JSString, global: *JSGlobalObject) jsc.ZigString {
+        var out = jsc.ZigString.init("");
         this.toZigString(global, &out);
         return out;
     }
@@ -98,6 +98,6 @@ const ZigString = @import("./ZigString.zig").ZigString;
 const bun = @import("bun");
 const JSError = bun.JSError;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

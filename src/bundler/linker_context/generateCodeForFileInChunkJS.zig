@@ -603,7 +603,8 @@ pub fn generateCodeForFileInChunkJS(
     if (out_stmts.len == 0) {
         return .{
             .result = .{
-                .code = &[_]u8{},
+                .code = "",
+                .code_allocator = bun.default_allocator,
                 .source_map = null,
             },
         };

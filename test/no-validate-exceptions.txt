@@ -52,6 +52,7 @@ vendor/elysia/test/macro/macro.test.ts
 vendor/elysia/test/path/group.test.ts
 vendor/elysia/test/path/guard.test.ts
 vendor/elysia/test/path/path.test.ts
+vendor/elysia/test/path/plugin.test.ts
 vendor/elysia/test/plugins/affix.test.ts
 vendor/elysia/test/plugins/checksum.test.ts
 vendor/elysia/test/plugins/error-propagation.test.ts
@@ -199,6 +200,7 @@ test/cli/install/isolated-install.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/cli/update_interactive_formatting.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -251,9 +253,39 @@ test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts
 test/js/third_party/resvg/bbox.test.js
 test/js/third_party/rollup-v4/rollup-v4.test.ts
-test/napi/node-napi.test.ts
 test/napi/uv.test.ts
 test/napi/uv_stub.test.ts
+test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/5_function_factory/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/7_factory_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/8_passing_wrapped/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_array/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_cannot_run_js/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_constructor/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_error/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_promise/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
+test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js
@@ -272,3 +304,4 @@ test/js/web/crypto/web-crypto.test.ts
 test/js/node/crypto/node-crypto.test.js
 test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
+test/regression/issue/21311.test.ts

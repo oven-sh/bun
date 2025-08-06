@@ -1682,10 +1682,8 @@ pub fn double(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) usize;
-
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1694,7 +1692,7 @@ pub const FormatDouble = struct {
             return "-0";
         }
 
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1744,7 +1742,7 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
+    pub fn fmtString(global: *bun.jsc.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
@@ -1880,12 +1878,13 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
     });
 }
 
+const string = []const u8;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const js_lexer = bun.js_lexer;
 const sha = bun.sha;
-const string = bun.string;
 const strings = bun.strings;
 
 const std = @import("std");

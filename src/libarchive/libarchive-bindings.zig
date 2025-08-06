@@ -1,6 +1,9 @@
 const wchar_t = u16;
+
+// Match libarchive's platform-specific type definitions
 const la_int64_t = i64;
 const la_ssize_t = isize;
+
 const struct_archive = opaque {};
 const struct_archive_entry = opaque {};
 // const time_t = @import("std").c.time_t;

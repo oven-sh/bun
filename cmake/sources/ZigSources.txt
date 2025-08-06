@@ -763,6 +763,7 @@ src/shell/states/Subshell.zig
 src/shell/subproc.zig
 src/shell/util.zig
 src/shell/Yield.zig
+src/sourcemap/code_coverage/HTML.zig
 src/sourcemap/CodeCoverage.zig
 src/sourcemap/JSSourceMap.zig
 src/sourcemap/LineOffsetTable.zig

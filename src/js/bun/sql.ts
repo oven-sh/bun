@@ -270,6 +270,14 @@ interface DatabaseAdapter<Connection> {
   flush(): void;
   isConnected(): boolean;
   get closed(): boolean;
+  reserve<T>(sql: any, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T>;
+  getBeginCommand(options?: string, distributedName?: string): string;
+  getCommitCommand(distributedName?: string): string;
+  getRollbackCommand(distributedName?: string): string;
+  getBeforeCommitOrRollbackCommand(distributedName?: string): string | null;
+  supportsDistributedTransactions(): boolean;
+  commitDistributed(name: string, sql: any): Promise<any>;
+  rollbackDistributed(name: string, sql: any): Promise<any>;
 }
 
 namespace Postgres {
@@ -927,21 +935,79 @@ namespace Postgres {
       return this.pool.isConnected();
     }
 
-    getOptions(): Bun.SQL.__internal.DefinedPostgresOptions {
-      return this.pool.options;
+    reserve<T>(sql: any, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
+      // PostgreSQL uses connection pooling - get a reserved connection
+      const promiseWithResolvers = Promise.withResolvers();
+      this.connect(onReserveConnected.bind(promiseWithResolvers), true);
+      return promiseWithResolvers.promise;
+    }
+
+    getBeginCommand(options?: string, distributedName?: string): string {
+      if (distributedName) {
+        // Distributed transaction - prepare transaction instead of commit
+        return `BEGIN`;
+      }
+      return options ? `BEGIN ${options}` : "BEGIN";
+    }
+
+    getCommitCommand(distributedName?: string): string {
+      if (distributedName) {
+        return `PREPARE TRANSACTION '${distributedName}'`;
+      }
+      return "COMMIT";
+    }
+
+    getRollbackCommand(distributedName?: string): string {
+      return "ROLLBACK";
+    }
+
+    getBeforeCommitOrRollbackCommand(distributedName?: string): string | null {
+      return null; // PostgreSQL doesn't need this
+    }
+
+    supportsDistributedTransactions(): boolean {
+      return true;
+    }
+
+    async commitDistributed(name: string, sql: any): Promise<any> {
+      return await sql.unsafe(`COMMIT PREPARED '${name}'`);
+    }
+
+    async rollbackDistributed(name: string, sql: any): Promise<any> {
+      return await sql.unsafe(`ROLLBACK PREPARED '${name}'`);
     }
   }
 }
 
 class SQLiteConnection {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
+  public connection: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
+  public queries: Set<any> = new Set();
+  private closeCallbacks: Set<(err?: any) => void> = new Set();
 
   constructor(db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>) {
     this.db = db;
+    this.connection = db; // Expose the db as connection for compatibility
+  }
+
+  onClose(callback: (err?: any) => void) {
+    this.closeCallbacks.add(callback);
+  }
+
+  flush() {
+    // SQLite doesn't buffer queries like PostgreSQL
+    // This is a no-op for SQLite
   }
 
   release() {
-    this.db.close();
+    // SQLite doesn't actually close the db on release
+    // It's shared across all connections
+    // Just clear the callbacks
+    for (const callback of this.closeCallbacks) {
+      callback();
+    }
+    this.closeCallbacks.clear();
+    this.queries.clear();
   }
 }
 
@@ -950,7 +1016,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
   get closed() {
-    return this.db !== null;
+    return this.db === null;
   }
 
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
@@ -1068,8 +1134,57 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return !!this.db;
   }
 
-  getOptions(): Bun.SQL.__internal.DefinedSQLiteOptions {
-    return this.options;
+  reserve<T>(sql: Bun.SQL, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
+    // SQLite doesn't use connection pooling, so reserve doesn't make sense
+    return Promise.reject(new Error("SQLite doesn't support connection reservation (no connection pool)"));
+  }
+
+  getBeginCommand(options?: string, distributedName?: string): string {
+    if (distributedName) {
+      throw new Error("SQLite doesn't support distributed transactions");
+    }
+    // SQLite transaction modes: DEFERRED, IMMEDIATE, EXCLUSIVE
+    if (options) {
+      const upperOptions = options.toUpperCase();
+      if (upperOptions.includes("READ")) {
+        return "BEGIN DEFERRED";
+      } else if (upperOptions.includes("IMMEDIATE")) {
+        return "BEGIN IMMEDIATE";
+      } else if (upperOptions.includes("EXCLUSIVE")) {
+        return "BEGIN EXCLUSIVE";
+      }
+    }
+    return "BEGIN DEFERRED";
+  }
+
+  getCommitCommand(distributedName?: string): string {
+    if (distributedName) {
+      throw new Error("SQLite doesn't support distributed transactions");
+    }
+    return "COMMIT";
+  }
+
+  getRollbackCommand(distributedName?: string): string {
+    if (distributedName) {
+      throw new Error("SQLite doesn't support distributed transactions");
+    }
+    return "ROLLBACK";
+  }
+
+  getBeforeCommitOrRollbackCommand(distributedName?: string): string | null {
+    return null; // SQLite doesn't need this
+  }
+
+  supportsDistributedTransactions(): boolean {
+    return false;
+  }
+
+  async commitDistributed(name: string, sql: any): Promise<any> {
+    throw new Error("SQLite doesn't support distributed transactions");
+  }
+
+  async rollbackDistributed(name: string, sql: any): Promise<any> {
+    throw new Error("SQLite doesn't support distributed transactions");
   }
 }
 
@@ -2159,36 +2274,30 @@ const SQL: typeof Bun.SQL = function SQL(
     };
 
     reserved_sql.commitDistributed = async function (name: string) {
-      const adapter = resolvedOptions.adapter;
       assertValidTransactionName(name);
-      switch (adapter) {
-        case "postgres":
-          return await reserved_sql.unsafe(`COMMIT PREPARED '${name}'`);
-        case "mysql":
-          return await reserved_sql.unsafe(`XA COMMIT '${name}'`);
-        case "mssql":
-          throw Error(`MSSQL distributed transaction is automatically committed.`);
-        case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
-        default:
-          throw new UnsupportedAdapterError(resolvedOptions);
+      if (!adapter.supportsDistributedTransactions()) {
+        const adapterName =
+          resolvedOptions.adapter === "sqlite"
+            ? "SQLite"
+            : resolvedOptions.adapter === "postgres"
+              ? "PostgreSQL"
+              : resolvedOptions.adapter;
+        throw Error(`${adapterName} doesn't support distributed transactions`);
       }
+      return await adapter.commitDistributed(name, reserved_sql);
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
       assertValidTransactionName(name);
-      const adapter = resolvedOptions.adapter;
-      switch (adapter) {
-        case "postgres":
-          return await reserved_sql.unsafe(`ROLLBACK PREPARED '${name}'`);
-        case "mysql":
-          return await reserved_sql.unsafe(`XA ROLLBACK '${name}'`);
-        case "mssql":
-          throw Error(`MSSQL distributed transaction is automatically rolled back.`);
-        case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
-        default:
-          throw new UnsupportedAdapterError(resolvedOptions);
+      if (!adapter.supportsDistributedTransactions()) {
+        const adapterName =
+          resolvedOptions.adapter === "sqlite"
+            ? "SQLite"
+            : resolvedOptions.adapter === "postgres"
+              ? "PostgreSQL"
+              : resolvedOptions.adapter;
+        throw Error(`${adapterName} doesn't support distributed transactions`);
       }
+      return await adapter.rollbackDistributed(name, reserved_sql);
     };
 
     // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
@@ -2365,83 +2474,47 @@ const SQL: typeof Bun.SQL = function SQL(
 
     let savepoints = 0;
     let transactionSavepoints = new Set();
-    const adapter = resolvedOptions.adapter;
-    let BEGIN_COMMAND: string = "BEGIN";
-    let ROLLBACK_COMMAND: string = "ROLLBACK";
-    let COMMIT_COMMAND: string = "COMMIT";
+
+    // Use adapter methods to get transaction commands
+    let BEGIN_COMMAND: string;
+    let ROLLBACK_COMMAND: string;
+    let COMMIT_COMMAND: string;
+    let BEFORE_COMMIT_OR_ROLLBACK_COMMAND: string | null;
+
+    // These are standard across most adapters, but could be overridden in the future
     let SAVEPOINT_COMMAND: string = "SAVEPOINT";
     let RELEASE_SAVEPOINT_COMMAND: string | null = "RELEASE SAVEPOINT";
     let ROLLBACK_TO_SAVEPOINT_COMMAND: string = "ROLLBACK TO SAVEPOINT";
-    // MySQL and maybe other adapters need to call XA END or some other command before commit or rollback in a distributed transaction
-    let BEFORE_COMMIT_OR_ROLLBACK_COMMAND: string | null = null;
+
     if (distributed) {
       if (options.indexOf("'") !== -1) {
         adapter.release(pooledConnection);
         return reject(new Error(`Distributed transaction name cannot contain single quotes.`));
       }
-      // distributed transaction
-      // in distributed transaction options is the name/id of the transaction
-      switch (adapter) {
-        case "postgres":
-          // in postgres we only need to call prepare transaction instead of commit
-          COMMIT_COMMAND = `PREPARE TRANSACTION '${options}'`;
-          break;
-        case "mysql":
-          // MySQL we use XA transactions
-          // START TRANSACTION is autocommit false
-          BEGIN_COMMAND = `XA START '${options}'`;
-          BEFORE_COMMIT_OR_ROLLBACK_COMMAND = `XA END '${options}'`;
-          COMMIT_COMMAND = `XA PREPARE '${options}'`;
-          ROLLBACK_COMMAND = `XA ROLLBACK '${options}'`;
-          break;
-        case "sqlite":
-          adapter.release(pooledConnection);
 
-          // do not support options just use defaults
-          return reject(new Error(`SQLite dont support distributed transactions.`));
-        case "mssql":
-          BEGIN_COMMAND = ` BEGIN DISTRIBUTED TRANSACTION ${options}`;
-          ROLLBACK_COMMAND = `ROLLBACK TRANSACTION ${options}`;
-          COMMIT_COMMAND = `COMMIT TRANSACTION ${options}`;
-          break;
-        default:
-          adapter.release(pooledConnection);
-
-          // TODO: use ERR_
-          return reject(new UnsupportedAdapterError(resolvedOptions));
+      // Check if adapter supports distributed transactions
+      if (!adapter.supportsDistributedTransactions()) {
+        adapter.release(pooledConnection);
+        const adapterName =
+          resolvedOptions.adapter === "sqlite"
+            ? "SQLite"
+            : resolvedOptions.adapter === "postgres"
+              ? "PostgreSQL"
+              : resolvedOptions.adapter;
+        return reject(new Error(`${adapterName} doesn't support distributed transactions`));
       }
+
+      // Get distributed transaction commands from adapter
+      BEGIN_COMMAND = adapter.getBeginCommand(undefined, options);
+      COMMIT_COMMAND = adapter.getCommitCommand(options);
+      ROLLBACK_COMMAND = adapter.getRollbackCommand(options);
+      BEFORE_COMMIT_OR_ROLLBACK_COMMAND = adapter.getBeforeCommitOrRollbackCommand(options);
     } else {
-      // normal transaction
-      switch (adapter) {
-        case "postgres":
-          if (options) {
-            BEGIN_COMMAND = `BEGIN ${options}`;
-          }
-          break;
-        case "mysql":
-          // START TRANSACTION is autocommit false
-          BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
-          break;
-
-        case "sqlite":
-          if (options) {
-            // sqlite supports DEFERRED, IMMEDIATE, EXCLUSIVE
-            BEGIN_COMMAND = `BEGIN ${options}`;
-          }
-          break;
-        case "mssql":
-          BEGIN_COMMAND = options ? `START TRANSACTION ${options}` : "START TRANSACTION";
-          ROLLBACK_COMMAND = "ROLLBACK TRANSACTION";
-          COMMIT_COMMAND = "COMMIT TRANSACTION";
-          SAVEPOINT_COMMAND = "SAVE";
-          RELEASE_SAVEPOINT_COMMAND = null; // mssql dont have release savepoint
-          ROLLBACK_TO_SAVEPOINT_COMMAND = "ROLLBACK TRANSACTION";
-          break;
-        default:
-          adapter.release(pooledConnection);
-          // TODO: use ERR_
-          return reject(new UnsupportedAdapterError(resolvedOptions));
-      }
+      // Get normal transaction commands from adapter
+      BEGIN_COMMAND = adapter.getBeginCommand(options);
+      COMMIT_COMMAND = adapter.getCommitCommand();
+      ROLLBACK_COMMAND = adapter.getRollbackCommand();
+      BEFORE_COMMIT_OR_ROLLBACK_COMMAND = adapter.getBeforeCommitOrRollbackCommand();
     }
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
@@ -2493,33 +2566,29 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.commitDistributed = async function (name: string) {
       assertValidTransactionName(name);
-      switch (adapter) {
-        case "postgres":
-          return await run_internal_transaction_sql(`COMMIT PREPARED '${name}'`);
-        case "mysql":
-          return await run_internal_transaction_sql(`XA COMMIT '${name}'`);
-        case "mssql":
-          throw Error(`MSSQL distributed transaction is automatically committed.`);
-        case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
-        default:
-          throw new UnsupportedAdapterError(resolvedOptions);
+      if (!adapter.supportsDistributedTransactions()) {
+        const adapterName =
+          resolvedOptions.adapter === "sqlite"
+            ? "SQLite"
+            : resolvedOptions.adapter === "postgres"
+              ? "PostgreSQL"
+              : resolvedOptions.adapter;
+        throw Error(`${adapterName} doesn't support distributed transactions`);
       }
+      return await adapter.commitDistributed(name, run_internal_transaction_sql);
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
       assertValidTransactionName(name);
-      switch (adapter) {
-        case "postgres":
-          return await run_internal_transaction_sql(`ROLLBACK PREPARED '${name}'`);
-        case "mysql":
-          return await run_internal_transaction_sql(`XA ROLLBACK '${name}'`);
-        case "mssql":
-          throw Error(`MSSQL distributed transaction is automatically rolled back.`);
-        case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
-        default:
-          throw new UnsupportedAdapterError(resolvedOptions);
+      if (!adapter.supportsDistributedTransactions()) {
+        const adapterName =
+          resolvedOptions.adapter === "sqlite"
+            ? "SQLite"
+            : resolvedOptions.adapter === "postgres"
+              ? "PostgreSQL"
+              : resolvedOptions.adapter;
+        throw Error(`${adapterName} doesn't support distributed transactions`);
       }
+      return await adapter.rollbackDistributed(name, run_internal_transaction_sql);
     };
     // begin is not allowed on a transaction we need to use savepoint() instead
     transaction_sql.begin = function () {
@@ -2718,10 +2787,7 @@ const SQL: typeof Bun.SQL = function SQL(
     if (adapter.closed) {
       return Promise.reject(connectionClosedError());
     }
-
-    const promiseWithResolvers = Promise.withResolvers();
-    adapter.connect(onReserveConnected.bind(promiseWithResolvers), true);
-    return promiseWithResolvers.promise;
+    return adapter.reserve(sql, onReserveConnected);
   };
 
   sql.rollbackDistributed = async function (name: string) {
@@ -2730,19 +2796,18 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     assertValidTransactionName(name);
-    const adapter = resolvedOptions.adapter;
-    switch (adapter) {
-      case "postgres":
-        return await sql.unsafe(`ROLLBACK PREPARED '${name}'`);
-      case "mysql":
-        return await sql.unsafe(`XA ROLLBACK '${name}'`);
-      case "mssql":
-        throw Error(`MSSQL distributed transaction is automatically rolled back.`);
-      case "sqlite":
-        throw Error(`SQLite dont support distributed transactions.`);
-      default:
-        throw Error(`Unsupported adapter: ${adapter}.`);
+
+    if (!adapter.supportsDistributedTransactions()) {
+      const adapterName =
+        resolvedOptions.adapter === "sqlite"
+          ? "SQLite"
+          : resolvedOptions.adapter === "postgres"
+            ? "PostgreSQL"
+            : resolvedOptions.adapter;
+      throw Error(`${adapterName} doesn't support distributed transactions`);
     }
+
+    return await adapter.rollbackDistributed(name, sql);
   };
 
   sql.commitDistributed = async function (name: string) {
@@ -2751,20 +2816,18 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     assertValidTransactionName(name);
-    const adapter = resolvedOptions.adapter;
 
-    switch (adapter) {
-      case "postgres":
-        return await sql.unsafe(`COMMIT PREPARED '${name}'`);
-      case "mysql":
-        return await sql.unsafe(`XA COMMIT '${name}'`);
-      case "mssql":
-        throw Error(`MSSQL distributed transaction is automatically committed.`);
-      case "sqlite":
-        throw Error(`SQLite dont support distributed transactions.`);
-      default:
-        throw Error(`Unsupported adapter: ${adapter}.`);
+    if (!adapter.supportsDistributedTransactions()) {
+      const adapterName =
+        resolvedOptions.adapter === "sqlite"
+          ? "SQLite"
+          : resolvedOptions.adapter === "postgres"
+            ? "PostgreSQL"
+            : resolvedOptions.adapter;
+      throw Error(`${adapterName} doesn't support distributed transactions`);
     }
+
+    return await adapter.commitDistributed(name, sql);
   };
 
   sql.beginDistributed = (name: string, fn: TransactionCallback) => {

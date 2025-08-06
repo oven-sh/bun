@@ -253,13 +253,18 @@ pub fn firstCall(
         }
     }
 
-    // HTTP/2 upgrade is handled by AsyncHTTP layer, not here
-    // The ALPN negotiation result is stored in should_use_http2 for upper layers to use
-    
-    // Reset HTTP/2 flag for this lower-level client since HTTP/2 is handled elsewhere
-    if (client.should_use_http2) {
-        log("HTTP/2 negotiated, will be handled by AsyncHTTP layer", .{});
-        // Don't try to handle HTTP/2 at this low level
+    // Check if HTTP/2 was negotiated via ALPN
+    if (client.should_use_http2 and !client.http2_attempted) {
+        log("HTTP/2 negotiated via ALPN, sending connection preface", .{});
+        
+        // Attempt to upgrade to HTTP/2
+        client.upgradeToHTTP2(is_ssl, socket) catch |err| {
+            log("Failed to upgrade to HTTP/2: {}, falling back to HTTP/1.1", .{err});
+            client.fallbackToHTTP1(is_ssl, socket);
+            return;
+        };
+        
+        return;
     }
 
     if (client.state.request_stage == .pending) {
@@ -528,6 +533,9 @@ negotiated_protocol: []const u8 = "",
 should_use_http2: bool = false,
 http2_attempted: bool = false,
 protocol: HTTPProtocol = .unspecified,
+http2_hpack_decoder: ?*@import("bun.js/api/bun/lshpack.zig").HPACK = null,
+http2_next_stream_id: u32 = 1,
+http2_settings_acked: bool = false,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -550,6 +558,12 @@ pub fn deinit(this: *HTTPClient) void {
         bun.default_allocator.free(this.negotiated_protocol);
         this.negotiated_protocol = "";
     }
+    
+    // Clean up HTTP/2 HPACK decoder
+    if (this.http2_hpack_decoder) |decoder| {
+        decoder.deinit();
+        this.http2_hpack_decoder = null;
+    }
 }
 
 pub fn upgradeToHTTP2(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
@@ -569,6 +583,10 @@ pub fn upgradeToHTTP2(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPC
 
     // Set HTTP/2 flag in the internal state
     this.state.flags.is_http2 = true;
+    
+    // Initialize HPACK decoder
+    const lshpack = @import("bun.js/api/bun/lshpack.zig");
+    this.http2_hpack_decoder = lshpack.HPACK.init(4096);
     
     // Send HTTP/2 connection preface
     try this.sendHTTP2Preface(is_ssl, socket);
@@ -693,55 +711,387 @@ pub fn handleHTTP2Data(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     
+    _ = ctx;
+    
     log("handleHTTP2Data: {} bytes", .{incoming_data.len});
     
-    // For now, we need to delegate to a proper HTTP/2 client implementation
-    // The current architecture doesn't have a fully integrated HTTP/2 client
-    // so we fall back to HTTP/1.1 for now to avoid malformed response errors
+    // Parse HTTP/2 frames
+    var data = incoming_data;
+    var frames_processed: usize = 0;
     
-    // Set flags back to HTTP/1.1 and reprocess the data
-    this.state.flags.is_http2 = false;
-    this.should_use_http2 = false;
-    
-    log("HTTP/2 data handling not fully implemented, falling back to HTTP/1.1", .{});
-    
-    // Re-process as HTTP/1.1
-    switch (this.state.response_stage) {
-        .pending, .headers => {
-            this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
-        },
-        .body => {
-            this.setTimeout(socket, 5);
-
-            const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
-                this.closeAndFail(err, is_ssl, socket);
+    while (data.len >= 9) { // Minimum frame size is 9 bytes (header)
+        // Parse frame header
+        const frame_length = (@as(u32, data[0]) << 16) | (@as(u32, data[1]) << 8) | @as(u32, data[2]);
+        const frame_type = data[3];
+        const frame_flags = data[4];
+        const stream_id = ((@as(u32, data[5]) << 24) | (@as(u32, data[6]) << 16) | 
+                          (@as(u32, data[7]) << 8) | @as(u32, data[8])) & 0x7FFFFFFF;
+        
+        log("HTTP/2 Frame: type={}, flags={}, stream_id={}, length={}", .{frame_type, frame_flags, stream_id, frame_length});
+        
+        // Check if we have the complete frame
+        if (data.len < 9 + frame_length) {
+            log("Incomplete HTTP/2 frame, need {} more bytes", .{(9 + frame_length) - data.len});
+            break;
+        }
+        
+        const frame_payload = data[9..9 + frame_length];
+        
+        // Handle different frame types
+        switch (frame_type) {
+            0x00 => { // DATA frame
+                log("Received DATA frame on stream {}", .{stream_id});
+                if (stream_id == 0) {
+                    log("Protocol error: DATA frame on stream 0", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                // TODO: Handle data frame properly
+            },
+            0x01 => { // HEADERS frame
+                log("Received HEADERS frame on stream {}", .{stream_id});
+                if (stream_id == 0) {
+                    log("Protocol error: HEADERS frame on stream 0", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                // TODO: Handle headers frame with HPACK decompression
+            },
+            0x03 => { // RST_STREAM frame
+                log("Received RST_STREAM frame on stream {}", .{stream_id});
+                if (stream_id == 0) {
+                    log("Protocol error: RST_STREAM frame on stream 0", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                // Parse error code
+                if (frame_payload.len >= 4) {
+                    const error_code = (@as(u32, frame_payload[0]) << 24) | 
+                                      (@as(u32, frame_payload[1]) << 16) | 
+                                      (@as(u32, frame_payload[2]) << 8) | 
+                                      @as(u32, frame_payload[3]);
+                    log("  RST_STREAM error code: {} (0x{x})", .{error_code, error_code});
+                }
+                // TODO: Handle stream reset properly
+            },
+            0x04 => { // SETTINGS frame
+                log("Received SETTINGS frame", .{});
+                if (stream_id != 0) {
+                    log("Protocol error: SETTINGS frame on non-zero stream", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                
+                // Check if it's a SETTINGS ACK
+                if (frame_flags & 0x01 != 0) {
+                    log("Received SETTINGS ACK", .{});
+                    this.http2_settings_acked = true;
+                    // Send the request if we haven't already
+                    if (this.http2_next_stream_id == 1) {
+                        this.sendHTTP2Request(is_ssl, socket) catch |err| {
+                            log("Failed to send HTTP/2 request: {}", .{err});
+                            this.closeAndFail(err, is_ssl, socket);
+                            return;
+                        };
+                        this.http2_next_stream_id = 3; // Next odd stream ID
+                    }
+                } else {
+                    // Process server settings
+                    this.processHTTP2Settings(frame_payload, is_ssl, socket);
+                    
+                    // Send SETTINGS ACK
+                    this.sendHTTP2SettingsAck(is_ssl, socket) catch |err| {
+                        log("Failed to send SETTINGS ACK: {}", .{err});
+                        this.closeAndFail(err, is_ssl, socket);
+                        return;
+                    };
+                }
+            },
+            0x06 => { // PING frame
+                log("Received PING frame", .{});
+                if (stream_id != 0) {
+                    log("Protocol error: PING frame on non-zero stream", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                
+                // Check if it's a PING ACK
+                if (frame_flags & 0x01 == 0) {
+                    // Not an ACK, need to respond
+                    this.sendHTTP2PingAck(frame_payload, is_ssl, socket) catch |err| {
+                        log("Failed to send PING ACK: {}", .{err});
+                        this.closeAndFail(err, is_ssl, socket);
+                        return;
+                    };
+                }
+            },
+            0x07 => { // GOAWAY frame
+                log("Received GOAWAY frame", .{});
+                if (stream_id != 0) {
+                    log("Protocol error: GOAWAY frame on non-zero stream", .{});
+                    this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
+                    return;
+                }
+                // Parse GOAWAY details
+                if (frame_payload.len >= 8) {
+                    const last_stream_id = ((@as(u32, frame_payload[0]) << 24) | 
+                                           (@as(u32, frame_payload[1]) << 16) | 
+                                           (@as(u32, frame_payload[2]) << 8) | 
+                                           @as(u32, frame_payload[3])) & 0x7FFFFFFF;
+                    const error_code = (@as(u32, frame_payload[4]) << 24) | 
+                                      (@as(u32, frame_payload[5]) << 16) | 
+                                      (@as(u32, frame_payload[6]) << 8) | 
+                                      @as(u32, frame_payload[7]);
+                    log("  GOAWAY: last_stream_id={}, error_code={} (0x{x})", .{last_stream_id, error_code, error_code});
+                    if (frame_payload.len > 8) {
+                        log("  GOAWAY debug data: {s}", .{frame_payload[8..]});
+                    }
+                }
+                // Server is shutting down
+                this.closeAndFail(error.HTTP2GoAway, is_ssl, socket);
                 return;
-            };
-
-            if (report_progress) {
-                this.progressUpdate(is_ssl, ctx, socket);
-                return;
+            },
+            0x08 => { // WINDOW_UPDATE frame
+                log("Received WINDOW_UPDATE frame on stream {}", .{stream_id});
+                // TODO: Handle window update
+            },
+            else => {
+                log("Unknown HTTP/2 frame type: {}", .{frame_type});
+                // Ignore unknown frame types per spec
             }
-        },
-        .body_chunk => {
-            this.setTimeout(socket, 5);
+        }
+        
+        // Move to next frame
+        data = data[9 + frame_length..];
+        frames_processed += 1;
+    }
+    
+    log("Processed {} HTTP/2 frames", .{frames_processed});
+    
+    // If we have leftover data, it might be an incomplete frame
+    if (data.len > 0) {
+        log("Leftover data: {} bytes (incomplete frame)", .{data.len});
+        // TODO: Buffer incomplete frames for next read
+    }
+}
 
-            const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
-                this.closeAndFail(err, is_ssl, socket);
-                return;
-            };
+pub fn processHTTP2Settings(this: *HTTPClient, payload: []const u8, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    _ = this;
+    _ = socket;
+    
+    log("Processing HTTP/2 SETTINGS frame with {} bytes", .{payload.len});
+    
+    // Each setting is 6 bytes: 2 bytes ID + 4 bytes value
+    var offset: usize = 0;
+    while (offset + 6 <= payload.len) {
+        const setting_id = (@as(u16, payload[offset]) << 8) | @as(u16, payload[offset + 1]);
+        const setting_value = (@as(u32, payload[offset + 2]) << 24) | 
+                             (@as(u32, payload[offset + 3]) << 16) |
+                             (@as(u32, payload[offset + 4]) << 8) | 
+                             @as(u32, payload[offset + 5]);
+        
+        log("  Setting: ID={}, Value={}", .{setting_id, setting_value});
+        
+        // TODO: Store and apply these settings
+        switch (setting_id) {
+            0x1 => log("    SETTINGS_HEADER_TABLE_SIZE={}", .{setting_value}),
+            0x2 => log("    SETTINGS_ENABLE_PUSH={}", .{setting_value}),
+            0x3 => log("    SETTINGS_MAX_CONCURRENT_STREAMS={}", .{setting_value}),
+            0x4 => log("    SETTINGS_INITIAL_WINDOW_SIZE={}", .{setting_value}),
+            0x5 => log("    SETTINGS_MAX_FRAME_SIZE={}", .{setting_value}),
+            0x6 => log("    SETTINGS_MAX_HEADER_LIST_SIZE={}", .{setting_value}),
+            else => log("    Unknown setting ID", .{}),
+        }
+        
+        offset += 6;
+    }
+}
 
-            if (report_progress) {
-                this.progressUpdate(is_ssl, ctx, socket);
-                return;
-            }
-        },
-        .fail => {},
-        else => {
-            this.state.pending_response = null;
-            this.closeAndFail(error.UnexpectedData, is_ssl, socket);
-            return;
-        },
+pub fn sendHTTP2SettingsAck(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    _ = this;
+    
+    log("Sending HTTP/2 SETTINGS ACK", .{});
+    
+    // SETTINGS ACK is an empty SETTINGS frame with ACK flag set
+    var frame_header: [9]u8 = undefined;
+    // Length: 0
+    frame_header[0] = 0;
+    frame_header[1] = 0;
+    frame_header[2] = 0;
+    // Type: SETTINGS (0x04)
+    frame_header[3] = 0x04;
+    // Flags: ACK (0x01)
+    frame_header[4] = 0x01;
+    // Stream ID: 0
+    frame_header[5] = 0;
+    frame_header[6] = 0;
+    frame_header[7] = 0;
+    frame_header[8] = 0;
+    
+    const bytes_written = socket.write(&frame_header);
+    if (bytes_written != frame_header.len) {
+        return error.HTTP2SettingsAckFailed;
+    }
+}
+
+pub fn sendHTTP2PingAck(this: *HTTPClient, payload: []const u8, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    _ = this;
+    
+    log("Sending HTTP/2 PING ACK", .{});
+    
+    // PING frame must be exactly 8 bytes
+    if (payload.len != 8) {
+        return error.HTTP2InvalidPingPayload;
+    }
+    
+    // PING ACK echoes the same payload with ACK flag set
+    var frame_header: [9]u8 = undefined;
+    // Length: 8
+    frame_header[0] = 0;
+    frame_header[1] = 0;
+    frame_header[2] = 8;
+    // Type: PING (0x06)
+    frame_header[3] = 0x06;
+    // Flags: ACK (0x01)
+    frame_header[4] = 0x01;
+    // Stream ID: 0
+    frame_header[5] = 0;
+    frame_header[6] = 0;
+    frame_header[7] = 0;
+    frame_header[8] = 0;
+    
+    var bytes_written = socket.write(&frame_header);
+    if (bytes_written != frame_header.len) {
+        return error.HTTP2PingAckHeaderFailed;
+    }
+    
+    bytes_written = socket.write(payload);
+    if (bytes_written != 8) {
+        return error.HTTP2PingAckPayloadFailed;
+    }
+}
+
+pub fn sendHTTP2Request(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    const h2_frame_parser = @import("bun.js/api/bun/h2_frame_parser.zig");
+    
+    log("Sending HTTP/2 request for {s}", .{this.url.href});
+    
+    // Stream ID: We'll use stream 1 for our first request
+    const stream_id: u32 = 1;
+    
+    // Use the HPACK decoder we already have (it can also encode)
+    const hpack = this.http2_hpack_decoder orelse return error.NoHPACKDecoder;
+    
+    // Build pseudo-headers for HTTP/2
+    var headers_buffer: [4096]u8 = undefined;
+    var headers_len: usize = 0;
+    
+    // Encode pseudo-headers in order (required by HTTP/2 spec)
+    // :method
+    const method_str = @tagName(this.method);
+    log("  Encoding :method = {s} at offset {}", .{method_str, headers_len});
+    const new_len = try hpack.encode(":method", method_str, false, &headers_buffer, headers_len);
+    log("  After :method, offset {} -> {}, bytes written: {}", .{headers_len, new_len, new_len - headers_len});
+    headers_len = new_len;
+    
+    // :scheme  
+    const scheme = if (is_ssl) "https" else "http";
+    log("  Encoding :scheme = {s} at offset {}", .{scheme, headers_len});
+    const new_len2 = try hpack.encode(":scheme", scheme, false, &headers_buffer, headers_len);
+    log("  After :scheme, offset {} -> {}, bytes written: {}", .{headers_len, new_len2, if (new_len2 > headers_len) new_len2 - headers_len else 0});
+    if (new_len2 > headers_len) {
+        headers_len = new_len2;
+    } else {
+        log("  WARNING: :scheme encoding failed or wrote 0 bytes!", .{});
+    }
+    
+    // :authority (host)
+    const authority = this.url.hostname;
+    log("  Encoding :authority = {s} at offset {}", .{authority, headers_len});
+    const new_len3 = try hpack.encode(":authority", authority, false, &headers_buffer, headers_len);
+    log("  After :authority, offset {} -> {}, bytes written: {}", .{headers_len, new_len3, if (new_len3 > headers_len) new_len3 - headers_len else 0});
+    headers_len = new_len3;
+    
+    // :path
+    var path_buf: [4096]u8 = undefined;
+    const path = if (this.url.pathname.len > 0) blk: {
+        var path_len: usize = 0;
+        @memcpy(path_buf[path_len..path_len + this.url.pathname.len], this.url.pathname);
+        path_len += this.url.pathname.len;
+        
+        if (this.url.search.len > 0) {
+            @memcpy(path_buf[path_len..path_len + this.url.search.len], this.url.search);
+            path_len += this.url.search.len;
+        }
+        break :blk path_buf[0..path_len];
+    } else "/";
+    
+    log("  Encoding :path = {s} at offset {}", .{path, headers_len});
+    const new_len4 = try hpack.encode(":path", path, false, &headers_buffer, headers_len);
+    log("  After :path, offset {} -> {}, bytes written: {}", .{headers_len, new_len4, if (new_len4 > headers_len) new_len4 - headers_len else 0});
+    if (new_len4 > headers_len) {
+        headers_len = new_len4;
+    } else {
+        log("  WARNING: :path encoding failed or wrote 0 bytes!", .{});
+    }
+    
+    // Add regular headers from the request
+    const header_entries = this.header_entries.slice();
+    const header_names = header_entries.items(.name);
+    const header_values = header_entries.items(.value);
+    
+    for (header_names, header_values) |name_str, value_str| {
+        const name = this.headerStr(name_str);
+        const value = this.headerStr(value_str);
+        
+        // Skip connection-specific headers (not allowed in HTTP/2)
+        if (strings.eqlComptime(name, "connection") or 
+            strings.eqlComptime(name, "keep-alive") or
+            strings.eqlComptime(name, "proxy-connection") or
+            strings.eqlComptime(name, "transfer-encoding") or
+            strings.eqlComptime(name, "upgrade")) {
+            continue;
+        }
+        
+        // Convert to lowercase for HTTP/2
+        var lower_name_buf: [256]u8 = undefined;
+        const lower_name = strings.copyLowercase(name, &lower_name_buf);
+        
+        headers_len = try hpack.encode(lower_name, value, false, &headers_buffer, headers_len);
+    }
+    
+    // Use proper frame structures from h2_frame_parser
+    var frame_header = h2_frame_parser.FrameHeader{
+        .length = @intCast(headers_len),
+        .type = @intFromEnum(h2_frame_parser.FrameType.HTTP_FRAME_HEADERS),
+        .flags = @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_HEADERS) | 
+                 if (this.method == .GET) @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_STREAM) else 0,
+        .streamIdentifier = stream_id,
+    };
+    
+    // Write frame header
+    var frame_header_buf: [9]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&frame_header_buf);
+    if (!frame_header.write(@TypeOf(stream.writer()), stream.writer())) {
+        return error.HTTP2HeadersFrameHeaderFailed;
+    }
+    
+    var bytes_written = socket.write(&frame_header_buf);
+    if (bytes_written != frame_header_buf.len) {
+        return error.HTTP2HeadersFrameHeaderFailed;
+    }
+    
+    // Write headers payload
+    bytes_written = socket.write(headers_buffer[0..headers_len]);
+    if (bytes_written != headers_len) {
+        return error.HTTP2HeadersFramePayloadFailed;
+    }
+    
+    log("HTTP/2 HEADERS frame sent on stream {} with {} bytes", .{stream_id, headers_len});
+    
+    // TODO: If we have a request body, send DATA frames
+    if (this.method != .GET and this.method != .HEAD) {
+        // Handle request body
     }
 }
 
@@ -1359,6 +1709,12 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
     if (this.proxy_tunnel) |proxy| {
         proxy.onWritable(is_ssl, socket);
+    }
+    
+    // Don't send HTTP/1.1 request if we're using HTTP/2
+    if (this.state.flags.is_http2) {
+        log("onWritable called for HTTP/2 connection, ignoring", .{});
+        return;
     }
 
     switch (this.state.request_stage) {

@@ -455,6 +455,83 @@ for (let credentials of allCredentials) {
               }
             });
 
+            it("should enforce contentLength restrictions on S3Client presigned URLs", async () => {
+              const testContent = "Test data for S3Client";  // 23 bytes
+              const contentLength = testContent.length;
+              const uploadFilename = bucketInName ? `${S3Bucket}/${randomUUID()}-s3client` : `${randomUUID()}-s3client`;
+              
+              // Test 1: Upload exactly contentLength bytes - should succeed
+              {
+                const presignedUrl = bucket.presign(uploadFilename, {
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
+                
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: testContent,  // Exactly 23 bytes
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                expect(response.status).toBe(200);
+                
+                // Verify the content was uploaded correctly
+                const file = bucket.file(uploadFilename, options);
+                const downloaded = await file.text();
+                expect(downloaded).toBe(testContent);
+                
+                // Clean up
+                await file.unlink();
+              }
+              
+              // Test 2: Upload less than contentLength - should fail
+              {
+                const presignedUrl = bucket.presign(uploadFilename + "-less", {
+                  method: "PUT", 
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                const shortContent = "Short";  // Only 5 bytes, less than 23
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: shortContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                // Should fail with 400 Bad Request due to content length mismatch
+                expect([400, 403]).toContain(response.status);
+              }
+              
+              // Test 3: Upload more than contentLength - should fail  
+              {
+                const presignedUrl = bucket.presign(uploadFilename + "-more", {
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                const longContent = "This content is definitely much longer than the expected 23 bytes and should cause a failure";
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: longContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                // Should fail with 400 Bad Request due to content length mismatch
+                expect([400, 403]).toContain(response.status);
+              }
+            });
+
             it("should be able to upload large files using bucket.write + readable Request", async () => {
               {
                 await bucket.write(
@@ -724,6 +801,117 @@ for (let credentials of allCredentials) {
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
+            });
+
+            it("should enforce contentLength restrictions on PUT presigned URLs", async () => {
+              const testContent = "Hello, Bun!";  // 12 bytes
+              const contentLength = testContent.length;
+              const uploadFilename = tmp_filename + "-contentlength-test";
+              
+              // Test 1: Upload exactly contentLength bytes - should succeed
+              {
+                const s3file = s3(uploadFilename, options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
+                
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: testContent,  // Exactly 12 bytes
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                expect(response.status).toBe(200);
+                
+                // Verify the content was uploaded correctly
+                const downloaded = await s3file.text();
+                expect(downloaded).toBe(testContent);
+                
+                // Clean up
+                await s3file.unlink();
+              }
+              
+              // Test 2: Upload less than contentLength - should fail
+              {
+                const s3file = s3(uploadFilename + "-less", options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT", 
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                const shortContent = "Short";  // Only 5 bytes, less than 12
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: shortContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                // Should fail with 400 Bad Request due to content length mismatch
+                expect([400, 403]).toContain(response.status);
+              }
+              
+              // Test 3: Upload more than contentLength - should fail  
+              {
+                const s3file = s3(uploadFilename + "-more", options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+                
+                const longContent = "This is a much longer content than expected";  // Much more than 12 bytes
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: longContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+                
+                // Should fail with 400 Bad Request due to content length mismatch
+                expect([400, 403]).toContain(response.status);
+              }
+            });
+
+            it("should work with ContentLength (AWS SDK style) restrictions", async () => {
+              const testData = Buffer.alloc(100, 'x'); // Exactly 100 bytes
+              const uploadFilename = tmp_filename + "-aws-style";
+              
+              // Test with AWS SDK style "ContentLength" 
+              const s3file = s3(uploadFilename, options);
+              const presignedUrl = s3file.presign({
+                method: "PUT",
+                expiresIn: 3600,
+                ContentLength: 100,  // AWS SDK style (PascalCase)
+              });
+              
+              expect(presignedUrl.includes("Content-Length=100")).toBe(true);
+              
+              const response = await fetch(presignedUrl, {
+                method: "PUT",
+                body: testData,  // Exactly 100 bytes
+                headers: {
+                  "Content-Type": "application/octet-stream",
+                },
+              });
+              
+              expect(response.status).toBe(200);
+              
+              // Verify upload
+              const stat = await s3file.stat();
+              expect(stat.size).toBe(100);
+              
+              // Clean up
+              await s3file.unlink();
             });
 
             it("should be able to upload large files in one go using Bun.write", async () => {

@@ -494,7 +494,6 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
                 }
                 content_length = content_length_;
             }
-            // Also support "ContentLength" for AWS SDK compatibility
             if (content_length == null) {
                 if (try options.getOptional(globalThis, "ContentLength", i64)) |content_length_| {
                     if (content_length_ < 0) {

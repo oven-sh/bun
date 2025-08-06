@@ -988,8 +988,30 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       flags,
       run: (connection, query) => {
         try {
-          // Execute the statement with the values
-          const result = values?.length ? statement.all(...values) : statement.all();
+          // Extract command from SQL query
+          const commandMatch = sqlString.trim().match(/^(\w+)/);
+          const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
+
+          let result;
+          let changes = 0;
+
+          // For data modification statements without RETURNING, use run() to get changes count
+          if (
+            (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") &&
+            !sqlString.toUpperCase().includes("RETURNING")
+          ) {
+            const runResult = statement.run(...values);
+            changes = runResult.changes;
+            result = [];
+          } else {
+            // Use all() for SELECT or queries with RETURNING clause
+            result = values?.length ? statement.all(...values) : statement.all();
+
+            // For INSERT/UPDATE/DELETE with RETURNING, count the returned rows
+            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+              changes = Array.isArray(result) ? result.length : 0;
+            }
+          }
 
           // Create SQLResultArray with command and count properties
           const resultArray = new SQLResultArray();
@@ -997,19 +1019,13 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             resultArray.push(...result);
           }
 
-          // Extract command from SQL query
-          const commandMatch = sqlString.trim().match(/^(\w+)/);
-          if (commandMatch) {
-            const cmd = commandMatch[1].toUpperCase();
-            resultArray.command = cmd;
+          resultArray.command = cmd;
 
-            // For data modification statements, get the count of affected rows
-            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
-              // SQLite statement has a changes property on the result
-              resultArray.count = (statement as any).changes || 0;
-            } else {
-              resultArray.count = result?.length || 0;
-            }
+          // Set count appropriately
+          if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+            resultArray.count = changes;
+          } else {
+            resultArray.count = result?.length || 0;
           }
 
           query.resolve(resultArray);

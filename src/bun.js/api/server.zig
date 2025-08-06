@@ -188,6 +188,16 @@ pub const AnyRoute = union(enum) {
     }
 
     pub fn htmlRouteFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
+        if (argument.as(HTMLBundle)) |html_bundle| {
+            const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
+            if (!entry.found_existing) {
+                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
+                return .{ .html = entry.value_ptr.* };
+            } else {
+                return .{ .html = entry.value_ptr.dupeRef() };
+            }
+        }
+
         if (argument.as(jsc.WebCore.Response)) |response| {
             if (response.body.value == .InternalBlob and !response.body.value.InternalBlob.was_string) {
                 const bytes = response.body.value.InternalBlob.bytes.items;
@@ -223,16 +233,6 @@ pub const AnyRoute = union(enum) {
                         return .{ .html = route };
                     }
                 }
-            }
-        }
-
-        if (argument.as(HTMLBundle)) |html_bundle| {
-            const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
-            if (!entry.found_existing) {
-                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
-                return .{ .html = entry.value_ptr.* };
-            } else {
-                return .{ .html = entry.value_ptr.dupeRef() };
             }
         }
 

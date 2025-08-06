@@ -3,30 +3,44 @@ pub fn writeFormat(
     base_path: []const u8,
     writer: anytype,
 ) !void {
-    var filename = report.source_url.slice();
+    var filename = report.source_url.byteSlice();
     if (base_path.len > 0) {
-        filename = bun.path.relative(base_path, filename);
+        filename = std.fs.path.relative(std.heap.page_allocator, base_path, filename) catch filename;
     }
 
     const functions_fraction = report.functionCoverageFraction();
     const lines_fraction = report.linesCoverageFraction();
 
-    // Generate HTML filename from source filename
-    var html_filename_buf: bun.PathBuffer = undefined;
-    const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{bun.path.basename(filename)}) catch filename;
+    // Generate HTML filename from source filename (replace slashes with underscores)
+    var html_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var safe_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+    // Replace slashes with underscores in the filename
+    var safe_len: usize = 0;
+    for (filename) |char| {
+        if (char == '/' or char == '\\') {
+            safe_filename_buf[safe_len] = '_';
+        } else {
+            safe_filename_buf[safe_len] = char;
+        }
+        safe_len += 1;
+    }
+    const safe_filename = safe_filename_buf[0..safe_len];
+    const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{safe_filename}) catch filename;
 
     // Write HTML structure for this file's coverage
     try writer.print(
         \\    <tr data-file="{s}">
         \\      <td><a href="{s}">{s}</a></td>
-        \\      <td class="coverage">{d:.2}%</td>
-        \\      <td class="coverage">{d:.2}%</td>
+        \\      <td class="coverage {s}">{d:.2}%</td>
+        \\      <td class="coverage {s}">{d:.2}%</td>
         \\      <td class="uncovered-lines">
-    , .{ filename, html_filename, filename, functions_fraction * 100.0, lines_fraction * 100.0 });
+    , .{ filename, html_filename, filename, if (functions_fraction >= 0.8) "good" else "bad", functions_fraction * 100.0, if (lines_fraction >= 0.8) "good" else "bad", lines_fraction * 100.0 });
 
     // Add uncovered line ranges
-    var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
-    defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+    const allocator = std.heap.page_allocator;
+    var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(allocator) catch return;
+    defer executable_lines_that_havent_been_executed.deinit(allocator);
     executable_lines_that_havent_been_executed.toggleAll();
     executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
 
@@ -61,7 +75,7 @@ pub fn writeFormat(
         start_of_line_range = next_line;
     }
 
-    if (prev_line != start_of_line_range) {
+    if (prev_line != start_of_line_range or (prev_line > 0 and start_of_line_range > 0)) {
         if (is_first) {
             is_first = false;
         } else {
@@ -84,9 +98,19 @@ pub fn writeDetailedFile(
     source_path: []const u8,
     writer: anytype,
 ) !void {
-    var filename = report.source_url.slice();
+    _ = writeDetailedFileWithTree(report, base_path, source_path, null, writer) catch |err| return err;
+}
+
+pub fn writeDetailedFileWithTree(
+    report: *const Report,
+    base_path: []const u8,
+    source_path: []const u8,
+    all_reports: ?[]const Report,
+    writer: anytype,
+) !void {
+    var filename = report.source_url.byteSlice();
     if (base_path.len > 0) {
-        filename = bun.path.relative(base_path, filename);
+        filename = std.fs.path.relative(std.heap.page_allocator, base_path, filename) catch filename;
     }
 
     const functions_fraction = report.functionCoverageFraction();
@@ -102,11 +126,24 @@ pub fn writeDetailedFile(
         \\  <meta charset="UTF-8">
         \\  <meta name="viewport" content="width=device-width, initial-scale=1.0">
     );
-    try writer.print("  <title>Coverage: {s}</title>\n", .{bun.path.basename(filename)});
+    try writer.print("  <title>Coverage: {s}</title>\n", .{std.fs.path.basename(filename)});
     try writer.writeAll(
         \\  <style>
-        \\    body { font-family: 'SF Mono', Monaco, monospace; margin: 0; padding: 0; background: #1e1e1e; color: #d4d4d4; }
-        \\    .header { background: #2d2d2d; padding: 20px; border-bottom: 1px solid #3e3e3e; position: sticky; top: 0; z-index: 100; }
+        \\    body { font-family: 'SF Mono', Monaco, monospace; margin: 0; padding: 0; background: #1e1e1e; color: #d4d4d4; display: flex; height: 100vh; }
+        \\    .sidebar { width: 280px; background: #252526; border-right: 1px solid #3e3e3e; overflow-y: auto; flex-shrink: 0; }
+        \\    .sidebar-header { padding: 15px 20px; background: #2d2d2d; border-bottom: 1px solid #3e3e3e; position: sticky; top: 0; z-index: 10; }
+        \\    .sidebar-header h2 { margin: 0; font-size: 14px; font-weight: normal; color: #cccccc; }
+        \\    .file-tree { padding: 10px 0; }
+        \\    .file-tree-item { padding: 5px 20px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; text-decoration: none; color: #cccccc; font-size: 13px; }
+        \\    .file-tree-item:hover { background: #2a2d2e; }
+        \\    .file-tree-item.active { background: #37373d; }
+        \\    .file-tree-item .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        \\    .file-tree-item .coverage-badge { padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold; }
+        \\    .file-tree-item .coverage-badge.good { background: #2d4f3e; color: #4ec9b0; }
+        \\    .file-tree-item .coverage-badge.medium { background: #4a3c28; color: #dcdcaa; }
+        \\    .file-tree-item .coverage-badge.bad { background: #5a2d2d; color: #f48771; }
+        \\    .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        \\    .header { background: #2d2d2d; padding: 20px; border-bottom: 1px solid #3e3e3e; }
         \\    .header h1 { margin: 0 0 10px 0; font-size: 18px; font-weight: normal; color: #cccccc; }
         \\    .header .path { color: #858585; font-size: 14px; margin-bottom: 15px; }
         \\    .stats { display: flex; gap: 30px; font-size: 14px; }
@@ -115,27 +152,85 @@ pub fn writeDetailedFile(
         \\    .stat-value { font-weight: bold; }
         \\    .stat.good .stat-value { color: #4ec9b0; }
         \\    .stat.bad .stat-value { color: #f48771; }
+        \\    .source-container { flex: 1; overflow-y: auto; }
         \\    .source-code { margin: 0; padding: 20px 0; font-size: 14px; line-height: 1.5; }
-        \\    .line { display: block; padding: 0 20px; white-space: pre; position: relative; }
+        \\    .line { display: flex; position: relative; align-items: flex-start; min-height: 1.5em; }
         \\    .line:hover { background: #2a2a2a; }
-        \\    .line-number { display: inline-block; width: 60px; text-align: right; color: #858585; margin-right: 20px; user-select: none; }
+        \\    .line-number { display: inline-block; width: 60px; text-align: right; color: #858585; user-select: none; }
         \\    .line.covered { background: linear-gradient(90deg, #2d4f3e 0%, transparent 70%); }
         \\    .line.covered .line-number { color: #4ec9b0; }
         \\    .line.uncovered { background: linear-gradient(90deg, #5a2d2d 0%, transparent 70%); }
         \\    .line.uncovered .line-number { color: #f48771; }
         \\    .line.non-executable { opacity: 0.6; }
-        \\    .hit-count { position: absolute; left: 90px; color: #858585; font-size: 12px; min-width: 30px; }
+        \\    .hit-count { display: inline-block; width: 45px; text-align: right; color: #858585; font-size: 12px; margin-right: 15px; margin-left: 10px; user-select: none; }
         \\    .line.covered .hit-count { color: #4ec9b0; }
         \\    .back-link { position: absolute; right: 20px; top: 20px; color: #569cd6; text-decoration: none; }
         \\    .back-link:hover { text-decoration: underline; }
+        \\    pre { margin: 0; display: inline; }
+        \\    .code-content { white-space: pre; }
         \\  </style>
         \\</head>
         \\<body>
-        \\  <div class="header">
-        \\    <a href="index.html" class="back-link">← Back to summary</a>
-        \\    <h1>Coverage Report</h1>
+        \\  <div class="sidebar">
+        \\    <div class="sidebar-header">
+        \\      <h2>Files</h2>
+        \\    </div>
+        \\    <div class="file-tree">
     );
-    try writer.print("    <div class=\"path\">{s}</div>\n", .{filename});
+
+    // Add file tree items if we have all reports
+    if (all_reports) |reports| {
+        for (reports) |*r| {
+            var tree_filename = r.source_url.byteSlice();
+            if (base_path.len > 0) {
+                tree_filename = std.fs.path.relative(std.heap.page_allocator, base_path, tree_filename) catch tree_filename;
+            }
+
+            // Generate HTML filename
+            var html_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var safe_filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+            var safe_len: usize = 0;
+            for (tree_filename) |char| {
+                if (char == '/' or char == '\\') {
+                    safe_filename_buf[safe_len] = '_';
+                } else {
+                    safe_filename_buf[safe_len] = char;
+                }
+                safe_len += 1;
+            }
+            const safe_filename = safe_filename_buf[0..safe_len];
+            const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{safe_filename}) catch tree_filename;
+
+            const coverage = r.linesCoverageFraction();
+            const coverage_class = if (coverage >= 0.8) "good" else if (coverage >= 0.5) "medium" else "bad";
+            const is_active = std.mem.eql(u8, tree_filename, filename);
+
+            try writer.print(
+                \\      <a href="{s}" class="file-tree-item{s}">
+                \\        <span class="file-name">{s}</span>
+                \\        <span class="coverage-badge {s}">{d:.0}%</span>
+                \\      </a>
+                \\
+            , .{
+                html_filename,
+                if (is_active) " active" else "",
+                std.fs.path.basename(tree_filename),
+                coverage_class,
+                coverage * 100.0,
+            });
+        }
+    }
+
+    try writer.writeAll(
+        \\    </div>
+        \\  </div>
+        \\  <div class="main-content">
+        \\    <div class="header">
+        \\      <a href="index.html" class="back-link">← Back to summary</a>
+        \\      <h1>Coverage Report</h1>
+    );
+    try writer.print("      <div class=\"path\">{s}</div>\n", .{filename});
     try writer.print(
         \\    <div class="stats">
         \\      <div class="stat {s}">
@@ -149,7 +244,8 @@ pub fn writeDetailedFile(
         \\      </div>
         \\    </div>
         \\  </div>
-        \\  <pre class="source-code">
+        \\  <div class="source-container">
+        \\    <div class="source-code">
     , .{
         if (lines_fraction >= 0.8) "good" else "bad",
         lines_fraction * 100.0,
@@ -160,56 +256,67 @@ pub fn writeDetailedFile(
     });
 
     // Try to read the source file
-    const source_contents = bun.sys.File.readFrom(bun.FD.cwd(), source_path, bun.default_allocator).unwrap() catch brk: {
-        // If we can't read the file, just show a message
+    const allocator = std.heap.page_allocator;
+    const source_file = std.fs.cwd().openFile(source_path, .{}) catch {
         try writer.print("<div class=\"line\">Could not read source file: {s}</div>", .{source_path});
-        break :brk "";
+        try writer.writeAll("    </div>\n  </div>\n  </div>\n</body>\n</html>\n");
+        return;
     };
-    defer if (source_contents.len > 0) bun.default_allocator.free(source_contents);
+    defer source_file.close();
 
-    if (source_contents.len > 0) {
-        // Split source into lines and annotate with coverage
-        var lines = std.mem.splitScalar(u8, source_contents, '\n');
-        var line_number: u32 = 1;
-        const line_hits = report.line_hits.slice();
+    const source_contents = source_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch {
+        try writer.print("<div class=\"line\">Could not read source file: {s}</div>", .{source_path});
+        try writer.writeAll("    </div>\n  </div>\n  </div>\n</body>\n</html>\n");
+        return;
+    };
+    defer allocator.free(source_contents);
 
-        while (lines.next()) |line| {
-            const line_index = line_number - 1;
-            const is_executable = report.executable_lines.isSet(line_index);
-            const is_covered = report.lines_which_have_executed.isSet(line_index);
-            const hit_count = if (line_index < line_hits.len) line_hits[line_index] else 0;
+    // Split source into lines and annotate with coverage
+    var lines = std.mem.splitScalar(u8, source_contents, '\n');
+    var line_number: u32 = 1;
+    const line_hits = report.line_hits.slice();
 
-            const css_class = if (!is_executable)
-                "line non-executable"
-            else if (is_covered)
-                "line covered"
-            else
-                "line uncovered";
+    while (lines.next()) |line| {
+        const line_index = line_number - 1;
+        const is_executable = line_index < report.executable_lines.bit_length and report.executable_lines.isSet(line_index);
+        const is_covered = line_index < report.lines_which_have_executed.bit_length and report.lines_which_have_executed.isSet(line_index);
+        const hit_count = if (line_index < line_hits.len) line_hits[line_index] else 0;
 
-            try writer.print("<span class=\"{s}\" data-line=\"{d}\">", .{ css_class, line_number });
-            try writer.print("<span class=\"line-number\">{d}</span>", .{line_number});
+        const css_class = if (!is_executable)
+            "line non-executable"
+        else if (is_covered)
+            "line covered"
+        else
+            "line uncovered";
 
-            if (is_executable and hit_count > 0) {
-                try writer.print("<span class=\"hit-count\">{d}x</span>", .{hit_count});
-            }
+        try writer.print("<div class=\"{s}\" data-line=\"{d}\">", .{ css_class, line_number });
+        try writer.print("<span class=\"line-number\">{d}</span>", .{line_number});
 
-            // HTML escape the source line
-            for (line) |char| {
-                switch (char) {
-                    '<' => try writer.writeAll("&lt;"),
-                    '>' => try writer.writeAll("&gt;"),
-                    '&' => try writer.writeAll("&amp;"),
-                    '"' => try writer.writeAll("&quot;"),
-                    '\'' => try writer.writeAll("&#39;"),
-                    else => try writer.writeByte(char),
-                }
-            }
-            try writer.writeAll("</span>\n");
-            line_number += 1;
+        if (is_executable and hit_count > 0) {
+            try writer.print("<span class=\"hit-count\">{d}x</span>", .{hit_count});
+        } else if (is_executable) {
+            try writer.writeAll("<span class=\"hit-count\"></span>");
+        } else {
+            try writer.writeAll("<span class=\"hit-count\" style=\"visibility: hidden;\"></span>");
         }
+
+        try writer.writeAll("<span class=\"code-content\">");
+        // HTML escape the source line
+        for (line) |char| {
+            switch (char) {
+                '<' => try writer.writeAll("&lt;"),
+                '>' => try writer.writeAll("&gt;"),
+                '&' => try writer.writeAll("&amp;"),
+                '"' => try writer.writeAll("&quot;"),
+                '\'' => try writer.writeAll("&#39;"),
+                else => try writer.writeByte(char),
+            }
+        }
+        try writer.writeAll("</span></div>\n");
+        line_number += 1;
     }
 
-    try writer.writeAll("  </pre>\n</body>\n</html>\n");
+    try writer.writeAll("    </div>\n  </div>\n  </div>\n</body>\n</html>\n");
 }
 
 const bun = @import("bun");

@@ -319,13 +319,6 @@ pub fn writeDetailedFileWithTree(
     try writer.writeAll("    </div>\n  </div>\n  </div>\n</body>\n</html>\n");
 }
 
-const bun = @import("bun");
-const Report = bun.sourcemap.coverage.Report;
-
-const std = @import("std");
-const Output = bun.Output;
-const Global = bun.Global;
-
 pub fn writeHeader(writer: std.io.AnyWriter) !void {
     try writer.writeAll(
         \\<!DOCTYPE html>
@@ -450,3 +443,9 @@ pub fn createDetailFile(
         },
     }
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+const Report = bun.sourcemap.coverage.Report;

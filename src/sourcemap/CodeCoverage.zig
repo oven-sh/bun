@@ -261,7 +261,7 @@ pub const Report = struct {
         }
     };
 
-    pub const Html = @import("code_coverage/html.zig");
+    pub const Html = @import("./code_coverage/html.zig");
 
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);

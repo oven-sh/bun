@@ -85,12 +85,12 @@ test("subtract function", () => {
     expect(detailHtmlContent).toContain("<!DOCTYPE html>");
     expect(detailHtmlContent).toContain("Coverage: demo.ts");
     expect(detailHtmlContent).toContain("Back to summary");
-    
+
     // Should show the source code with coverage highlighting
     expect(detailHtmlContent).toContain("export function add");
     expect(detailHtmlContent).toContain("export function subtract");
     expect(detailHtmlContent).toContain("export function uncoveredFunction");
-    
+
     // Should have line numbers and coverage indicators
     expect(detailHtmlContent).toContain("line covered");
     expect(detailHtmlContent).toContain("line uncovered");

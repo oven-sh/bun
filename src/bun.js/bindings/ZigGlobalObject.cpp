@@ -79,6 +79,9 @@
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
+#include "sqlite/JSNodeSQLiteDatabaseSync.h"
+#include "sqlite/JSNodeSQLiteStatementSync.h"
+#include "sqlite/NodeSQLiteModule.h"
 #include "webcore/JSMIMEBindings.h"
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
@@ -3421,6 +3424,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(structure);
             init.setConstructor(constructor);
         });
+
 
     m_JSCryptoKey.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

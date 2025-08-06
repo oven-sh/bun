@@ -323,3 +323,130 @@ const bun = @import("bun");
 const Report = bun.sourcemap.coverage.Report;
 
 const std = @import("std");
+const Output = bun.Output;
+const Global = bun.Global;
+
+pub fn writeHeader(writer: std.io.AnyWriter) !void {
+    try writer.writeAll(
+        \\<!DOCTYPE html>
+        \\<html lang="en">
+        \\<head>
+        \\  <meta charset="UTF-8">
+        \\  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        \\  <title>Coverage Report</title>
+        \\  <style>
+        \\    body { font-family: 'SF Mono', Monaco, monospace; margin: 0; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+        \\    h1 { color: #569cd6; margin-bottom: 10px; }
+        \\    .summary { background: #252526; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        \\    .summary p { margin: 5px 0; }
+        \\    .files-table { background: #252526; border-radius: 5px; overflow: hidden; }
+        \\    table { width: 100%; border-collapse: collapse; }
+        \\    th { background: #2d2d2d; padding: 10px; text-align: left; font-weight: normal; color: #cccccc; }
+        \\    td { padding: 10px; border-top: 1px solid #3e3e3e; }
+        \\    tr:hover { background: #2a2d2e; }
+        \\    a { color: #569cd6; text-decoration: none; }
+        \\    a:hover { text-decoration: underline; }
+        \\    .coverage { text-align: right; font-weight: bold; }
+        \\    .coverage.good { color: #4ec9b0; }
+        \\    .coverage.bad { color: #f48771; }
+        \\    .uncovered-lines { color: #858585; font-size: 0.9em; }
+        \\  </style>
+        \\</head>
+        \\<body>
+        \\  <h1>Coverage Report</h1>
+        \\  <div class="summary">
+        \\    <p>Generated: 
+    );
+}
+
+pub fn writeTimestamp(writer: std.io.AnyWriter) !void {
+    const timestamp_ms = std.time.milliTimestamp();
+    const seconds = @divTrunc(timestamp_ms, std.time.ms_per_s);
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(seconds) };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    try writer.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}</p>\n  </div>\n", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        epoch_seconds.getDaySeconds().getHoursIntoDay(),
+        epoch_seconds.getDaySeconds().getMinutesIntoHour(),
+        epoch_seconds.getDaySeconds().getSecondsIntoMinute(),
+    });
+
+    try writer.writeAll(
+        \\  <div class="files-table">
+        \\    <table>
+        \\      <thead>
+        \\        <tr>
+        \\          <th>File</th>
+        \\          <th class="coverage">Functions</th>
+        \\          <th class="coverage">Lines</th>
+        \\          <th>Uncovered Lines</th>
+        \\        </tr>
+        \\      </thead>
+        \\      <tbody>
+        \\
+    );
+}
+
+pub fn writeFooter(writer: std.io.AnyWriter) !void {
+    try writer.writeAll(
+        \\      </tbody>
+        \\    </table>
+        \\  </div>
+        \\</body>
+        \\</html>
+        \\
+    );
+}
+
+pub fn createDetailFile(
+    report: *const Report,
+    relative_dir: []const u8,
+    reports_directory: []const u8,
+    source_path: []const u8,
+    all_reports: []const Report,
+) !void {
+    const relative_source_path = if (relative_dir.len > 0) bun.path.relative(relative_dir, source_path) else source_path;
+
+    // Create HTML filename for this source file
+    var detail_html_name_buf: bun.PathBuffer = undefined;
+    const detail_html_filename = std.fmt.bufPrint(&detail_html_name_buf, "{s}.html", .{bun.path.basename(relative_source_path)}) catch return;
+
+    // Write directly to final path
+    const detail_path = bun.path.joinAbsStringBufZ(relative_dir, &detail_html_name_buf, &.{ reports_directory, detail_html_filename }, .auto);
+
+    const detail_file = bun.sys.File.openat(
+        .cwd(),
+        detail_path,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+        0o644,
+    );
+
+    switch (detail_file) {
+        .err => |err| {
+            Output.err(.lcovCoverageError, "Failed to create HTML detail file", .{});
+            Output.printError("\n{s}", .{err});
+            return;
+        },
+        .result => |file| {
+            defer file.close();
+            var detail_buffered_writer = std.io.bufferedWriter(file.writer());
+            const detail_writer = detail_buffered_writer.writer();
+
+            // Write detailed coverage HTML for this source file
+            writeDetailedFileWithTree(
+                report,
+                relative_dir,
+                source_path,
+                all_reports,
+                detail_writer,
+            ) catch return;
+
+            detail_buffered_writer.flush() catch return;
+        },
+    }
+}

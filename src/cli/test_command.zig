@@ -1176,78 +1176,8 @@ pub const CommandLineReporter = struct {
 
         // Write HTML header
         if (comptime reporters.html) {
-            try html_writer.writeAll(
-                \\<!DOCTYPE html>
-                \\<html lang="en">
-                \\<head>
-                \\  <meta charset="UTF-8">
-                \\  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                \\  <title>Bun Coverage Report</title>
-                \\  <style>
-                \\    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f8f9fa; }
-                \\    .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                \\    .stats { display: flex; gap: 20px; margin-bottom: 20px; }
-                \\    .stat { background: white; padding: 15px; border-radius: 6px; flex: 1; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                \\    .stat-value { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
-                \\    .stat-label { color: #6c757d; font-size: 14px; }
-                \\    .files-table { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                \\    table { width: 100%; border-collapse: collapse; }
-                \\    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; }
-                \\    th { background: #f8f9fa; font-weight: 600; color: #495057; }
-                \\    .coverage { text-align: right; font-weight: 500; }
-                \\    .coverage.high { color: #28a745; }
-                \\    .coverage.medium { color: #ffc107; }
-                \\    .coverage.low { color: #dc3545; }
-                \\    .uncovered-lines { font-family: monospace; font-size: 12px; color: #6c757d; }
-                \\    .file-detail { background: white; margin: 20px 0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                \\    .file-detail h3 { margin: 0; padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; }
-                \\    .file-stats { padding: 10px 20px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; }
-                \\    .file-stats span { margin-right: 20px; font-size: 14px; color: #6c757d; }
-                \\    .source-code { margin: 0; padding: 0; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px; line-height: 1.4; overflow-x: auto; }
-                \\    .line { display: block; padding: 2px 20px; white-space: pre; }
-                \\    .line.covered { background: #d4edda; }
-                \\    .line.uncovered { background: #f8d7da; }
-                \\    .line.non-executable { background: #f8f9fa; color: #6c757d; }
-                \\    .line:hover { background-color: #e9ecef; }
-                \\  </style>
-                \\</head>
-                \\<body>
-                \\  <div class="header">
-                \\    <h1>Bun Coverage Report</h1>
-                \\    <p>Generated on 
-            );
-
-            // Add timestamp
-            const timestamp = std.time.timestamp();
-            const datetime = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
-            const day_seconds = datetime.getDaySeconds();
-            const epoch_day = datetime.getEpochDay();
-            const year_day = epoch_day.calculateYearDay();
-            const month_day = year_day.calculateMonthDay();
-
-            try html_writer.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}</p>\n  </div>\n", .{
-                year_day.year,
-                month_day.month.numeric(),
-                month_day.day_index + 1,
-                day_seconds.getHoursIntoDay(),
-                day_seconds.getMinutesIntoHour(),
-                day_seconds.getSecondsIntoMinute(),
-            });
-
-            try html_writer.writeAll(
-                \\  <div class="files-table">
-                \\    <table>
-                \\      <thead>
-                \\        <tr>
-                \\          <th>File</th>
-                \\          <th>Functions</th>
-                \\          <th>Lines</th>
-                \\          <th>Uncovered Lines</th>
-                \\        </tr>
-                \\      </thead>
-                \\      <tbody>
-                \\
-            );
+            try CodeCoverageReport.Html.writeHeader(html_writer.any());
+            try CodeCoverageReport.Html.writeTimestamp(html_writer.any());
         }
         // --- HTML ---
 
@@ -1300,51 +1230,18 @@ pub const CommandLineReporter = struct {
                 CodeCoverageReport.Html.writeFormat(
                     &report,
                     relative_dir,
-                    html_writer,
+                    html_writer.any(),
                 ) catch continue;
 
                 // Generate separate HTML file for this source file
                 const source_path = report.source_url.slice();
-                const relative_source_path = if (relative_dir.len > 0) bun.path.relative(relative_dir, source_path) else source_path;
-                
-                // Create HTML filename for this source file
-                var detail_html_name_buf: bun.PathBuffer = undefined;
-                const detail_html_filename = std.fmt.bufPrint(&detail_html_name_buf, "{s}.html", .{bun.path.basename(relative_source_path)}) catch continue;
-                
-                // Write directly to final path
-                const detail_path = bun.path.joinAbsStringBufZ(relative_dir, &detail_html_name_buf, &.{ opts.reports_directory, detail_html_filename }, .auto);
-                
-                const detail_file = bun.sys.File.openat(
-                    .cwd(),
-                    detail_path,
-                    bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
-                    0o644,
-                );
-
-                switch (detail_file) {
-                    .err => |err| {
-                        _ = err;
-                        // Log error but continue with other files
-                        continue;
-                    },
-                    .result => |f| {
-                        defer f.close();
-                        
-                        // Create buffered writer for detail file
-                        var detail_buffered_writer = std.io.bufferedWriter(f.writer());
-                        const detail_writer = detail_buffered_writer.writer();
-                        
-                        // Write detailed coverage HTML for this source file
-                        CodeCoverageReport.Html.writeDetailedFile(
-                            &report,
-                            relative_dir,
-                            source_path,
-                            detail_writer,
-                        ) catch continue;
-                        
-                        detail_buffered_writer.flush() catch continue;
-                    },
-                }
+                CodeCoverageReport.Html.createDetailFile(
+                    &report,
+                    relative_dir,
+                    opts.reports_directory,
+                    source_path,
+                    &.{}, // Empty slice for now - sidebar feature can be added later
+                ) catch continue;
             }
         }
 
@@ -1410,15 +1307,8 @@ pub const CommandLineReporter = struct {
         }
 
         if (comptime reporters.html) {
-            // Write HTML footer
-            try html_writer.writeAll(
-                \\      </tbody>
-                \\    </table>
-                \\  </div>
-                \\</body>
-                \\</html>
-                \\
-            );
+            // Write HTML footer and finalize
+            try CodeCoverageReport.Html.writeFooter(html_writer.any());
 
             try html_buffered_writer.flush();
             html_file.close();

@@ -294,7 +294,8 @@ function getAdapterDisplayName(
     case "postgres":
       return "PostgreSQL";
     default:
-      return adapter;
+      adapter satisfies never;
+      return "Unknown adapter";
   }
 }
 

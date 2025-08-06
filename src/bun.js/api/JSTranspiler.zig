@@ -429,7 +429,6 @@ pub const Config = struct {
 };
 
 // Legacy alias for backwards compatibility during migration
-const TranspilerOptions = Config;
 
 // Mimalloc gets unstable if we try to move this to a different thread
 // threadlocal var transform_buffer: bun.MutableString = undefined;

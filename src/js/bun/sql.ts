@@ -280,6 +280,24 @@ interface DatabaseAdapter<Connection> {
   rollbackDistributed(name: string, sql: any): Promise<any>;
 }
 
+/**
+ * Get the display name for an adapter (e.g., "sqlite" -> "SQLite", "postgres" -> "PostgreSQL")
+ */
+function getAdapterDisplayName(
+  optionsOrAdapter: Bun.SQL.__internal.DefinedOptions | Bun.SQL.__internal.DefinedOptions["adapter"],
+): string {
+  const adapter = typeof optionsOrAdapter === "string" ? optionsOrAdapter : optionsOrAdapter.adapter;
+
+  switch (adapter) {
+    case "sqlite":
+      return "SQLite";
+    case "postgres":
+      return "PostgreSQL";
+    default:
+      return adapter;
+  }
+}
+
 namespace Postgres {
   export function normalizeSSLMode(value: string): SSLMode {
     if (!value) {
@@ -1966,7 +1984,7 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+  if (sslMode !== Postgres.SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
     } else if (tls) {
@@ -1974,8 +1992,8 @@ function parseOptions(
     }
   }
 
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
+  if (tls && sslMode === Postgres.SSLMode.disable) {
+    sslMode = Postgres.SSLMode.prefer;
   }
   port = Number(port);
 
@@ -2276,26 +2294,14 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.commitDistributed = async function (name: string) {
       assertValidTransactionName(name);
       if (!adapter.supportsDistributedTransactions()) {
-        const adapterName =
-          resolvedOptions.adapter === "sqlite"
-            ? "SQLite"
-            : resolvedOptions.adapter === "postgres"
-              ? "PostgreSQL"
-              : resolvedOptions.adapter;
-        throw Error(`${adapterName} doesn't support distributed transactions`);
+        throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
       }
       return await adapter.commitDistributed(name, reserved_sql);
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
       assertValidTransactionName(name);
       if (!adapter.supportsDistributedTransactions()) {
-        const adapterName =
-          resolvedOptions.adapter === "sqlite"
-            ? "SQLite"
-            : resolvedOptions.adapter === "postgres"
-              ? "PostgreSQL"
-              : resolvedOptions.adapter;
-        throw Error(`${adapterName} doesn't support distributed transactions`);
+        throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
       }
       return await adapter.rollbackDistributed(name, reserved_sql);
     };
@@ -2495,13 +2501,7 @@ const SQL: typeof Bun.SQL = function SQL(
       // Check if adapter supports distributed transactions
       if (!adapter.supportsDistributedTransactions()) {
         adapter.release(pooledConnection);
-        const adapterName =
-          resolvedOptions.adapter === "sqlite"
-            ? "SQLite"
-            : resolvedOptions.adapter === "postgres"
-              ? "PostgreSQL"
-              : resolvedOptions.adapter;
-        return reject(new Error(`${adapterName} doesn't support distributed transactions`));
+        return reject(new Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`));
       }
 
       // Get distributed transaction commands from adapter
@@ -2567,26 +2567,14 @@ const SQL: typeof Bun.SQL = function SQL(
     transaction_sql.commitDistributed = async function (name: string) {
       assertValidTransactionName(name);
       if (!adapter.supportsDistributedTransactions()) {
-        const adapterName =
-          resolvedOptions.adapter === "sqlite"
-            ? "SQLite"
-            : resolvedOptions.adapter === "postgres"
-              ? "PostgreSQL"
-              : resolvedOptions.adapter;
-        throw Error(`${adapterName} doesn't support distributed transactions`);
+        throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
       }
       return await adapter.commitDistributed(name, run_internal_transaction_sql);
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
       assertValidTransactionName(name);
       if (!adapter.supportsDistributedTransactions()) {
-        const adapterName =
-          resolvedOptions.adapter === "sqlite"
-            ? "SQLite"
-            : resolvedOptions.adapter === "postgres"
-              ? "PostgreSQL"
-              : resolvedOptions.adapter;
-        throw Error(`${adapterName} doesn't support distributed transactions`);
+        throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
       }
       return await adapter.rollbackDistributed(name, run_internal_transaction_sql);
     };
@@ -2798,13 +2786,7 @@ const SQL: typeof Bun.SQL = function SQL(
     assertValidTransactionName(name);
 
     if (!adapter.supportsDistributedTransactions()) {
-      const adapterName =
-        resolvedOptions.adapter === "sqlite"
-          ? "SQLite"
-          : resolvedOptions.adapter === "postgres"
-            ? "PostgreSQL"
-            : resolvedOptions.adapter;
-      throw Error(`${adapterName} doesn't support distributed transactions`);
+      throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
     }
 
     return await adapter.rollbackDistributed(name, sql);
@@ -2818,13 +2800,7 @@ const SQL: typeof Bun.SQL = function SQL(
     assertValidTransactionName(name);
 
     if (!adapter.supportsDistributedTransactions()) {
-      const adapterName =
-        resolvedOptions.adapter === "sqlite"
-          ? "SQLite"
-          : resolvedOptions.adapter === "postgres"
-            ? "PostgreSQL"
-            : resolvedOptions.adapter;
-      throw Error(`${adapterName} doesn't support distributed transactions`);
+      throw Error(`${getAdapterDisplayName(resolvedOptions)} doesn't support distributed transactions`);
     }
 
     return await adapter.commitDistributed(name, sql);

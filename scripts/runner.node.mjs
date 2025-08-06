@@ -1061,12 +1061,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
-  // TEMPORARY TEST:
-  if (process.platform === "win32") {
-    bunEnv.MIMALLOC_ARENA_EAGER_COMMIT = "0";
-    bunEnv.MIMALLOC_USE_HUGE_OS_PAGES = "0";
-  }
-
   if (basename(execPath).includes("asan")) {
     bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
   }

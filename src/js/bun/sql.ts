@@ -1014,8 +1014,7 @@ class SQLiteConnection {
   }
 
   flush() {
-    // SQLite doesn't buffer queries like PostgreSQL
-    // This is a no-op for SQLite
+    throw new Error("SQLite doesn't support flush() - queries are executed synchronously");
   }
 
   release() {

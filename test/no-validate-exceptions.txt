@@ -301,6 +301,7 @@ test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

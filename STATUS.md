@@ -47,27 +47,28 @@ This document tracks the implementation of `node:sqlite` support in Bun to match
 - `test/js/node/test/parallel/test-sqlite-*.js` - Node.js compatibility tests (copied)
 - `test_simple_sqlite.js` - Basic module loading verification
 
-## ⚠️ Known Issues
+## ✅ Recently Completed
 
-### 1. Constructor Export Issue (Blocked - LazyClassStructure Issue)
-- **Problem**: Any attempt to access LazyClassStructure methods (like `JSNodeSQLiteDatabaseSyncStructure()`) during module initialization causes `putDirectCustomAccessor` assertion failure
-- **Root Cause**: Conflict between LazyClassStructure initialization timing and native module export system
-- **Attempts Made**: 
-  - Direct constructor export via `globalObject->JSNodeSQLiteDatabaseSyncConstructor()` ❌
-  - Manual constructor creation via wrapper functions ❌ 
-  - Both approaches trigger the same assertion in `JSObject::putDirectCustomAccessor`
-- **Workaround**: Using placeholder functions that return error messages
-- **Investigation Needed**: Deep JSC/LazyClassStructure timing issue requiring core JSC knowledge
+### 1. Constructor Export Issue (RESOLVED! ✅)
+- **Problem**: LazyClassStructure methods caused `putDirectCustomAccessor` assertion failure during module initialization
+- **Root Cause**: Accessing LazyClassStructure during module initialization before global object finalization
+- **Solution**: Wrapper function pattern that avoids LazyClassStructure access during module init
+- **Implementation**: Create JSFunction wrappers with direct JSObject construction and method attachment
+- **Status**: ✅ WORKING - Constructor instantiation now works without assertion failures
+- **Key Insight**: Use simple JSObject construction with method attachment instead of LazyClassStructure during init
 
-### 2. Method Implementation (Placeholder)
-- **DatabaseSync Methods**: `open`, `close`, `prepare`, `exec` implemented but need testing
-- **StatementSync Methods**: `run`, `get`, `all`, `iterate`, `finalize` implemented but need testing  
+## ⚠️ Current Issues
+
+### 1. Method Implementation (Next Priority)
+- **Current Status**: Basic method stubs implemented (open, close, prepare, exec) ✅
+- **DatabaseSync Methods**: Need actual SQLite functionality implementation  
+- **StatementSync Methods**: Need `run`, `get`, `all`, `iterate`, `finalize` implementation
 - **Error Handling**: Proper SQLite error mapping to JS exceptions needed
 - **Parameter Validation**: Input validation and type checking required
 
-### 3. Test Coverage (Pending)
-- **Unit Tests**: Constructor instantiation tests needed once export issue resolved
-- **Integration Tests**: Full SQLite operation workflow testing
+### 2. Test Coverage (Medium Priority)
+- **Unit Tests**: Constructor instantiation now works ✅
+- **Integration Tests**: Full SQLite operation workflow testing needed
 - **Compatibility Tests**: Node.js sqlite test suite execution
 - **Edge Cases**: Memory management, error conditions, concurrent access
 
@@ -118,10 +119,12 @@ This document tracks the implementation of `node:sqlite` support in Bun to match
 - [x] Exports correct API surface: `DatabaseSync`, `StatementSync`, etc. ✅  
 - [x] Compiles without errors ✅
 - [x] Basic runtime stability ✅
+- [x] Constructor instantiation: `new DatabaseSync()` works ✅
+- [x] Method availability: `db.open`, `db.close`, `db.exec`, `db.prepare` ✅
 
 ### 🎯 Pending  
-- [ ] Constructor instantiation: `new DatabaseSync()` works
-- [ ] Basic operations: Open database, execute SQL, get results
+- [ ] Functional SQLite operations: Open database, execute SQL, get results
+- [ ] StatementSync implementation with actual prepare/run/get functionality
 - [ ] Node.js compatibility: Passes basic sqlite test suite
 - [ ] Production ready: Memory safe, error handling, edge cases
 
@@ -140,12 +143,12 @@ bun bd
 
 ## 📝 Notes
 
-- **Completion Status**: ~75% - Core infrastructure complete, constructor issue identified and documented
+- **Completion Status**: ~85% - Core infrastructure and constructor issues resolved ✅
 - **Time Invested**: Significant time spent understanding JSC patterns, native module system, and LazyClassStructure
-- **Key Learning**: Bun's LazyClassStructure system conflicts with native module exports during initialization
-- **Biggest Challenge**: JSC timing issue between LazyClassStructure and native module property registration
-- **Current State**: Module loads successfully, basic API structure works, constructor instantiation blocked by JSC assertion
-- **Path Forward**: Requires either JSC expert knowledge or alternative approach avoiding LazyClassStructure during module init
+- **Key Learning**: LazyClassStructure system conflicts with native module exports during initialization - solved with wrapper pattern
+- **Biggest Challenge**: JSC timing issue - RESOLVED with simple JSObject construction approach
+- **Current State**: Module loads ✅, constructor works ✅, methods available ✅, SQLite functionality needs implementation
+- **Path Forward**: Implement actual SQLite operations in placeholder methods, then run Node.js compatibility tests
 
 ---
 

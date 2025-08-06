@@ -72,7 +72,7 @@ const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const PublicPromise = Promise;
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
+type TransactionCallback<T = any> = Bun.SQL.ContextCallback<T, Bun.SQL>;
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
@@ -421,7 +421,7 @@ type OnConnected<Connection> = (
   ...args: [error: null, connection: Connection] | [error: Error, connection: null]
 ) => void;
 
-interface DatabaseAdapter<Options, Connection> {
+interface DatabaseAdapter<Connection> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
   createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any;
 
@@ -433,7 +433,7 @@ interface DatabaseAdapter<Options, Connection> {
   isConnected(): boolean;
 }
 
-class PostgresAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedPostgresOptions, PooledPostgresConnection> {
+class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection> {
   private pool: PostgresConnectionPool;
 
   constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
@@ -502,10 +502,10 @@ class SQLiteConnection {
   }
 }
 
-class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteOptions, SQLiteConnection> {
+class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
 
-  init(options: Bun.SQL.__internal.DefinedSQLiteOptions): void {
+  public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
     const { Database } = getBunSqliteModule();
     this.db = new Database(options.filename, options);
   }
@@ -524,11 +524,16 @@ class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteO
   }
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
+    if (poolSize !== 1) {
+      throw new Error("SQLite does not support pooling, poolSize must be 1");
+    }
+
     if (!this.db) {
       throw new Error("SQLite database not initialized");
     }
 
     const statement = this.db.prepare(sqlString, values, flags);
+
     return {
       statement,
       values,
@@ -544,18 +549,17 @@ class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteO
     };
   }
 
-  connect(onConnected: (err: Error | null, connection: any) => void, reserved: boolean = false): void {
+  connect(onConnected: OnConnected<SQLiteConnection>, reserved: boolean = false): void {
     // SQLite doesn't need connection pooling - return the single connection
     if (this.db) {
-      onConnected(null, { connection: this.db, bindQuery: () => {}, unbindQuery: () => {} });
+      onConnected(null, new SQLiteConnection(this.db));
     } else {
       onConnected(new Error("SQLite database not initialized"), null);
     }
   }
 
-  release(connection: any, connectingEvent: boolean = false): void {
-    this.db?.close();
-    // SQLite doesn't need to release connections back to a pool
+  release(connection: SQLiteConnection, connectingEvent: boolean = false): void {
+    connection.release();
   }
 
   async close(options?: { timeout?: number }): Promise<void> {
@@ -563,7 +567,6 @@ class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteO
     if (this.db) {
       this.db.close();
       this.db = null;
-      this.connection = null;
     }
   }
 
@@ -576,7 +579,7 @@ class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteO
   }
 }
 
-class Query<Adapter extends DatabaseAdapter<any, any>, T = any> extends PublicPromise<T> {
+class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise<T> {
   [_resolve]: (value: T) => void;
   [_reject]: (reason?: any) => void;
   [_handle];
@@ -641,6 +644,10 @@ class Query<Adapter extends DatabaseAdapter<any, any>, T = any> extends PublicPr
     if (!handle) {
       try {
         const [sqlString, final_values] = this.adapter.normalizeQuery(this[_strings], this[_values]);
+
+        console.log("POOL SIZE", this[_poolSize]);
+        process.exit(0);
+
         this[_handle] = handle = this.adapter.createQueryHandle(sqlString, final_values, this[_flags], this[_poolSize]);
       } catch (err) {
         this[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
@@ -1602,7 +1609,6 @@ function parseOptions(
     tls,
     url: URL,
     query: string,
-    adapter: NonNullable<Bun.SQL.Options["adapter"]>,
     idleTimeout: number | null,
     connectionTimeout: number | null,
     maxLifetime: number | null,
@@ -1651,17 +1657,12 @@ function parseOptions(
   query = "";
 
   if (url) {
-    ({ hostname, port, username, password, adapter } = options);
+    ({ hostname, port, username, password } = options);
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
     username ||= decodeIfValid(url.username);
     password ||= decodeIfValid(url.password);
-    adapter ||= url.protocol;
-
-    if (adapter[adapter.length - 1] === ":") {
-      adapter = adapter.slice(0, -1);
-    }
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
@@ -1702,8 +1703,8 @@ function parseOptions(
       }
     }
   }
+
   tls ||= options.tls || options.ssl;
-  adapter ||= options.adapter || "postgres";
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -1900,7 +1901,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
-      pool.release(pooledConnection); // release the connection back to the pool
+      adapter.release(pooledConnection); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
@@ -1930,7 +1931,7 @@ const SQL: typeof Bun.SQL = function SQL(
         resolvedOptions.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
         resolvedOptions.max,
         queryFromPoolHandler,
-        pool,
+        adapter,
       );
     } catch (err) {
       return Promise.reject(err);
@@ -1943,7 +1944,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler, pool);
+      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler, adapter);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1978,7 +1979,7 @@ const SQL: typeof Bun.SQL = function SQL(
           : SQLQueryFlags.allowUnsafeTransaction,
         resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        pool,
+        adapter,
       );
       transactionQueries.add(query);
       return query;
@@ -2001,7 +2002,7 @@ const SQL: typeof Bun.SQL = function SQL(
         flags,
         resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        pool,
+        adapter,
       );
       transactionQueries.add(query);
       return query;
@@ -2228,7 +2229,7 @@ const SQL: typeof Bun.SQL = function SQL(
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       pooledConnection.queries.delete(onClose);
-      pool.release(pooledConnection);
+      adapter.release(pooledConnection);
       return Promise.resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
@@ -2295,7 +2296,7 @@ const SQL: typeof Bun.SQL = function SQL(
     let BEFORE_COMMIT_OR_ROLLBACK_COMMAND: string | null = null;
     if (distributed) {
       if (options.indexOf("'") !== -1) {
-        pool.release(pooledConnection);
+        adapter.release(pooledConnection);
         return reject(new Error(`Distributed transaction name cannot contain single quotes.`));
       }
       // distributed transaction
@@ -2314,7 +2315,7 @@ const SQL: typeof Bun.SQL = function SQL(
           ROLLBACK_COMMAND = `XA ROLLBACK '${options}'`;
           break;
         case "sqlite":
-          pool.release(pooledConnection);
+          adapter.release(pooledConnection);
 
           // do not support options just use defaults
           return reject(new Error(`SQLite dont support distributed transactions.`));
@@ -2324,7 +2325,7 @@ const SQL: typeof Bun.SQL = function SQL(
           COMMIT_COMMAND = `COMMIT TRANSACTION ${options}`;
           break;
         default:
-          pool.release(pooledConnection);
+          adapter.release(pooledConnection);
 
           // TODO: use ERR_
           return reject(new UnsupportedAdapterError(resolvedOptions));
@@ -2357,7 +2358,7 @@ const SQL: typeof Bun.SQL = function SQL(
           ROLLBACK_TO_SAVEPOINT_COMMAND = "ROLLBACK TRANSACTION";
           break;
         default:
-          pool.release(pooledConnection);
+          adapter.release(pooledConnection);
           // TODO: use ERR_
           return reject(new UnsupportedAdapterError(resolvedOptions));
       }
@@ -2603,7 +2604,7 @@ const SQL: typeof Bun.SQL = function SQL(
       state.connectionState |= ReservedConnectionState.closed;
       pooledConnection.queries.delete(onClose);
       if (!dontRelease) {
-        pool.release(pooledConnection);
+        adapter.release(pooledConnection);
       }
     }
   }

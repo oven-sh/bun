@@ -988,32 +988,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       flags,
       run: (connection, query) => {
         try {
-          // Extract command from SQL query
-          const commandMatch = sqlString.trim().match(/^(\w+)/);
-          const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
-
-          let result;
-          let changes = 0;
-
-          // For data modification statements, use run() to get changes count
-          // For queries with RETURNING clause, still use all() to get results
-          if (
-            (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE" || cmd === "CREATE") &&
-            !sqlString.toUpperCase().includes("RETURNING")
-          ) {
-            // Use run() for data modification without RETURNING
-            const runResult = values?.length ? statement.run(...values) : statement.run();
-            changes = runResult?.changes || 0;
-            result = [];
-          } else {
-            // Use all() for SELECT or queries with RETURNING clause
-            result = values?.length ? statement.all(...values) : statement.all();
-            // For INSERT/UPDATE/DELETE with RETURNING, we still need the changes count
-            // SQLite doesn't provide this directly with all(), so we need to count the results
-            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
-              changes = Array.isArray(result) ? result.length : 0;
-            }
-          }
+          // Execute the statement with the values
+          const result = values?.length ? statement.all(...values) : statement.all();
 
           // Create SQLResultArray with command and count properties
           const resultArray = new SQLResultArray();
@@ -1021,13 +997,19 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             resultArray.push(...result);
           }
 
-          resultArray.command = cmd;
+          // Extract command from SQL query
+          const commandMatch = sqlString.trim().match(/^(\w+)/);
+          if (commandMatch) {
+            const cmd = commandMatch[1].toUpperCase();
+            resultArray.command = cmd;
 
-          // Set count appropriately
-          if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
-            resultArray.count = changes;
-          } else {
-            resultArray.count = result?.length || 0;
+            // For data modification statements, get the count of affected rows
+            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+              // SQLite statement has a changes property on the result
+              resultArray.count = (statement as any).changes || 0;
+            } else {
+              resultArray.count = result?.length || 0;
+            }
           }
 
           query.resolve(resultArray);

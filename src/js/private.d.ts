@@ -19,7 +19,7 @@ declare module "bun" {
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions>;
+    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
 
     /**
      * Represents the result of the `parseOptions()` function in the postgres path

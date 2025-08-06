@@ -52,6 +52,14 @@ class SQLResultArray extends PublicArray {
   }
 }
 
+let lazy_bunSqliteModule: (typeof import("./sqlite.ts"))["default"];
+function getBunSqliteModule() {
+  if (!lazy_bunSqliteModule) {
+    lazy_bunSqliteModule = require("./sqlite.ts");
+  }
+  return lazy_bunSqliteModule;
+}
+
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
@@ -423,18 +431,12 @@ interface DatabaseAdapter<Options, Connection> {
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
   isConnected(): boolean;
-
-  init(options: Options): void;
 }
 
-class PostgresAdapterImpl
-  implements DatabaseAdapter<Bun.SQL.__internal.DefinedPostgresOptions, PooledPostgresConnection>
-{
-  private pool: PostgresConnectionPool | null = null;
-  private options: Bun.SQL.__internal.DefinedPostgresOptions;
+class PostgresAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedPostgresOptions, PooledPostgresConnection> {
+  private pool: PostgresConnectionPool;
 
-  init(options: Bun.SQL.__internal.DefinedPostgresOptions): void {
-    this.options = options;
+  constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
     this.pool = new PostgresConnectionPool(options);
   }
 
@@ -488,44 +490,79 @@ class PostgresAdapterImpl
   }
 }
 
-// SQLite adapter implementation
-class SQLiteAdapterImpl implements DatabaseAdapter {
-  private connection: any = null;
-  private options: any;
+class SQLiteConnection {
+  private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
 
-  init(options: any): void {
-    this.options = options;
-    // SQLite doesn't need connection pooling like PostgreSQL
-    // Initialize single connection here when ready
+  constructor(db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>) {
+    this.db = db;
+  }
+
+  release() {
+    this.db.close();
+  }
+}
+
+class SQLiteAdapter implements DatabaseAdapter<Bun.SQL.__internal.DefinedSQLiteOptions, SQLiteConnection> {
+  private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
+
+  init(options: Bun.SQL.__internal.DefinedSQLiteOptions): void {
+    const { Database } = getBunSqliteModule();
+    this.db = new Database(options.filename, options);
   }
 
   normalizeQuery(strings: any, values: any): [string, any[]] {
-    throw new Error("SQLite queries not yet implemented");
+    if (typeof strings === "string") {
+      return [strings, values];
+    }
+
+    let sqlString = strings[0];
+    for (let i = 0; i < values.length; i++) {
+      sqlString += "?" + strings[i + 1];
+    }
+
+    return [sqlString, values];
   }
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
-    // SQLite-specific query creation - placeholder for now
-    // TODO: Implement SQLite query creation when sqlite.zig is ready
-    throw new Error("SQLite queries not yet implemented");
+    if (!this.db) {
+      throw new Error("SQLite database not initialized");
+    }
+
+    const statement = this.db.prepare(sqlString, values, flags);
+    return {
+      statement,
+      values,
+      flags,
+      run: (connection, query) => {
+        try {
+          const result = values?.length ? statement.all(...values) : statement.all();
+          query.resolve(result);
+        } catch (err) {
+          query.reject(err);
+        }
+      },
+    };
   }
 
   connect(onConnected: (err: Error | null, connection: any) => void, reserved: boolean = false): void {
-    // SQLite doesn't typically need connection pooling
-    if (this.connection) {
-      onConnected(null, this.connection);
+    // SQLite doesn't need connection pooling - return the single connection
+    if (this.db) {
+      onConnected(null, { connection: this.db, bindQuery: () => {}, unbindQuery: () => {} });
     } else {
-      onConnected(new Error("SQLite connection not initialized"), null);
+      onConnected(new Error("SQLite database not initialized"), null);
     }
   }
 
   release(connection: any, connectingEvent: boolean = false): void {
+    this.db?.close();
     // SQLite doesn't need to release connections back to a pool
   }
 
   async close(options?: { timeout?: number }): Promise<void> {
     // Close the SQLite database connection
-    if (this.connection) {
-      // TODO: Implement SQLite close
+    if (this.db) {
+      this.db.close();
+      this.db = null;
       this.connection = null;
     }
   }
@@ -535,7 +572,7 @@ class SQLiteAdapterImpl implements DatabaseAdapter {
   }
 
   isConnected(): boolean {
-    return !!this.connection;
+    return !!this.db;
   }
 }
 
@@ -932,7 +969,7 @@ class PooledPostgresConnection {
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
   }
-  bindQuery(query: Query, onClose: (err: Error) => void) {
+  bindQuery(query: Query<PostgresAdapter, any>, onClose: (err: Error) => void) {
     this.queries.add(onClose);
     // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
@@ -990,7 +1027,7 @@ class PooledPostgresConnection {
   }
 }
 
-class PostgresConnectionPool {
+class PostgresConnectionPool implements DatabaseAdapter {
   options: Bun.SQL.__internal.DefinedPostgresOptions;
 
   connections: Array<PooledPostgresConnection | null>;
@@ -1004,6 +1041,10 @@ class PostgresConnectionPool {
   onAllQueriesFinished: (() => void) | null = null;
 
   constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
+    this.init(options);
+  }
+
+  init(options: Bun.SQL.__internal.DefinedPostgresOptions): void {
     this.options = options;
     this.connections = new Array<PooledPostgresConnection | null>(options.max);
     this.readyConnections = new Set();
@@ -1366,6 +1407,34 @@ class PostgresConnectionPool {
       this.waitingQueue.push(onConnected);
       this.flushConcurrentQueries();
     }
+  }
+
+  normalizeQuery(strings: any, values: any): [string, any[]] {
+    return normalizeQuery(strings, values);
+  }
+
+  createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
+    if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
+      if (poolSize !== 1) {
+        const upperCaseSqlString = sqlString.toUpperCase().trim();
+        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
+          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+        }
+      }
+    }
+
+    return createQuery(
+      sqlString,
+      values,
+      new SQLResultArray(),
+      undefined,
+      !!(flags & SQLQueryFlags.bigint),
+      !!(flags & SQLQueryFlags.simple),
+    );
+  }
+
+  isConnected(): boolean {
+    return !this.closed && this.poolStarted;
   }
 }
 
@@ -1783,15 +1852,12 @@ class UnsupportedAdapterError extends Error {
   }
 }
 
-function createPool(options: Bun.SQL.__internal.DefinedOptions) {
+function createAdapter(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
-    case "postgres": {
-      return new PostgresConnectionPool(options);
-    }
-
-    case "sqlite": {
-      return new SQLiteConnectionPool(options);
-    }
+    case "postgres":
+      return new PostgresAdapter(options);
+    case "sqlite":
+      return new SQLiteAdapter(options);
 
     default: {
       options satisfies never;
@@ -1806,29 +1872,27 @@ const SQL: typeof Bun.SQL = function SQL(
 ): Bun.SQL {
   const resolvedOptions = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
 
-  switch (resolvedOptions.adapter) {
-    case "postgres":
-      break;
-    default: {
-      throw new UnsupportedAdapterError(resolvedOptions);
-    }
-  }
+  const adapter = createAdapter(resolvedOptions);
 
-  const pool = new PostgresConnectionPool(resolvedOptions);
-
-  function onQueryDisconnected(this: PooledPostgresConnection, err) {
+  function onQueryDisconnected(this: Query<typeof adapter, any>, err: Error | null) {
     // connection closed mid query this will not be called if the query finishes first
     const query = this;
     if (err) {
       return query.reject(err);
     }
+
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
   }
 
-  function onQueryConnected(handle, err, pooledConnection) {
+  function onQueryConnected(
+    this: Query<typeof adapter, any>,
+    handle: ReturnType<typeof adapter.createQueryHandle>,
+    err: Error | null,
+    pooledConnection: PooledPostgresConnection,
+  ) {
     const query = this;
     if (err) {
       // fail to aquire a connection from the pool
@@ -1866,6 +1930,7 @@ const SQL: typeof Bun.SQL = function SQL(
         resolvedOptions.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
         resolvedOptions.max,
         queryFromPoolHandler,
+        pool,
       );
     } catch (err) {
       return Promise.reject(err);
@@ -1878,7 +1943,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler);
+      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler, pool);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1913,6 +1978,7 @@ const SQL: typeof Bun.SQL = function SQL(
           : SQLQueryFlags.allowUnsafeTransaction,
         resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        pool,
       );
       transactionQueries.add(query);
       return query;
@@ -1935,6 +2001,7 @@ const SQL: typeof Bun.SQL = function SQL(
         flags,
         resolvedOptions.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        pool,
       );
       transactionQueries.add(query);
       return query;

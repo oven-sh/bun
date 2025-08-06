@@ -1,7 +1,9 @@
+console.log("[sql.ts] Module loading started");
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const { hideFromStack } = require("internal/shared");
 const defineProperties = Object.defineProperties;
+console.log("[sql.ts] Required internal/shared");
 
 const PublicArray = globalThis.Array;
 const PublicPromise = globalThis.Promise;
@@ -37,6 +39,9 @@ hideFromStack(notTaggedCallError);
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
+  public command!: string | null;
+  public count!: number | null;
+
   constructor() {
     super();
     // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
@@ -54,8 +59,16 @@ class SQLResultArray extends PublicArray {
 namespace SQLite {
   let lazy_bunSqliteModule: (typeof import("./sqlite.ts"))["default"];
   export function getBunSqliteModule() {
+    console.log("[getBunSqliteModule] Called, lazy_bunSqliteModule is:", lazy_bunSqliteModule);
     if (!lazy_bunSqliteModule) {
-      lazy_bunSqliteModule = require("./sqlite.ts");
+      console.log("[getBunSqliteModule] Loading sqlite module...");
+      try {
+        lazy_bunSqliteModule = require("./sqlite.ts");
+        console.log("[getBunSqliteModule] Successfully loaded sqlite module:", lazy_bunSqliteModule);
+      } catch (error) {
+        console.log("[getBunSqliteModule] Error loading sqlite module:", error);
+        throw error;
+      }
     }
     return lazy_bunSqliteModule;
   }
@@ -79,7 +92,17 @@ const {
   createQuery: createPostgresQuery,
   init: initPostgres,
 } = $zig("postgres.zig", "createBinding") as {
-  init: () => void;
+  init: (
+    onResolveQuery: (
+      query: Query<any>,
+      result: SQLResultArray,
+      commandTag: string,
+      count: number,
+      queries: any,
+      is_last: boolean,
+    ) => void,
+    onRejectQuery: (query: Query<any>, err: Error, queries: any) => void,
+  ) => void;
   createConnection: (
     hostname: string | undefined,
     port: number,
@@ -106,34 +129,6 @@ const {
     simple: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLQuery;
 };
-
-function normalizeSSLMode(value: string): Postgres.SSLMode {
-  if (!value) {
-    return Postgres.SSLMode.disable;
-  }
-
-  value = (value + "").toLowerCase();
-  switch (value) {
-    case "disable":
-      return Postgres.SSLMode.disable;
-    case "prefer":
-      return Postgres.SSLMode.prefer;
-    case "require":
-    case "required":
-      return Postgres.SSLMode.require;
-    case "verify-ca":
-    case "verify_ca":
-      return Postgres.SSLMode.verify_ca;
-    case "verify-full":
-    case "verify_full":
-      return Postgres.SSLMode.verify_full;
-    default: {
-      break;
-    }
-  }
-
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
-}
 
 enum SQLQueryFlags {
   none = 0,
@@ -280,9 +275,38 @@ interface DatabaseAdapter<Connection> {
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
   isConnected(): boolean;
+  get closed(): boolean;
 }
 
 namespace Postgres {
+  export function normalizeSSLMode(value: string): SSLMode {
+    if (!value) {
+      return SSLMode.disable;
+    }
+
+    value = (value + "").toLowerCase();
+    switch (value) {
+      case "disable":
+        return SSLMode.disable;
+      case "prefer":
+        return SSLMode.prefer;
+      case "require":
+      case "required":
+        return SSLMode.require;
+      case "verify-ca":
+      case "verify_ca":
+        return SSLMode.verify_ca;
+      case "verify-full":
+      case "verify_full":
+        return SSLMode.verify_full;
+      default: {
+        break;
+      }
+    }
+
+    throw $ERR_INVALID_ARG_VALUE("sslmode", value);
+  }
+
   export const enum SSLMode {
     disable = 0,
     prefer = 1,
@@ -471,7 +495,7 @@ namespace Postgres {
     return [query, binding_values];
   }
 
-  class PostgresConnectionPool {
+  export class PostgresConnectionPool {
     options: Bun.SQL.__internal.DefinedPostgresOptions;
 
     connections: Array<PooledPostgresConnection | null>;
@@ -848,14 +872,14 @@ namespace Postgres {
         this.flushConcurrentQueries();
       }
     }
-
-    isConnected(): boolean {
-      return !this.closed && this.poolStarted;
-    }
   }
 
   export class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection> {
     private pool: PostgresConnectionPool;
+
+    get closed() {
+      return this.pool.closed;
+    }
 
     constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
       this.pool = new PostgresConnectionPool(options);
@@ -906,7 +930,6 @@ namespace Postgres {
     }
 
     isConnected(): boolean {
-      if (!this.pool) return false;
       return this.pool.isConnected();
     }
 
@@ -932,10 +955,17 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
   private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
+  get closed() {
+    return this.db !== null;
+  }
+
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
+    console.log("[SQLiteAdapter] Constructor called with options:", options);
     this.options = options;
     const SQLiteModule = SQLite.getBunSqliteModule();
+    console.log("[SQLiteAdapter] Got SQLiteModule:", SQLiteModule);
     this.db = new SQLiteModule.Database(options.filename);
+    console.log("[SQLiteAdapter] Created database:", this.db);
   }
 
   normalizeQuery(strings: any, values: any): [string, any[]] {
@@ -958,8 +988,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       throw new Error("SQLite database not initialized");
     }
 
-    // Prepare the statement with empty params array and flags
-    const statement = this.db.prepare(sqlString, [], flags || 0);
+    // Prepare the statement - SQLite prepare doesn't accept flags in the same way
+    const statement = this.db.prepare(sqlString);
 
     return {
       statement,
@@ -971,8 +1001,30 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
           console.log("[SQLite] About to call statement.all with values:", values);
           const result = values?.length ? statement.all(...values) : statement.all();
           console.log("[SQLite] Got result:", result);
-          query.resolve(result);
-          console.log("[SQLite] Called query.resolve");
+
+          // Create SQLResultArray with command and count properties
+          const resultArray = new SQLResultArray();
+          if (Array.isArray(result)) {
+            resultArray.push(...result);
+          }
+
+          // Extract command from SQL query
+          const commandMatch = sqlString.trim().match(/^(\w+)/);
+          if (commandMatch) {
+            const cmd = commandMatch[1].toUpperCase();
+            resultArray.command = cmd;
+
+            // For data modification statements, get the count of affected rows
+            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+              // SQLite statement has a changes property on the result
+              resultArray.count = (statement as any).changes || 0;
+            } else {
+              resultArray.count = result?.length || 0;
+            }
+          }
+
+          query.resolve(resultArray);
+          console.log("[SQLite] Called query.resolve with command:", resultArray.command, "count:", resultArray.count);
         } catch (err) {
           console.log("[SQLite] Error in run:", err);
           query.reject(err);
@@ -1018,7 +1070,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 }
 
-class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise<T> {
+class Query<T = any> extends PublicPromise<T> {
   [_resolve]: (value: T) => void;
   [_reject]: (reason?: any) => void;
   [_handle];
@@ -1030,7 +1082,7 @@ class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise
   [_flags]: number;
   [_results]: any;
 
-  private adapter: Adapter;
+  private adapter: DatabaseAdapter<any>;
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
@@ -1049,14 +1101,15 @@ class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise
     values: any[],
     flags: number,
     poolSize: number,
-    handler: (query: Query<Adapter, T>, handle: ReturnType<Adapter["createQueryHandle"]>) => any,
-    adapter: Adapter,
+    handler: (query: Query<T>, handle) => any,
+    adapter: DatabaseAdapter<any>,
   ) {
     let resolve_: (value: T) => void, reject_: (reason?: any) => void;
     super((resolve, reject) => {
       resolve_ = resolve;
       reject_ = reject;
     });
+
     if (typeof strings === "string") {
       if (!(flags & SQLQueryFlags.unsafe)) {
         // identifier (cannot be executed in safe mode)
@@ -1064,6 +1117,7 @@ class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise
         strings = escapeIdentifier(strings);
       }
     }
+
     this[_resolve] = resolve_!;
     this[_reject] = reject_!;
     this[_handle] = null;
@@ -1078,7 +1132,7 @@ class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise
     this.adapter = adapter;
   }
 
-  private getQueryHandle(): ReturnType<Adapter["createQueryHandle"]> {
+  private getQueryHandle() {
     let handle = this[_handle];
     if (!handle) {
       try {
@@ -1220,7 +1274,7 @@ class Query<Adapter extends DatabaseAdapter<any>, T = any> extends PublicPromise
     return result;
   }
 
-  finally() {
+  finally(_callback: (value: T) => void) {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw notTaggedCallError();
     }
@@ -1311,7 +1365,7 @@ initPostgres(
   },
 );
 
-function onQueryFinish(onClose) {
+function onQueryFinish(onClose: (err: Error) => void) {
   this.queries.delete(onClose);
   this.pool.release(this);
 }
@@ -1331,7 +1385,7 @@ enum PooledConnectionFlags {
 }
 
 class PooledPostgresConnection {
-  pool: PostgresConnectionPool;
+  pool: Postgres.PostgresConnectionPool;
   connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
@@ -1395,7 +1449,7 @@ class PooledPostgresConnection {
 
     this.pool.release(this, true);
   }
-  constructor(connectionInfo, pool: PostgresConnectionPool) {
+  constructor(connectionInfo, pool: Postgres.PostgresConnectionPool) {
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
@@ -1408,12 +1462,13 @@ class PooledPostgresConnection {
       this.#onClose.bind(this),
     )) as $ZigGeneratedClasses.PostgresSQLConnection;
   }
+
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
   }
-  bindQuery(query: Query<PostgresAdapter, any>, onClose: (err: Error) => void) {
+
+  bindQuery<T>(query: Query<T>, onClose: (err: Error) => void) {
     this.queries.add(onClose);
-    // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
   }
 
@@ -1622,7 +1677,7 @@ function parseOptions(
     password: string,
     database: any,
     tls,
-    url: URL,
+    url: URL | undefined,
     query: string,
     idleTimeout: number | null,
     connectionTimeout: number | null,
@@ -1635,7 +1690,7 @@ function parseOptions(
 
   let prepare = true;
   const env = Bun.env || {};
-  var sslMode: SSLMode = SSLMode.disable;
+  var sslMode: Postgres.SSLMode = Postgres.SSLMode.disable;
 
   if (stringOrUrl === undefined || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
     let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
@@ -1644,7 +1699,7 @@ function parseOptions(
       urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
 
       if (urlString) {
-        sslMode = SSLMode.require;
+        sslMode = Postgres.SSLMode.require;
       }
     }
 
@@ -1663,7 +1718,7 @@ function parseOptions(
       }
     }
     if (options?.tls) {
-      sslMode = SSLMode.require;
+      sslMode = Postgres.SSLMode.require;
       tls = options.tls;
     }
   } else if (typeof stringOrUrl === "string") {
@@ -1682,7 +1737,7 @@ function parseOptions(
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
-        sslMode = normalizeSSLMode(queryObject[key]);
+        sslMode = Postgres.normalizeSSLMode(queryObject[key]);
       } else if (key.toLowerCase() === "path") {
         path = queryObject[key];
       } else {
@@ -1886,7 +1941,9 @@ const SQL: typeof Bun.SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
+  console.log("[SQL] Called with:", stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const resolvedOptions = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+  console.log("[SQL] Resolved options:", resolvedOptions);
 
   const adapter = createAdapter(resolvedOptions);
 
@@ -2895,6 +2952,7 @@ defineProperties(defaultSQLObject, {
   },
 });
 
+console.log("[sql.ts] Module export being created");
 export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,

@@ -871,7 +871,7 @@ pub const Value = union(Tag) {
             },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
-            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) }, // Return empty blob for HTMLBundle
+            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -889,7 +889,7 @@ pub const Value = union(Tag) {
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
-            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) }, // Return empty blob for HTMLBundle
+            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 

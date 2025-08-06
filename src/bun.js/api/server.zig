@@ -219,7 +219,7 @@ pub const AnyRoute = union(enum) {
 
                         return .{ .html = route };
                     } else {
-                        const route = entry.value_ptr.dupeRef();
+                        var route = HTMLBundle.Route.init(html_bundle_ptr);
 
                         if (response.init.headers) |headers| {
                             route.data.custom_headers = bun.http.Headers.from(headers, bun.default_allocator, .{}) catch bun.outOfMemory();

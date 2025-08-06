@@ -1,9 +1,7 @@
-console.log("[sql.ts] Module loading started");
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const { hideFromStack } = require("internal/shared");
 const defineProperties = Object.defineProperties;
-console.log("[sql.ts] Required internal/shared");
 
 const PublicArray = globalThis.Array;
 const PublicPromise = globalThis.Promise;
@@ -59,14 +57,10 @@ class SQLResultArray extends PublicArray {
 namespace SQLite {
   let lazy_bunSqliteModule: (typeof import("./sqlite.ts"))["default"];
   export function getBunSqliteModule() {
-    console.log("[getBunSqliteModule] Called, lazy_bunSqliteModule is:", lazy_bunSqliteModule);
     if (!lazy_bunSqliteModule) {
-      console.log("[getBunSqliteModule] Loading sqlite module...");
       try {
         lazy_bunSqliteModule = require("./sqlite.ts");
-        console.log("[getBunSqliteModule] Successfully loaded sqlite module:", lazy_bunSqliteModule);
       } catch (error) {
-        console.log("[getBunSqliteModule] Error loading sqlite module:", error);
         throw error;
       }
     }
@@ -960,12 +954,9 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
-    console.log("[SQLiteAdapter] Constructor called with options:", options);
     this.options = options;
     const SQLiteModule = SQLite.getBunSqliteModule();
-    console.log("[SQLiteAdapter] Got SQLiteModule:", SQLiteModule);
     this.db = new SQLiteModule.Database(options.filename);
-    console.log("[SQLiteAdapter] Created database:", this.db);
   }
 
   normalizeQuery(strings: any, values: any): [string, any[]] {
@@ -997,10 +988,33 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       flags,
       run: (connection, query) => {
         try {
-          // Execute the statement with the values
-          console.log("[SQLite] About to call statement.all with values:", values);
-          const result = values?.length ? statement.all(...values) : statement.all();
-          console.log("[SQLite] Got result:", result);
+          // Extract command from SQL query
+          const commandMatch = sqlString.trim().match(/^(\w+)/);
+          const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
+
+          let result;
+          let changes = 0;
+
+          // For data modification statements, use run() to get changes count
+          // For queries with RETURNING clause, still use all() to get results
+          if (
+            (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE" || cmd === "CREATE") &&
+            !sqlString.toUpperCase().includes("RETURNING")
+          ) {
+            // Use run() for data modification without RETURNING
+            const runResult = values?.length ? statement.run(...values) : statement.run();
+            changes = runResult?.changes || 0;
+            result = [];
+          } else {
+            // Use all() for SELECT or queries with RETURNING clause
+            result = values?.length ? statement.all(...values) : statement.all();
+            // For INSERT/UPDATE/DELETE with RETURNING, get changes from last run
+            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+              // We need to get changes another way for RETURNING queries
+              // In Bun's SQLite, we can check the database's changes property
+              changes = this.db.changes || 0;
+            }
+          }
 
           // Create SQLResultArray with command and count properties
           const resultArray = new SQLResultArray();
@@ -1008,25 +1022,17 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             resultArray.push(...result);
           }
 
-          // Extract command from SQL query
-          const commandMatch = sqlString.trim().match(/^(\w+)/);
-          if (commandMatch) {
-            const cmd = commandMatch[1].toUpperCase();
-            resultArray.command = cmd;
+          resultArray.command = cmd;
 
-            // For data modification statements, get the count of affected rows
-            if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
-              // SQLite statement has a changes property on the result
-              resultArray.count = (statement as any).changes || 0;
-            } else {
-              resultArray.count = result?.length || 0;
-            }
+          // Set count appropriately
+          if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
+            resultArray.count = changes;
+          } else {
+            resultArray.count = result?.length || 0;
           }
 
           query.resolve(resultArray);
-          console.log("[SQLite] Called query.resolve with command:", resultArray.command, "count:", resultArray.count);
         } catch (err) {
-          console.log("[SQLite] Error in run:", err);
           query.reject(err);
         }
       },
@@ -1941,9 +1947,7 @@ const SQL: typeof Bun.SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
-  console.log("[SQL] Called with:", stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const resolvedOptions = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-  console.log("[SQL] Resolved options:", resolvedOptions);
 
   const adapter = createAdapter(resolvedOptions);
 
@@ -2952,7 +2956,6 @@ defineProperties(defaultSQLObject, {
   },
 });
 
-console.log("[sql.ts] Module export being created");
 export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,

@@ -714,7 +714,12 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
+#if __has_feature(address_sanitizer)
+        // mimalloc is disabled in ASAN builds
+        free(ptr);
+#else
         mi_free(ptr);
+#endif
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -725,7 +730,12 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
+#if __has_feature(address_sanitizer)
+        // mimalloc is disabled in ASAN builds
+        free(ptr);
+#else
         mi_free(ptr);
+#endif
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

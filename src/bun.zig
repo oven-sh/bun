@@ -8,7 +8,7 @@ const bun = @This();
 
 pub const Environment = @import("./env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = !Environment.enable_asan;
 
 pub const default_allocator: std.mem.Allocator = if (use_mimalloc)
     allocators.c_allocator

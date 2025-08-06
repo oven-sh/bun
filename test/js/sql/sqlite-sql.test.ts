@@ -20,7 +20,7 @@ describe("Bun.sql SQLite support", () => {
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql).toBeDefined();
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(dbPath);
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -33,7 +33,7 @@ describe("Bun.sql SQLite support", () => {
       });
 
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(":memory:");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;

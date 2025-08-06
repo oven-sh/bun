@@ -953,7 +953,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
     if (poolSize !== undefined && poolSize !== 1) {
-      throw new Error("SQLite does not support pooling, poolSize must be 1");
+      throw new Error("SQLite does not support pooling, poolSize must be 1, or not defined.");
     }
 
     if (!this.db) {

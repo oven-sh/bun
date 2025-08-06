@@ -99,6 +99,12 @@ const server = Bun.serve({
       }
     }),
     "/home": new Response(html),
+    "/haha": new Response(html, {status: 400}),
+    "/index.html": html,
+    "/tea": {
+      GET: new Response(html, {status: 418}),
+      POST: () => new Response("Teapot!!!"),
+    },
     "/hello": new Response(hello),
     "/*": new Response(html, {
       status: 404,
@@ -147,6 +153,62 @@ console.log(server.port);
     expect(text).toContain("Test Page");
     expect(text).toContain("Hello from HTMLBundle");
     expect(text).toMatch(/src="[^"]+\.js"/);
+  }
+
+  {
+    const response = await fetch(`http://localhost:${port}/index.html`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Custom")).not.toBe("custom-value");
+    expect(response.headers.get("X-Test")).not.toBe("test-value");
+    expect(response.headers.get("Content-Type")).toBe("text/html;charset=utf-8");
+
+    const text = await response.text();
+    expect(text).toContain("Test Page");
+    expect(text).toContain("Hello from HTMLBundle");
+    expect(text).toMatch(/src="[^"]+\.js"/);
+  }
+
+  {
+    const response = await fetch(`http://localhost:${port}/haha`);
+    expect(response.status).toBe(400);
+    expect(response.headers.get("X-Custom")).not.toBe("custom-value");
+    expect(response.headers.get("X-Test")).not.toBe("test-value");
+    expect(response.headers.get("Content-Type")).toBe("text/html;charset=utf-8");
+
+    const text = await response.text();
+    expect(text).toContain("Test Page");
+    expect(text).toContain("Hello from HTMLBundle");
+    expect(text).toMatch(/src="[^"]+\.js"/);
+  }
+
+  {
+    const response = await fetch(`http://localhost:${port}/tea`, {
+      method: "GET",
+    });
+
+    expect(response.status).toBe(418);
+    expect(response.headers.get("X-Custom")).not.toBe("custom-value");
+    expect(response.headers.get("X-Test")).not.toBe("test-value");
+    expect(response.headers.get("Content-Type")).toBe("text/html;charset=utf-8");
+
+    const text = await response.text();
+    expect(text).toContain("Test Page");
+    expect(text).toContain("Hello from HTMLBundle");
+    expect(text).toMatch(/src="[^"]+\.js"/);
+  }
+
+  {
+    const response = await fetch(`http://localhost:${port}/tea`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Custom")).not.toBe("custom-value");
+    expect(response.headers.get("X-Test")).not.toBe("test-value");
+    expect(response.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
+
+    const text = await response.text();
+    expect(text).toBe("Teapot!!!");
   }
 
   {

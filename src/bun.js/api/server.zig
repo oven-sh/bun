@@ -203,22 +203,9 @@ pub const AnyRoute = union(enum) {
                 const bytes = response.body.value.InternalBlob.bytes.items;
                 if (bytes.len == @sizeOf(*HTMLBundle)) {
                     const html_bundle_ptr = @as(**HTMLBundle, @ptrCast(@alignCast(bytes.ptr))).*;
-                    const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle_ptr) catch bun.outOfMemory();
-                    if (!entry.found_existing) {
-                        entry.value_ptr.* = HTMLBundle.Route.init(html_bundle_ptr);
-                        const route = entry.value_ptr.*;
+                    const needs_custom = response.init.headers != null or response.statusCode() != 200;
 
-                        if (response.init.headers) |headers| {
-                            route.data.custom_headers = bun.http.Headers.from(headers, bun.default_allocator, .{}) catch bun.outOfMemory();
-                        }
-
-                        const status = response.statusCode();
-                        if (status != 200) {
-                            route.data.custom_status = status;
-                        }
-
-                        return .{ .html = route };
-                    } else {
+                    if (needs_custom) {
                         var route = HTMLBundle.Route.init(html_bundle_ptr);
 
                         if (response.init.headers) |headers| {
@@ -231,6 +218,15 @@ pub const AnyRoute = union(enum) {
                         }
 
                         return .{ .html = route };
+                    } else {
+                        const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle_ptr) catch bun.outOfMemory();
+
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = HTMLBundle.Route.init(html_bundle_ptr);
+                            return .{ .html = entry.value_ptr.* };
+                        } else {
+                            return .{ .html = entry.value_ptr.dupeRef() };
+                        }
                     }
                 }
             }

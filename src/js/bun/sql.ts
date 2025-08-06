@@ -998,7 +998,17 @@ namespace Postgres {
   }
 }
 
-class SQLiteConnection {}
+class SQLiteConnection {
+  private db: any;
+
+  constructor(db?: any) {
+    this.db = db;
+  }
+
+  getDatabase() {
+    return this.db;
+  }
+}
 
 class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
@@ -1014,15 +1024,110 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
 
   normalizeQuery(strings: any, values: any): [string, any[]] {
     if (typeof strings === "string") {
-      return [strings, values];
+      return [strings, values || []];
     }
 
-    let sqlString = strings[0];
-    for (let i = 0; i < values.length; i++) {
-      sqlString += "?" + strings[i + 1];
+    const str_len = strings.length;
+    if (str_len === 0) {
+      return ["", []];
     }
 
-    return [sqlString, values];
+    let binding_values: any[] = [];
+    let query = "";
+
+    for (let i = 0; i < str_len; i++) {
+      const string = strings[i];
+      if (typeof string === "string") {
+        query += string;
+        if (values.length > i) {
+          const value = values[i];
+          if (value instanceof SQLHelper) {
+            // Handle SQLHelper for bulk inserts, updates, etc.
+            const command = detectCommand(query);
+            const { columns, value: items } = value as SQLHelper;
+            const columnCount = columns.length;
+
+            if (command === SQLCommand.insert) {
+              // INSERT INTO table (col1, col2) VALUES (?, ?), (?, ?)
+              query += "(";
+              for (let j = 0; j < columnCount; j++) {
+                query += escapeIdentifier(columns[j]);
+                if (j < columnCount - 1) {
+                  query += ", ";
+                }
+              }
+              query += ") VALUES";
+
+              if (Array.isArray(items)) {
+                const itemsCount = items.length;
+                for (let j = 0; j < itemsCount; j++) {
+                  query += "(";
+                  const item = items[j];
+                  for (let k = 0; k < columnCount; k++) {
+                    const column = columns[k];
+                    const columnValue = item[column];
+                    query += "?";
+                    if (k < columnCount - 1) {
+                      query += ", ";
+                    }
+                    binding_values.push(columnValue === undefined ? null : columnValue);
+                  }
+                  query += ")";
+                  if (j < itemsCount - 1) {
+                    query += ",";
+                  }
+                }
+              } else {
+                // Single object insert
+                query += "(";
+                for (let k = 0; k < columnCount; k++) {
+                  const column = columns[k];
+                  const columnValue = items[column];
+                  query += "?";
+                  if (k < columnCount - 1) {
+                    query += ", ";
+                  }
+                  binding_values.push(columnValue === undefined ? null : columnValue);
+                }
+                query += ")";
+              }
+            } else if (command === SQLCommand.whereIn) {
+              // WHERE column IN (?, ?, ?)
+              query += "(";
+              const items_array = Array.isArray(items) ? items : [items];
+              for (let j = 0; j < items_array.length; j++) {
+                query += "?";
+                if (j < items_array.length - 1) {
+                  query += ", ";
+                }
+                binding_values.push(items_array[j]);
+              }
+              query += ")";
+            } else if (command === SQLCommand.updateSet) {
+              // UPDATE table SET col1 = ?, col2 = ?
+              for (let j = 0; j < columnCount; j++) {
+                query += escapeIdentifier(columns[j]) + " = ?";
+                if (j < columnCount - 1) {
+                  query += ", ";
+                }
+                const columnValue = items[columns[j]];
+                binding_values.push(columnValue === undefined ? null : columnValue);
+              }
+            } else {
+              // For other commands or unrecognized patterns, just add placeholders
+              query += "?";
+              binding_values.push(value);
+            }
+          } else {
+            // Regular value
+            query += "?";
+            binding_values.push(value);
+          }
+        }
+      }
+    }
+
+    return [query, binding_values];
   }
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
@@ -1030,32 +1135,107 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     if (!this.db) {
       throw new Error("SQLite database not initialized");
     }
-    // Prepare the statement - SQLite prepare doesn't accept flags in the same way
-    const statement = this.db.prepare(sqlString);
+
+    // For simple queries (no parameters), check if we might have multiple statements
+    // by looking for semicolons that aren't in strings
+    const isSimple = (flags & SQLQueryFlags.simple) !== 0;
+    const hasNoParams = !values || values.length === 0;
+    let useMultiStatementMode = false;
+
+    if (isSimple && hasNoParams) {
+      // Simple heuristic: check if there are multiple statements
+      // This is not perfect but should handle most cases
+      const trimmed = sqlString.trim();
+      // Remove string literals and comments to check for real semicolons
+      const withoutStrings = trimmed.replace(/'[^']*'/g, "").replace(/"[^"]*"/g, "");
+      const withoutComments = withoutStrings.replace(/--[^\n]*/g, "").replace(/\/\*[^*]*\*\//g, "");
+
+      // Count semicolons that aren't at the end
+      const semicolons = withoutComments.match(/;/g);
+      if (semicolons && semicolons.length > 1) {
+        // Likely multiple statements
+        useMultiStatementMode = true;
+      } else if (semicolons && semicolons.length === 1 && !withoutComments.trim().endsWith(";")) {
+        // Semicolon in the middle, likely multiple statements
+        useMultiStatementMode = true;
+      }
+    }
+
+    // Prepare the statement normally if not multi-statement
+    let statement = null;
+    if (!useMultiStatementMode) {
+      statement = this.db.prepare(sqlString, values || [], 0);
+    }
 
     return {
       statement,
       values,
       flags,
-      run: (_connection, query) => {
+      useMultiStatementMode,
+      run: (connection, query) => {
         try {
+          // Get the actual database from SQLiteConnection if needed
+          const db = connection?.getDatabase ? connection.getDatabase() : this.db;
+          if (!db) {
+            throw new Error("SQLite database not initialized");
+          }
+
+          // If it's a multi-statement query, execute all statements
+          if (useMultiStatementMode) {
+            // Execute all statements using run/exec
+            db.run(sqlString);
+
+            // Try to get result from the last SELECT if any
+            // Look for the last complete SELECT statement
+            const selectMatches = sqlString.match(/SELECT[^;]*;?\s*$/i);
+            if (selectMatches) {
+              const lastSelect = selectMatches[0].replace(/;\s*$/, "").trim();
+              if (lastSelect) {
+                // Execute the last SELECT to get results
+                const lastStatement = db.prepare(lastSelect, [], 0);
+                const result = lastStatement.all();
+                const resultArray = new SQLResultArray();
+                if (Array.isArray(result)) {
+                  resultArray.push(...result);
+                }
+                resultArray.command = "SELECT";
+                resultArray.count = result?.length || 0;
+                query.resolve(resultArray);
+                return;
+              }
+            }
+
+            // No SELECT at the end, return empty result with changes info
+            const resultArray = new SQLResultArray();
+            resultArray.command = null;
+            resultArray.count = 0;
+            query.resolve(resultArray);
+            return;
+          }
+
           const commandMatch = sqlString.trim().match(/^(\w+)/);
           const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
 
           let result: unknown[];
           let changes = 0;
 
+          // For transaction control statements (BEGIN, COMMIT, ROLLBACK, SAVEPOINT, etc.)
+          if (cmd === "BEGIN" || cmd === "COMMIT" || cmd === "ROLLBACK" || cmd === "SAVEPOINT" || cmd === "RELEASE") {
+            statement.run(...(values || []));
+            result = [];
+            changes = 0;
+          }
           // For data modification statements without RETURNING, use run() to get changes count
-          if (
+          else if (
             (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") &&
             !sqlString.toUpperCase().includes("RETURNING")
           ) {
-            const runResult = statement.run(...values);
+            const runResult = statement.run(...(values || []));
             changes = runResult.changes;
             result = [];
           } else {
             // Use all() for SELECT or queries with RETURNING clause
-            result = statement.all(...values);
+            result = statement.all(...(values || []));
 
             // For INSERT/UPDATE/DELETE with RETURNING, count the returned rows
             if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
@@ -1090,7 +1270,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   connect(onConnected: OnConnected<SQLiteConnection>, _reserved: boolean = false): void {
     // SQLite doesn't need connection pooling - return the single connection
     if (this.db) {
-      onConnected(null, new SQLiteConnection());
+      const connection = new SQLiteConnection(this.db);
+      onConnected(null, connection);
     } else {
       onConnected(new Error("SQLite database not initialized"), null);
     }
@@ -1736,6 +1917,22 @@ function parseDefinitelySqliteUrl(value: string | URL): string | null {
   return null;
 }
 
+function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
+  options: Bun.SQL.Options,
+  adapter: A,
+): options is Extract<Bun.SQL.Options, { adapter?: A }> {
+  return options.adapter === adapter;
+}
+
+function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
+  options: Bun.SQL.Options,
+  adapter: A,
+): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
+  if (!isOptionsOfAdapter(options, adapter)) {
+    throw new Error(`Expected options to be of adapter ${adapter}, but got ${options.adapter}`);
+  }
+}
+
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -1772,21 +1969,23 @@ function parseOptions(
     throw new UnsupportedAdapterError(options);
   }
 
+  assertIsOptionsOfAdapter(options, "postgres");
+
   // TODO: Better typing for these vars
   let hostname: any,
-    port: number,
-    username: string,
-    password: string,
+    port: number | string | undefined,
+    username: string | null | undefined,
+    password: string | (() => Bun.MaybePromise<string>) | undefined | null,
     database: any,
     tls,
     url: URL | undefined,
     query: string,
-    idleTimeout: number | null,
-    connectionTimeout: number | null,
-    maxLifetime: number | null,
-    onconnect: (client: Bun.SQL) => void,
-    onclose: (client: Bun.SQL) => void,
-    max: number | null,
+    idleTimeout: number | null | undefined,
+    connectionTimeout: number | null | undefined,
+    maxLifetime: number | null | undefined,
+    onconnect: ((client: Bun.SQL) => void) | undefined,
+    onclose: ((client: Bun.SQL) => void) | undefined,
+    max: number | null | undefined,
     bigint: any,
     path: string | string[];
 
@@ -1856,7 +2055,7 @@ function parseOptions(
 
   port ||= Number(options.port || env.PGPORT || 5432);
 
-  path ||= options.path || "";
+  path ||= (options as { path?: string }).path || "";
   // add /.s.PGSQL.${port} if it doesn't exist
   if (path && path?.indexOf("/.s.PGSQL.") === -1) {
     path = `${path}/.s.PGSQL.${port}`;
@@ -2146,10 +2345,41 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
-    handle.run(pooledConnection.connection, query);
+    // For SQLite, pooledConnection is the connection itself
+    // For PostgreSQL, pooledConnection.connection is the actual connection
+    const actualConnection = pooledConnection.connection || pooledConnection;
+    handle.run(actualConnection, query);
   }
-  function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
+  function queryFromTransaction(strings, values, pooledConnection, transactionQueries, state?) {
     try {
+      // Check if this is a write operation in a read-only transaction
+      if (state?.readOnly) {
+        let sqlString = "";
+        if (typeof strings === "string") {
+          sqlString = strings;
+        } else if (strings && strings.raw) {
+          // Template literal - reconstruct the query
+          sqlString = strings[0] || "";
+        }
+
+        if (sqlString) {
+          const upperString = sqlString.trim().toUpperCase();
+          const firstWord = upperString.split(/\s+/)[0];
+          if (
+            firstWord === "INSERT" ||
+            firstWord === "UPDATE" ||
+            firstWord === "DELETE" ||
+            firstWord === "CREATE" ||
+            firstWord === "DROP" ||
+            firstWord === "ALTER" ||
+            firstWord === "REPLACE" ||
+            firstWord === "TRUNCATE"
+          ) {
+            return Promise.reject(new Error("attempt to write a readonly database"));
+          }
+        }
+      }
+
       const query = new Query(
         strings,
         values,
@@ -2237,7 +2467,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
 
       // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries, state);
     }
 
     reserved_sql.unsafe = (string: string, args: unknown[] = []) => {
@@ -2442,6 +2672,7 @@ const SQL: typeof Bun.SQL = function SQL(
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
       queries: new Set(),
+      readOnly: options?.toLowerCase() === "read" || options?.toLowerCase() === "readonly",
     };
 
     let savepoints = 0;
@@ -2483,12 +2714,34 @@ const SQL: typeof Bun.SQL = function SQL(
       BEFORE_COMMIT_OR_ROLLBACK_COMMAND = adapter.getBeforeCommitOrRollbackCommand();
     }
     const onClose = onTransactionDisconnected.bind(state);
-    pooledConnection.onClose(onClose);
+    // SQLite doesn't have onClose method, only PostgreSQL does
+    if (pooledConnection.onClose) {
+      pooledConnection.onClose(onClose);
+    }
 
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
+
+      // Check if this is a write operation in a read-only transaction
+      if (state.readOnly) {
+        const upperString = string.trim().toUpperCase();
+        const firstWord = upperString.split(/\s+/)[0];
+        if (
+          firstWord === "INSERT" ||
+          firstWord === "UPDATE" ||
+          firstWord === "DELETE" ||
+          firstWord === "CREATE" ||
+          firstWord === "DROP" ||
+          firstWord === "ALTER" ||
+          firstWord === "REPLACE" ||
+          firstWord === "TRUNCATE"
+        ) {
+          return Promise.reject(new Error("attempt to write a readonly database"));
+        }
+      }
+
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
     function transaction_sql(strings, ...values) {
@@ -2507,9 +2760,26 @@ const SQL: typeof Bun.SQL = function SQL(
         return new SQLHelper([strings], values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries, state);
     }
     transaction_sql.unsafe = (string, args = []) => {
+      // Check if this is a write operation in a read-only transaction
+      if (state.readOnly) {
+        const upperString = string.trim().toUpperCase();
+        const firstWord = upperString.split(/\s+/)[0];
+        if (
+          firstWord === "INSERT" ||
+          firstWord === "UPDATE" ||
+          firstWord === "DELETE" ||
+          firstWord === "CREATE" ||
+          firstWord === "DROP" ||
+          firstWord === "ALTER" ||
+          firstWord === "REPLACE" ||
+          firstWord === "TRUNCATE"
+        ) {
+          return Promise.reject(new Error("attempt to write a readonly database"));
+        }
+      }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
     transaction_sql.file = async (path: string, args = []) => {

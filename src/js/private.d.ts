@@ -10,11 +10,21 @@ type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => v
  */
 declare function $bundleError(...message: any[]): never;
 
+declare module "url" {
+  interface URLSearchParams {
+    toJSON(): Record<string, string>;
+  }
+}
+
+declare const a: string;
+
 declare module "bun" {
   namespace SQL.__internal {
     type Define<T, K extends keyof T = never> = T & {
       [Key in K | "adapter"]: NonNullable<T[Key]>;
     } & {};
+
+    type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
 
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path

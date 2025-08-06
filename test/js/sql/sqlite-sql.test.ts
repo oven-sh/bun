@@ -387,10 +387,9 @@ describe("Bun.sql SQLite support", () => {
       const result = await sql.begin("read", async tx => {
         const accounts = await tx`SELECT * FROM accounts`;
 
-        // This should fail in a read-only transaction
         try {
           await tx`UPDATE accounts SET balance = 0`;
-          expect(true).toBe(false); // Should not reach here
+          expect().fail("Update should have failed"); // Should not reach here
         } catch (err) {
           expect(err).toBeInstanceOf(Error);
           expect((err as Error).message).toContain("readonly");

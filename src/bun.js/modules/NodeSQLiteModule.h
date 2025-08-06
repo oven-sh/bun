@@ -18,6 +18,17 @@ DEFINE_NATIVE_MODULE(NodeSQLite)
 {
     INIT_NATIVE_MODULE(4);
 
+    // Get the ZigGlobalObject to access LazyClassStructures
+    auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    
+    // DatabaseSync constructor using LazyClassStructure
+    auto* databaseSyncConstructor = zigGlobalObject->m_JSNodeSQLiteDatabaseSyncClassStructure.constructorInitializedOnMainThread(zigGlobalObject);
+    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s), databaseSyncConstructor);
+    
+    // StatementSync constructor using LazyClassStructure
+    auto* statementSyncConstructor = zigGlobalObject->m_JSNodeSQLiteStatementSyncClassStructure.constructorInitializedOnMainThread(zigGlobalObject);
+    put(JSC::Identifier::fromString(vm, "StatementSync"_s), statementSyncConstructor);
+
     // backup function
     auto* backupFunction = JSC::JSFunction::create(vm, globalObject, 0, "backup"_s, jsFunctionNodeSQLiteBackup, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteBackup);
     put(JSC::Identifier::fromString(vm, "backup"_s), backupFunction);
@@ -33,15 +44,6 @@ DEFINE_NATIVE_MODULE(NodeSQLite)
     constants->putDirect(vm, JSC::Identifier::fromString(vm, "SQLITE_CHANGESET_CONSTRAINT"_s), JSC::jsNumber(4));
     constants->putDirect(vm, JSC::Identifier::fromString(vm, "SQLITE_CHANGESET_FOREIGN_KEY"_s), JSC::jsNumber(5));
     put(JSC::Identifier::fromString(vm, "constants"_s), constants);
-
-    // Use wrapper function with alternative constructor creation approach
-    auto* databaseSyncConstructor = JSC::JSFunction::create(vm, globalObject, 1, "DatabaseSync"_s, jsFunctionNodeSQLiteDatabaseSyncWrapper, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteDatabaseSyncWrapper);
-    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s), databaseSyncConstructor);
-    
-    // Note: StatementSync constructor is typically not exposed directly in Node.js
-    // but for compatibility we include it with an error message
-    auto* statementSyncConstructor = JSC::JSFunction::create(vm, globalObject, 0, "StatementSync"_s, jsFunctionNodeSQLiteStatementSyncWrapper, ImplementationVisibility::Public, NoIntrinsic, jsFunctionNodeSQLiteStatementSyncWrapper);
-    put(JSC::Identifier::fromString(vm, "StatementSync"_s), statementSyncConstructor);
 }
 
 } // namespace Zig

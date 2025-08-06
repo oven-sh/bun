@@ -11,7 +11,7 @@ namespace Bun {
 class JSNodeSQLiteDatabaseSync final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSNodeSQLiteDatabaseSync* create(JSC::VM& vm, JSC::Structure* structure);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);

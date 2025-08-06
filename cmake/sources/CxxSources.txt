@@ -192,6 +192,8 @@ src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSync.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSyncConstructor.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSyncPrototype.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSync.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 src/bun.js/bindings/Strong.cpp

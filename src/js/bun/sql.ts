@@ -998,46 +998,16 @@ namespace Postgres {
   }
 }
 
-class SQLiteConnection {
-  private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
-  public connection: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
-  public queries: Set<any> = new Set();
-  private closeCallbacks: Set<(err?: any) => void> = new Set();
-
-  constructor(db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>) {
-    this.db = db;
-    this.connection = db; // Expose the db as connection for compatibility
-  }
-
-  onClose(callback: (err?: any) => void) {
-    this.closeCallbacks.add(callback);
-  }
-
-  flush() {
-    throw new Error("SQLite doesn't support flush() - queries are executed synchronously");
-  }
-
-  release() {
-    // SQLite doesn't have connection pooling, so "release" just cleans up callbacks
-    // The database connection remains open and shared
-    for (const callback of this.closeCallbacks) {
-      callback();
-    }
-    this.closeCallbacks.clear();
-    this.queries.clear();
-  }
-}
+class SQLiteConnection {}
 
 class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
-  private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
   get closed() {
     return this.db === null;
   }
 
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
-    this.options = options;
     const SQLiteModule = SQLite.getBunSqliteModule();
     this.db = new SQLiteModule.Database(options.filename);
   }
@@ -1057,11 +1027,9 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
     // SQLite doesn't support pooling, so we ignore the poolSize parameter
-
     if (!this.db) {
       throw new Error("SQLite database not initialized");
     }
-
     // Prepare the statement - SQLite prepare doesn't accept flags in the same way
     const statement = this.db.prepare(sqlString);
 
@@ -1069,7 +1037,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
       statement,
       values,
       flags,
-      run: (connection, query) => {
+      run: (_connection, query) => {
         try {
           const commandMatch = sqlString.trim().match(/^(\w+)/);
           const cmd = commandMatch ? commandMatch[1].toUpperCase() : "";
@@ -1122,14 +1090,14 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   connect(onConnected: OnConnected<SQLiteConnection>, _reserved: boolean = false): void {
     // SQLite doesn't need connection pooling - return the single connection
     if (this.db) {
-      onConnected(null, new SQLiteConnection(this.db));
+      onConnected(null, new SQLiteConnection());
     } else {
       onConnected(new Error("SQLite database not initialized"), null);
     }
   }
 
-  release(connection: SQLiteConnection, _connectingEvent: boolean = false): void {
-    connection.release();
+  release(_connection: SQLiteConnection, _connectingEvent: boolean = false): void {
+    // SQLite has nothing it needs to clean up
   }
 
   async close(_options?: { timeout?: number }): Promise<void> {

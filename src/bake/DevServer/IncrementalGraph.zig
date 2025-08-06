@@ -511,7 +511,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .js => |js| {
                             // Insert new source map or patch existing empty source map.
                             const source_map: PackedMap.RefOrEmpty = brk: {
-                                if (js.source_map) |source_map| {
+                                if (js.source_map) |*source_map| {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
                                         flags.source_map_state = .ref;
@@ -624,14 +624,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 }
                             }
                         } else {
-                            if (content.js.source_map) |source_map| {
-                                const packed_map = PackedMap.newNonEmpty(source_map.chunk, source_map.escaped_source);
+                            if (content.js.source_map) |source_map| append_empty: {
+                                const packed_map = PackedMap.newNonEmpty(source_map.chunk, source_map.escaped_source orelse break :append_empty);
                                 try g.current_chunk_source_maps.append(dev.allocator, .{
                                     .ref = packed_map,
                                 });
-                            } else {
-                                try g.current_chunk_source_maps.append(dev.allocator, PackedMap.RefOrEmpty.blank_empty);
+                                return;
                             }
+                            try g.current_chunk_source_maps.append(dev.allocator, PackedMap.RefOrEmpty.blank_empty);
                         }
                     }
                 },
@@ -1779,15 +1779,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
         };
 
         /// Uses `arena` as a temporary allocator, fills in all fields of `out` except ref_count
-        pub fn takeSourceMap(g: *@This(), arena: std.mem.Allocator, gpa: Allocator, out: *SourceMapStore.Entry) bun.OOM!void {
+        pub fn takeSourceMap(g: *@This(), _: std.mem.Allocator, gpa: Allocator, out: *SourceMapStore.Entry) bun.OOM!void {
             const paths = g.bundled_files.keys();
 
             switch (side) {
                 .client => {
                     const files = g.bundled_files.values();
-
-                    const buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(buf);
 
                     const buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(buf);

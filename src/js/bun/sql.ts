@@ -952,7 +952,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
-    if (poolSize !== 1) {
+    if (poolSize !== undefined && poolSize !== 1) {
       throw new Error("SQLite does not support pooling, poolSize must be 1");
     }
 
@@ -1900,7 +1900,7 @@ const SQL: typeof Bun.SQL = function SQL(
     this: Query<typeof adapter, any>,
     handle: ReturnType<typeof adapter.createQueryHandle>,
     err: Error | null,
-    pooledConnection: PooledPostgresConnection,
+    connection: any,
   ) {
     const query = this;
     if (err) {
@@ -1909,13 +1909,20 @@ const SQL: typeof Bun.SQL = function SQL(
     }
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
-      adapter.release(pooledConnection); // release the connection back to the pool
+      adapter.release(connection); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
-    // bind close event to the query (will unbind and auto release the connection when the query is finished)
-    pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
-    handle.run(pooledConnection.connection, query);
+    // For PostgreSQL, we need to bind the query to track disconnection
+    // For SQLite, we just run the query directly
+    if (resolvedOptions.adapter === "postgres") {
+      const pooledConnection = connection as PooledPostgresConnection;
+      pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
+      handle.run(pooledConnection.connection, query);
+    } else {
+      // SQLite - run the query directly
+      handle.run(connection, query);
+    }
   }
 
   function queryFromPoolHandler(query, handle, err) {
@@ -1928,7 +1935,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
-    pool.connect(onQueryConnected.bind(query, handle));
+    adapter.connect(onQueryConnected.bind(query, handle));
   }
 
   function queryFromPool(strings, values) {

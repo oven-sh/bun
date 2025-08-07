@@ -55,86 +55,74 @@ function component(mod: any, params: Record<string, string> | null) {
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, and extra route metadata.
 export async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
-  try {
-    // The framework generally has two rendering modes.
-    // - Standard browser navigation
-    // - Client-side navigation
-    //
-    // For React, this means calling `renderToReadableStream` to generate the RSC
-    // payload, but only generate HTML for the former of these rendering modes.
-    // This is signaled by `client.tsx` via the `Accept` header.
-    const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
+  // The framework generally has two rendering modes.
+  // - Standard browser navigation
+  // - Client-side navigation
+  //
+  // For React, this means calling `renderToReadableStream` to generate the RSC
+  // payload, but only generate HTML for the former of these rendering modes.
+  // This is signaled by `client.tsx` via the `Accept` header.
+  const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-    // Do not render <link> tags if the request is skipping SSR.
-    const page = getPage(meta, skipSSR ? [] : meta.styles);
+  // Do not render <link> tags if the request is skipping SSR.
+  const page = getPage(meta, skipSSR ? [] : meta.styles);
 
-    // TODO: write a lightweight version of PassThrough
-    const rscPayload = new PassThrough();
+  // TODO: write a lightweight version of PassThrough
+  const rscPayload = new PassThrough();
 
-    if (skipSSR) {
-      // "client.tsx" reads the start of the response to determine the
-      // CSS files to load. The styles are loaded before the new page
-      // is presented, to avoid a flash of unstyled content.
-      const int = Buffer.allocUnsafe(4);
-      const str = meta.styles.join("\n");
-      int.writeUInt32LE(str.length, 0);
-      rscPayload.write(int);
-      rscPayload.write(str);
-    }
-
-    // This renders Server Components to a ReadableStream "RSC Payload"
-    let pipe;
-    const signal: MiniAbortSignal = { aborted: false, abort: null! };
-    ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
-      onError: err => {
-        if (signal.aborted) return;
-        console.error(err);
-        // Mark as aborted and call the abort function
-        signal.aborted = true;
-        signal.abort();
-        // For PassThrough streams, we need to properly close them
-        // when an error occurs during React rendering
-        process.nextTick(() => {
-          // Emit error event first so listeners can handle it
-          if (!rscPayload.destroyed) {
-            rscPayload.emit("error", err);
-            rscPayload.destroy(); // Then destroy it
-          }
-        });
-      },
-      filterStackFrame: () => false,
-    }));
-    pipe(rscPayload);
-
-    rscPayload.on("error", err => {
-      if (signal.aborted) return;
-      console.error(err);
-    });
-
-    if (skipSSR) {
-      return new Response(rscPayload as any, {
-        status: 200,
-        headers: { "Content-Type": "text/x-component" },
-      });
-    }
-
-    // The RSC payload is rendered into HTML
-    return new Response(renderToHtml(rscPayload, meta.modules, signal), {
-      headers: {
-        "Content-Type": "text/html; charset=utf8",
-      },
-    });
-  } catch (error) {
-    console.error("Error during React server rendering:", error);
-    // Return a proper error response instead of hanging
-    return new Response(
-      `<html><body><h1>500 - Server Error</h1><pre>${error instanceof Error ? error.message : "Unknown error"}</pre></body></html>`,
-      {
-        status: 500,
-        headers: { "Content-Type": "text/html; charset=utf8" },
-      },
-    );
+  if (skipSSR) {
+    // "client.tsx" reads the start of the response to determine the
+    // CSS files to load. The styles are loaded before the new page
+    // is presented, to avoid a flash of unstyled content.
+    const int = Buffer.allocUnsafe(4);
+    const str = meta.styles.join("\n");
+    int.writeUInt32LE(str.length, 0);
+    rscPayload.write(int);
+    rscPayload.write(str);
   }
+
+  // This renders Server Components to a ReadableStream "RSC Payload"
+  let pipe;
+  const signal: MiniAbortSignal = { aborted: false, abort: null! };
+  ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
+    onError: err => {
+      if (signal.aborted) return;
+
+      // Mark as aborted and call the abort function
+      signal.aborted = true;
+      signal.abort();
+      // For PassThrough streams, we need to properly close them
+      // when an error occurs during React rendering
+      // process.nextTick(() => {
+      //   // Emit error event first so listeners can handle it
+      //   if (!rscPayload.destroyed) {
+      //     rscPayload.emit("error", err);
+      //     rscPayload.destroy(); // Then destroy it
+      //   }
+      // });
+    },
+    filterStackFrame: () => false,
+  }));
+  pipe(rscPayload);
+
+  rscPayload.on("error", err => {
+    if (signal.aborted) return;
+    console.error(err);
+  });
+
+  if (skipSSR) {
+    return new Response(rscPayload as any, {
+      status: 200,
+      headers: { "Content-Type": "text/x-component" },
+    });
+  }
+
+  // The RSC payload is rendered into HTML
+  return new Response(renderToHtml(rscPayload, meta.modules, signal), {
+    headers: {
+      "Content-Type": "text/html; charset=utf8",
+    },
+  });
 }
 
 // When a production build is performed, pre-rendering is invoked here. If this

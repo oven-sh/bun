@@ -162,7 +162,6 @@ class RscInjectionStream extends EventEmitter {
       this.rscHasEnded = true;
     });
     rscPayload.on("error", err => {
-      console.error("RSC payload stream error in RscInjectionStream:", err);
       this.rscHasEnded = true;
       // Close the controller
       controller.close();

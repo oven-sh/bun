@@ -800,7 +800,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     this.transpiler.setAllocator(allocator);
-    var log = logger.Log.init(arena.backingAllocator());
+    var log = logger.Log.init(bun.default_allocator);
     defer log.deinit();
     this.transpiler.setLog(&log);
     defer {
@@ -947,16 +947,16 @@ pub fn transformSync(
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
-    const prev_bundler = this.transpiler;
+    const prev_allocator = this.transpiler.allocator;
     this.transpiler.setAllocator(allocator);
+    defer this.transpiler.setAllocator(prev_allocator);
     this.transpiler.macro_context = null;
-    var log = logger.Log.init(arena.backingAllocator());
+    var log = logger.Log.init(bun.default_allocator);
     log.level = this.transpiler_options.log.level;
+    const old_log = this.transpiler.log;
     this.transpiler.setLog(&log);
+    defer this.transpiler.setLog(old_log);
 
-    defer {
-        this.transpiler = prev_bundler;
-    }
     const parse_result = getParseResult(
         this,
         allocator,
@@ -975,26 +975,21 @@ pub fn transformSync(
         return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
     }
 
-    var buffer_writer = this.buffer_writer orelse brk: {
-        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator());
-
-        writer.buffer.growIfNeeded(code.len) catch unreachable;
+    var buffer_writer = if (this.buffer_writer) |*w| w else brk: {
+        var writer = JSPrinter.BufferWriter.init(bun.default_allocator);
+        writer.buffer.growIfNeeded(code.len) catch return error.OutOfMemory;
         writer.buffer.list.expandToCapacity();
-        break :brk writer;
+        this.buffer_writer = writer;
+        break :brk &this.buffer_writer.?;
     };
 
-    defer {
-        this.buffer_writer = buffer_writer;
-    }
-
     buffer_writer.reset();
-    var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+    var printer = JSPrinter.BufferPrinter.init(buffer_writer.*);
+    defer buffer_writer.* = printer.ctx;
     _ = this.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
         return globalThis.throwError(err, "Failed to print code");
     };
 
-    // TODO: benchmark if pooling this way is faster or moving is faster
-    buffer_writer = printer.ctx;
     var out = jsc.ZigString.init(buffer_writer.written);
     out.setOutputEncoding();
 
@@ -1082,7 +1077,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     defer ast_scope.exit();
 
     this.transpiler.setAllocator(allocator);
-    var log = logger.Log.init(arena.backingAllocator());
+    var log = logger.Log.init(bun.default_allocator);
     defer log.deinit();
     this.transpiler.setLog(&log);
     defer {

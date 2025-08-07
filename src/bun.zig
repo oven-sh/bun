@@ -3366,7 +3366,13 @@ pub fn OrdinalT(comptime Int: type) type {
             return @intFromEnum(ord) + 1;
         }
 
-        pub fn add(ord: @This(), inc: Int) @This() {
+        /// Add two ordinal numbers together. Both are converted to zero-based before addition.
+        pub fn add(ord: @This(), b: @This()) @This() {
+            return fromZeroBased(ord.zeroBased() + b.zeroBased());
+        }
+
+        /// Add a scalar value to an ordinal number
+        pub fn addScalar(ord: @This(), inc: Int) @This() {
             return fromZeroBased(ord.zeroBased() + inc);
         }
 

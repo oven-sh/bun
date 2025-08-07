@@ -1,17 +1,9 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const picohttp = JSC.WebCore.picohttp;
-const S3Error = @import("./error.zig").S3Error;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const SignResult = S3Credentials.SignResult;
-const strings = bun.strings;
 const log = bun.Output.scoped(.S3, true);
 pub const S3HttpDownloadStreamingTask = struct {
     pub const new = bun.TrivialNew(@This());
 
     http: bun.http.AsyncHTTP,
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
     sign_result: SignResult,
     headers: bun.http.Headers,
     callback_context: *anyopaque,
@@ -39,7 +31,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     },
     state: State.AtomicType = State.AtomicType.init(@bitCast(State{})),
 
-    concurrent_task: JSC.ConcurrentTask = .{},
+    concurrent_task: jsc.ConcurrentTask = .{},
     range: ?[]const u8,
     proxy_url: []const u8,
 
@@ -240,3 +232,13 @@ pub const S3HttpDownloadStreamingTask = struct {
         }
     }
 };
+
+const std = @import("std");
+const S3Error = @import("./error.zig").S3Error;
+
+const S3Credentials = @import("./credentials.zig").S3Credentials;
+const SignResult = S3Credentials.SignResult;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;

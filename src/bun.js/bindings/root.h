@@ -74,6 +74,9 @@
 #include <wtf/Platform.h>
 
 #ifdef __cplusplus
+#if OS(LINUX)
+#include <limits>
+#endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
@@ -94,5 +97,9 @@
 #define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
+
+// can be nothrow | zero_is_throw | check_slow
+#define ZIG_EXPORT(...)
+#define ZIG_NONNULL
 
 #endif

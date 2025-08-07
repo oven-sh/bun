@@ -25,12 +25,14 @@ public:
     virtual ~InspectorLifecycleAgent();
 
     // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    virtual void didCreateFrontendAndBackend() final;
     virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
 
     // LifecycleReporterBackendDispatcherHandler
     virtual Protocol::ErrorStringOr<void> enable() final;
     virtual Protocol::ErrorStringOr<void> disable() final;
+
+    virtual CommandResultOf<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */> getModuleGraph() final;
 
     // Public API
     void reportReload();

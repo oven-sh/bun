@@ -1,8 +1,8 @@
 /*
-  Dummy plugin which counts the occurences of the word "foo" in the source code,
+  Dummy plugin which counts the occurrences of the word "foo" in the source code,
   replacing it with "boo".
 
-  It stores the number of occurences in the External struct.
+  It stores the number of occurrences in the External struct.
 */
 #include <atomic>
 #include <bun-native-bundler-plugin-api/bundler_plugin.h>

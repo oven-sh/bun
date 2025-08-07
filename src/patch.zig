@@ -1,11 +1,3 @@
-const Output = bun.Output;
-const Global = bun.Global;
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Allocator = std.mem.Allocator;
-const List = std.ArrayListUnmanaged;
-
 const WHITESPACE: []const u8 = " \t\n\r";
 
 // TODO: calculate this for different systems
@@ -44,7 +36,7 @@ pub const PatchFile = struct {
         pathbuf: bun.PathBuffer = undefined,
         patch_dir_abs_path: ?[:0]const u8 = null,
 
-        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) JSC.Maybe([:0]const u8) {
+        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) bun.sys.Maybe([:0]const u8) {
             if (state.patch_dir_abs_path) |p| return .{ .result = p };
             return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
                 .result => |p| {
@@ -217,7 +209,7 @@ pub const PatchFile = struct {
         arena: *bun.ArenaAllocator,
         patch_dir: bun.FileDescriptor,
         state: *ApplyState,
-    ) JSC.Maybe(void) {
+    ) bun.sys.Maybe(void) {
         const file_path: [:0]const u8 = arena.allocator().dupeZ(u8, patch.path) catch bun.outOfMemory();
 
         // Need to get the mode of the original file
@@ -336,7 +328,7 @@ pub const PatchFile = struct {
             };
         }
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 };
 
@@ -1076,9 +1068,9 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
-    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn makeDiff(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
@@ -1112,7 +1104,7 @@ pub const TestingAPIs = struct {
         };
     }
     const ApplyArgs = struct {
-        patchfile_txt: JSC.ZigString.Slice,
+        patchfile_txt: jsc.ZigString.Slice,
         patchfile: PatchFile,
         dirfd: bun.FileDescriptor,
 
@@ -1125,7 +1117,7 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn apply(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
@@ -1133,15 +1125,15 @@ pub const TestingAPIs = struct {
         defer args.deinit();
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         }
 
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn parse(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
@@ -1159,35 +1151,35 @@ pub const TestingAPIs = struct {
         defer patchfile.deinit(bun.default_allocator);
 
         const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
-        const outstr = bun.String.fromUTF8(str);
+        const outstr = bun.String.borrowUTF8(str);
         return outstr.toJS(globalThis);
     }
 
-    pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
+    pub fn parseApplyArgs(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.jsc.Node.Maybe(ApplyArgs, jsc.JSValue) {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
-            return .{ .err = .undefined };
+            return .initErr(.js_undefined);
         };
 
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.undefined);
+            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.js_undefined);
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
 
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
-                    globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
-                    return .{ .err = .undefined };
+                    globalThis.throwValue(e.withPath(path).toJS(globalThis)) catch {};
+                    return .initErr(.js_undefined);
                 },
                 .result => |fd| fd,
             };
         } else bun.FileDescriptor.cwd();
 
-        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.undefined);
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.js_undefined);
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
@@ -1199,7 +1191,7 @@ pub const TestingAPIs = struct {
 
             patchfile_src.deinit();
             globalThis.throwError(e, "failed to parse patchfile") catch {};
-            return .{ .err = .undefined };
+            return .initErr(.js_undefined);
         };
 
         return .{
@@ -1217,7 +1209,7 @@ pub fn spawnOpts(
     new_folder: []const u8,
     cwd: [:0]const u8,
     git: [:0]const u8,
-    loop: *JSC.AnyEventLoop,
+    loop: *jsc.AnyEventLoop,
 ) bun.spawn.sync.Options {
     const argv: []const []const u8 = brk: {
         const ARGV = &[_][:0]const u8{
@@ -1273,7 +1265,7 @@ pub fn spawnOpts(
     };
 }
 
-pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
     var stdout = std.ArrayList(u8).init(bun.default_allocator);
     var stderr = std.ArrayList(u8).init(bun.default_allocator);
 
@@ -1341,7 +1333,7 @@ pub fn gitDiffInternal(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,
-) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
     const paths = gitDiffPreprocessPaths(allocator, old_folder_, new_folder_, false);
     const old_folder = paths[0];
     const new_folder = paths[1];
@@ -1509,7 +1501,7 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
     }
 }
 
-/// We need to remove occurences of "a/" and "b/" and "$old_folder/" and
+/// We need to remove occurrences of "a/" and "b/" and "$old_folder/" and
 /// "$new_folder/" but we don't want to remove them from the actual patch
 /// content (maybe someone had a/$old_folder/foo.txt in the changed files).
 ///
@@ -1542,3 +1534,11 @@ fn shouldSkipLine(line: []const u8) bool {
             // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
             (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }
+
+const bun = @import("bun");
+const Output = bun.Output;
+const jsc = bun.jsc;
+
+const std = @import("std");
+const List = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

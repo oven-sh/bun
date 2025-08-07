@@ -1,4 +1,4 @@
-import cryptoBrowserify from "crypto-browserify";
+import * as cryptoBrowserify from "crypto-browserify";
 
 export const prng = cryptoBrowserify.prng;
 export const pseudoRandomBytes = cryptoBrowserify.pseudoRandomBytes;
@@ -73,3 +73,4 @@ export function getCurves() {
 }
 
 export const webcrypto = crypto;
+export default crypto;

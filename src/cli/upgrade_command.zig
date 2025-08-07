@@ -1,44 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const std = @import("std");
-const Progress = bun.Progress;
-
-const lex = bun.js_lexer;
-const logger = bun.logger;
-
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
-
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-const JSON = bun.JSON;
-const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Lock = bun.Mutex;
-const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
-
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
@@ -222,9 +181,9 @@ pub const UpgradeCommand = struct {
 
         var log = logger.Log.init(allocator);
         defer if (comptime silent) log.deinit();
-        var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
+        const source = &logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
@@ -351,8 +310,8 @@ pub const UpgradeCommand = struct {
     const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
 
     const manual_upgrade_command = switch (Environment.os) {
-        .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
-        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        .linux, .mac => "curl -fsSL https://bun.com/install | bash",
+        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -399,7 +358,7 @@ pub const UpgradeCommand = struct {
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
@@ -642,7 +601,7 @@ pub const UpgradeCommand = struct {
                         .stdin = .inherit,
 
                         .windows = if (Environment.isWindows) .{
-                            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
                         },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
@@ -902,7 +861,7 @@ pub const UpgradeCommand = struct {
                     \\
                     \\What's new in Bun v{s}:
                     \\
-                    \\    <cyan>https://bun.sh/blog/release-notes/{s}<r>
+                    \\    <cyan>https://bun.com/blog/release-notes/{s}<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -934,31 +893,31 @@ pub const UpgradeCommand = struct {
 };
 
 pub const upgrade_js_bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
-    const ZigString = JSC.ZigString;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
+    const ZigString = jsc.ZigString;
 
     var tempdir_fd: ?bun.FileDescriptor = null;
 
-    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 3);
         const open = ZigString.static("openTempDirWithoutSharingDelete");
-        obj.put(global, open, JSC.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        obj.put(global, open, jsc.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
         const close = ZigString.static("closeTempDirHandle");
-        obj.put(global, close, JSC.createCallback(global, close, 1, jsCloseTempDirHandle));
+        obj.put(global, close, jsc.createCallback(global, close, 1, jsCloseTempDirHandle));
         return obj;
     }
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+        if (comptime !Environment.isWindows) return .js_undefined;
         const w = std.os.windows;
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
         const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
-            .err => return .undefined,
+            .err => return .js_undefined,
             .result => |norm| norm,
         };
 
@@ -1002,17 +961,17 @@ pub const upgrade_js_bindings = struct {
             else => {},
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+    pub fn jsCloseTempDirHandle(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+        if (comptime !Environment.isWindows) return .js_undefined;
 
         if (tempdir_fd) |fd| {
             fd.close();
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 };
 
@@ -1020,3 +979,30 @@ pub fn @"export"() void {
     _ = &upgrade_js_bindings;
     Version.@"export"();
 }
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const fs = @import("../fs.zig");
+const linker = @import("../linker.zig");
+const std = @import("std");
+const Archive = @import("../libarchive/libarchive.zig").Archive;
+const Command = @import("../cli.zig").Command;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

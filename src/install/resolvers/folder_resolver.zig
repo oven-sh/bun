@@ -1,23 +1,3 @@
-const std = @import("std");
-const PackageID = @import("../install.zig").PackageID;
-const Lockfile = @import("../install.zig").Lockfile;
-const initializeStore = @import("../install.zig").initializeStore;
-const json_parser = bun.JSON;
-const PackageManager = @import("../install.zig").PackageManager;
-const Npm = @import("../npm.zig");
-const logger = bun.logger;
-const FileSystem = @import("../../fs.zig").FileSystem;
-const JSAst = bun.JSAst;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const Features = @import("../install.zig").Features;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const strings = bun.strings;
-const Resolution = @import("../resolution.zig").Resolution;
-const String = bun.Semver.String;
-const Semver = bun.Semver;
-const bun = @import("bun");
-const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
     err: anyerror,
@@ -191,7 +171,7 @@ pub const FolderResolution = union(Tag) {
                 manager,
                 manager.allocator,
                 manager.log,
-                json.source,
+                &json.source,
                 json.root,
                 ResolverType,
                 resolver,
@@ -201,7 +181,7 @@ pub const FolderResolution = union(Tag) {
             const tracer = bun.perf.trace("FolderResolver.readPackageJSONFromDisk.folder");
             defer tracer.end();
 
-            const source = brk: {
+            const source = &brk: {
                 var file = bun.sys.File.from(try bun.sys.openatA(
                     bun.FD.cwd(),
                     abs,
@@ -347,3 +327,26 @@ pub const FolderResolution = union(Tag) {
         return FolderResolution{ .new_package_id = package.meta.id };
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("../dependency.zig");
+const Npm = @import("../npm.zig");
+const std = @import("std");
+const FileSystem = @import("../../fs.zig").FileSystem;
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+const Resolution = @import("../resolution.zig").Resolution;
+
+const Features = @import("../install.zig").Features;
+const Lockfile = @import("../install.zig").Lockfile;
+const PackageID = @import("../install.zig").PackageID;
+const PackageManager = @import("../install.zig").PackageManager;
+
+const bun = @import("bun");
+const JSAst = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const String = bun.Semver.String;

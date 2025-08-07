@@ -38,7 +38,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalOb
     JSKeyObject* thisObject = jsDynamicCast<JSKeyObject*>(callFrame->thisValue());
     if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "KeyObject"_s, "equals"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     JSValue otherKeyObjectValue = callFrame->argument(0);

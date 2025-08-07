@@ -91,7 +91,7 @@ devTest("html file is watched", {
 
 `files` holds the initial state, and the callback runs with the server running. `dev.fetch()` runs HTTP requests, while `dev.client()` opens a browser instance to the code.
 
-Functions `dev.write` and `dev.patch` and `dev.delete` mutate the filesystem. Do not use `node:fs` APIs, as the dev server ones are hooked to wait for hot-reload, and all connected clients to recieve changes.
+Functions `dev.write` and `dev.patch` and `dev.delete` mutate the filesystem. Do not use `node:fs` APIs, as the dev server ones are hooked to wait for hot-reload, and all connected clients to receive changes.
 
 When a change performs a hard-reload, that must be explicitly annotated with `expectReload`. This tells `client-fixture.mjs` that the test is meant to reload the page once; All other hard reloads automatically fail the test.
 

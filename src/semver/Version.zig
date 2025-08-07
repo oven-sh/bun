@@ -985,26 +985,17 @@ pub const Version = extern struct {
     }
 };
 
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
+const string = []const u8;
 
-const JSC = bun.JSC;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const Lockfile = bun.install.Lockfile;
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const assert = bun.assert;
+const strings = bun.strings;
+
 const ExternalString = bun.Semver.ExternalString;
+const Query = bun.Semver.Query;
 const SlicedString = bun.Semver.SlicedString;
 const String = bun.Semver.String;
-
-const Query = bun.Semver.Query;
-const assert = bun.assert;

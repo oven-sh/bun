@@ -1,25 +1,3 @@
-const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const Global = bun.Global;
-const json_parser = bun.JSON;
-const logger = bun.logger;
-const Output = bun.Output;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const DependencyID = Install.DependencyID;
-const PackageManager = Install.PackageManager;
-const Integrity = @import("./integrity.zig").Integrity;
-const Npm = @import("./npm.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Semver = bun.Semver;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const Path = @import("../resolver/resolve_path.zig");
-const Environment = bun.Environment;
-const w = std.os.windows;
-const OOM = bun.OOM;
-
 const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
@@ -509,7 +487,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         };
     }
 
-    if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX")) {
+    if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX)) {
         // create an index storing each version of a package installed
         if (strings.indexOfChar(basename, '/') == null) create_index: {
             const dest_name = switch (this.resolution.tag) {
@@ -556,3 +534,24 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         },
     };
 }
+
+const string = []const u8;
+
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const FileSystem = @import("../fs.zig").FileSystem;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+
+const Install = @import("./install.zig");
+const DependencyID = Install.DependencyID;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;

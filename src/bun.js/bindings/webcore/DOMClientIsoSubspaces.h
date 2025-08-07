@@ -10,7 +10,7 @@ using namespace JSC;
 
 class DOMClientIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMClientIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
 
 public:
     DOMClientIsoSubspaces() = default;
@@ -35,7 +35,11 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSpecialSandbox;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSourceTextModule;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSyntheticModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSExtensions;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
@@ -64,10 +68,12 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -941,5 +947,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;
 };
 } // namespace WebCore

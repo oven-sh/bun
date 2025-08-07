@@ -40,7 +40,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    if (UNLIKELY(returnedException)) {
+    if (returnedException) [[unlikely]] {
         // This should be impossible because it returns a promise.
         return JSC::JSPromise::rejectedPromise(global, returnedException->value());
     }

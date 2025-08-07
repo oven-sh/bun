@@ -44,10 +44,12 @@
       "src/bun.js/bindings/webcrypto/*/*.cpp",
       "src/bun.js/bindings/node/*.cpp",
       "src/bun.js/bindings/node/crypto/*.cpp",
+      "src/bun.js/bindings/node/http/*.cpp",
       "src/bun.js/bindings/v8/*.cpp",
       "src/bun.js/bindings/v8/shim/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
+      "src/vm/*.cpp",
       "packages/bun-usockets/src/crypto/*.cpp"
     ]
   },
@@ -59,7 +61,9 @@
       "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
       "src/bun.js/bindings/uv-posix-polyfills.c",
-      "src/bun.js/bindings/uv-posix-stubs.c"
+      "src/bun.js/bindings/uv-posix-stubs.c",
+      "src/*.c",
+      "src/bun.js/bindings/node/http/llhttp/*.c"
     ]
   }
 ]

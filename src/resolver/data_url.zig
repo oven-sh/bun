@@ -1,16 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
     /// possible errors for decode and encode
@@ -234,3 +221,12 @@ pub const DataURL = struct {
         return true;
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const strings = bun.strings;

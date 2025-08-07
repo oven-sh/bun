@@ -1,45 +1,5 @@
 // This file is the old linker, used by Bun.Transpiler.
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const FileDescriptorType = bun.FileDescriptor;
 
-const Ref = @import("./ast/base.zig").Ref;
-
-const std = @import("std");
-const lex = bun.js_lexer;
-const logger = bun.logger;
-const Options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-
-const Fs = @import("fs.zig");
-const Api = @import("api/schema.zig").Api;
-const Resolver = @import("./resolver/resolver.zig");
-const sync = @import("sync.zig");
-const _import_record = @import("./import_record.zig");
-const ImportRecord = _import_record.ImportRecord;
-const ImportKind = _import_record.ImportKind;
-const allocators = @import("./allocators.zig");
-const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const _transpiler = bun.transpiler;
-const Transpiler = _transpiler.Transpiler;
-const ResolveQueue = _transpiler.ResolveQueue;
-const ResolverType = Resolver.Resolver;
-const ESModule = @import("./resolver/package_json.zig").ESModule;
-const Runtime = @import("./runtime.zig").Runtime;
-const URL = @import("url.zig").URL;
-const JSC = bun.JSC;
-const PluginRunner = bun.transpiler.PluginRunner;
 pub const CSSResolveError = error{ResolveMessage};
 
 pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
@@ -186,7 +146,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -245,11 +205,11 @@ pub const Linker = struct {
                                 linker.log,
                                 import_record.range.loc,
                                 if (is_bun)
-                                    JSC.JSGlobalObject.BunPluginTarget.bun
+                                    jsc.JSGlobalObject.BunPluginTarget.bun
                                 else if (linker.options.target == .browser)
-                                    JSC.JSGlobalObject.BunPluginTarget.browser
+                                    jsc.JSGlobalObject.BunPluginTarget.browser
                                 else
-                                    JSC.JSGlobalObject.BunPluginTarget.node,
+                                    jsc.JSGlobalObject.BunPluginTarget.node,
                             )) |path| {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
@@ -459,3 +419,29 @@ pub const Linker = struct {
         return !get_or_put_entry.found_existing;
     }
 };
+
+const string = []const u8;
+
+const Fs = @import("./fs.zig");
+const Options = @import("./options.zig");
+const std = @import("std");
+const URL = @import("./url.zig").URL;
+
+const _import_record = @import("./import_record.zig");
+const ImportRecord = _import_record.ImportRecord;
+
+const Resolver = @import("./resolver/resolver.zig");
+const ResolverType = Resolver.Resolver;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptorType = bun.FileDescriptor;
+const allocators = bun.allocators;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const _transpiler = bun.transpiler;
+const PluginRunner = bun.transpiler.PluginRunner;
+const ResolveQueue = _transpiler.ResolveQueue;
+const Transpiler = _transpiler.Transpiler;

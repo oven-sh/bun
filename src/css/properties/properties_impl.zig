@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const CustomPropertyName = css.css_properties.CustomPropertyName;
@@ -9,7 +5,6 @@ const CustomPropertyName = css.css_properties.CustomPropertyName;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
-const Error = css.Error;
 
 const PropertyId = css.PropertyId;
 const Property = css.Property;
@@ -110,3 +105,5 @@ pub const property_mixin = struct {
         }
     }
 };
+
+const bun = @import("bun");

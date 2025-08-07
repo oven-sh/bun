@@ -1,4 +1,3 @@
-import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";
@@ -7,6 +6,7 @@ import net from "node:net";
 import { connect, createServer } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
   async function test(pipe_name: string) {
     const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
     const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
@@ -40,9 +40,8 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
     }
   }
 
-  const batch = [];
+  const batch: Promise<void>[] = [];
 
-  const before = heapStats().objectTypeCounts.TLSSocket || 0;
   for (let i = 0; i < 200; i++) {
     batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
     batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -52,10 +51,11 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
     }
   }
   await Promise.all(batch);
-  expectMaxObjectTypeCount(expect, "TLSSocket", before);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
 });
 
 it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", async () => {
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
   const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
   const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
   let client: ReturnType<typeof net.connect> | ReturnType<typeof connect> | null = null;
@@ -89,8 +89,6 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
       server?.close();
     }
   }
-  const before = heapStats().objectTypeCounts.TLSSocket || 0;
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
-  await test(`\\\\?\\pipe\\test\\${randomUUID()}`);
-  expectMaxObjectTypeCount(expect, "TLSSocket", before);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });

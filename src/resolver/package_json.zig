@@ -1,42 +1,11 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const Api = @import("../api/schema.zig").Api;
-const std = @import("std");
-const options = @import("../options.zig");
-const cache = @import("../cache.zig");
-const logger = bun.logger;
-const js_ast = bun.JSAst;
-
-const fs = @import("../fs.zig");
-const resolver = @import("./resolver.zig");
-const js_lexer = bun.js_lexer;
-const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
-const MainFieldMap = bun.StringMap;
 pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = bun.StringArrayHashMap(string);
-const Semver = bun.Semver;
-const Dependency = @import("../install/dependency.zig");
-const String = Semver.String;
-const Version = Semver.Version;
-const Install = @import("../install/install.zig");
-const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
-const Architecture = @import("../install/npm.zig").Architecture;
-const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -100,7 +69,7 @@ pub const PackageJSON = struct {
 
     side_effects: SideEffects = .unspecified,
 
-    // Present if the "browser" field is present. This field is intended to be
+    // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
     // functionality. That way you don't have to rewrite the code for those 3rd-
@@ -201,7 +170,7 @@ pub const PackageJSON = struct {
             values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
             i += 1;
         }
-        framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
+        framework.override_modules = api.StringMap{ .keys = keys, .values = values };
     }
 
     fn loadDefineExpression(
@@ -620,7 +589,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = json_source.path.text;
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, &json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -701,8 +670,11 @@ pub const PackageJSON = struct {
             }
         }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.target == .browser) {
+        // Read the "browser" property
+        // Since we cache parsed package.json in-memory, we have to read the "browser" field
+        // including when `target` is not `browser` since the developer may later
+        // run a build for the browser in the same process (like the DevServer).
+        {
             // We both want the ability to have the option of CJS vs. ESM and the
             // option of having node vs. browser. The way to do this is to use the
             // object literal form of the "browser" field like this:
@@ -746,7 +718,9 @@ pub const PackageJSON = struct {
                                     }
                                 },
                                 else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
+                                    if (!json_source.path.isNodeModule())
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
                                 },
                             }
                         }
@@ -2049,3 +2023,33 @@ fn findInvalidSegment(path_: string) ?string {
 
     return null;
 }
+
+const string = []const u8;
+
+const Dependency = @import("../install/dependency.zig");
+const Install = @import("../install/install.zig");
+const cache = @import("../cache.zig");
+const fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("./resolve_path.zig");
+const resolver = @import("./resolver.zig");
+const std = @import("std");
+
+const Architecture = @import("../install/npm.zig").Architecture;
+const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MainFieldMap = bun.StringMap;
+const Output = bun.Output;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const strings = bun.strings;
+const api = bun.schema.api;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+const Version = Semver.Version;

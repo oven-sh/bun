@@ -67,4 +67,3 @@ pub fn WeakPtr(comptime T: type, data_field: []const u8) type {
 }
 
 pub const bun = @import("bun");
-const std = @import("std");

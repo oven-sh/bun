@@ -108,7 +108,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstruc
     auto* castedThis = jsCast<JSEventTargetDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "EventTarget"_s);
     auto object = EventTarget::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -201,7 +201,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventTargetPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEventTarget::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -213,7 +213,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
@@ -233,13 +233,15 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
             warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
         }
         auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
+        RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
         JSObject& target = *castedThis;
         errorInstance->putDirect(vm, vm.propertyNames->target, &target);
         RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTFMove(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
-        RETURN_IF_EXCEPTION(throwScope, {});
+        if (throwScope.exception()) [[unlikely]]
+            throwScope.clearException();
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -259,7 +261,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_removeEventList
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
@@ -288,7 +290,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_dispatchEventBo
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto event = convert<IDLInterface<Event>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "event"_s, "EventTarget"_s, "dispatchEvent"_s, "Event"_s); });
@@ -346,7 +348,7 @@ bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto* jsEventTarget = jsCast<JSEventTarget*>(handle.slot()->asCell());
     if (jsEventTarget->wrapped().isFiringEventListeners()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
         return true;
     }

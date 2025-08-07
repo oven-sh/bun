@@ -1,7 +1,7 @@
 /**
  * This is the public API for `bind.ts` files
  * It is aliased as `import {} from 'bindgen'`
- * @see https://bun.sh/docs/project/bindgen
+ * @see https://bun.com/docs/project/bindgen
  */
 
 import {

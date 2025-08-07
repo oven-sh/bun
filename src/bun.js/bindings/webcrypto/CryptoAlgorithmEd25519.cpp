@@ -41,7 +41,7 @@ static ExceptionOr<Vector<uint8_t>> signEd25519(const Vector<uint8_t>& sk, size_
 {
     uint8_t newSignature[64];
 
-    ED25519_sign(newSignature, data.data(), data.size(), sk.data());
+    ED25519_sign(newSignature, data.begin(), data.size(), sk.begin());
     return Vector<uint8_t>(std::span { newSignature, 64 });
 }
 
@@ -55,7 +55,7 @@ static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLen
     if (signature.size() != keyLengthInBytes * 2)
         return false;
 
-    return ED25519_verify(data.data(), data.size(), signature.data(), key.data()) == 1;
+    return ED25519_verify(data.begin(), data.size(), signature.begin(), key.begin()) == 1;
 }
 
 ExceptionOr<bool> CryptoAlgorithmEd25519::platformVerify(const CryptoKeyOKP& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)

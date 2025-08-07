@@ -52,6 +52,8 @@ In your root-level `package.json`, add a `catalog` or `catalogs` field within th
 }
 ```
 
+If you put `catalog` or `catalogs` at the top level of the `package.json` file, that will work too.
+
 ### 2. Reference Catalog Versions in Workspace Packages
 
 In your workspace packages, use the `catalog:` protocol to reference versions:
@@ -287,3 +289,10 @@ Bun's lockfile tracks catalog versions, making it easy to ensure consistent inst
 - Catalogs are only available within workspaces; they cannot be used outside the monorepo
 
 Bun's catalog system provides a powerful yet simple way to maintain consistency across your monorepo without introducing additional complexity to your workflow.
+
+## Publishing
+
+When you run `bun publish` or `bun pm pack`, Bun automatically replaces
+`catalog:` references in your `package.json` with the resolved version numbers.
+The published package includes regular semver strings and no longer depends on
+your catalog definitions.

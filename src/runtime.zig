@@ -1,22 +1,3 @@
-const options = @import("./options.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Fs = @import("./fs.zig");
-const Schema = @import("./api/schema.zig");
-const Ref = @import("ast/base.zig").Ref;
-const JSAst = bun.JSAst;
-
-const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
     const FallbackMessage = struct {
         pub var has_printed = false;
@@ -34,13 +15,13 @@ pub const Fallback = struct {
     pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
     const Base64FallbackMessage = struct {
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
         pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bb = std.ArrayList(u8).init(this.allocator);
             defer bb.deinit();
             const bb_writer = bb.writer();
-            const Encoder = Schema.Writer(@TypeOf(bb_writer));
+            const Encoder = schema.Writer(@TypeOf(bb_writer));
             var encoder = Encoder.init(bb_writer);
             this.msg.encode(&encoder) catch {};
 
@@ -104,7 +85,7 @@ pub const Fallback = struct {
 
     pub fn render(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         preload: string,
         entry_point: string,
         comptime WriterType: type,
@@ -126,7 +107,7 @@ pub const Fallback = struct {
 
     pub fn renderBackend(
         allocator: std.mem.Allocator,
-        msg: *const Api.FallbackMessageContainer,
+        msg: *const api.FallbackMessageContainer,
         comptime WriterType: type,
         writer: WriterType,
     ) !void {
@@ -222,7 +203,7 @@ pub const Runtime = struct {
         /// This is used for `--print` entry points so we can get the result.
         remove_cjs_module_wrapper: bool = false,
 
-        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+        runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache = null,
 
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
@@ -290,6 +271,15 @@ pub const Runtime = struct {
             /// - Ban "use server" functions since it is on the client-side
             client_side,
 
+            pub fn isServerSide(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_server_reference,
+                    .wrap_anon_server_functions,
+                    => true,
+                    else => false,
+                };
+            }
+
             pub fn wrapsExports(mode: ServerComponentsMode) bool {
                 return switch (mode) {
                     .wrap_exports_for_client_reference,
@@ -322,6 +312,7 @@ pub const Runtime = struct {
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
+        __jsonParse: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -337,6 +328,7 @@ pub const Runtime = struct {
             "$$typeof",
             "__using",
             "__callDispose",
+            "__jsonParse",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);
@@ -451,3 +443,18 @@ pub const Runtime = struct {
         }
     };
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const strings = bun.strings;
+
+const JSAst = bun.ast;
+const Ref = bun.ast.Ref;
+
+const schema = bun.schema;
+const api = schema.api;

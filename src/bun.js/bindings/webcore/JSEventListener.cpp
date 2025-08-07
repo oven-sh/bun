@@ -133,7 +133,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject *
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    Bun::Process* process = jsCast<Bun::Process*>(globalObject->processObject());
+    Bun::Process* process = globalObject->processObject();
     auto exception = callFrame->argument(0);
     auto func = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
     process->queueNextTick(lexicalGlobalObject, func, exception);
@@ -203,7 +203,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             return;
 
         handleEventFunction = jsFunction->get(lexicalGlobalObject, Identifier::fromString(vm, "handleEvent"_s));
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
             event.target()->uncaughtExceptionInEventHandler();
@@ -255,7 +255,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // See event_target.js function addCatch in node
     if (retval.isObject()) {
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
             event.target()->uncaughtExceptionInEventHandler();
@@ -267,7 +267,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             arglist.append(JSValue(JSC::jsUndefined()));
             arglist.append(JSValue(JSC::JSFunction::create(vm, lexicalGlobalObject, 1, String(), jsFunctionEmitUncaughtExceptionNextTick, ImplementationVisibility::Public, NoIntrinsic))); // err => process.nextTick(() => throw err)
             JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
-            if (UNLIKELY(scope.exception())) {
+            if (scope.exception()) [[unlikely]] {
                 auto* exception = scope.exception();
                 scope.clearException();
                 event.target()->uncaughtExceptionInEventHandler();
@@ -288,7 +288,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     //     // This is a OnBeforeUnloadEventHandler, and therefore the return value must be coerced into a String.
     //     if (is<BeforeUnloadEvent>(event)) {
     //         String resultStr = convert<IDLNullable<IDLDOMString>>(*lexicalGlobalObject, retval);
-    //         if (UNLIKELY(scope.exception())) {
+    //         if (scope.exception()) [[unlikely]] {
     //             if (handleExceptionIfNeeded(scope.exception()))
     //                 return;
     //         }

@@ -222,6 +222,7 @@ pub const E = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 };
 
 pub const S = struct {
@@ -524,6 +525,7 @@ pub const SystemErrno = enum(u16) {
     UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
     UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
     UV_EUNATCH = -uv.UV_EUNATCH,
+    UV_ENOEXEC = -uv.UV_ENOEXEC,
 
     pub const max = 137;
 
@@ -1162,8 +1164,11 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
     pub const NODATA = -uv.UV_ENODATA;
     pub const UNATCH = -uv.UV_EUNATCH;
+    pub const NOEXEC = -uv.UV_ENOEXEC;
 };
-const std = @import("std");
+
 const bun = @import("bun");
-const uv = bun.windows.libuv;
+const std = @import("std");
+
 const Win32Error = bun.windows.Win32Error;
+const uv = bun.windows.libuv;

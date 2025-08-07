@@ -106,13 +106,13 @@ public:
         if (closeConnection) {
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-                    
+
                 /* HTTP 1.1 must send this back unless the client already sent it to us.
                 * It is a connection close when either of the two parties say so but the
                 * one party must tell the other one so.
                 *
                 * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     writeHeader("Connection", "close");
                 }
 
@@ -125,14 +125,13 @@ public:
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            
+
             /* Write the chunked data if there is any (this will not send zero chunks) */
             this->write(data, nullptr);
-            
+
 
             /* Terminating 0 chunk */
             Super::write("0\r\n\r\n", 5);
-
             httpResponseData->markDone();
 
             /* We need to check if we should close this socket here now */
@@ -471,7 +470,7 @@ public:
         writeStatus(HTTP_200_OK);
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        
+
         if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
@@ -533,7 +532,7 @@ public:
             }
             return !has_failed;
         }
-        
+
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
@@ -546,7 +545,7 @@ public:
                 Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
-            
+
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
@@ -579,14 +578,13 @@ public:
             // Write End of Chunked Encoding after data has been written
             Super::write("\r\n", 2);
         }
-        
+
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
             *writtenPtr = total_written;
         }
-
         /* If we did not fail the write, accept more */
         return !has_failed;
     }

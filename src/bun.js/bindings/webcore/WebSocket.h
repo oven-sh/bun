@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "WebSocketDeflate.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
@@ -37,6 +38,11 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
+#include "WebSocketErrorCode.h"
+
+namespace WebCore {
+class JSBlob;
+}
 
 namespace uWS {
 template<bool, bool, typename>
@@ -50,7 +56,7 @@ class ArrayBufferView;
 
 namespace WebCore {
 
-// class Blob;
+class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
@@ -93,19 +99,19 @@ public:
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
     ExceptionOr<void> send(JSC::ArrayBufferView&);
-    // ExceptionOr<void> send(Blob&);
+    ExceptionOr<void> send(JSBlob*);
 
     ExceptionOr<void> ping();
     ExceptionOr<void> ping(const String& message);
     ExceptionOr<void> ping(JSC::ArrayBuffer&);
     ExceptionOr<void> ping(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> ping(JSBlob*);
 
     ExceptionOr<void> pong();
     ExceptionOr<void> pong(const String& message);
     ExceptionOr<void> pong(JSC::ArrayBuffer&);
     ExceptionOr<void> pong(JSC::ArrayBufferView&);
-    // ExceptionOr<void> ping(Blob&);
+    ExceptionOr<void> pong(JSBlob*);
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
@@ -127,8 +133,8 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
-    void didFailWithErrorCode(int32_t code);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);

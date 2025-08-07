@@ -1,17 +1,5 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
-const std = @import("std");
-
-const posix = std.posix;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 pub const Opcode = enum(u4) {
     Continue = 0x0,
@@ -96,3 +84,8 @@ pub const WebsocketHeader = packed struct(u16) {
         return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;

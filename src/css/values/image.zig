@@ -1,13 +1,7 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Url = css.css_values.url.Url;
 const Gradient = css.css_values.gradient.Gradient;
 const Resolution = css.css_values.resolution.Resolution;
@@ -407,3 +401,9 @@ fn parseFileType(input: *css.Parser) Result([]const u8) {
     };
     return input.parseNestedBlock([]const u8, {}, Fn.parseNestedBlockFn);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

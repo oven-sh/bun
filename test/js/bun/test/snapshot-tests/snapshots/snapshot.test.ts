@@ -203,7 +203,7 @@ class SnapshotTester {
     if (!opts.shouldNotError) {
       if (!isFirst) {
         // make sure it fails first:
-        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).not.toBe(0);
+        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).toBe(1);
         // make sure the existing snapshot is unchanged:
         expect(await this.getSnapshotContents()).toBe(this.targetSnapshotContents);
       }
@@ -311,7 +311,7 @@ for (const inlineSnapshot of [false, true]) {
           { forceUpdate: true },
         );
         expect(await t.getSnapshotContents()).toBe(
-          '// Bun Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
+          '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
         );
       });
 
@@ -395,7 +395,7 @@ class InlineSnapshotTester {
       stdio: ["pipe", "pipe", "pipe"],
     });
     expect(spawnres.stderr.toString()).toInclude(eopts.msg);
-    expect(spawnres.exitCode).not.toBe(0);
+    expect(spawnres.exitCode).toBe(1);
     expect(this.readfile(thefile)).toEqual(code);
   }
   test(cb: (v: (a: string, b: string, c: string) => string) => string): void {
@@ -429,7 +429,7 @@ class InlineSnapshotTester {
         stdio: ["pipe", "pipe", "pipe"],
       });
       expect(spawnres.stderr.toString()).toInclude("error:");
-      expect(spawnres.exitCode).not.toBe(0);
+      expect(spawnres.exitCode).toBe(1);
       expect(this.readfile(thefile)).toEqual(before_value);
     }
 
@@ -879,7 +879,7 @@ test("indented inline snapshots", () => {
               "a": 2,
                 }
 `);
-  }).toThrowErrorMatchingSnapshot();
+  }).toThrow();
 });
 
 test("error snapshots", () => {

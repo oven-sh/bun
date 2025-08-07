@@ -38,3 +38,32 @@ await writer.close();
 for await (const chunk of uint8Transform.readable) {
   expectType(chunk).is<Uint8Array<ArrayBuffer>>();
 }
+
+declare const stream: ReadableStream<Uint8Array>;
+
+expectType(stream.json()).is<Promise<any>>();
+expectType(stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+expectType(stream.text()).is<Promise<string>>();
+expectType(stream.blob()).is<Promise<Blob>>();
+
+import { ReadableStream as NodeStreamReadableStream } from "node:stream/web";
+
+declare const node_stream: NodeStreamReadableStream<Uint8Array>;
+
+expectType(node_stream.json()).is<Promise<any>>();
+expectType(node_stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+expectType(node_stream.text()).is<Promise<string>>();
+expectType(node_stream.blob()).is<Promise<Blob>>();
+
+Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
+
+Bun.file("./foo.csv")
+  .stream()
+  .pipeThrough(new TextDecoderStream())
+  .pipeTo(
+    new WritableStream({
+      write(chunk) {
+        expectType(chunk).is<string>();
+      },
+    }),
+  );

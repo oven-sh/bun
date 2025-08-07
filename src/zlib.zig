@@ -1,10 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-const std = @import("std");
-const bun = @import("bun");
-
-const mimalloc = @import("./allocators/mimalloc.zig");
-
 pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;
 
@@ -26,20 +21,12 @@ const Byte = u8;
 const uInt = u32;
 const uLong = u64;
 const Bytef = Byte;
-const charf = u8;
-const intf = c_int;
-const uIntf = uInt;
 const uLongf = uLong;
-const voidpc = ?*const anyopaque;
 const voidpf = ?*anyopaque;
-const voidp = ?*anyopaque;
-const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-const internal = @import("zlib-internal");
-const zStream_struct = @import("zlib-internal").zStream_struct;
 pub const z_stream = @import("zlib-internal").z_stream;
 pub const z_streamp = @import("zlib-internal").z_streamp;
 
@@ -65,7 +52,6 @@ pub const z_streamp = @import("zlib-internal").z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-const DataType = @import("zlib-internal").DataType;
 pub const FlushValue = @import("zlib-internal").FlushValue;
 pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
@@ -743,6 +729,8 @@ pub const NodeMode = enum(u8) {
     UNZIP = 7,
     BROTLI_DECODE = 8,
     BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
 };
 
 /// Not for streaming!
@@ -940,3 +928,12 @@ pub const ZlibCompressorArrayList = struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;
+
+const internal = @import("zlib-internal");
+const DataType = @import("zlib-internal").DataType;
+const zStream_struct = @import("zlib-internal").zStream_struct;

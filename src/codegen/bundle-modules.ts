@@ -496,6 +496,10 @@ declare module "module" {
 
 `;
 
+    dts += `        (id: "bun"): typeof import("bun");\n`;
+    dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
+    dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
+
     for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));

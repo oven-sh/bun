@@ -1039,9 +1039,9 @@ namespace Postgres {
 }
 
 class SQLiteConnection {
-  private db: any;
+  private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>;
 
-  constructor(db?: any) {
+  constructor(db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]>) {
     this.db = db;
   }
 
@@ -1213,41 +1213,16 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHand
     const handle: SQLiteQueryHandle = {
       run: (connection, query) => {
         try {
-          // Get the actual database from SQLiteConnection if needed
-          const db = connection?.getDatabase ? connection.getDatabase() : this.db;
-          if (!db) {
-            throw new Error("SQLite database not initialized");
-          }
+          const db = connection.getDatabase();
 
-          // If it's a multi-statement query, execute all statements
           if (useMultiStatementMode) {
-            // Execute all statements using run/exec
-            db.run(sqlString);
+            statement.finalize();
 
-            // Try to get result from the last SELECT if any
-            // Look for the last complete SELECT statement
-            const selectMatches = sqlString.match(/SELECT[^;]*;?\s*$/i);
-            if (selectMatches) {
-              const lastSelect = selectMatches[0].replace(/;\s*$/, "").trim();
-              if (lastSelect) {
-                // Execute the last SELECT to get results
-                const lastStatement = db.prepare(lastSelect, [], 0);
-                const result = lastStatement.all();
-                const resultArray = new SQLResultArray();
-                if (Array.isArray(result)) {
-                  resultArray.push(...result);
-                }
-                resultArray.command = "SELECT";
-                resultArray.count = result?.length || 0;
-                query.resolve(resultArray);
-                return;
-              }
-            }
+            const runResult = db.run(sqlString, ...values);
 
-            // No SELECT at the end, return empty result with changes info
             const resultArray = new SQLResultArray();
-            resultArray.command = null;
-            resultArray.count = 0;
+            resultArray.command = "MULTI";
+            resultArray.count = runResult?.changes || 0;
             query.resolve(resultArray);
             return;
           }
@@ -1309,7 +1284,6 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHand
   }
 
   connect(onConnected: OnConnected<SQLiteConnection>, _reserved: boolean = false): void {
-    // SQLite doesn't need connection pooling - return the single connection
     if (this.db) {
       const connection = new SQLiteConnection(this.db);
       onConnected(null, connection);
@@ -1517,7 +1491,9 @@ class Query<T = any> extends PublicPromise<T> {
     this[_queryStatus] &= ~QueryStatus.active;
     const handle = this.getQueryHandle();
     if (!handle) return this;
-    handle.done();
+    if (handle && typeof handle.done === "function") {
+      handle.done();
+    }
     return this[_resolve](x);
   }
 
@@ -1527,7 +1503,9 @@ class Query<T = any> extends PublicPromise<T> {
     if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
       const handle = this.getQueryHandle();
       if (!handle) return this[_reject](x);
-      handle.done();
+      if (handle && typeof handle.done === "function") {
+        handle.done();
+      }
     }
 
     return this[_reject](x);
@@ -1542,7 +1520,9 @@ class Query<T = any> extends PublicPromise<T> {
 
     if (status & QueryStatus.executed) {
       const handle = this.getQueryHandle();
-      handle.cancel();
+      if (handle && typeof handle.cancel === "function") {
+        handle.cancel();
+      }
     }
 
     return this;
@@ -1556,7 +1536,9 @@ class Query<T = any> extends PublicPromise<T> {
   raw() {
     const handle = this.getQueryHandle();
     if (!handle) return this;
-    handle.setMode(SQLQueryResultMode.raw);
+    if (handle && typeof handle.setMode === "function") {
+      handle.setMode(SQLQueryResultMode.raw);
+    }
     return this;
   }
 
@@ -1568,7 +1550,9 @@ class Query<T = any> extends PublicPromise<T> {
   values() {
     const handle = this.getQueryHandle();
     if (!handle) return this;
-    handle.setMode(SQLQueryResultMode.values);
+    if (handle && typeof handle.setMode === "function") {
+      handle.setMode(SQLQueryResultMode.values);
+    }
     return this;
   }
 

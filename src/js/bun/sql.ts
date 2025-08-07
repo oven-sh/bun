@@ -1127,7 +1127,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   }
 
   createQueryHandle(sqlString: string, values: any[] = [], flags: number = 0): any {
-    $assert(this.db, "SQLite database not initialized");
+    if (this.db === null) throw new Error("SQLite database not initialized");
 
     // For simple queries (no parameters), check if we might have multiple statements
     // by looking for semicolons that aren't in strings

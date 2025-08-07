@@ -81,6 +81,14 @@ await promise;
 
 If it's several callbacks, it's okay to use callbacks. We aren't a stickler for this.
 
+### No timeouts
+
+**CRITICAL**: Do not set a timeout on tests. Bun already has timeouts.
+
+### Use port 0 to get a random port
+
+Most APIs in Bun support `port: 0` to get a random port. Never hardcode ports. Avoid using your own random port number function.
+
 ### Creating temporary files
 
 Use `tempDirWithFiles` to create a temporary directory with files.

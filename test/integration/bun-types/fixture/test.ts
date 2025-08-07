@@ -5,7 +5,9 @@ import {
   beforeEach,
   describe,
   expect,
+  expectTypeOf,
   jest,
+  mock,
   type Mock,
   spyOn,
   test,
@@ -162,3 +164,12 @@ jest.fn(() => 123 as const);
 xtest("", () => {});
 xdescribe("", () => {});
 xit("", () => {});
+
+test("expectTypeOf basic type checks", () => {
+  expectTypeOf({ name: "test" }).toMatchObjectType<{ name: string }>();
+
+  // @ts-expect-error
+  expectTypeOf({ name: 123 }).toMatchObjectType<{ name: string }>();
+});
+
+mock.clearAllMocks();

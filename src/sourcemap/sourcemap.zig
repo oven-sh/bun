@@ -623,12 +623,12 @@ pub const Mapping = struct {
                     remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
-                    generated.lines = generated.lines.add(@sizeOf(usize) / 2);
+                    generated.lines = generated.lines.addScalar(@sizeOf(usize) / 2);
                     remain = remain[@sizeOf(usize) / 2 ..];
                 }
 
                 while (remain.len > 0 and remain[0] == ';') {
-                    generated.lines = generated.lines.add(1);
+                    generated.lines = generated.lines.addScalar(1);
                     remain = remain[1..];
                 }
 
@@ -653,7 +653,7 @@ pub const Mapping = struct {
 
             needs_sort = needs_sort or generated_column_delta.value < 0;
 
-            generated.columns = generated.columns.add(generated_column_delta.value);
+            generated.columns = generated.columns.addScalar(generated_column_delta.value);
             if (generated.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
@@ -722,7 +722,7 @@ pub const Mapping = struct {
                 };
             }
 
-            original.lines = original.lines.add(original_line_delta.value);
+            original.lines = original.lines.addScalar(original_line_delta.value);
             if (original.lines.zeroBased() < 0) {
                 return .{
                     .fail = .{
@@ -748,7 +748,7 @@ pub const Mapping = struct {
                 };
             }
 
-            original.columns = original.columns.add(original_column_delta.value);
+            original.columns = original.columns.addScalar(original_column_delta.value);
             if (original.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
@@ -1270,9 +1270,9 @@ pub const LineColumnOffset = struct {
 
     pub fn add(this: *LineColumnOffset, b: LineColumnOffset) void {
         if (b.lines.zeroBased() == 0) {
-            this.columns = this.columns.add(b.columns.zeroBased());
+            this.columns = this.columns.add(b.columns);
         } else {
-            this.lines = this.lines.add(b.lines.zeroBased());
+            this.lines = this.lines.add(b.lines);
             this.columns = b.columns;
         }
     }
@@ -1297,7 +1297,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                this.columns = this.columns.add(1);
+                this.columns = this.columns.addScalar(1);
                 offset = i + 1;
                 continue;
             }
@@ -1308,16 +1308,16 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        this.columns = this.columns.add(1);
+                        this.columns = this.columns.addScalar(1);
                         continue;
                     }
 
-                    this.lines = this.lines.add(1);
+                    this.lines = this.lines.addScalar(1);
                     this.columns = bun.Ordinal.start;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    this.columns = this.columns.add(switch (c) {
+                    this.columns = this.columns.addScalar(switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
                     });
@@ -1333,7 +1333,7 @@ pub const LineColumnOffset = struct {
             assert(!bun.strings.containsChar(remain, '\r'));
         }
 
-        this.columns = this.columns.add(@intCast(remain.len));
+        this.columns = this.columns.addScalar(@intCast(remain.len));
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
@@ -1402,7 +1402,7 @@ pub const SourceMapPieces = struct {
 
         while (current < mappings.len) {
             if (mappings[current] == ';') {
-                generated.lines = generated.lines.add(1);
+                generated.lines = generated.lines.addScalar(1);
                 generated.columns = bun.Ordinal.start;
                 prev_shift_column_delta = 0;
                 current += 1;
@@ -1412,7 +1412,7 @@ pub const SourceMapPieces = struct {
             const potential_end_of_run = current;
 
             const decode_result = decodeVLQ(mappings, current);
-            generated.columns = generated.columns.add(decode_result.value);
+            generated.columns = generated.columns.addScalar(decode_result.value);
             current = decode_result.start;
 
             const potential_start_of_run = current;

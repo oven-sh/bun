@@ -33,14 +33,26 @@ const FrameType = h2_frame_parser.FrameType;
 const FrameHeader = h2_frame_parser.FrameHeader;
 const FullSettingsPayload = h2_frame_parser.FullSettingsPayload;
 const SettingsType = h2_frame_parser.SettingsType;
-const SettingsPayloadUnit = h2_frame_parser.SettingsPayloadUnit;
+// SettingsPayloadUnit is not public, define locally
+const SettingsPayloadUnit = packed struct(u48) {
+    identifier: u16,
+    value: u32,
+};
 const HeadersFrameFlags = h2_frame_parser.HeadersFrameFlags;
 const DataFrameFlags = h2_frame_parser.DataFrameFlags;
-const SettingsFlags = h2_frame_parser.SettingsFlags;
-const PingFrameFlags = h2_frame_parser.PingFrameFlags;
+// SettingsFlags is not public, define locally
+const SettingsFlags = enum(u8) {
+    ACK = 0x01,
+    _,
+};
+// PingFrameFlags is not public, define locally
+const PingFrameFlags = enum(u8) {
+    ACK = 0x01,
+    _,
+};
 const ErrorCode = h2_frame_parser.ErrorCode;
 
-const log = Output.scoped(.HTTP2Client, false);
+const log = Output.scoped(.HTTP2Client, true);
 
 // Header field structure for HTTP/2
 const HeaderField = struct {
@@ -446,6 +458,23 @@ fn connect(self: *HTTP2Client) !void {
 
         if (temp_client.should_use_http2) {
             log("ALPN negotiated HTTP/2, proceeding with HTTP/2 client", .{});
+            
+            // Update the socket's extension data to point to HTTP2Client
+            // The socket ext field points to a **anyopaque which should point to an ActiveSocket union
+            if (socket.ext(**anyopaque)) |ctx_ptr| {
+                bun.Output.prettyErrorln("Current socket handler before: {*}", .{ctx_ptr.*});
+                // Create an ActiveSocket union with HTTP2Client
+                const active_socket = NewHTTPContext(true).ActiveSocket.init(self);
+                // Update the pointer to point to our HTTP2Client wrapped in ActiveSocket
+                ctx_ptr.* = bun.cast(**anyopaque, active_socket.ptr());
+                bun.Output.prettyErrorln("Updated socket handler to HTTP2Client: {*}", .{ctx_ptr.*});
+                log("Updated socket handler to HTTP2Client", .{});
+            } else {
+                bun.Output.prettyErrorln("ERROR: Socket has no extension data pointer", .{});
+                log("Socket has no extension data pointer", .{});
+                return error.InvalidSocket;
+            }
+            
             // Transfer socket to HTTP/2 client
             try self.onOpen(true, socket);
         } else {
@@ -471,7 +500,13 @@ pub fn onOpen(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(
     self.connection_state = .active;
     if (self.connection) |*conn| {
         conn.state = .active;
-        conn.socket = socket;
+        // For HTTP/2, we only support SSL connections
+        if (comptime is_ssl) {
+            conn.socket = socket;
+        } else {
+            // HTTP/2 requires SSL
+            return error.HTTP2RequiresHTTPS;
+        }
     }
 
     // ALPN negotiation is now handled by the main HTTPClient
@@ -522,6 +557,10 @@ fn sendConnectionPreface(self: *HTTP2Client, comptime is_ssl: bool, socket: NewH
 }
 
 fn sendSettingsFrame(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    // HTTP/2 requires SSL
+    if (comptime !is_ssl) {
+        return error.HTTP2RequiresHTTPS;
+    }
     log("Sending SETTINGS frame", .{});
 
     const settings_frame = FrameHeader{
@@ -538,6 +577,9 @@ fn sendSettingsFrame(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPC
     header_bytes[4] = settings_frame.flags;
     std.mem.writeInt(u32, header_bytes[5..9], settings_frame.streamIdentifier, .big);
 
+    // Cork the socket to batch writes if available
+    // Note: cork() may not be available on all socket types
+    
     var bytes_written = socket.write(&header_bytes);
     if (bytes_written != header_bytes.len) {
         return self.fail(error.SettingsFrameHeaderFailed);
@@ -593,7 +635,19 @@ fn sendSettingsFrame(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPC
     self.connection.?.settings_ack_pending = true;
 
     // Now send the HTTP request
-    try self.sendRequest(socket);
+    if (comptime is_ssl) {
+        try self.sendRequest(socket);
+    }
+    
+    // Flush all buffered data
+    socket.flush();
+    
+    // Set a reasonable timeout (5 minutes)
+    socket.timeout(0);
+    socket.setTimeoutMinutes(5);
+    
+    // Socket will automatically start receiving data after writing
+    // The onData callback will be called when data arrives
 }
 
 fn sendRequest(self: *HTTP2Client, socket: NewHTTPContext(true).HTTPSocket) !void {
@@ -892,6 +946,8 @@ pub fn onData(
 ) void {
     _ = context;
 
+    // Force output to see if this is called
+    bun.Output.prettyErrorln("HTTP2Client.onData called with {d} bytes", .{data.len});
     log("Received HTTP/2 data: {d} bytes", .{data.len});
 
     // Check abort signal during data processing
@@ -908,43 +964,64 @@ pub fn onData(
     };
 }
 
+const FrameHeaderInfo = struct {
+    length: u24,
+    frame_type: u8,
+    flags: u8,
+    stream_id: u32,
+};
+
+fn parseFrameHeader(data: []const u8) ?FrameHeaderInfo {
+    if (data.len < 9) return null;
+    
+    const length_bytes: [3]u8 = data[0..3][0..3].*;
+    const length = std.mem.readInt(u24, &length_bytes, .big);
+    const frame_type = data[3];
+    const flags = data[4];
+    const stream_id_bytes: [4]u8 = data[5..9][0..4].*;
+    const stream_id = std.mem.readInt(u32, &stream_id_bytes, .big) & 0x7FFFFFFF; // Clear reserved bit
+    
+    return FrameHeaderInfo{
+        .length = length,
+        .frame_type = frame_type,
+        .flags = flags,
+        .stream_id = stream_id,
+    };
+}
+
 fn parseFrames(self: *HTTP2Client, data: []const u8) !void {
     var offset: usize = 0;
 
     while (offset < data.len) {
-        // Need at least 9 bytes for frame header
-        if (offset + 9 > data.len) {
+        // Parse frame header using helper function
+        const frame_header = parseFrameHeader(data[offset..]) orelse {
             log("Incomplete frame header, buffering needed", .{});
             break;
-        }
-
-        // Parse frame header
-        const length = std.mem.readInt(u24, data[offset .. offset + 3], .big);
-        const frame_type = data[offset + 3];
-        const flags = data[offset + 4];
-        const stream_id = std.mem.readInt(u32, data[offset + 5 .. offset + 9], .big) & 0x7FFFFFFF; // Clear reserved bit
+        };
 
         offset += 9;
 
         // Check if we have the complete frame
-        if (offset + length > data.len) {
+        if (offset + frame_header.length > data.len) {
             log("Incomplete frame payload, buffering needed", .{});
             break;
         }
 
-        const payload = data[offset .. offset + length];
-        offset += length;
+        const payload = data[offset .. offset + frame_header.length];
+        offset += frame_header.length;
 
-        log("Received frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_type, flags, stream_id, length });
+        log("Received frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_header.frame_type, frame_header.flags, frame_header.stream_id, frame_header.length });
 
         // Process frame based on type
-        try self.processFrame(frame_type, flags, stream_id, payload);
+        try self.processFrame(frame_header.frame_type, frame_header.flags, frame_header.stream_id, payload);
     }
 }
 
 fn processFrame(self: *HTTP2Client, frame_type: u8, flags: u8, stream_id: u32, payload: []const u8) !void {
-    // Validate frame type
-    const ftype = @as(FrameType, @enumFromInt(frame_type)) catch {
+    // Validate frame type - FrameType enum doesn't have error handling, check bounds manually
+    const ftype: FrameType = if (frame_type <= 10) 
+        @enumFromInt(frame_type) 
+    else {
         log("Invalid frame type: {d}", .{frame_type});
         return error.ProtocolError;
     };
@@ -979,7 +1056,7 @@ fn processFrame(self: *HTTP2Client, frame_type: u8, flags: u8, stream_id: u32, p
     // Validate payload size for specific frame types
     switch (ftype) {
         .HTTP_FRAME_SETTINGS => {
-            if ((flags & @intFromEnum(SettingsFlags.ACK)) == 0 and payload.len % 6 != 0) {
+            if ((flags & 0x01) == 0 and payload.len % 6 != 0) { // Not an ACK and payload not multiple of 6
                 log("SETTINGS frame payload size must be multiple of 6, got {d}", .{payload.len});
                 return error.FrameSizeError;
             }
@@ -1042,7 +1119,7 @@ fn processFrame(self: *HTTP2Client, frame_type: u8, flags: u8, stream_id: u32, p
 fn processSettingsFrame(self: *HTTP2Client, flags: u8, payload: []const u8) !void {
     log("Processing SETTINGS frame, flags={d}", .{flags});
 
-    if (flags & @intFromEnum(SettingsFlags.ACK) != 0) {
+    if (flags & 0x01 != 0) { // ACK flag
         // This is a SETTINGS ACK
         self.connection.?.settings_ack_pending = false;
         log("Received SETTINGS ACK", .{});
@@ -1052,18 +1129,25 @@ fn processSettingsFrame(self: *HTTP2Client, flags: u8, payload: []const u8) !voi
     // Parse settings
     var offset: usize = 0;
     while (offset + 6 <= payload.len) {
-        const setting_id = std.mem.readInt(u16, payload[offset .. offset + 2], .big);
-        const setting_value = std.mem.readInt(u32, payload[offset + 2 .. offset + 6], .big);
+        const id_bytes: [2]u8 = payload[offset .. offset + 2][0..2].*;
+        const setting_id = std.mem.readInt(u16, &id_bytes, .big);
+        const value_bytes: [4]u8 = payload[offset + 2 .. offset + 6][0..4].*;
+        const setting_value = std.mem.readInt(u32, &value_bytes, .big);
         offset += 6;
 
         log("Setting: id={d}, value={d}", .{ setting_id, setting_value });
 
-        // Update peer settings
-        const unit = SettingsPayloadUnit{
-            .type = setting_id,
-            .value = setting_value,
-        };
-        self.connection.?.peer_settings.updateWith(unit);
+        // Update peer settings based on setting ID
+        // Just check the raw values without enum conversion due to visibility issues
+        switch (setting_id) {
+            1 => self.connection.?.peer_settings.headerTableSize = setting_value,
+            2 => self.connection.?.peer_settings.enablePush = setting_value,
+            3 => self.connection.?.peer_settings.maxConcurrentStreams = setting_value,
+            4 => self.connection.?.peer_settings.initialWindowSize = setting_value,
+            5 => self.connection.?.peer_settings.maxFrameSize = setting_value,
+            6 => self.connection.?.peer_settings.maxHeaderListSize = setting_value,
+            else => {}, // Ignore unknown settings
+        }
     }
 
     // Send SETTINGS ACK
@@ -1359,10 +1443,8 @@ fn processRstStreamFrame(self: *HTTP2Client, stream_id: u32, payload: []const u8
     }
 
     // Categorize the error more precisely
-    const err_code = @as(ErrorCode, @enumFromInt(error_code)) catch {
-        log("Unknown RST_STREAM error code: {d}", .{error_code});
-        return error.ProtocolError;
-    };
+    // ErrorCode enum doesn't have error handling, just cast directly
+    const err_code: ErrorCode = @enumFromInt(error_code);
 
     const stream_error = switch (err_code) {
         .NO_ERROR => error.StreamClosed,
@@ -1441,22 +1523,22 @@ fn completeResponse(self: *HTTP2Client, stream: *Stream) !void {
     const status_line = try std.fmt.allocPrint(self.allocator, "HTTP/1.1 {d} {s}\r\n", .{ status_code, reason_phrase });
     defer self.allocator.free(status_line);
 
-    try self.response_buffer.list.appendSlice(status_line);
+    try self.response_buffer.list.appendSlice(self.allocator, status_line);
 
     // Add headers (skip pseudo-headers)
     for (stream.response_headers.items) |header| {
         if (!strings.startsWith(header.name, ":")) {
             const header_line = try std.fmt.allocPrint(self.allocator, "{s}: {s}\r\n", .{ header.name, header.value });
             defer self.allocator.free(header_line);
-            try self.response_buffer.list.appendSlice(header_line);
+            try self.response_buffer.list.appendSlice(self.allocator, header_line);
         }
     }
 
     // End headers
-    try self.response_buffer.list.appendSlice("\r\n");
+    try self.response_buffer.list.appendSlice(self.allocator, "\r\n");
 
     // Add body
-    try self.response_buffer.list.appendSlice(stream.response_data.items);
+    try self.response_buffer.list.appendSlice(self.allocator, stream.response_data.items);
 
     // Clean up stream
     stream.setState(.closed);

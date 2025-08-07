@@ -1,6 +1,39 @@
 import type * as BunSQLite from "bun:sqlite";
 
 declare module "bun" {
+  /**
+   * Represents a reserved connection from the connection pool
+   * Extends SQL with additional release functionality
+   */
+  interface ReservedSQL extends SQL, Disposable {
+    /**
+     * Releases the client back to the connection pool
+     */
+    release(): void;
+  }
+
+  /**
+   * Represents a client within a transaction context
+   * Extends SQL with savepoint functionality
+   */
+  interface TransactionSQL extends SQL {
+    /**
+     * Creates a savepoint within the current transaction
+     */
+    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<T>;
+    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;
+
+    /**
+     * The reserve method pulls out a connection from the pool, and returns a
+     * client that wraps the single connection.
+     *
+     * Using reserve() inside of a transaction will return a brand new
+     * connection, not one related to the transaction. This matches the
+     * behaviour of the `postgres` package.
+     */
+    reserve(): Promise<ReservedSQL>;
+  }
+
   namespace SQL {
     class UnsupportedAdapterError extends Error {
       public readonly options: Bun.SQL.Options;
@@ -513,11 +546,9 @@ declare module "bun" {
      * }
      *
      * // Bun supports Symbol.dispose and Symbol.asyncDispose
-     * {
-     *  // always release after context (safer)
-     *  using reserved = await sql.reserve()
-     *  await reserved`select * from users`
-     * }
+     * // always release after context (safer)
+     * using reserved = await sql.reserve()
+     * await reserved`select * from users`
      * ```
      */
     reserve(): Promise<ReservedSQL>;

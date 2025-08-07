@@ -1276,27 +1276,6 @@ declare module "bun" {
     stat(): Promise<import("node:fs").Stats>;
   }
 
-  /**
-   * Represents a reserved connection from the connection pool
-   * Extends SQL with additional release functionality
-   */
-  interface ReservedSQL extends SQL, Disposable {
-    /**
-     * Releases the client back to the connection pool
-     */
-    release(): void;
-  }
-
-  /**
-   * Represents a client within a transaction context
-   * Extends SQL with savepoint functionality
-   */
-  interface TransactionSQL extends SQL {
-    /** Creates a savepoint within the current transaction */
-    savepoint<T>(name: string, fn: SQLSavepointContextCallback<T>): Promise<T>;
-    savepoint<T>(fn: SQLSavepointContextCallback<T>): Promise<T>;
-  }
-
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
 
   interface CSRFGenerateOptions {

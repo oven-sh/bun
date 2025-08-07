@@ -80,7 +80,7 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = null,
+            .handlers = undefined,
         });
         return socket.getThisValue(globalThis);
     } else {
@@ -89,7 +89,7 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = null,
+            .handlers = undefined,
         });
         return socket.getThisValue(globalThis);
     }

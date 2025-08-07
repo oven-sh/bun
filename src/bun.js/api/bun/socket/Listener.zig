@@ -626,9 +626,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
             if (ssl_enabled) {
                 var tls = if (prev_maybe_tls) |prev| blk: {
-                    if (prev.handlers) |prev_handlers| {
-                        bun.destroy(prev_handlers);
-                    }
+                    bun.destroy(prev.handlers);
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);

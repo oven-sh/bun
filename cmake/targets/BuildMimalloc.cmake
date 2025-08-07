@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    1cef3e8f4167733818f1883b2f3a9dd4754224cf
+    1beadf9651a7bfdec6b5367c380ecc3fe1c40d1a
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -14,7 +14,7 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_TESTS=OFF
   -DMI_USE_CXX=ON
   -DMI_SKIP_COLLECT_ON_EXIT=ON
-  
+
   # ```
   # ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
   # Started development server: http://localhost:3004
@@ -64,13 +64,13 @@ if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
-# Enable SIMD optimizations when not building for baseline (older CPUs)
-if(NOT ENABLE_BASELINE)
-  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
-  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
-endif()
-
-if(DEBUG)
+if(WIN32)
+  if(DEBUG)
+    set(MIMALLOC_LIBRARY mimalloc-static-debug)
+  else()
+    set(MIMALLOC_LIBRARY mimalloc-static)
+  endif()
+elseif(DEBUG)
   if (ENABLE_ASAN)
     set(MIMALLOC_LIBRARY mimalloc-asan-debug)
   else()
@@ -85,7 +85,6 @@ endif()
 if(APPLE OR (LINUX AND NOT DEBUG))
   set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
 endif()
-
 
 register_cmake_command(
   TARGET

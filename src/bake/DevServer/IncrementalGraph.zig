@@ -126,15 +126,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .client => struct {
                 /// Content depends on `flags.kind`
                 /// See function wrappers to safely read into this data
-                content: union {
-                    /// Access contents with `.jsCode()`.
+                content: extern union {
+                    /// Allocated by `dev.allocator`. Access with `.jsCode()`
                     /// When stale, the code is "", otherwise it contains at
                     /// least one non-whitespace character, as empty chunks
                     /// contain at least a function wrapper.
-                    js_code: struct {
-                        ptr: [*]const u8,
-                        allocator: std.mem.Allocator,
-                    },
+                    js_code_ptr: [*]const u8,
                     /// Access with `.cssAssetId()`
                     css_asset_id: u64,
 
@@ -182,20 +179,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    if (@import("builtin").mode == .ReleaseFast or @import("builtin").mode == .ReleaseSmall) {
-                        bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
-                        bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
+                    const d = std.debug;
+                    if (!Environment.isDebug) {
+                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 3);
+                        d.assert(@alignOf(@This()) == @alignOf([*]u8));
                     }
                 }
 
-                fn initJavaScript(code_slice: []const u8, code_allocator: std.mem.Allocator, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
+                fn initJavaScript(code_slice: []const u8, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
                     assert(flags.kind == .js or flags.kind == .asset);
                     assert(flags.source_map_state == std.meta.activeTag(source_map));
                     return .{
-                        .content = .{ .js_code = .{
-                            .ptr = code_slice.ptr,
-                            .allocator = code_allocator,
-                        } },
+                        .content = .{ .js_code_ptr = code_slice.ptr },
                         .code_len = @intCast(code_slice.len),
                         .flags = flags,
                         .source_map = source_map.untag(),
@@ -225,12 +220,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 fn jsCode(file: @This()) []const u8 {
                     assert(file.flags.kind.hasInlinejscodeChunk());
-                    return file.content.js_code.ptr[0..file.code_len];
-                }
-
-                fn freeJsCode(file: *@This()) void {
-                    assert(file.flags.kind.hasInlinejscodeChunk());
-                    file.content.js_code.allocator.free(file.jsCode());
+                    return file.content.js_code_ptr[0..file.code_len];
                 }
 
                 fn cssAssetId(file: @This()) u64 {
@@ -260,7 +250,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn freeFileContent(g: *IncrementalGraph(.client), key: []const u8, file: *File, css: enum { unref_css, ignore_css }) void {
             switch (file.flags.kind) {
                 .js, .asset => {
-                    file.freeJsCode();
+                    g.owner().allocator.free(file.jsCode());
                     switch (file.sourceMap()) {
                         .ref => |ptr| {
                             ptr.derefWithContext(g.owner());
@@ -396,10 +386,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
             content: union(enum) {
                 js: struct {
                     code: []const u8,
-                    code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
-                        escaped_source: ?[]u8,
+                        escaped_source: []u8,
                     },
                 },
                 css: u64,
@@ -486,22 +475,24 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     switch (content) {
                         .css => |css| gop.value_ptr.* = .initCSS(css, flags),
                         .js => |js| {
+                            dev.allocation_scope.assertOwned(js.code);
+
                             // Insert new source map or patch existing empty source map.
                             const source_map: PackedMap.RefOrEmpty = brk: {
                                 if (js.source_map) |source_map| {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
+                                        dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
+                                        dev.allocation_scope.assertOwned(source_map.escaped_source);
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
                                             source_map.chunk,
-                                            source_map.escaped_source.?,
+                                            source_map.escaped_source,
                                         ) };
                                     }
                                     var take = source_map.chunk.buffer;
                                     take.deinit();
-                                    if (source_map.escaped_source) |escaped_source| {
-                                        bun.default_allocator.free(escaped_source);
-                                    }
+                                    dev.allocator.free(source_map.escaped_source);
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -517,7 +508,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 } };
                             };
 
-                            gop.value_ptr.* = .initJavaScript(js.code, js.code_allocator, flags, source_map);
+                            gop.value_ptr.* = .initJavaScript(js.code, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator, file_index);
@@ -588,9 +579,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (content.js.source_map) |source_map| {
                             var take = source_map.chunk.buffer;
                             take.deinit();
-                            if (source_map.escaped_source) |escaped_source| {
-                                bun.default_allocator.free(escaped_source);
-                            }
+                            dev.allocator.free(source_map.escaped_source);
                         }
                     }
                 },

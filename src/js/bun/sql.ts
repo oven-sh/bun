@@ -257,9 +257,23 @@ type OnConnected<Connection> = (
   ...args: [error: null, connection: Connection] | [error: Error, connection: null]
 ) => void;
 
-interface DatabaseAdapter<Connection> {
+// Base interface for all query handles
+interface BaseQueryHandle<Connection> {
+  run(connection: Connection, query: Query<any>): void;
+}
+
+interface PostgresQueryHandle extends BaseQueryHandle<PooledPostgresConnection> {
+  setPendingValue(value: any): void;
+  done(): void;
+  cancel(): void;
+  setMode(mode: SQLQueryResultMode): void;
+}
+
+interface SQLiteQueryHandle extends BaseQueryHandle<SQLiteConnection> {}
+
+interface DatabaseAdapter<Connection, Handle extends BaseQueryHandle<Connection> = BaseQueryHandle<Connection>> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
-  createQueryHandle(sqlString: string, values: unknown[], flags: number): any;
+  createQueryHandle(sqlString: string, values: unknown[], flags: number): Handle;
   calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number;
   getOptions(): Bun.SQL.__internal.DefinedOptions;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
@@ -893,7 +907,7 @@ namespace Postgres {
     }
   }
 
-  export class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection> {
+  export class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection, PostgresQueryHandle> {
     private pool: PostgresConnectionPool;
     private options: Bun.SQL.__internal.DefinedPostgresOptions;
 
@@ -936,7 +950,7 @@ namespace Postgres {
       return normalizeQuery(strings, values);
     }
 
-    createQueryHandle(sqlString: string, values: unknown[], flags: number): any {
+    createQueryHandle(sqlString: string, values: unknown[], flags: number): PostgresQueryHandle {
       const poolSize = this.options.max;
       if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
         if (poolSize !== 1) {
@@ -1036,7 +1050,7 @@ class SQLiteConnection {
   }
 }
 
-class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
+class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHandle> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
   private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
@@ -1186,45 +1200,17 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return [query, binding_values];
   }
 
-  createQueryHandle(sqlString: string, values: any[] = [], flags: number): any {
+  createQueryHandle(sqlString: string, values: any[] = [], flags: number): SQLiteQueryHandle {
     if (this.db === null) throw new Error("SQLite database not initialized");
 
-    // For simple queries (no parameters), check if we might have multiple statements
-    // by looking for semicolons that aren't in strings
-    const isSimple = (flags & SQLQueryFlags.simple) !== 0;
-    const hasNoParams = !values || values.length === 0;
-    let useMultiStatementMode = false;
-
-    if (isSimple && hasNoParams) {
-      // Simple heuristic: check if there are multiple statements
-      // This is not perfect but should handle most cases
-      const trimmed = sqlString.trim();
-      // Remove string literals and comments to check for real semicolons
-      const withoutStrings = trimmed.replace(/'[^']*'/g, "").replace(/"[^"]*"/g, "");
-      const withoutComments = withoutStrings.replace(/--[^\n]*/g, "").replace(/\/\*[^*]*\*\//g, "");
-
-      // Count semicolons that aren't at the end
-      const semicolons = withoutComments.match(/;/g);
-      if (semicolons && semicolons.length > 1) {
-        // Likely multiple statements
-        useMultiStatementMode = true;
-      } else if (semicolons && semicolons.length === 1 && !withoutComments.trim().endsWith(";")) {
-        // Semicolon in the middle, likely multiple statements
-        useMultiStatementMode = true;
-      }
-    }
-
-    // Prepare the statement normally if not multi-statement
+    // Prepare the statement first to check if it has multiple statements
     let statement: InstanceType<(typeof import("./sqlite.ts"))["default"]["Statement"]> | null = null;
-    if (!useMultiStatementMode) {
-      statement = this.db.prepare(sqlString, values || [], 0);
-    }
+    statement = this.db.prepare(sqlString, values || [], 0);
 
-    return {
-      statement,
-      values,
-      flags,
-      useMultiStatementMode,
+    // Check if the statement has multiple statements
+    const useMultiStatementMode = statement?.hasMultipleStatements === true;
+
+    const handle: SQLiteQueryHandle = {
       run: (connection, query) => {
         try {
           // Get the actual database from SQLiteConnection if needed
@@ -1317,10 +1303,9 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
           query.reject(err);
         }
       },
-      done: () => {
-        // No-op for SQLite - PostgreSQL uses this for cleanup
-      },
     };
+
+    return handle;
   }
 
   connect(onConnected: OnConnected<SQLiteConnection>, _reserved: boolean = false): void {
@@ -1419,7 +1404,7 @@ class Query<T = any> extends PublicPromise<T> {
   [_flags]: number;
   [_results]: any;
 
-  private adapter: DatabaseAdapter<any>;
+  private adapter: DatabaseAdapter<any, any>;
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];

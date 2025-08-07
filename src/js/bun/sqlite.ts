@@ -279,6 +279,10 @@ class Statement {
     return this.#raw.paramsCount;
   }
 
+  get hasMultipleStatements() {
+    return this.#raw.hasMultipleStatements;
+  }
+
   finalize(...args) {
     this.isFinalized = true;
     return this.#raw.finalize(...args);

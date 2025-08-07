@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-update:
-    if: ${{ github.repository == 'oven-sh/bun' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.repository_owner == 'oven-sh' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -56,7 +56,7 @@ jobs:
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          
+
           # Try to get commit SHA from tag object (for annotated tags)
           # If it fails, assume it's a lightweight tag pointing directly to commit
           LATEST_SHA=$(curl -sL "https://api.github.com/repos/HdrHistogram/HdrHistogram_c/git/tags/$LATEST_TAG_SHA" 2>/dev/null | jq -r '.object.sha // empty')

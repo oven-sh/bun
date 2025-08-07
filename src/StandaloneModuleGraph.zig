@@ -737,7 +737,7 @@ pub const StandaloneModuleGraph = struct {
                 input_result.bytes.deinit();
 
                 if (inject_options.windows_hide_console) {
-                    pe_file.setSubsystem(bun.pe.PEFile.Subsystem.GUI) catch |err| {
+                    pe_file.setSubsystem(.GUI) catch |err| {
                         Output.prettyErrorln("Failed to disable console on executable: {}", .{err});
                         cleanup(zname, cloned_executable_fd);
                         Global.exit(1);

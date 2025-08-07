@@ -301,6 +301,7 @@ const Connection = struct {
 // Main HTTP/2 Client structure
 allocator: std.mem.Allocator,
 connection: ?Connection = null,
+frame_buffer: FrameBuffer = FrameBuffer.init(),
 url: URL,
 method: Method = Method.GET,
 headers: Headers.Entry.List = .empty,
@@ -366,6 +367,9 @@ pub fn deinit(self: *HTTP2Client) void {
         
         conn.deinit();
     }
+    
+    // Clean up frame buffer
+    self.frame_buffer.deinit(self.allocator);
     
     // Clean up any other allocated resources
     if (self.signals.aborted != null) {
@@ -971,6 +975,58 @@ const FrameHeaderInfo = struct {
     stream_id: u32,
 };
 
+const FrameBuffer = struct {
+    buffer: bun.ByteList = .{},
+    
+    pub fn init() FrameBuffer {
+        return FrameBuffer{};
+    }
+    
+    pub fn deinit(self: *FrameBuffer, allocator: std.mem.Allocator) void {
+        self.buffer.deinitWithAllocator(allocator);
+    }
+    
+    pub fn appendData(self: *FrameBuffer, allocator: std.mem.Allocator, data: []const u8) !void {
+        _ = try self.buffer.write(allocator, data);
+    }
+    
+    pub fn hasCompleteFrame(self: *FrameBuffer) bool {
+        const data = self.buffer.slice();
+        if (data.len < 9) return false;  // Need at least frame header
+        
+        // Parse frame header to get length
+        const frame_header = parseFrameHeader(data) orelse return false;
+        
+        // Check if we have the complete frame (header + payload)
+        return data.len >= 9 + frame_header.length;
+    }
+    
+    pub fn extractCompleteFrame(self: *FrameBuffer, allocator: std.mem.Allocator) ?[]const u8 {
+        const data = self.buffer.slice();
+        if (!self.hasCompleteFrame()) return null;
+        
+        const frame_header = parseFrameHeader(data) orelse return null;
+        const total_frame_size = 9 + frame_header.length;
+        
+        // Create a copy of the complete frame
+        const frame_data = allocator.dupe(u8, data[0..total_frame_size]) catch return null;
+        
+        // Remove the extracted frame from buffer
+        const remaining_data = data[total_frame_size..];
+        if (remaining_data.len > 0) {
+            // Copy remaining data to the beginning of the buffer
+            std.mem.copyForwards(u8, data[0..remaining_data.len], remaining_data);
+        }
+        self.buffer.len = @intCast(remaining_data.len);
+        
+        return frame_data;
+    }
+    
+    pub fn clear(self: *FrameBuffer) void {
+        self.buffer.len = 0;
+    }
+};
+
 fn parseFrameHeader(data: []const u8) ?FrameHeaderInfo {
     if (data.len < 9) return null;
     
@@ -990,28 +1046,20 @@ fn parseFrameHeader(data: []const u8) ?FrameHeaderInfo {
 }
 
 fn parseFrames(self: *HTTP2Client, data: []const u8) !void {
-    var offset: usize = 0;
-
-    while (offset < data.len) {
-        // Parse frame header using helper function
-        const frame_header = parseFrameHeader(data[offset..]) orelse {
-            log("Incomplete frame header, buffering needed", .{});
-            break;
-        };
-
-        offset += 9;
-
-        // Check if we have the complete frame
-        if (offset + frame_header.length > data.len) {
-            log("Incomplete frame payload, buffering needed", .{});
-            break;
-        }
-
-        const payload = data[offset .. offset + frame_header.length];
-        offset += frame_header.length;
-
+    // Add new data to the frame buffer
+    try self.frame_buffer.appendData(self.allocator, data);
+    
+    // Process all complete frames from the buffer
+    while (self.frame_buffer.hasCompleteFrame()) {
+        const frame_data = self.frame_buffer.extractCompleteFrame(self.allocator) orelse break;
+        defer self.allocator.free(frame_data);
+        
+        // Parse frame header from the complete frame
+        const frame_header = parseFrameHeader(frame_data).?; // We know it's complete
+        const payload = frame_data[9..];
+        
         log("Received frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_header.frame_type, frame_header.flags, frame_header.stream_id, frame_header.length });
-
+        
         // Process frame based on type
         try self.processFrame(frame_header.frame_type, frame_header.flags, frame_header.stream_id, payload);
     }

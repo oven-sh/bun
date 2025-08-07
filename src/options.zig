@@ -38,10 +38,10 @@ pub fn validatePath(
     return out;
 }
 
-pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
+pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, total_capacity: usize, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureTotalCapacity(@as(u32, @intCast(keys.len)));
+        try hash_map.ensureTotalCapacity(@as(u32, @intCast(total_capacity)));
         for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -1093,27 +1093,41 @@ pub const ESMConditions = struct {
     require: ConditionsMap,
     style: ConditionsMap,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) bun.OOM!ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string, allow_addons: bool, conditions: []const string) bun.OOM!ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
         style_condition_map.putAssumeCapacity("style", {});
 
+        for (conditions) |condition| {
+            import_condition_map.putAssumeCapacity(condition, {});
+            require_condition_map.putAssumeCapacity(condition, {});
+            default_condition_amp.putAssumeCapacity(condition, {});
+        }
+
         for (defaults) |default| {
-            default_condition_amp.putAssumeCapacityNoClobber(default, {});
-            import_condition_map.putAssumeCapacityNoClobber(default, {});
-            require_condition_map.putAssumeCapacityNoClobber(default, {});
-            style_condition_map.putAssumeCapacityNoClobber(default, {});
+            default_condition_amp.putAssumeCapacity(default, {});
+            import_condition_map.putAssumeCapacity(default, {});
+            require_condition_map.putAssumeCapacity(default, {});
+            style_condition_map.putAssumeCapacity(default, {});
+        }
+
+        if (allow_addons) {
+            default_condition_amp.putAssumeCapacity("node-addons", {});
+            import_condition_map.putAssumeCapacity("node-addons", {});
+            require_condition_map.putAssumeCapacity("node-addons", {});
+
+            // style is not here because you don't import N-API addons inside css files.
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
@@ -1385,9 +1399,11 @@ pub fn definesFromTransformOptions(
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
         allocator,
+        input_user_define.keys.len + 4,
         input_user_define.keys,
         input_user_define.values,
     );
+    defer user_defines.deinit();
 
     var environment_defines = defines.UserDefinesArray.init(allocator);
     defer environment_defines.deinit();
@@ -1554,6 +1570,7 @@ pub const ResolveFileExtensions = struct {
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
     const input_loaders = _loaders orelse std.mem.zeroes(api.LoaderMap);
     const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
+    defer allocator.free(loader_values);
 
     for (loader_values, input_loaders.loaders) |*loader, input| {
         loader.* = Loader.fromAPI(input);
@@ -1562,9 +1579,14 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
     var loaders = try stringHashMapFromArrays(
         bun.StringArrayHashMap(Loader),
         allocator,
+        input_loaders.extensions.len +
+            if (target.isBun()) default_loader_ext_bun.len else 0 +
+                if (target == .browser) default_loader_ext_browser.len else 0 +
+                    default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
     );
+    errdefer loaders.deinit();
 
     inline for (default_loader_ext) |ext| {
         _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
@@ -1978,21 +2000,12 @@ pub const BundleOptions = struct {
             // 1. defaults
             // 2. node-addons
             // 3. user conditions
-            opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
-
-            dont_append_node_addons: {
-                if (transform.allow_addons) |allow_addons| {
-                    if (!allow_addons) {
-                        break :dont_append_node_addons;
-                    }
-                }
-
-                try opts.conditions.append("node-addons");
-            }
-
-            if (transform.conditions.len > 0) {
-                try opts.conditions.appendSlice(transform.conditions);
-            }
+            opts.conditions = try ESMConditions.init(
+                allocator,
+                opts.target.defaultConditions(),
+                transform.allow_addons orelse true,
+                transform.conditions,
+            );
         }
 
         switch (opts.target) {

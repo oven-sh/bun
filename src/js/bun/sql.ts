@@ -1928,6 +1928,10 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   options: Bun.SQL.Options,
   adapter: A,
 ): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
+  if (options.adapter === undefined) {
+    return; // best effort
+  }
+
   if (!isOptionsOfAdapter(options, adapter)) {
     throw new Error(`Expected options to be of adapter ${adapter}, but got ${options.adapter}`);
   }

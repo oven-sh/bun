@@ -31,7 +31,7 @@ async function findRandomPort() {
   });
 }
 async function waitForPostgres(port) {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
         idle_timeout: 20,
@@ -43,7 +43,7 @@ async function waitForPostgres(port) {
       console.log("PostgreSQL is ready!");
       return true;
     } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      console.log(`Waiting for PostgreSQL... (${i + 1}/5)`, error);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }

@@ -1034,7 +1034,7 @@ pub const FetchTasklet = struct {
     pub fn get(
         allocator: std.mem.Allocator,
         globalThis: *jsc.JSGlobalObject,
-        fetch_options: FetchOptions,
+        fetch_options: *const FetchOptions,
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         var jsc_vm = globalThis.bunVM();
@@ -1270,7 +1270,7 @@ pub const FetchTasklet = struct {
     pub fn queue(
         allocator: std.mem.Allocator,
         global: *JSGlobalObject,
-        fetch_options: FetchOptions,
+        fetch_options: *const FetchOptions,
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         http.HTTPThread.init(&.{});
@@ -2625,7 +2625,7 @@ pub fn Bun__fetch_(
     _ = FetchTasklet.queue(
         allocator,
         globalThis,
-        .{
+        &.{
             .method = method,
             .url = url,
             .headers = headers orelse Headers{

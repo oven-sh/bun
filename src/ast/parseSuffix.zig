@@ -860,6 +860,11 @@ pub fn ParseSuffix(
                 const old_optional_chain = optional_chain.*;
                 optional_chain.* = null;
 
+                // Each of these tokens are split into a function to conserve
+                // stack space. Currently in Zig, the compiler does not reuse
+                // stack space between scopes This means that having a large
+                // function with many scopes and local variables consumes
+                // enormous amounts of stack space.
                 const continuation = switch (p.lexer.token) {
                     inline .t_ampersand,
                     .t_ampersand_ampersand_equals,

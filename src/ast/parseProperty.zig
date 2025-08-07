@@ -132,397 +132,411 @@ pub fn ParseProperty(
             };
         }
 
-        pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
-            var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
-            const key_range = p.lexer.range();
-            var is_computed = false;
+        pub fn parseProperty(p: *P, kind_: Property.Kind, opts: *PropertyOpts, errors_: ?*DeferredErrors) anyerror!?G.Property {
+            var kind = kind_;
+            var errors = errors_;
+            // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
+            restart: while (true) {
+                var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
+                const key_range = p.lexer.range();
+                var is_computed = false;
 
-            switch (p.lexer.token) {
-                .t_numeric_literal => {
-                    key = p.newExpr(E.Number{
-                        .value = p.lexer.number,
-                    }, p.lexer.loc());
-                    // p.checkForLegacyOctalLiteral()
-                    try p.lexer.next();
-                },
-                .t_string_literal => {
-                    key = try p.parseStringLiteral();
-                },
-                .t_big_integer_literal => {
-                    key = p.newExpr(E.BigInt{ .value = p.lexer.identifier }, p.lexer.loc());
-                    // markSyntaxFeature
-                    try p.lexer.next();
-                },
-                .t_private_identifier => {
-                    if (!opts.is_class or opts.ts_decorators.len > 0) {
-                        try p.lexer.expected(.t_identifier);
-                    }
-
-                    key = p.newExpr(E.PrivateIdentifier{ .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable }, p.lexer.loc());
-                    try p.lexer.next();
-                },
-                .t_open_bracket => {
-                    is_computed = true;
-                    // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
-                    try p.lexer.next();
-                    const wasIdentifier = p.lexer.token == .t_identifier;
-                    const expr = try p.parseExpr(.comma);
-
-                    if (comptime is_typescript_enabled) {
-
-                        // Handle index signatures
-                        if (p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
-                            switch (expr.data) {
-                                .e_identifier => {
-                                    try p.lexer.next();
-                                    try p.skipTypeScriptType(.lowest);
-                                    try p.lexer.expect(.t_close_bracket);
-                                    try p.lexer.expect(.t_colon);
-                                    try p.skipTypeScriptType(.lowest);
-                                    try p.lexer.expectOrInsertSemicolon();
-
-                                    // Skip this property entirely
-                                    return null;
-                                },
-                                else => {},
-                            }
+                switch (p.lexer.token) {
+                    .t_numeric_literal => {
+                        key = p.newExpr(E.Number{
+                            .value = p.lexer.number,
+                        }, p.lexer.loc());
+                        // p.checkForLegacyOctalLiteral()
+                        try p.lexer.next();
+                    },
+                    .t_string_literal => {
+                        key = try p.parseStringLiteral();
+                    },
+                    .t_big_integer_literal => {
+                        key = p.newExpr(E.BigInt{ .value = p.lexer.identifier }, p.lexer.loc());
+                        // markSyntaxFeature
+                        try p.lexer.next();
+                    },
+                    .t_private_identifier => {
+                        if (!opts.is_class or opts.ts_decorators.len > 0) {
+                            try p.lexer.expected(.t_identifier);
                         }
-                    }
 
-                    try p.lexer.expect(.t_close_bracket);
-                    key = expr;
-                },
-                .t_asterisk => {
-                    if (kind != .normal or opts.is_generator) {
-                        try p.lexer.unexpected();
-                        return error.SyntaxError;
-                    }
+                        key = p.newExpr(E.PrivateIdentifier{ .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable }, p.lexer.loc());
+                        try p.lexer.next();
+                    },
+                    .t_open_bracket => {
+                        is_computed = true;
+                        // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
+                        try p.lexer.next();
+                        const wasIdentifier = p.lexer.token == .t_identifier;
+                        const expr = try p.parseExpr(.comma);
 
-                    try p.lexer.next();
-                    opts.is_generator = true;
-                    return try p.parseProperty(.normal, opts, errors);
-                },
+                        if (comptime is_typescript_enabled) {
 
-                else => {
-                    const name = p.lexer.identifier;
-                    const raw = p.lexer.raw();
-                    const name_range = p.lexer.range();
+                            // Handle index signatures
+                            if (p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
+                                switch (expr.data) {
+                                    .e_identifier => {
+                                        try p.lexer.next();
+                                        try p.skipTypeScriptType(.lowest);
+                                        try p.lexer.expect(.t_close_bracket);
+                                        try p.lexer.expect(.t_colon);
+                                        try p.skipTypeScriptType(.lowest);
+                                        try p.lexer.expectOrInsertSemicolon();
 
-                    if (!p.lexer.isIdentifierOrKeyword()) {
-                        try p.lexer.expect(.t_identifier);
-                    }
-
-                    try p.lexer.next();
-
-                    // Support contextual keywords
-                    if (kind == .normal and !opts.is_generator) {
-                        // Does the following token look like a key?
-                        const couldBeModifierKeyword = p.lexer.isIdentifierOrKeyword() or switch (p.lexer.token) {
-                            .t_open_bracket, .t_numeric_literal, .t_string_literal, .t_asterisk, .t_private_identifier => true,
-                            else => false,
-                        };
-
-                        // If so, check for a modifier keyword
-                        if (couldBeModifierKeyword) {
-                            // TODO: micro-optimization, use a smaller list for non-typescript files.
-                            if (js_lexer.PropertyModifierKeyword.List.get(name)) |keyword| {
-                                switch (keyword) {
-                                    .p_get => {
-                                        if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
-                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
-                                            return try p.parseProperty(.get, opts, null);
-                                        }
+                                        // Skip this property entirely
+                                        return null;
                                     },
-
-                                    .p_set => {
-                                        if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
-                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
-                                            return try p.parseProperty(.set, opts, null);
-                                        }
-                                    },
-                                    .p_async => {
-                                        if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_async and !p.lexer.has_newline_before) {
-                                            opts.is_async = true;
-                                            opts.async_range = name_range;
-
-                                            // p.markSyntaxFeature(ObjectAccessors, name_range)
-                                            return try p.parseProperty(kind, opts, null);
-                                        }
-                                    },
-                                    .p_static => {
-                                        if (!opts.is_static and !opts.is_async and opts.is_class and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_get) == .p_static) {
-                                            opts.is_static = true;
-                                            return try p.parseProperty(kind, opts, null);
-                                        }
-                                    },
-                                    .p_declare => {
-                                        // skip declare keyword entirely
-                                        // https://github.com/oven-sh/bun/issues/1907
-                                        if (opts.is_class and is_typescript_enabled and strings.eqlComptime(raw, "declare")) {
-                                            const scope_index = p.scopes_in_order.items.len;
-                                            if (try p.parseProperty(kind, opts, null)) |_prop| {
-                                                var prop = _prop;
-                                                if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
-                                                    prop.kind = .declare;
-                                                    return prop;
-                                                }
-                                            }
-
-                                            p.discardScopesUpTo(scope_index);
-                                            return null;
-                                        }
-                                    },
-                                    .p_abstract => {
-                                        if (opts.is_class and is_typescript_enabled and !opts.is_ts_abstract and strings.eqlComptime(raw, "abstract")) {
-                                            opts.is_ts_abstract = true;
-                                            const scope_index = p.scopes_in_order.items.len;
-                                            if (try p.parseProperty(kind, opts, null)) |_prop| {
-                                                var prop = _prop;
-                                                if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
-                                                    prop.kind = .abstract;
-                                                    return prop;
-                                                }
-                                            }
-                                            p.discardScopesUpTo(scope_index);
-                                            return null;
-                                        }
-                                    },
-                                    .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
-                                        // Skip over TypeScript keywords
-                                        if (opts.is_class and is_typescript_enabled and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
-                                            return try p.parseProperty(kind, opts, null);
-                                        }
-                                    },
+                                    else => {},
                                 }
                             }
-                        } else if (p.lexer.token == .t_open_brace and strings.eqlComptime(name, "static")) {
-                            const loc = p.lexer.loc();
-                            try p.lexer.next();
+                        }
 
-                            const old_fn_or_arrow_data_parse = p.fn_or_arrow_data_parse;
-                            p.fn_or_arrow_data_parse = .{
-                                .is_return_disallowed = true,
-                                .allow_super_property = true,
-                                .allow_await = .forbid_all,
+                        try p.lexer.expect(.t_close_bracket);
+                        key = expr;
+                    },
+                    .t_asterisk => {
+                        if (kind != .normal or opts.is_generator) {
+                            try p.lexer.unexpected();
+                            return error.SyntaxError;
+                        }
+
+                        try p.lexer.next();
+                        opts.is_generator = true;
+                        kind = .normal;
+                        continue :restart;
+                    },
+
+                    else => {
+                        const name = p.lexer.identifier;
+                        const raw = p.lexer.raw();
+                        const name_range = p.lexer.range();
+
+                        if (!p.lexer.isIdentifierOrKeyword()) {
+                            try p.lexer.expect(.t_identifier);
+                        }
+
+                        try p.lexer.next();
+
+                        // Support contextual keywords
+                        if (kind == .normal and !opts.is_generator) {
+                            // Does the following token look like a key?
+                            const couldBeModifierKeyword = p.lexer.isIdentifierOrKeyword() or switch (p.lexer.token) {
+                                .t_open_bracket, .t_numeric_literal, .t_string_literal, .t_asterisk, .t_private_identifier => true,
+                                else => false,
                             };
 
-                            _ = try p.pushScopeForParsePass(.class_static_init, loc);
-                            var _parse_opts = ParseStatementOptions{};
-                            const stmts = try p.parseStmtsUpTo(.t_close_brace, &_parse_opts);
+                            // If so, check for a modifier keyword
+                            if (couldBeModifierKeyword) {
+                                // TODO: micro-optimization, use a smaller list for non-typescript files.
+                                if (js_lexer.PropertyModifierKeyword.List.get(name)) |keyword| {
+                                    switch (keyword) {
+                                        .p_get => {
+                                            if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_get) {
+                                                kind = .get;
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
 
-                            p.popScope();
+                                        .p_set => {
+                                            if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_set) {
+                                                // p.markSyntaxFeature(ObjectAccessors, name_range)
+                                                kind = .set;
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
+                                        .p_async => {
+                                            if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_async and !p.lexer.has_newline_before) {
+                                                opts.is_async = true;
+                                                opts.async_range = name_range;
 
-                            p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
-                            try p.lexer.expect(.t_close_brace);
+                                                // p.markSyntaxFeature(ObjectAccessors, name_range)
 
-                            const block = p.allocator.create(
-                                G.ClassStaticBlock,
-                            ) catch unreachable;
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
+                                        .p_static => {
+                                            if (!opts.is_static and !opts.is_async and opts.is_class and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_get) == .p_static) {
+                                                opts.is_static = true;
+                                                kind = .normal;
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
+                                        .p_declare => {
+                                            // skip declare keyword entirely
+                                            // https://github.com/oven-sh/bun/issues/1907
+                                            if (opts.is_class and is_typescript_enabled and strings.eqlComptime(raw, "declare")) {
+                                                const scope_index = p.scopes_in_order.items.len;
+                                                if (try p.parseProperty(kind, opts, null)) |_prop| {
+                                                    var prop = _prop;
+                                                    if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                        prop.kind = .declare;
+                                                        return prop;
+                                                    }
+                                                }
 
-                            block.* = G.ClassStaticBlock{
-                                .stmts = js_ast.BabyList(Stmt).init(stmts),
-                                .loc = loc,
-                            };
+                                                p.discardScopesUpTo(scope_index);
+                                                return null;
+                                            }
+                                        },
+                                        .p_abstract => {
+                                            if (opts.is_class and is_typescript_enabled and !opts.is_ts_abstract and strings.eqlComptime(raw, "abstract")) {
+                                                opts.is_ts_abstract = true;
+                                                const scope_index = p.scopes_in_order.items.len;
+                                                if (try p.parseProperty(kind, opts, null)) |*prop| {
+                                                    if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                        var prop_ = prop.*;
+                                                        prop_.kind = .abstract;
+                                                        return prop_;
+                                                    }
+                                                }
+                                                p.discardScopesUpTo(scope_index);
+                                                return null;
+                                            }
+                                        },
+                                        .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
+                                            // Skip over TypeScript keywords
+                                            if (opts.is_class and is_typescript_enabled and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
+                                    }
+                                }
+                            } else if (p.lexer.token == .t_open_brace and strings.eqlComptime(name, "static")) {
+                                const loc = p.lexer.loc();
+                                try p.lexer.next();
+
+                                const old_fn_or_arrow_data_parse = p.fn_or_arrow_data_parse;
+                                p.fn_or_arrow_data_parse = .{
+                                    .is_return_disallowed = true,
+                                    .allow_super_property = true,
+                                    .allow_await = .forbid_all,
+                                };
+
+                                _ = try p.pushScopeForParsePass(.class_static_init, loc);
+                                var _parse_opts = ParseStatementOptions{};
+                                const stmts = try p.parseStmtsUpTo(.t_close_brace, &_parse_opts);
+
+                                p.popScope();
+
+                                p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
+                                try p.lexer.expect(.t_close_brace);
+
+                                const block = p.allocator.create(
+                                    G.ClassStaticBlock,
+                                ) catch unreachable;
+
+                                block.* = G.ClassStaticBlock{
+                                    .stmts = js_ast.BabyList(Stmt).init(stmts),
+                                    .loc = loc,
+                                };
+
+                                return G.Property{
+                                    .kind = .class_static_block,
+                                    .class_static_block = block,
+                                };
+                            }
+                        }
+
+                        // Handle invalid identifiers in property names
+                        // https://github.com/oven-sh/bun/issues/12039
+                        if (p.lexer.token == .t_syntax_error) {
+                            p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}) catch bun.outOfMemory();
+                            return error.SyntaxError;
+                        }
+
+                        key = p.newExpr(E.String{ .data = name }, name_range.loc);
+
+                        // Parse a shorthand property
+                        const isShorthandProperty = !opts.is_class and
+                            kind == .normal and
+                            p.lexer.token != .t_colon and
+                            p.lexer.token != .t_open_paren and
+                            p.lexer.token != .t_less_than and
+                            !opts.is_generator and
+                            !opts.is_async and
+                            !js_lexer.Keywords.has(name);
+
+                        if (isShorthandProperty) {
+                            if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
+                                strings.eqlComptime(name, "await")) or
+                                (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
+                                    strings.eqlComptime(name, "yield")))
+                            {
+                                if (strings.eqlComptime(name, "await")) {
+                                    p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
+                                } else {
+                                    p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" here") catch unreachable;
+                                }
+                            }
+
+                            const ref = p.storeNameInRef(name) catch unreachable;
+                            const value = p.newExpr(E.Identifier{ .ref = ref }, key.loc);
+
+                            // Destructuring patterns have an optional default value
+                            var initializer: ?Expr = null;
+                            if (errors != null and p.lexer.token == .t_equals) {
+                                errors.?.invalid_expr_default_value = p.lexer.range();
+                                try p.lexer.next();
+                                initializer = try p.parseExpr(.comma);
+                            }
 
                             return G.Property{
-                                .kind = .class_static_block,
-                                .class_static_block = block,
+                                .kind = kind,
+                                .key = key,
+                                .value = value,
+                                .initializer = initializer,
+                                .flags = Flags.Property.init(.{
+                                    .was_shorthand = true,
+                                }),
                             };
                         }
-                    }
+                    },
+                }
 
-                    // Handle invalid identifiers in property names
-                    // https://github.com/oven-sh/bun/issues/12039
-                    if (p.lexer.token == .t_syntax_error) {
-                        p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}) catch bun.outOfMemory();
-                        return error.SyntaxError;
-                    }
+                var has_type_parameters = false;
+                var has_definite_assignment_assertion_operator = false;
 
-                    key = p.newExpr(E.String{ .data = name }, name_range.loc);
-
-                    // Parse a shorthand property
-                    const isShorthandProperty = !opts.is_class and
-                        kind == .normal and
-                        p.lexer.token != .t_colon and
-                        p.lexer.token != .t_open_paren and
-                        p.lexer.token != .t_less_than and
-                        !opts.is_generator and
-                        !opts.is_async and
-                        !js_lexer.Keywords.has(name);
-
-                    if (isShorthandProperty) {
-                        if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
-                            strings.eqlComptime(name, "await")) or
-                            (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
-                                strings.eqlComptime(name, "yield")))
-                        {
-                            if (strings.eqlComptime(name, "await")) {
-                                p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
-                            } else {
-                                p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" here") catch unreachable;
-                            }
-                        }
-
-                        const ref = p.storeNameInRef(name) catch unreachable;
-                        const value = p.newExpr(E.Identifier{ .ref = ref }, key.loc);
-
-                        // Destructuring patterns have an optional default value
-                        var initializer: ?Expr = null;
-                        if (errors != null and p.lexer.token == .t_equals) {
-                            errors.?.invalid_expr_default_value = p.lexer.range();
+                if (comptime is_typescript_enabled) {
+                    if (opts.is_class) {
+                        if (p.lexer.token == .t_question) {
+                            // "class X { foo?: number }"
+                            // "class X { foo!: number }"
                             try p.lexer.next();
-                            initializer = try p.parseExpr(.comma);
+                        } else if (p.lexer.token == .t_exclamation and
+                            !p.lexer.has_newline_before and
+                            kind == .normal and
+                            !opts.is_async and
+                            !opts.is_generator)
+                        {
+                            // "class X { foo!: number }"
+                            try p.lexer.next();
+                            has_definite_assignment_assertion_operator = true;
+                        }
+                    }
+
+                    // "class X { foo?<T>(): T }"
+                    // "const x = { foo<T>(): T {} }"
+                    if (!has_definite_assignment_assertion_operator) {
+                        has_type_parameters = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true }) != .did_not_skip_anything;
+                    }
+                }
+
+                // Parse a class field with an optional initial value
+                if (opts.is_class and
+                    kind == .normal and !opts.is_async and
+                    !opts.is_generator and
+                    p.lexer.token != .t_open_paren and
+                    !has_type_parameters and
+                    (p.lexer.token != .t_open_paren or has_definite_assignment_assertion_operator))
+                {
+                    var initializer: ?Expr = null;
+                    var ts_metadata = TypeScript.Metadata.default;
+
+                    // Forbid the names "constructor" and "prototype" in some cases
+                    if (!is_computed) {
+                        switch (key.data) {
+                            .e_string => |str| {
+                                if (str.eqlComptime("constructor") or (opts.is_static and str.eqlComptime("prototype"))) {
+                                    // TODO: fmt error message to include string value.
+                                    p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (comptime is_typescript_enabled) {
+                        // Skip over types
+                        if (p.lexer.token == .t_colon) {
+                            try p.lexer.next();
+                            if (p.options.features.emit_decorator_metadata and opts.is_class and opts.ts_decorators.len > 0) {
+                                ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                            } else {
+                                try p.skipTypeScriptType(.lowest);
+                            }
+                        }
+                    }
+
+                    if (p.lexer.token == .t_equals) {
+                        if (comptime is_typescript_enabled) {
+                            if (!opts.declare_range.isEmpty()) {
+                                try p.log.addRangeError(p.source, p.lexer.range(), "Class fields that use \"declare\" cannot be initialized");
+                            }
                         }
 
-                        return G.Property{
-                            .kind = kind,
-                            .key = key,
-                            .value = value,
-                            .initializer = initializer,
-                            .flags = Flags.Property.init(.{
-                                .was_shorthand = true,
-                            }),
-                        };
-                    }
-                },
-            }
-
-            var has_type_parameters = false;
-            var has_definite_assignment_assertion_operator = false;
-
-            if (comptime is_typescript_enabled) {
-                if (opts.is_class) {
-                    if (p.lexer.token == .t_question) {
-                        // "class X { foo?: number }"
-                        // "class X { foo!: number }"
                         try p.lexer.next();
-                    } else if (p.lexer.token == .t_exclamation and
-                        !p.lexer.has_newline_before and
-                        kind == .normal and
-                        !opts.is_async and
-                        !opts.is_generator)
-                    {
-                        // "class X { foo!: number }"
-                        try p.lexer.next();
-                        has_definite_assignment_assertion_operator = true;
+
+                        // "this" and "super" property access is allowed in field initializers
+                        const old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
+                        const old_allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
+                        p.fn_or_arrow_data_parse.is_this_disallowed = false;
+                        p.fn_or_arrow_data_parse.allow_super_property = true;
+
+                        initializer = try p.parseExpr(.comma);
+
+                        p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
+                        p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
                     }
-                }
 
-                // "class X { foo?<T>(): T }"
-                // "const x = { foo<T>(): T {} }"
-                if (!has_definite_assignment_assertion_operator) {
-                    has_type_parameters = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true }) != .did_not_skip_anything;
-                }
-            }
-
-            // Parse a class field with an optional initial value
-            if (opts.is_class and
-                kind == .normal and !opts.is_async and
-                !opts.is_generator and
-                p.lexer.token != .t_open_paren and
-                !has_type_parameters and
-                (p.lexer.token != .t_open_paren or has_definite_assignment_assertion_operator))
-            {
-                var initializer: ?Expr = null;
-                var ts_metadata = TypeScript.Metadata.default;
-
-                // Forbid the names "constructor" and "prototype" in some cases
-                if (!is_computed) {
+                    // Special-case private identifiers
                     switch (key.data) {
-                        .e_string => |str| {
-                            if (str.eqlComptime("constructor") or (opts.is_static and str.eqlComptime("prototype"))) {
-                                // TODO: fmt error message to include string value.
-                                p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
+                        .e_private_identifier => |*private| {
+                            const name = p.loadNameFromRef(private.ref);
+                            if (strings.eqlComptime(name, "#constructor")) {
+                                p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
                             }
+
+                            const declare: js_ast.Symbol.Kind = if (opts.is_static)
+                                .private_static_field
+                            else
+                                .private_field;
+
+                            private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
                         },
                         else => {},
                     }
+
+                    try p.lexer.expectOrInsertSemicolon();
+
+                    return G.Property{
+                        .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                        .kind = kind,
+                        .flags = Flags.Property.init(.{
+                            .is_computed = is_computed,
+                            .is_static = opts.is_static,
+                        }),
+                        .key = key,
+                        .initializer = initializer,
+                        .ts_metadata = ts_metadata,
+                    };
                 }
 
-                if (comptime is_typescript_enabled) {
-                    // Skip over types
-                    if (p.lexer.token == .t_colon) {
-                        try p.lexer.next();
-                        if (p.options.features.emit_decorator_metadata and opts.is_class and opts.ts_decorators.len > 0) {
-                            ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
-                        } else {
-                            try p.skipTypeScriptType(.lowest);
-                        }
-                    }
+                // Parse a method expression
+                if (p.lexer.token == .t_open_paren or kind != .normal or opts.is_class or opts.is_async or opts.is_generator) {
+                    return parseMethodExpression(p, kind, opts, is_computed, &key, key_range);
                 }
 
-                if (p.lexer.token == .t_equals) {
-                    if (comptime is_typescript_enabled) {
-                        if (!opts.declare_range.isEmpty()) {
-                            try p.log.addRangeError(p.source, p.lexer.range(), "Class fields that use \"declare\" cannot be initialized");
-                        }
-                    }
-
-                    try p.lexer.next();
-
-                    // "this" and "super" property access is allowed in field initializers
-                    const old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
-                    const old_allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
-                    p.fn_or_arrow_data_parse.is_this_disallowed = false;
-                    p.fn_or_arrow_data_parse.allow_super_property = true;
-
-                    initializer = try p.parseExpr(.comma);
-
-                    p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
-                    p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
-                }
-
-                // Special-case private identifiers
-                switch (key.data) {
-                    .e_private_identifier => |*private| {
-                        const name = p.loadNameFromRef(private.ref);
-                        if (strings.eqlComptime(name, "#constructor")) {
-                            p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
-                        }
-
-                        const declare: js_ast.Symbol.Kind = if (opts.is_static)
-                            .private_static_field
-                        else
-                            .private_field;
-
-                        private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
-                    },
-                    else => {},
-                }
-
-                try p.lexer.expectOrInsertSemicolon();
-
-                return G.Property{
-                    .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                // Parse an object key/value pair
+                try p.lexer.expect(.t_colon);
+                var property: G.Property = .{
                     .kind = kind,
                     .flags = Flags.Property.init(.{
                         .is_computed = is_computed,
-                        .is_static = opts.is_static,
                     }),
                     .key = key,
-                    .initializer = initializer,
-                    .ts_metadata = ts_metadata,
+                    .value = Expr{ .data = .e_missing, .loc = .{} },
                 };
+
+                try p.parseExprOrBindings(.comma, errors, &property.value.?);
+                return property;
             }
-
-            // Parse a method expression
-            if (p.lexer.token == .t_open_paren or kind != .normal or opts.is_class or opts.is_async or opts.is_generator) {
-                return parseMethodExpression(p, kind, opts, is_computed, &key, key_range);
-            }
-
-            // Parse an object key/value pair
-            try p.lexer.expect(.t_colon);
-            var property: G.Property = .{
-                .kind = kind,
-                .flags = Flags.Property.init(.{
-                    .is_computed = is_computed,
-                }),
-                .key = key,
-                .value = Expr{ .data = .e_missing, .loc = .{} },
-            };
-
-            try p.parseExprOrBindings(.comma, errors, &property.value.?);
-            return property;
         }
     };
 }

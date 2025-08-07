@@ -1110,11 +1110,23 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         // --- HTML ---
-        var html_name_buf: bun.PathBuffer = undefined;
-        const html_file, const html_name, const html_buffered_writer, const html_writer = brk: {
-            if (comptime !reporters.html) break :brk .{ {}, {}, {}, {} };
+        // Structure to hold HTML report data in memory
+        const HtmlReportData = struct {
+            report: CodeCoverageReport,
+            filename: []const u8,
+            html_filename: []const u8,
+            coverage: f64,
+        };
+        var html_reports = if (comptime reporters.html) std.ArrayList(HtmlReportData).init(bun.default_allocator) else {};
+        defer if (comptime reporters.html) {
+            for (html_reports.items) |*item| {
+                item.report.deinit(bun.default_allocator);
+            }
+            html_reports.deinit();
+        };
 
-            // Ensure the directory exists
+        // Ensure the directory exists for HTML reports
+        if (comptime reporters.html) {
             var fs = bun.jsc.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
@@ -1124,65 +1136,12 @@ pub const CommandLineReporter = struct {
                     .always_return_none = true,
                 },
             );
-
-            // Write the index.html file to a temporary file we atomically rename to the final name after it succeeds
-            var base64_bytes: [8]u8 = undefined;
-            var shortname_buf: [512]u8 = undefined;
-            bun.csprng(&base64_bytes);
-            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".index.html.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
-            const path = bun.path.joinAbsStringBufZ(relative_dir, &html_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
-            const file = bun.sys.File.openat(
-                .cwd(),
-                path,
-                bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
-                0o644,
-            );
-
-            switch (file) {
-                .err => |err| {
-                    Output.err(.lcovCoverageError, "Failed to create HTML coverage file", .{});
-                    Output.printError("\n{s}", .{err});
-                    Global.exit(1);
-                },
-                .result => |f| {
-                    const buffered = buffered_writer: {
-                        const writer = f.writer();
-                        // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
-                        ptr.* = .{
-                            .end = 0,
-                            .unbuffered_writer = writer,
-                        };
-                        break :buffered_writer ptr;
-                    };
-
-                    break :brk .{
-                        f,
-                        path,
-                        buffered,
-                        buffered.writer(),
-                    };
-                },
-            }
-        };
-        errdefer {
-            if (comptime reporters.html) {
-                html_file.close();
-                _ = bun.sys.unlink(
-                    html_name,
-                );
-            }
         }
 
         // Collect sidebar items for HTML reporter
         var sidebar_items = if (comptime reporters.html) std.ArrayList(CodeCoverageReport.Html.SidebarItem).init(bun.default_allocator);
         defer if (comptime reporters.html) sidebar_items.deinit();
 
-        // Write HTML header
-        if (comptime reporters.html) {
-            try CodeCoverageReport.Html.writeHeader(html_writer.any());
-            try CodeCoverageReport.Html.writeTimestamp(html_writer.any());
-        }
         // --- HTML ---
 
         for (byte_ranges) |*entry| {
@@ -1205,7 +1164,12 @@ pub const CommandLineReporter = struct {
             }
 
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-            defer report.deinit(bun.default_allocator);
+            // Report deinit is now handled conditionally based on HTML reporter
+            defer {
+                if (comptime !reporters.html) {
+                    report.deinit(bun.default_allocator);
+                }
+            }
 
             if (comptime reporters.text) {
                 var fraction = base_fraction;
@@ -1230,14 +1194,7 @@ pub const CommandLineReporter = struct {
             }
 
             if (comptime reporters.html) {
-                // Write entry to index.html
-                CodeCoverageReport.Html.writeFormat(
-                    &report,
-                    relative_dir,
-                    html_writer.any(),
-                ) catch continue;
-
-                // Collect sidebar item for this file
+                // Collect report data for later processing
                 var filename = report.source_url.byteSlice();
                 if (relative_dir.len > 0) {
                     filename = std.fs.path.relative(std.heap.page_allocator, relative_dir, filename) catch filename;
@@ -1262,6 +1219,14 @@ pub const CommandLineReporter = struct {
                 const stored_filename = try bun.default_allocator.dupe(u8, filename);
                 const stored_html_filename = try bun.default_allocator.dupe(u8, html_filename);
 
+                // Store the report data (transfer ownership instead of deinit)
+                try html_reports.append(.{
+                    .report = report,
+                    .filename = stored_filename,
+                    .html_filename = stored_html_filename,
+                    .coverage = report.linesCoverageFraction(),
+                });
+                
                 try sidebar_items.append(.{
                     .filename = stored_filename,
                     .html_filename = stored_html_filename,
@@ -1270,42 +1235,91 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        // Generate detail files with sidebar for HTML reporter
+        // Generate all HTML files in one block
         if (comptime reporters.html) {
+            // First, generate index.html
+            var html_name_buf: bun.PathBuffer = undefined;
+            var base64_bytes: [8]u8 = undefined;
+            var shortname_buf: [512]u8 = undefined;
+            bun.csprng(&base64_bytes);
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".index.html.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            const html_name = bun.path.joinAbsStringBufZ(relative_dir, &html_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
+            const html_file = bun.sys.File.openat(
+                .cwd(),
+                html_name,
+                bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                0o644,
+            );
+
+            switch (html_file) {
+                .err => |err| {
+                    Output.err(.lcovCoverageError, "Failed to create HTML coverage file", .{});
+                    Output.printError("\n{s}", .{err});
+                    Global.exit(1);
+                },
+                .result => |f| {
+                    defer f.close();
+                    
+                    const buffered = buffered_writer: {
+                        const writer = f.writer();
+                        // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
+                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        ptr.* = .{
+                            .end = 0,
+                            .unbuffered_writer = writer,
+                        };
+                        break :buffered_writer ptr;
+                    };
+                    defer bun.default_allocator.destroy(buffered);
+                    
+                    const html_writer = buffered.writer();
+                    const html_any_writer = html_writer.any();
+
+                    // Write header and timestamp
+                    try CodeCoverageReport.Html.writeHeader(html_any_writer);
+                    try CodeCoverageReport.Html.writeTimestamp(html_any_writer);
+
+                    // Write all report entries to index.html
+                    for (html_reports.items) |*item| {
+                        CodeCoverageReport.Html.writeFormat(
+                            &item.report,
+                            relative_dir,
+                            html_any_writer,
+                        ) catch continue;
+                    }
+
+                    // Write footer
+                    try CodeCoverageReport.Html.writeFooter(html_any_writer);
+                    try buffered.flush();
+                },
+            }
+
+            // Atomically rename to final name
+            const cwd = bun.FD.cwd();
+            bun.sys.moveFileZ(
+                cwd,
+                html_name,
+                cwd,
+                bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{ opts.reports_directory, "index.html" },
+                    .auto,
+                ),
+            ) catch |err| {
+                Output.err(err, "Failed to save index.html file", .{});
+                Global.exit(1);
+            };
+
             // Now generate all detail files with the complete sidebar
-            var i: usize = 0;
-            for (byte_ranges) |*entry| {
-                // Check if this file should be ignored (same logic as above)
-                if (opts.ignore_patterns.len > 0) {
-                    const utf8 = entry.source_url.slice();
-                    const relative_path = bun.path.relative(relative_dir, utf8);
-
-                    var should_ignore = false;
-                    for (opts.ignore_patterns) |pattern| {
-                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
-                            should_ignore = true;
-                            break;
-                        }
-                    }
-
-                    if (should_ignore) {
-                        continue;
-                    }
-                }
-
-                var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-                defer report.deinit(bun.default_allocator);
-
-                const source_path = report.source_url.slice();
+            for (html_reports.items) |*item| {
+                const source_path = item.report.source_url.slice();
                 CodeCoverageReport.Html.createDetailFile(
-                    &report,
+                    &item.report,
                     relative_dir,
                     opts.reports_directory,
                     source_path,
                     sidebar_items.items,
                 ) catch continue;
-
-                i += 1;
             }
 
             // Free the allocated strings
@@ -1376,27 +1390,7 @@ pub const CommandLineReporter = struct {
             };
         }
 
-        if (comptime reporters.html) {
-            // Write HTML footer and finalize
-            try CodeCoverageReport.Html.writeFooter(html_writer.any());
-
-            try html_buffered_writer.flush();
-            html_file.close();
-            const cwd = bun.FD.cwd();
-            bun.sys.moveFileZ(
-                cwd,
-                html_name,
-                cwd,
-                bun.path.joinAbsStringZ(
-                    relative_dir,
-                    &.{ opts.reports_directory, "index.html" },
-                    .auto,
-                ),
-            ) catch |err| {
-                Output.err(err, "Failed to save index.html file", .{});
-                Global.exit(1);
-            };
-        }
+        // HTML footer and finalization is now handled in the block above
     }
 };
 

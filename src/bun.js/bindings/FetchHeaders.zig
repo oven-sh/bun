@@ -23,8 +23,8 @@ pub const FetchHeaders = opaque {
 
     pub fn createValue(
         global: *JSGlobalObject,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
@@ -37,7 +37,7 @@ pub const FetchHeaders = opaque {
         );
     }
 
-    extern "c" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
+    extern "c" fn WebCore__FetchHeaders__createFromJS(*jsc.JSGlobalObject, JSValue) ?*FetchHeaders;
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -61,8 +61,8 @@ pub const FetchHeaders = opaque {
 
     pub fn from(
         global: *JSGlobalObject,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
@@ -361,7 +361,7 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn cast(value: JSValue) ?*FetchHeaders {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, jsc.VirtualMachine.get().global.vm());
     }
 
     pub fn toJS(this: *FetchHeaders, globalThis: *JSGlobalObject) JSValue {
@@ -405,8 +405,8 @@ pub const FetchHeaders = opaque {
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: [*]Api.StringPointer,
-        values: [*]Api.StringPointer,
+        names: [*]api.StringPointer,
+        values: [*]api.StringPointer,
         buf: [*]u8,
     ) void {
         return WebCore__FetchHeaders__copyTo(
@@ -420,11 +420,11 @@ pub const FetchHeaders = opaque {
 
 const bun = @import("bun");
 
-const Api = @import("../../api/schema.zig").Api;
-const StringPointer = Api.StringPointer;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VM = jsc.VM;
+const ZigString = jsc.ZigString;
 
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const VM = JSC.VM;
-const ZigString = JSC.ZigString;
+const api = bun.schema.api;
+const StringPointer = api.StringPointer;

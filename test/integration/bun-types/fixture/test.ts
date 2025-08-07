@@ -1,4 +1,17 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  jest,
+  mock,
+  type Mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { expectType } from "./utilities";
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
@@ -307,3 +320,12 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+test("expectTypeOf basic type checks", () => {
+  expectTypeOf({ name: "test" }).toMatchObjectType<{ name: string }>();
+
+  // @ts-expect-error
+  expectTypeOf({ name: 123 }).toMatchObjectType<{ name: string }>();
+});
+
+mock.clearAllMocks();

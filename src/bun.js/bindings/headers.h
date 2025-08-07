@@ -227,7 +227,6 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* arg0, 
 CPP_DECL void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const unsigned char* arg2, uint32_t arg3);
 CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
@@ -261,7 +260,6 @@ CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsBoolean(bool arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsDoubleNumber(double arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNull();
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0);
@@ -322,7 +320,6 @@ CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC::VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__VM__whenIdle(JSC::VM* arg0, void(* ArgFn1)());
 
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 

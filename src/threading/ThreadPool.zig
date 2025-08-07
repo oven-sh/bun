@@ -550,6 +550,8 @@ pub const Thread = struct {
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
+        bun.mimalloc.mi_thread_set_in_threadpool();
+
         {
             var counter_buf: [100]u8 = undefined;
             const int = counter.fetchAdd(1, .seq_cst);

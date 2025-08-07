@@ -37,14 +37,14 @@ fn fail(this: *@This(), msg: []const u8) Yield {
 fn print(this: *@This(), msg: []const u8) Maybe(void) {
     if (this.bltn().stdout.needsIO() != null) {
         this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
-        return Maybe(void).success;
+        return .success;
     }
     const res = this.bltn().writeNoIO(.stdout, msg);
     if (res == .err) return Maybe(void).initErr(res.err);
-    return Maybe(void).success;
+    return .success;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
@@ -71,6 +71,6 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;
 const Yield = bun.shell.Yield;

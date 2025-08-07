@@ -216,7 +216,7 @@ pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_add
 /// Call when the pointer from `trackExternalAllocation` is freed.
 /// Returns true if the free was invalid.
 pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usize) bool {
-    if (comptime !enabled) return;
+    if (comptime !enabled) return false;
     const ptr: []const u8 = switch (@typeInfo(@TypeOf(slice))) {
         .pointer => |p| switch (p.size) {
             .slice => brk: {

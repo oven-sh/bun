@@ -56,7 +56,7 @@ beforeAll(async () => {
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun run build
       bun pm pack --destination ${FIXTURE_DIR}
-      exit 0
+      rm CLAUDE.md
       mv package.json.backup package.json
 
       cd ${FIXTURE_DIR}
@@ -163,11 +163,11 @@ async function diagnose(
 
   return {
     diagnostics,
-    emptyInterfaces: checkForEmptyInterfaces(program, fixtureDir),
+    emptyInterfaces: checkForEmptyInterfaces(program),
   };
 }
 
-function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
+function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
 
   const checker = program.getTypeChecker();
@@ -186,7 +186,6 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
     const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
 
     if (!concernsBun) {
-      // the lion is not concerned by symbols outside of bun
       continue;
     }
 
@@ -232,7 +231,8 @@ afterAll(async () => {
     console.log(TEMP_DIR);
 
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
-      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
+      console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
+      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -285,6 +285,17 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  test("checks with no lib at all", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+      options: {
+        lib: [],
+      },
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([]);
+  });
+
   test("checks with lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
       options: {
@@ -294,6 +305,21 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(new Set<string>());
     expect(diagnostics).toEqual([
+      {
+        code: 2769,
+        line: "fetch.ts:25:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:33:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:168:34",
+        message: "No overload matches this call.",
+      },
       {
         code: 2353,
         line: "globals.ts:307:5",
@@ -313,25 +339,25 @@ describe("@types/bun integration test", () => {
       },
       {
         code: 2345,
-        line: "index.ts:196:14",
+        line: "index.ts:193:14",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
       },
       {
         code: 2345,
-        line: "index.ts:326:29",
+        line: "index.ts:323:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       },
       {
         code: 2339,
         line: "spawn.ts:62:38",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
       },
       {
         code: 2339,
         line: "spawn.ts:107:38",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
       },
       {
         code: 2769,

@@ -426,6 +426,54 @@ test("exactly two assertions", () => {
 
 This helps ensure all your assertions run, especially in complex async code with multiple code paths.
 
+## Type Testing
+
+Bun includes `expectTypeOf` for testing typescript types, compatible with Vitest.
+
+### expectTypeOf
+
+{% callout %}
+
+**Note** — These functions are no-ops at runtime - you need to run TypeScript separately to verify the type checks.
+
+{% endcallout %}
+
+The `expectTypeOf` function provides type-level assertions that are checked by TypeScript's type checker. **Important**:
+
+To test your types:
+
+1. Write your type assertions using `expectTypeOf`
+2. Run `bunx tsc --noEmit` to check that your types are correct
+
+```ts
+import { expectTypeOf } from "bun:test";
+
+// Basic type assertions
+expectTypeOf<string>().toEqualTypeOf<string>();
+expectTypeOf(123).toBeNumber();
+expectTypeOf("hello").toBeString();
+
+// Object type matching
+expectTypeOf({ a: 1, b: "hello" }).toMatchObjectType<{ a: number }>();
+
+// Function types
+function greet(name: string): string {
+  return `Hello ${name}`;
+}
+
+expectTypeOf(greet).toBeFunction();
+expectTypeOf(greet).parameters.toEqualTypeOf<[string]>();
+expectTypeOf(greet).returns.toEqualTypeOf<string>();
+
+// Array types
+expectTypeOf([1, 2, 3]).items.toBeNumber();
+
+// Promise types
+expectTypeOf(Promise.resolve(42)).resolves.toBeNumber();
+```
+
+For full documentation on expectTypeOf matchers, see the [API Reference](/reference/bun/test/expectTypeOf)
+
 ## Matchers
 
 Bun implements the following matchers. Full Jest compatibility is on the roadmap; track progress [here](https://github.com/oven-sh/bun/issues/1825).
@@ -629,17 +677,17 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveReturnedWith()`](https://jestjs.io/docs/expect#tohavereturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveLastReturnedWith()`](https://jestjs.io/docs/expect#tohavelastreturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveNthReturnedWith()`](https://jestjs.io/docs/expect#tohaventhreturnedwithnthcall-value)
 
 ---

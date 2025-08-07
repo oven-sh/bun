@@ -416,13 +416,10 @@ pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTT
 
     var callback = this.result_callback;
     this.elapsed = bun.http.http_thread.timer.read() -| this.elapsed;
-    
+
     // Check ALPN negotiation result
-    log("onAsyncHTTPCallback: should_use_http2={}, protocol={}", .{ 
-        this.client.should_use_http2, 
-        this.protocol
-    });
-    
+    log("onAsyncHTTPCallback: should_use_http2={}, protocol={}", .{ this.client.should_use_http2, this.protocol });
+
     // Check if HTTP/2 was forced but not negotiated
     if (this.protocol == .h2 and !this.client.should_use_http2) {
         // User forced HTTP/2 but it wasn't negotiated
@@ -430,14 +427,14 @@ pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTT
         this.err = error.ProtocolNotSupported;
         // Don't return early, let it fail naturally
     }
-    
+
     // Check if HTTP/2 was negotiated via ALPN
     if (this.client.should_use_http2 and this.protocol != .h1) {
         // HTTP/2 was negotiated and not forced to HTTP/1.1
         if (!this.use_http2) {
             log("HTTP/2 negotiated via ALPN, upgrading to HTTP/2", .{});
             this.use_http2 = true;
-            
+
             // TODO: Implement proper HTTP/2 protocol handling here
             // For now, we'll continue with HTTP/1.1 until HTTP/2 is fully implemented
             log("HTTP/2 support not yet fully implemented, continuing with HTTP/1.1", .{});
@@ -503,7 +500,7 @@ pub fn onStart(this: *AsyncHTTP) void {
     if (this.response_buffer.list.capacity == 0) {
         this.response_buffer.allocator = bun.http.default_allocator;
     }
-    
+
     // log("onStart: this.protocol={}, this.client.protocol={}", .{this.protocol, this.client.protocol});
 
     // Always start with HTTP/1.1 client which will handle ALPN negotiation

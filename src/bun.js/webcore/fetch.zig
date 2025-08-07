@@ -1308,11 +1308,7 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} has_more={} bytes={}", .{ 
-            result.isSuccess(), 
-            result.has_more, 
-            if (result.body) |body| body.list.items.len else 0 
-        });
+        log("callback success={} has_more={} bytes={}", .{ result.isSuccess(), result.has_more, if (result.body) |body| body.list.items.len else 0 });
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;

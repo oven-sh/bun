@@ -53,10 +53,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
         }
 
-        const ActiveSocket = TaggedPointerUnion(.{
+        pub const ActiveSocket = TaggedPointerUnion(.{
             *DeadSocket,
             HTTPClient,
             PooledSocket,
+            bun.http.HTTP2Client,
         });
         const ssl_int = @as(c_int, @intFromBool(ssl));
 
@@ -79,7 +80,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            
+
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -116,12 +117,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         const alpn_h2 = [_]u8{ 2, 'h', '2' };
         const alpn_h1 = [_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
         const alpn_both = [_]u8{ 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        
+
         pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            
+
             const opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
@@ -133,19 +134,19 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             try this.initWithOpts(&opts);
         }
-        
+
         pub fn initWithThreadOptsAndProtocol(this: *@This(), init_opts: *const HTTPThread.InitOpts, protocol: HTTPClient.HTTPProtocol) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            
+
             var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
             };
-            
+
             // Set ALPN based on protocol preference
             switch (protocol) {
                 .h1 => {
@@ -175,9 +176,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 };
             }
             this.us_socket_context = socket.?;
-            
+
             // Configure the socket handler
-            log("Configuring socket handler for protocol={}, us_socket_context={*}", .{protocol, this.us_socket_context});
+            log("Configuring socket handler for protocol={}, us_socket_context={*}", .{ protocol, this.us_socket_context });
             HTTPSocket.configure(
                 this.us_socket_context,
                 false,
@@ -266,9 +267,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 log("onOpen called", .{});
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    log("Calling client.onOpen with ssl={}, client.protocol={}", .{ssl, client.protocol});
+                    log("Calling client.onOpen with ssl={}, client.protocol={}", .{ ssl, client.protocol });
                     client.onOpen(comptime ssl, socket) catch |err| {
                         log("Unable to open socket: {}", .{err});
+                        terminateSocket(socket);
+                        return;
+                    };
+                    return;
+                } else if (active.get(bun.http.HTTP2Client)) |client| {
+                    log("Calling HTTP2Client.onOpen with ssl={}", .{ssl});
+                    client.onOpen(comptime ssl, socket) catch |err| {
+                        log("Unable to open HTTP2 socket: {}", .{err});
                         terminateSocket(socket);
                         return;
                     };
@@ -375,6 +384,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onClose(comptime ssl, socket);
+                } else if (tagged.get(bun.http.HTTP2Client)) |client| {
+                    return client.onClose(comptime ssl, socket);
                 }
 
                 if (tagged.get(PooledSocket)) |pooled| {
@@ -394,7 +405,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 buf: []const u8,
             ) void {
                 const tagged = getTagged(ptr);
+                bun.Output.prettyErrorln("HTTPContext.onData: ptr={*}, buf.len={d}", .{ ptr, buf.len });
                 if (tagged.get(HTTPClient)) |client| {
+                    bun.Output.prettyErrorln("  -> HTTPClient", .{});
+                    return client.onData(
+                        comptime ssl,
+                        buf,
+                        if (comptime ssl) &bun.http.http_thread.https_context else &bun.http.http_thread.http_context,
+                        socket,
+                    );
+                } else if (tagged.get(bun.http.HTTP2Client)) |client| {
+                    bun.Output.prettyErrorln("  -> HTTP2Client", .{});
                     return client.onData(
                         comptime ssl,
                         buf,
@@ -425,6 +446,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         comptime ssl,
                         socket,
                     );
+                } else if (tagged.get(bun.http.HTTP2Client)) |client| {
+                    return client.onWritable(false, comptime ssl, socket);
                 } else if (tagged.is(PooledSocket)) {
                     // it's a keep-alive socket
                 } else {
@@ -528,7 +551,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
-            log("connect called on context {*}, ssl={}, client.protocol={}", .{this, ssl, client.protocol});
+            log("connect called on context {*}, ssl={}, client.protocol={}", .{ this, ssl, client.protocol });
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -553,9 +576,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             if (comptime ssl) {
                 const ssl_ctx = this.sslCtx();
-                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}, ssl_ctx={*}", .{hostname, port, this, ssl, this.us_socket_context, ssl_ctx});
+                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}, ssl_ctx={*}", .{ hostname, port, this, ssl, this.us_socket_context, ssl_ctx });
             } else {
-                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}", .{hostname, port, this, ssl, this.us_socket_context});
+                log("Connecting to {s}:{} with context {*}, ssl={}, us_socket_context={*}", .{ hostname, port, this, ssl, this.us_socket_context });
             }
             const socket = try HTTPSocket.connectAnon(
                 hostname,

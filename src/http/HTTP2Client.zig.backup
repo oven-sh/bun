@@ -33,10 +33,23 @@ const FrameType = h2_frame_parser.FrameType;
 const FrameHeader = h2_frame_parser.FrameHeader;
 const FullSettingsPayload = h2_frame_parser.FullSettingsPayload;
 const SettingsType = h2_frame_parser.SettingsType;
+// SettingsPayloadUnit is not public, define locally
+const SettingsPayloadUnit = packed struct(u48) {
+    identifier: u16,
+    value: u32,
+};
 const HeadersFrameFlags = h2_frame_parser.HeadersFrameFlags;
 const DataFrameFlags = h2_frame_parser.DataFrameFlags;
-const SettingsFlags = h2_frame_parser.SettingsFlags;
-const PingFrameFlags = h2_frame_parser.PingFrameFlags;
+// SettingsFlags is not public, define locally
+const SettingsFlags = enum(u8) {
+    ACK = 0x01,
+    _,
+};
+// PingFrameFlags is not public, define locally
+const PingFrameFlags = enum(u8) {
+    ACK = 0x01,
+    _,
+};
 const ErrorCode = h2_frame_parser.ErrorCode;
 
 const log = Output.scoped(.HTTP2Client, true);
@@ -288,7 +301,6 @@ const Connection = struct {
 // Main HTTP/2 Client structure
 allocator: std.mem.Allocator,
 connection: ?Connection = null,
-frame_buffer: FrameBuffer = FrameBuffer.init(),
 url: URL,
 method: Method = Method.GET,
 headers: Headers.Entry.List = .empty,
@@ -355,9 +367,6 @@ pub fn deinit(self: *HTTP2Client) void {
         conn.deinit();
     }
     
-    // Clean up frame buffer
-    self.frame_buffer.deinit(self.allocator);
-    
     // Clean up any other allocated resources
     if (self.signals.aborted != null) {
         _ = bun.http.socket_async_http_abort_tracker.swapRemove(self.async_http_id);
@@ -400,10 +409,82 @@ fn connect(self: *HTTP2Client) !void {
         conn.state = .connecting;
     }
 
-    // HTTP2Client should not handle connection establishment directly
-    // The HTTPClient handles ALPN negotiation and transfers control via transferToHTTP2Client
-    log("HTTP2Client.connect() should not be called directly - connection should be transferred from HTTPClient", .{});
-    return error.DirectHTTP2ConnectionNotSupported;
+    // Establish TLS connection with ALPN negotiation for HTTP/2
+    // Create a temporary HTTPClient to handle connection establishment
+    const is_ssl = self.url.isHTTPS();
+    
+    // Create minimal HTTPClient for connection establishment
+    // Initialize with default values to avoid garbage memory
+    var temp_client = HTTPClient{
+        .allocator = self.allocator,
+        .url = self.url,
+        .method = self.method,
+        .header_entries = self.headers,
+        .header_buf = self.header_buf,
+        .signals = self.signals,
+        .async_http_id = self.async_http_id,
+        .http_proxy = self.http_proxy,
+        .flags = self.flags,
+        .verbose = self.verbose,
+        .tls_props = self.tls_props,
+        .redirect_type = self.redirect_type,
+        .hostname = null,
+        .unix_socket_path = .{},
+        .connected_url = URL{},
+        .decompressor = .{},
+        .state = .none,
+        .request_body = .{ .bytes = "" },
+        .progress_node = null,
+        .aborted = false,
+        .should_use_http2 = false,
+        .allow_retry = true,
+        .cloned_headers_buf = false,
+        .result_callback = undefined,
+    };
+    
+    // Connect with comptime SSL parameter
+    if (is_ssl) {
+        var socket = bun.http.http_thread.connect(&temp_client, true) catch |err| {
+            log("HTTP/2 HTTPS connection failed: {}", .{err});
+            self.connection_state = .failed;
+            return err;
+        };
+
+        if (socket.isClosed()) {
+            log("HTTP/2 HTTPS socket closed immediately", .{});
+            self.connection_state = .failed;
+            return error.ConnectionClosed;
+        }
+
+        if (temp_client.should_use_http2) {
+            log("ALPN negotiated HTTP/2, proceeding with HTTP/2 client", .{});
+            
+            // Update the socket's extension data to point to HTTP2Client
+            // The socket ext field points to a **anyopaque which should point to an ActiveSocket union
+            if (socket.ext(**anyopaque)) |ctx_ptr| {
+                bun.Output.prettyErrorln("Current socket handler before: {*}", .{ctx_ptr.*});
+                // Create an ActiveSocket union with HTTP2Client
+                const active_socket = NewHTTPContext(true).ActiveSocket.init(self);
+                // Update the pointer to point to our HTTP2Client wrapped in ActiveSocket
+                ctx_ptr.* = bun.cast(**anyopaque, active_socket.ptr());
+                bun.Output.prettyErrorln("Updated socket handler to HTTP2Client: {*}", .{ctx_ptr.*});
+                log("Updated socket handler to HTTP2Client", .{});
+            } else {
+                bun.Output.prettyErrorln("ERROR: Socket has no extension data pointer", .{});
+                log("Socket has no extension data pointer", .{});
+                return error.InvalidSocket;
+            }
+            
+            // Transfer socket to HTTP/2 client
+            try self.onOpen(true, socket);
+        } else {
+            log("ALPN did not negotiate HTTP/2, falling back to HTTP/1.1", .{});
+            return error.HTTP2NotNegotiated;
+        }
+    } else {
+        log("HTTP/2 requires HTTPS, falling back to HTTP/1.1", .{});
+        return error.HTTP2RequiresHTTPS;
+    }
 }
 
 pub fn onOpen(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
@@ -413,11 +494,6 @@ pub fn onOpen(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(
     if (self.signals.get(.aborted)) {
         log("Request aborted after connection opened", .{});
         return self.closeAndAbort(is_ssl, socket);
-    }
-
-    // Initialize HTTP/2 connection state if not already done
-    if (self.connection == null) {
-        self.connection = try Connection.init(self.allocator);
     }
 
     // Update connection state
@@ -480,19 +556,6 @@ fn sendConnectionPreface(self: *HTTP2Client, comptime is_ssl: bool, socket: NewH
     try self.sendSettingsFrame(is_ssl, socket);
 }
 
-// Helper function to serialize and write FrameHeader
-fn writeFrameHeader(frame_header: FrameHeader, socket: anytype) !void {
-    var frame_copy = frame_header;
-    var header_bytes: [FrameHeader.byteSize]u8 = undefined;
-    std.mem.byteSwapAllFields(FrameHeader, &frame_copy);
-    @memcpy(&header_bytes, std.mem.asBytes(&frame_copy)[0..FrameHeader.byteSize]);
-    
-    const bytes_written = socket.write(&header_bytes);
-    if (bytes_written != header_bytes.len) {
-        return error.FrameHeaderWriteFailed;
-    }
-}
-
 fn sendSettingsFrame(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     // HTTP/2 requires SSL
     if (comptime !is_ssl) {
@@ -507,18 +570,64 @@ fn sendSettingsFrame(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPC
         .streamIdentifier = 0, // Settings frame always uses stream 0
     };
 
-    // Write frame header using helper function
-    writeFrameHeader(settings_frame, socket) catch {
+    // Write frame header
+    var header_bytes: [9]u8 = undefined;
+    std.mem.writeInt(u24, header_bytes[0..3], settings_frame.length, .big);
+    header_bytes[3] = settings_frame.type;
+    header_bytes[4] = settings_frame.flags;
+    std.mem.writeInt(u32, header_bytes[5..9], settings_frame.streamIdentifier, .big);
+
+    // Cork the socket to batch writes if available
+    // Note: cork() may not be available on all socket types
+    
+    var bytes_written = socket.write(&header_bytes);
+    if (bytes_written != header_bytes.len) {
         return self.fail(error.SettingsFrameHeaderFailed);
-    };
+    }
 
-    // Write settings payload using FullSettingsPayload serialization
-    var settings = self.connection.?.local_settings;
-    var settings_bytes: [FullSettingsPayload.byteSize]u8 = undefined;
-    std.mem.byteSwapAllFields(FullSettingsPayload, &settings);
-    @memcpy(&settings_bytes, std.mem.asBytes(&settings)[0..FullSettingsPayload.byteSize]);
+    // Write settings payload
+    var settings_bytes: [@sizeOf(FullSettingsPayload)]u8 = undefined;
+    const settings = &self.connection.?.local_settings;
 
-    const bytes_written = socket.write(&settings_bytes);
+    // Manually serialize settings to ensure correct byte order
+    var offset: usize = 0;
+
+    // Header table size
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_HEADER_TABLE_SIZE), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.headerTableSize, .big);
+    offset += 4;
+
+    // Enable push (disabled for client)
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.enablePush, .big);
+    offset += 4;
+
+    // Max concurrent streams
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_MAX_CONCURRENT_STREAMS), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.maxConcurrentStreams, .big);
+    offset += 4;
+
+    // Initial window size
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_INITIAL_WINDOW_SIZE), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.initialWindowSize, .big);
+    offset += 4;
+
+    // Max frame size
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_MAX_FRAME_SIZE), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.maxFrameSize, .big);
+    offset += 4;
+
+    // Max header list size
+    std.mem.writeInt(u16, settings_bytes[offset .. offset + 2][0..2], @intFromEnum(SettingsType.SETTINGS_MAX_HEADER_LIST_SIZE), .big);
+    offset += 2;
+    std.mem.writeInt(u32, settings_bytes[offset .. offset + 4][0..4], settings.maxHeaderListSize, .big);
+
+    bytes_written = socket.write(&settings_bytes);
     if (bytes_written != settings_bytes.len) {
         return self.fail(error.SettingsFramePayloadFailed);
     }
@@ -763,13 +872,20 @@ fn sendHeadersFrame(self: *HTTP2Client, socket: NewHTTPContext(true).HTTPSocket,
         .streamIdentifier = stream_id,
     };
 
-    // Write frame header using helper function
-    writeFrameHeader(headers_frame, socket) catch {
+    // Write frame header
+    var header_bytes: [9]u8 = undefined;
+    std.mem.writeInt(u24, header_bytes[0..3], headers_frame.length, .big);
+    header_bytes[3] = headers_frame.type;
+    header_bytes[4] = headers_frame.flags;
+    std.mem.writeInt(u32, header_bytes[5..9], headers_frame.streamIdentifier, .big);
+
+    var bytes_written = socket.write(&header_bytes);
+    if (bytes_written != header_bytes.len) {
         return self.fail(error.HeadersFrameHeaderFailed);
-    };
+    }
 
     // Write headers payload
-    const bytes_written = socket.write(header_data);
+    bytes_written = socket.write(header_data);
     if (bytes_written != header_data.len) {
         return self.fail(error.HeadersFramePayloadFailed);
     }
@@ -799,13 +915,20 @@ fn sendDataFrame(self: *HTTP2Client, socket: NewHTTPContext(true).HTTPSocket, st
         .streamIdentifier = stream.id,
     };
 
-    // Write frame header using helper function
-    writeFrameHeader(data_frame, socket) catch {
+    // Write frame header
+    var header_bytes: [9]u8 = undefined;
+    std.mem.writeInt(u24, header_bytes[0..3], data_frame.length, .big);
+    header_bytes[3] = data_frame.type;
+    header_bytes[4] = data_frame.flags;
+    std.mem.writeInt(u32, header_bytes[5..9], data_frame.streamIdentifier, .big);
+
+    var bytes_written = socket.write(&header_bytes);
+    if (bytes_written != header_bytes.len) {
         return self.fail(error.DataFrameHeaderFailed);
-    };
+    }
 
     // Write data payload
-    const bytes_written = socket.write(body_data);
+    bytes_written = socket.write(body_data);
     if (bytes_written != body_data.len) {
         return self.fail(error.DataFramePayloadFailed);
     }
@@ -826,12 +949,6 @@ pub fn onData(
     // Force output to see if this is called
     bun.Output.prettyErrorln("HTTP2Client.onData called with {d} bytes", .{data.len});
     log("Received HTTP/2 data: {d} bytes", .{data.len});
-    
-    // Add safety check for data length
-    if (data.len == 0) {
-        log("Received empty data, ignoring", .{});
-        return;
-    }
 
     // Check abort signal during data processing
     if (self.signals.get(.aborted)) {
@@ -839,194 +956,47 @@ pub fn onData(
         self.closeAndAbort(is_ssl, socket);
         return;
     }
-    
-    // Add safety check for self.connection
-    if (self.connection == null) {
-        log("No connection available, creating one", .{});
-        self.connection = Connection.init(self.allocator) catch |err| {
-            log("Failed to create connection: {}", .{err});
-            self.closeAndFail(err, is_ssl, socket);
-            return;
-        };
-    }
 
-    bun.Output.prettyErrorln("HTTP2Client.onData: About to call parseFrames", .{});
-    
     // Parse HTTP/2 frames
     self.parseFrames(data) catch |err| {
         log("Frame parsing error: {}", .{err});
         self.closeAndFail(err, is_ssl, socket);
     };
-    
-    bun.Output.prettyErrorln("HTTP2Client.onData: parseFrames completed", .{});
-}
-
-
-const FrameBuffer = struct {
-    buffer: bun.ByteList = .{},
-    
-    pub fn init() FrameBuffer {
-        return FrameBuffer{};
-    }
-    
-    pub fn deinit(self: *FrameBuffer, allocator: std.mem.Allocator) void {
-        self.buffer.deinitWithAllocator(allocator);
-    }
-    
-    pub fn appendData(self: *FrameBuffer, allocator: std.mem.Allocator, data: []const u8) !void {
-        // Safety check: ensure we have valid data to append
-        if (data.len == 0) return;
-        
-        _ = try self.buffer.write(allocator, data);
-    }
-    
-    pub fn hasCompleteFrame(self: *FrameBuffer) bool {
-        const data = self.buffer.slice();
-        if (data.len < 9) return false;  // Need at least frame header
-        
-        // Parse frame header to get length
-        const frame_header = parseFrameHeader(data) orelse return false;
-        
-        // Safety check: validate frame length is reasonable
-        // HTTP/2 max frame size is 16MB (2^24 - 1), but we use a more conservative limit
-        if (frame_header.length > 16 * 1024 * 1024) {
-            log("Frame too large: {d} bytes", .{frame_header.length});
-            return false;
-        }
-        
-        // Check if we have the complete frame (header + payload)
-        return data.len >= 9 + frame_header.length;
-    }
-    
-    pub fn extractCompleteFrame(self: *FrameBuffer, allocator: std.mem.Allocator) ?[]const u8 {
-        bun.Output.prettyErrorln("extractCompleteFrame: called, buffer.len={d}", .{self.buffer.len});
-        const data = self.buffer.slice();
-        if (!self.hasCompleteFrame()) {
-            bun.Output.prettyErrorln("extractCompleteFrame: hasCompleteFrame() returned false", .{});
-            return null;
-        }
-        
-        const frame_header = parseFrameHeader(data) orelse return null;
-        const total_frame_size = 9 + frame_header.length;
-        
-        log("extractCompleteFrame: total_frame_size={d}, buffer_len={d}", .{ total_frame_size, data.len });
-        
-        // Create a copy of the complete frame
-        const frame_data = allocator.dupe(u8, data[0..total_frame_size]) catch |err| {
-            log("extractCompleteFrame: allocator.dupe failed: {}", .{err});
-            return null;
-        };
-        
-        // Remove the frame from buffer by creating a new buffer with remaining data
-        const remaining_data = data[total_frame_size..];
-        
-        log("extractCompleteFrame: removing frame, remaining_data.len={d}", .{remaining_data.len});
-        bun.Output.prettyErrorln("extractCompleteFrame: before clear, buffer.len={d}, buffer contents: [0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}...]", .{ self.buffer.len, data[0], data[1], data[2], data[3], data[4] });
-        
-        // Clear the old buffer first
-        self.buffer.len = 0;
-        bun.Output.prettyErrorln("extractCompleteFrame: after clear, buffer.len={d}", .{self.buffer.len});
-        
-        // If there's remaining data, write it back to the buffer
-        if (remaining_data.len > 0) {
-            _ = self.buffer.write(allocator, remaining_data) catch {
-                // If write fails, free frame_data and return null
-                allocator.free(frame_data);
-                return null;
-            };
-        }
-        
-        log("extractCompleteFrame: buffer after removal, len={d}", .{self.buffer.len});
-        const new_data = self.buffer.slice();
-        if (new_data.len > 0) {
-            bun.Output.prettyErrorln("extractCompleteFrame: final buffer contents: [0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}, 0x{x:0>2}...]", .{ new_data[0], new_data[1], new_data[2], new_data[3], new_data[4] });
-        }
-        bun.Output.prettyErrorln("extractCompleteFrame: SUCCESS, returning frame_data.len={d}", .{frame_data.len});
-        
-        return frame_data;
-    }
-    
-    pub fn clear(self: *FrameBuffer) void {
-        self.buffer.len = 0;
-    }
-};
-
-fn parseFrameHeader(data: []const u8) ?FrameHeader {
-    if (data.len < 9) return null;
-    
-    var frame_header: FrameHeader = undefined;
-    FrameHeader.from(&frame_header, data[0..9], 0, true);
-    return frame_header;
 }
 
 fn parseFrames(self: *HTTP2Client, data: []const u8) !void {
-    // Safety check: ensure we have valid data and initialized buffer
-    if (data.len == 0) return;
-    
-    // Add new data to the frame buffer
-    self.frame_buffer.appendData(self.allocator, data) catch |err| {
-        log("Failed to append data to frame buffer: {}", .{err});
-        return err;
-    };
-    
-    // Process all complete frames from the buffer
-    var processed_frames: u32 = 0;
-    while (self.frame_buffer.hasCompleteFrame()) {
-        // Safety limit: prevent infinite loops due to malformed frames
-        processed_frames += 1;
-        bun.Output.prettyErrorln("parseFrames: while loop iteration {d}", .{processed_frames});
-        if (processed_frames > 10) {
-            bun.Output.prettyErrorln("Too many frames, aborting", .{});
-            log("Too many frames in single data packet, possible corruption", .{});
-            return error.TooManyFrames;
-        }
-        
-        const frame_data = self.frame_buffer.extractCompleteFrame(self.allocator) orelse {
-            log("Failed to extract complete frame from buffer", .{});
+    var offset: usize = 0;
+
+    while (offset < data.len) {
+        // Need at least 9 bytes for frame header
+        if (offset + 9 > data.len) {
+            log("Incomplete frame header, buffering needed", .{});
             break;
-        };
-        log("parseFrames: extracted frame_data.len={d}", .{frame_data.len});
-        
-        // Manual cleanup instead of defer to avoid double-free issues
-        
-        // Additional safety check: ensure frame_data has minimum size
-        if (frame_data.len < 9) {
-            log("Extracted frame too small: {d} bytes", .{frame_data.len});
-            self.allocator.free(frame_data);
-            continue;
         }
-        
-        // Parse frame header from the complete frame
-        const frame_header = parseFrameHeader(frame_data) orelse {
-            log("Failed to parse frame header", .{});
-            self.allocator.free(frame_data);
-            continue;
-        };
-        const payload = frame_data[9..];
-        
-        // Validate payload size matches frame header
-        if (payload.len != frame_header.length) {
-            log("Payload length mismatch: expected {d}, got {d}", .{ frame_header.length, payload.len });
-            self.allocator.free(frame_data);
-            continue;
+
+        // Parse frame header
+        const length_bytes: [3]u8 = data[offset .. offset + 3][0..3].*;
+        const length = std.mem.readInt(u24, &length_bytes, .big);
+        const frame_type = data[offset + 3];
+        const flags = data[offset + 4];
+        const stream_id_bytes: [4]u8 = data[offset + 5 .. offset + 9][0..4].*;
+        const stream_id = std.mem.readInt(u32, &stream_id_bytes, .big) & 0x7FFFFFFF; // Clear reserved bit
+
+        offset += 9;
+
+        // Check if we have the complete frame
+        if (offset + length > data.len) {
+            log("Incomplete frame payload, buffering needed", .{});
+            break;
         }
-        
-        log("Received frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_header.type, frame_header.flags, frame_header.streamIdentifier, frame_header.length });
-        bun.Output.prettyErrorln("Frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_header.type, frame_header.flags, frame_header.streamIdentifier, frame_header.length });
-        
+
+        const payload = data[offset .. offset + length];
+        offset += length;
+
+        log("Received frame: type={d}, flags={d}, stream={d}, length={d}", .{ frame_type, flags, stream_id, length });
+
         // Process frame based on type
-        self.processFrame(frame_header.type, frame_header.flags, frame_header.streamIdentifier, payload) catch |err| {
-            log("Failed to process frame: {}", .{err});
-            bun.Output.prettyErrorln("Frame processing failed: {}", .{err});
-            // Free memory before continuing
-            self.allocator.free(frame_data);
-            continue;
-        };
-        
-        bun.Output.prettyErrorln("Frame processed successfully", .{});
-        
-        // Free frame data after successful processing
-        self.allocator.free(frame_data);
+        try self.processFrame(frame_type, flags, stream_id, payload);
     }
 }
 
@@ -1176,9 +1146,16 @@ fn sendSettingsAck(self: *HTTP2Client) !void {
             .streamIdentifier = 0,
         };
 
-        writeFrameHeader(ack_frame, socket) catch {
+        var header_bytes: [9]u8 = undefined;
+        std.mem.writeInt(u24, header_bytes[0..3], ack_frame.length, .big);
+        header_bytes[3] = ack_frame.type;
+        header_bytes[4] = ack_frame.flags;
+        std.mem.writeInt(u32, header_bytes[5..9], ack_frame.streamIdentifier, .big);
+
+        const bytes_written = socket.write(&header_bytes);
+        if (bytes_written != header_bytes.len) {
             return error.SettingsAckFailed;
-        };
+        }
 
         log("Sent SETTINGS ACK", .{});
     }
@@ -1491,7 +1468,6 @@ fn processRstStreamFrame(self: *HTTP2Client, stream_id: u32, payload: []const u8
 }
 
 fn completeResponse(self: *HTTP2Client, stream: *Stream) !void {
-    bun.Output.prettyErrorln("completeResponse: Starting for stream {d}", .{stream.id});
     log("Completing response for stream {d}", .{stream.id});
 
     // Build response buffer from headers and data
@@ -1552,7 +1528,6 @@ fn completeResponse(self: *HTTP2Client, stream: *Stream) !void {
     self.connection.?.removeStream(stream.id);
 
     // Success callback
-    bun.Output.prettyErrorln("completeResponse: About to call result callback", .{});
     const result = HTTPClientResult{
         .metadata = null, // TODO: Implement proper metadata
         .fail = null,
@@ -1560,7 +1535,6 @@ fn completeResponse(self: *HTTP2Client, stream: *Stream) !void {
     };
 
     self.result_callback.function(self.result_callback.ctx, @ptrCast(self), result);
-    bun.Output.prettyErrorln("completeResponse: Result callback completed", .{});
 }
 
 pub fn onClose(self: *HTTP2Client, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {

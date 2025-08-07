@@ -19049,15 +19049,14 @@ pub const SSL = opaque {
     pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8, protocol: bun.http.HTTPProtocol) void {
         _ = protocol; // Protocol-specific configuration is done at SSL_CTX level
         if (hostname.len > 0) ssl.setHostname(hostname);
-        
+
         // Note: Don't clear/set SSL_OP_LEGACY_SERVER_CONNECT as it might affect ALPN
         // The SSL context already has ALPN configured based on protocol
-        
+
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
         SSL_set_enable_ech_grease(ssl, 1);
     }
-    
 
     pub fn handshake(this: *SSL) Error!void {
         const rc = SSL_connect(this);

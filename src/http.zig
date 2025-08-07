@@ -128,7 +128,7 @@ pub fn onOpen(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) !void {
-    log("HTTPClient.onOpen called in http.zig, is_ssl={}, client.protocol={}", .{is_ssl, client.protocol});
+    log("HTTPClient.onOpen called in http.zig, is_ssl={}, client.protocol={}", .{ is_ssl, client.protocol });
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -137,7 +137,7 @@ pub fn onOpen(
         }
     }
     client.registerAbortTracker(is_ssl, socket);
-    log("Connected {s} protocol={}\n", .{client.url.href, client.protocol});
+    log("Connected {s} protocol={}\n", .{ client.url.href, client.protocol });
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
@@ -170,7 +170,7 @@ pub fn onOpen(
 
             log("Calling configureHTTPClient with protocol={}", .{client.protocol});
             ssl_ptr.configureHTTPClient(hostname, client.protocol);
-            
+
             // Override ALPN on the SSL object directly to ensure it's set correctly
             // This is necessary because uSockets might set its own ALPN during SSL context creation
             switch (client.protocol) {
@@ -229,12 +229,12 @@ pub fn checkALPNNegotiation(client: *HTTPClient, ssl_ptr: *BoringSSL.SSL) void {
 
 pub fn fallbackToHTTP1(client: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("Falling back from HTTP/2 to HTTP/1.1", .{});
-    
+
     // Reset HTTP/2 state
     client.should_use_http2 = false;
     client.http2_attempted = true;
     client.state.flags.is_http2 = false;
-    
+
     // Continue with HTTP/1.1 processing
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
@@ -246,6 +246,7 @@ pub fn firstCall(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    bun.Output.prettyErrorln("DEBUG: firstCall called, is_ssl={}", .{is_ssl});
     if (comptime FeatureFlags.is_fetch_preconnect_supported) {
         if (client.flags.is_preconnect_only) {
             client.onPreconnect(is_ssl, socket);
@@ -254,16 +255,18 @@ pub fn firstCall(
     }
 
     // Check if HTTP/2 was negotiated via ALPN
+    bun.Output.prettyErrorln("DEBUG firstCall: should_use_http2={}, http2_attempted={}", .{ client.should_use_http2, client.http2_attempted });
     if (client.should_use_http2 and !client.http2_attempted) {
-        log("HTTP/2 negotiated via ALPN, sending connection preface", .{});
-        
-        // Attempt to upgrade to HTTP/2
-        client.upgradeToHTTP2(is_ssl, socket) catch |err| {
-            log("Failed to upgrade to HTTP/2: {}, falling back to HTTP/1.1", .{err});
+        log("HTTP/2 negotiated via ALPN, creating HTTP2Client", .{});
+        bun.Output.prettyErrorln("DEBUG: About to call transferToHTTP2Client", .{});
+
+        // Create HTTP2Client and transfer the socket to it
+        client.transferToHTTP2Client(is_ssl, socket) catch |err| {
+            log("Failed to transfer to HTTP/2 client: {}, falling back to HTTP/1.1", .{err});
             client.fallbackToHTTP1(is_ssl, socket);
             return;
         };
-        
+
         return;
     }
 
@@ -562,13 +565,13 @@ pub fn deinit(this: *HTTPClient) void {
         bun.default_allocator.free(this.negotiated_protocol);
         this.negotiated_protocol = "";
     }
-    
+
     // Clean up HTTP/2 HPACK decoder
     if (this.http2_hpack_decoder) |decoder| {
         decoder.deinit();
         this.http2_hpack_decoder = null;
     }
-    
+
     // Clean up HTTP/2 header block buffer
     if (this.http2_header_block_buffer) |buffer| {
         bun.default_allocator.free(buffer);
@@ -580,7 +583,7 @@ pub fn upgradeToHTTP2(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPC
     // This method handles the transition from HTTP/1.1 to HTTP/2 client
     // when ALPN negotiation indicates HTTP/2 support
 
-    log("upgradeToHTTP2 called, should_use_http2={}, http2_attempted={}", .{this.should_use_http2, this.http2_attempted});
+    log("upgradeToHTTP2 called, should_use_http2={}, http2_attempted={}", .{ this.should_use_http2, this.http2_attempted });
 
     if (!this.should_use_http2) {
         return error.HTTP2NotNegotiated;
@@ -596,39 +599,95 @@ pub fn upgradeToHTTP2(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPC
     // Set HTTP/2 flag in the internal state
     this.state.flags.is_http2 = true;
     log("Set is_http2 flag to true", .{});
-    
+
     // Initialize HPACK decoder
     const lshpack = @import("bun.js/api/bun/lshpack.zig");
     this.http2_hpack_decoder = lshpack.HPACK.init(4096);
-    
+
     // Send HTTP/2 connection preface
     try this.sendHTTP2Preface(is_ssl, socket);
+}
+
+pub fn transferToHTTP2Client(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    log("transferToHTTP2Client: Creating HTTP2Client to handle connection", .{});
+    
+    // Mark HTTP/2 attempt to prevent re-entry
+    this.http2_attempted = true;
+    
+    // Create HTTP2Client with current HTTPClient's configuration
+    var http2_client = try HTTP2Client.init(
+        this.allocator,
+        this.method,
+        this.url,
+        this.header_entries,
+        this.header_buf,
+        this.state.original_request_body,
+        this.state.body_out_str.?,
+        this.result_callback,
+        this.redirect_type
+    );
+    
+    // Transfer additional settings
+    http2_client.http_proxy = this.http_proxy;
+    http2_client.signals = this.signals;
+    http2_client.flags = this.flags;
+    http2_client.verbose = this.verbose;
+    http2_client.tls_props = this.tls_props;
+    http2_client.async_http_id = this.async_http_id;
+    
+    // Ensure reference count is maintained for socket handler
+    // The socket needs to hold a reference to the HTTP2Client  
+    // We need to store the HTTP2Client somewhere accessible so it doesn't get freed
+    // For now, use the HTTPClient's allocator to store it
+    const h2_client_ptr = try this.allocator.create(HTTP2Client);
+    h2_client_ptr.* = http2_client;
+    
+    // Update the socket's extension data to point to HTTP2Client
+    // The socket ext field points to a **anyopaque which should contain ActiveSocket.init(client).ptr()
+    if (socket.ext(**anyopaque)) |ctx_ptr| {
+        log("transferToHTTP2Client: Updating socket handler from HTTPClient to HTTP2Client", .{});
+        // Create an ActiveSocket union with HTTP2Client and get its ptr()
+        const active_socket = NewHTTPContext(is_ssl).ActiveSocket.init(h2_client_ptr);
+        // Update the pointer to point to our HTTP2Client's ActiveSocket ptr (same pattern as keep-alive)
+        ctx_ptr.* = bun.cast(**anyopaque, active_socket.ptr());
+        log("transferToHTTP2Client: Socket handler updated successfully", .{});
+    } else {
+        log("transferToHTTP2Client: ERROR: Socket has no extension data pointer", .{});
+        this.allocator.destroy(h2_client_ptr);
+        return error.InvalidSocket;
+    }
+    
+    // Transfer socket to HTTP/2 client
+    try h2_client_ptr.onOpen(is_ssl, socket);
+    
+    // HTTPClient should now step back and let HTTP2Client handle everything
+    log("transferToHTTP2Client: Successfully transferred control to HTTP2Client", .{});
 }
 
 pub fn sendHTTP2Preface(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     // HTTP/2 Connection Preface (RFC 7540, Section 3.5)
     const HTTP2_CONNECTION_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-    
+
     log("Sending HTTP/2 connection preface", .{});
-    
+
     // Send the connection preface
     const bytes_written = socket.write(HTTP2_CONNECTION_PREFACE);
     if (bytes_written != HTTP2_CONNECTION_PREFACE.len) {
         return error.HTTP2ConnectionPrefaceFailed;
     }
-    
+
     // Send initial SETTINGS frame
     try this.sendHTTP2Settings(is_ssl, socket);
 }
 
 pub fn sendHTTP2Settings(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     _ = this;
-    
+
     log("Sending HTTP/2 SETTINGS frame", .{});
-    
+
     // SETTINGS frame header (9 bytes) + payload (36 bytes for 6 settings)
     const settings_payload_size = 36; // 6 settings * 6 bytes each
-    
+
     // Frame header: length (24 bits) + type (8 bits) + flags (8 bits) + stream ID (32 bits)
     var frame_header: [9]u8 = undefined;
     // Length (24 bits, big endian)
@@ -644,73 +703,109 @@ pub fn sendHTTP2Settings(this: *HTTPClient, comptime is_ssl: bool, socket: NewHT
     frame_header[6] = 0;
     frame_header[7] = 0;
     frame_header[8] = 0;
-    
+
     // SETTINGS payload (6 settings)
     var settings_payload: [settings_payload_size]u8 = undefined;
     var offset: usize = 0;
-    
+
     // SETTINGS_HEADER_TABLE_SIZE (0x1) = 4096
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 1; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0x10; offset += 1;
-    settings_payload[offset] = 0x00; offset += 1; // Value: 4096
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 1;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0x10;
+    offset += 1;
+    settings_payload[offset] = 0x00;
+    offset += 1; // Value: 4096
+
     // SETTINGS_ENABLE_PUSH (0x2) = 0 (disabled for client)
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 2; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1; // Value: 0
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 2;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1; // Value: 0
+
     // SETTINGS_MAX_CONCURRENT_STREAMS (0x3) = 100
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 3; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 100; offset += 1; // Value: 100
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 3;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 100;
+    offset += 1; // Value: 100
+
     // SETTINGS_INITIAL_WINDOW_SIZE (0x4) = 65535
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 4; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0xFF; offset += 1;
-    settings_payload[offset] = 0xFF; offset += 1; // Value: 65535
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 4;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0xFF;
+    offset += 1;
+    settings_payload[offset] = 0xFF;
+    offset += 1; // Value: 65535
+
     // SETTINGS_MAX_FRAME_SIZE (0x5) = 16384
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 5; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0x40; offset += 1;
-    settings_payload[offset] = 0x00; offset += 1; // Value: 16384
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 5;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0x40;
+    offset += 1;
+    settings_payload[offset] = 0x00;
+    offset += 1; // Value: 16384
+
     // SETTINGS_MAX_HEADER_LIST_SIZE (0x6) = 8192
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 6; offset += 1; // ID
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0; offset += 1;
-    settings_payload[offset] = 0x20; offset += 1;
-    settings_payload[offset] = 0x00; offset += 1; // Value: 8192
-    
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 6;
+    offset += 1; // ID
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0;
+    offset += 1;
+    settings_payload[offset] = 0x20;
+    offset += 1;
+    settings_payload[offset] = 0x00;
+    offset += 1; // Value: 8192
+
     // Send frame header
     var bytes_written = socket.write(&frame_header);
     if (bytes_written != frame_header.len) {
         return error.HTTP2SettingsHeaderFailed;
     }
-    
+
     // Send settings payload
     bytes_written = socket.write(&settings_payload);
     if (bytes_written != settings_payload.len) {
         return error.HTTP2SettingsPayloadFailed;
     }
-    
+
     log("HTTP/2 SETTINGS frame sent successfully", .{});
-    
+
     // TODO: Send initial HTTP/2 request here
     // For now, we fall back to HTTP/1.1 after settings
     // This is a simplified implementation that just establishes the HTTP/2 connection
@@ -723,7 +818,6 @@ pub fn handleHTTP2Data(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    
     log("handleHTTP2Data: {} bytes", .{incoming_data.len});
     // Debug: print first few bytes to see what we're receiving
     if (incoming_data.len > 0) {
@@ -736,29 +830,29 @@ pub fn handleHTTP2Data(
         }
         log("  First bytes (hex): {s}", .{hex_buf[0..hex_pos]});
     }
-    
+
     // Parse HTTP/2 frames
     var data = incoming_data;
     var frames_processed: usize = 0;
-    
+
     while (data.len >= 9) { // Minimum frame size is 9 bytes (header)
         // Parse frame header
         const frame_length = (@as(u32, data[0]) << 16) | (@as(u32, data[1]) << 8) | @as(u32, data[2]);
         const frame_type = data[3];
         const frame_flags = data[4];
-        const stream_id = ((@as(u32, data[5]) << 24) | (@as(u32, data[6]) << 16) | 
-                          (@as(u32, data[7]) << 8) | @as(u32, data[8])) & 0x7FFFFFFF;
-        
-        log("HTTP/2 Frame: type={}, flags={}, stream_id={}, length={}", .{frame_type, frame_flags, stream_id, frame_length});
-        
+        const stream_id = ((@as(u32, data[5]) << 24) | (@as(u32, data[6]) << 16) |
+            (@as(u32, data[7]) << 8) | @as(u32, data[8])) & 0x7FFFFFFF;
+
+        log("HTTP/2 Frame: type={}, flags={}, stream_id={}, length={}", .{ frame_type, frame_flags, stream_id, frame_length });
+
         // Check if we have the complete frame
         if (data.len < 9 + frame_length) {
             log("Incomplete HTTP/2 frame, need {} more bytes", .{(9 + frame_length) - data.len});
             break;
         }
-        
-        const frame_payload = data[9..9 + frame_length];
-        
+
+        const frame_payload = data[9 .. 9 + frame_length];
+
         // Handle different frame types
         switch (frame_type) {
             0x00 => { // DATA frame
@@ -768,16 +862,16 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 // Parse DATA frame flags
                 const end_stream = (frame_flags & 0x01) != 0;
                 const padded = (frame_flags & 0x08) != 0;
-                
-                log("  DATA flags: end_stream={}, padded={}", .{end_stream, padded});
-                
+
+                log("  DATA flags: end_stream={}, padded={}", .{ end_stream, padded });
+
                 var data_payload = frame_payload;
                 var padding_length: u8 = 0;
-                
+
                 // Handle padding
                 if (padded) {
                     if (data_payload.len < 1) {
@@ -787,17 +881,17 @@ pub fn handleHTTP2Data(
                     }
                     padding_length = data_payload[0];
                     data_payload = data_payload[1..];
-                    
+
                     if (padding_length >= data_payload.len) {
                         log("Protocol error: Invalid padding length", .{});
                         this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                         return;
                     }
-                    data_payload = data_payload[0..data_payload.len - padding_length];
+                    data_payload = data_payload[0 .. data_payload.len - padding_length];
                 }
-                
+
                 log("  DATA payload: {} bytes", .{data_payload.len});
-                
+
                 // Append data to response buffer
                 if (data_payload.len > 0) {
                     // Process the body data similar to HTTP/1.1
@@ -805,12 +899,12 @@ pub fn handleHTTP2Data(
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
-                    
+
                     if (report_progress) {
                         this.progressUpdate(is_ssl, ctx, socket);
                     }
                 }
-                
+
                 // If END_STREAM is set, the response is complete
                 if (end_stream) {
                     log("  END_STREAM flag set, response complete", .{});
@@ -818,7 +912,7 @@ pub fn handleHTTP2Data(
                     this.state.response_stage = .done;
                     this.state.request_stage = .done;
                     this.state.stage = .done;
-                    
+
                     // Finalize the response
                     if (this.state.pending_response) |*resp| {
                         _ = this.handleResponseMetadata(resp) catch |err| {
@@ -826,7 +920,7 @@ pub fn handleHTTP2Data(
                             return;
                         };
                     }
-                    
+
                     // Call the result callback to notify fetch that the response is complete
                     const callback = this.result_callback;
                     const result = this.toResult();
@@ -841,20 +935,19 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 // Parse HEADERS frame flags
                 const end_stream = (frame_flags & 0x01) != 0;
                 const end_headers = (frame_flags & 0x04) != 0;
                 const padded = (frame_flags & 0x08) != 0;
                 const priority = (frame_flags & 0x20) != 0;
-                
-                log("  HEADERS flags: end_stream={}, end_headers={}, padded={}, priority={}", 
-                    .{end_stream, end_headers, padded, priority});
+
+                log("  HEADERS flags: end_stream={}, end_headers={}, padded={}, priority={}", .{ end_stream, end_headers, padded, priority });
                 log("  Frame payload length: {}", .{frame_payload.len});
-                
+
                 var headers_data = frame_payload;
                 var padding_length: u8 = 0;
-                
+
                 // Handle padding
                 if (padded) {
                     if (headers_data.len < 1) {
@@ -864,15 +957,15 @@ pub fn handleHTTP2Data(
                     }
                     padding_length = headers_data[0];
                     headers_data = headers_data[1..];
-                    
+
                     if (padding_length >= headers_data.len) {
                         log("Protocol error: Invalid padding length", .{});
                         this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                         return;
                     }
-                    headers_data = headers_data[0..headers_data.len - padding_length];
+                    headers_data = headers_data[0 .. headers_data.len - padding_length];
                 }
-                
+
                 // Handle priority
                 if (priority) {
                     if (headers_data.len < 5) {
@@ -883,9 +976,9 @@ pub fn handleHTTP2Data(
                     // Skip priority data (5 bytes)
                     headers_data = headers_data[5..];
                 }
-                
+
                 log("  Headers data length after processing: {}", .{headers_data.len});
-                
+
                 // If END_HEADERS is set, we have the complete header block
                 if (end_headers) {
                     // Decode headers directly if we don't have accumulated data
@@ -898,26 +991,26 @@ pub fn handleHTTP2Data(
                         };
                         break :blk this.getCompleteHeaderBlock();
                     } else headers_data; // First and only HEADERS frame
-                    
+
                     log("  Complete header block length: {}", .{headers_to_decode.len});
-                    
+
                     const decode_result = this.decodeHTTP2Headers(headers_to_decode) catch |err| {
                         log("Failed to decode HTTP/2 headers: {}", .{err});
                         this.clearHeaderBlock();
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
-                    
+
                     // Clear the accumulated header block
                     this.clearHeaderBlock();
-                    
+
                     // Update response with headers
                     if (decode_result.status_code) |code| {
                         // Build response object with headers
                         // Create status text buffer
                         var status_text_buf: [32]u8 = undefined;
                         const status_text = std.fmt.bufPrint(&status_text_buf, "{}", .{code}) catch "200";
-                        
+
                         this.state.pending_response = picohttp.Response{
                             .status = status_text,
                             .status_code = code,
@@ -925,23 +1018,23 @@ pub fn handleHTTP2Data(
                                 .list = shared_response_headers_buf[0..decode_result.header_count],
                             },
                         };
-                        
+
                         // Mark headers complete if END_HEADERS is set
                         if (end_headers) {
                             this.state.response_stage = .body;
                             this.state.flags.http2_headers_complete = true;
-                            
+
                             // Call progressUpdate to notify about headers
                             this.progressUpdate(is_ssl, ctx, socket);
                         }
-                        
+
                         // If END_STREAM is also set, the response is complete
                         if (end_stream) {
                             this.state.flags.http2_stream_ended = true;
                             this.state.response_stage = .done;
                             this.state.request_stage = .done;
                             this.state.stage = .done;
-                            
+
                             // Finalize the response
                             if (this.state.pending_response) |*resp| {
                                 _ = this.handleResponseMetadata(resp) catch |err| {
@@ -949,7 +1042,7 @@ pub fn handleHTTP2Data(
                                     return;
                                 };
                             }
-                            
+
                             // Call the result callback to notify fetch that the response is complete
                             const callback = this.result_callback;
                             const result = this.toResult();
@@ -967,7 +1060,6 @@ pub fn handleHTTP2Data(
                     log("  Header block incomplete, waiting for CONTINUATION frames", .{});
                     this.http2_expecting_continuation = true;
                 }
-                
             },
             0x09 => { // CONTINUATION frame
                 log("Received CONTINUATION frame on stream {}", .{stream_id});
@@ -976,19 +1068,19 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 if (!this.http2_expecting_continuation) {
                     log("Protocol error: Unexpected CONTINUATION frame", .{});
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 // Parse CONTINUATION frame flags
                 const end_headers = (frame_flags & 0x04) != 0;
-                
+
                 log("  CONTINUATION flags: end_headers={}", .{end_headers});
                 log("  Frame payload length: {}", .{frame_payload.len});
-                
+
                 // Accumulate the continuation header data
                 this.accumulateHeaderBlock(frame_payload) catch |err| {
                     log("Failed to accumulate continuation header block: {}", .{err});
@@ -996,31 +1088,31 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
-                
+
                 // If this is the end of the header block, decode it
                 if (end_headers) {
                     log("  Header block complete with CONTINUATION frame", .{});
-                    
+
                     const complete_header_block = this.getCompleteHeaderBlock();
                     log("  Complete header block length: {}", .{complete_header_block.len});
-                    
+
                     const decode_result = this.decodeHTTP2Headers(complete_header_block) catch |err| {
                         log("Failed to decode HTTP/2 headers from CONTINUATION: {}", .{err});
                         this.clearHeaderBlock();
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
-                    
+
                     // Clear the accumulated header block
                     this.clearHeaderBlock();
-                    
+
                     // Update response with headers (similar to HEADERS frame)
                     if (decode_result.status_code) |code| {
                         // Build response object with headers
                         // Create status text buffer
                         var status_text_buf: [32]u8 = undefined;
                         const status_text = std.fmt.bufPrint(&status_text_buf, "{}", .{code}) catch "200";
-                        
+
                         this.state.pending_response = picohttp.Response{
                             .status = status_text,
                             .status_code = code,
@@ -1028,11 +1120,11 @@ pub fn handleHTTP2Data(
                                 .list = shared_response_headers_buf[0..decode_result.header_count],
                             },
                         };
-                        
+
                         // Mark headers complete
                         this.state.response_stage = .body;
                         this.state.flags.http2_headers_complete = true;
-                        
+
                         // Call progressUpdate to notify about headers
                         this.progressUpdate(is_ssl, ctx, socket);
                     }
@@ -1047,11 +1139,11 @@ pub fn handleHTTP2Data(
                 }
                 // Parse error code
                 if (frame_payload.len >= 4) {
-                    const error_code = (@as(u32, frame_payload[0]) << 24) | 
-                                      (@as(u32, frame_payload[1]) << 16) | 
-                                      (@as(u32, frame_payload[2]) << 8) | 
-                                      @as(u32, frame_payload[3]);
-                    log("  RST_STREAM error code: {} (0x{x})", .{error_code, error_code});
+                    const error_code = (@as(u32, frame_payload[0]) << 24) |
+                        (@as(u32, frame_payload[1]) << 16) |
+                        (@as(u32, frame_payload[2]) << 8) |
+                        @as(u32, frame_payload[3]);
+                    log("  RST_STREAM error code: {} (0x{x})", .{ error_code, error_code });
                 }
                 // TODO: Handle stream reset properly
             },
@@ -1062,7 +1154,7 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 // Check if it's a SETTINGS ACK
                 if (frame_flags & 0x01 != 0) {
                     log("Received SETTINGS ACK", .{});
@@ -1079,7 +1171,7 @@ pub fn handleHTTP2Data(
                 } else {
                     // Process server settings
                     this.processHTTP2Settings(frame_payload, is_ssl, socket);
-                    
+
                     // Send SETTINGS ACK
                     this.sendHTTP2SettingsAck(is_ssl, socket) catch |err| {
                         log("Failed to send SETTINGS ACK: {}", .{err});
@@ -1095,7 +1187,7 @@ pub fn handleHTTP2Data(
                     this.closeAndFail(error.HTTP2ProtocolError, is_ssl, socket);
                     return;
                 }
-                
+
                 // Check if it's a PING ACK
                 if (frame_flags & 0x01 == 0) {
                     // Not an ACK, need to respond
@@ -1115,15 +1207,15 @@ pub fn handleHTTP2Data(
                 }
                 // Parse GOAWAY details
                 if (frame_payload.len >= 8) {
-                    const last_stream_id = ((@as(u32, frame_payload[0]) << 24) | 
-                                           (@as(u32, frame_payload[1]) << 16) | 
-                                           (@as(u32, frame_payload[2]) << 8) | 
-                                           @as(u32, frame_payload[3])) & 0x7FFFFFFF;
-                    const error_code = (@as(u32, frame_payload[4]) << 24) | 
-                                      (@as(u32, frame_payload[5]) << 16) | 
-                                      (@as(u32, frame_payload[6]) << 8) | 
-                                      @as(u32, frame_payload[7]);
-                    log("  GOAWAY: last_stream_id={}, error_code={} (0x{x})", .{last_stream_id, error_code, error_code});
+                    const last_stream_id = ((@as(u32, frame_payload[0]) << 24) |
+                        (@as(u32, frame_payload[1]) << 16) |
+                        (@as(u32, frame_payload[2]) << 8) |
+                        @as(u32, frame_payload[3])) & 0x7FFFFFFF;
+                    const error_code = (@as(u32, frame_payload[4]) << 24) |
+                        (@as(u32, frame_payload[5]) << 16) |
+                        (@as(u32, frame_payload[6]) << 8) |
+                        @as(u32, frame_payload[7]);
+                    log("  GOAWAY: last_stream_id={}, error_code={} (0x{x})", .{ last_stream_id, error_code, error_code });
                     if (frame_payload.len > 8) {
                         log("  GOAWAY debug data: {s}", .{frame_payload[8..]});
                     }
@@ -1139,16 +1231,16 @@ pub fn handleHTTP2Data(
             else => {
                 log("Unknown HTTP/2 frame type: {}", .{frame_type});
                 // Ignore unknown frame types per spec
-            }
+            },
         }
-        
+
         // Move to next frame
-        data = data[9 + frame_length..];
+        data = data[9 + frame_length ..];
         frames_processed += 1;
     }
-    
+
     log("Processed {} HTTP/2 frames", .{frames_processed});
-    
+
     // If we have leftover data, it might be an incomplete frame
     if (data.len > 0) {
         log("Leftover data: {} bytes (incomplete frame)", .{data.len});
@@ -1158,26 +1250,26 @@ pub fn handleHTTP2Data(
 
 fn accumulateHeaderBlock(this: *HTTPClient, headers_data: []const u8) !void {
     if (headers_data.len == 0) return;
-    
+
     if (this.http2_header_block_buffer == null) {
         // Initialize buffer with some initial capacity
         this.http2_header_block_buffer = try bun.default_allocator.alloc(u8, 8192);
         this.http2_header_block_len = 0;
     }
-    
+
     const buffer = this.http2_header_block_buffer.?;
     const needed_size = this.http2_header_block_len + headers_data.len;
-    
+
     if (needed_size > buffer.len) {
         // Resize buffer
-        const new_size = needed_size * 2;  // Double the size to avoid frequent reallocations
+        const new_size = needed_size * 2; // Double the size to avoid frequent reallocations
         const new_buffer = try bun.default_allocator.realloc(buffer, new_size);
         this.http2_header_block_buffer = new_buffer;
     }
-    
+
     // Append the new header data
     const final_buffer = this.http2_header_block_buffer.?;
-    @memcpy(final_buffer[this.http2_header_block_len..this.http2_header_block_len + headers_data.len], headers_data);
+    @memcpy(final_buffer[this.http2_header_block_len .. this.http2_header_block_len + headers_data.len], headers_data);
     this.http2_header_block_len += headers_data.len;
 }
 
@@ -1203,25 +1295,25 @@ fn decodeHTTP2Headers(this: *HTTPClient, headers_data: []const u8) !HTTP2HeaderD
         log("No HPACK decoder available", .{});
         return error.NoHPACKDecoder;
     };
-    
+
     // Initialize response headers if this is the first HEADERS frame
     if (!this.state.flags.http2_headers_received) {
         this.state.flags.http2_headers_received = true;
         this.state.response_stage = .headers;
-        
+
         // Clear the shared response headers buffer
         shared_response_headers_buf = undefined;
     }
-    
+
     // Decode headers
     var header_offset: usize = 0;
     var header_count: usize = 0;
     var status_code: ?u16 = null;
-    
+
     // Create temporary buffer for header strings
     var header_buf: [8192]u8 = undefined;
     var header_buf_used: usize = 0;
-    
+
     while (header_offset < headers_data.len and header_count < shared_response_headers_buf.len) {
         // Debug: show what we're about to decode
         if (header_offset == 0) {
@@ -1234,22 +1326,22 @@ fn decodeHTTP2Headers(this: *HTTPClient, headers_data: []const u8) !HTTP2HeaderD
             }
             log("  HPACK data to decode (hex): {s}", .{hex_buf[0..hex_pos]});
         }
-        
+
         const result = hpack.decode(headers_data[header_offset..]) catch |err| {
-            log("HPACK decode error: {} (offset={}, remaining_len={})", .{err, header_offset, headers_data.len - header_offset});
+            log("HPACK decode error: {} (offset={}, remaining_len={})", .{ err, header_offset, headers_data.len - header_offset });
             // Print the problematic byte
             if (header_offset < headers_data.len) {
                 log("  Error at byte: 0x{x:0>2}", .{headers_data[header_offset]});
             }
             return err;
         };
-        
+
         const name = result.name;
         const value = result.value;
         const bytes_consumed = result.next;
-        
-        log("  Decoded header: {s} = {s}", .{name, value});
-        
+
+        log("  Decoded header: {s} = {s}", .{ name, value });
+
         // Handle pseudo-headers
         if (strings.eqlComptime(name, ":status")) {
             status_code = std.fmt.parseInt(u16, value, 10) catch 200;
@@ -1259,25 +1351,25 @@ fn decodeHTTP2Headers(this: *HTTPClient, headers_data: []const u8) !HTTP2HeaderD
             if (header_buf_used + name.len + value.len < header_buf.len) {
                 // Copy name to buffer
                 const name_start = header_buf_used;
-                @memcpy(header_buf[name_start..name_start + name.len], name);
+                @memcpy(header_buf[name_start .. name_start + name.len], name);
                 header_buf_used += name.len;
-                
+
                 // Copy value to buffer
                 const value_start = header_buf_used;
-                @memcpy(header_buf[value_start..value_start + value.len], value);
+                @memcpy(header_buf[value_start .. value_start + value.len], value);
                 header_buf_used += value.len;
-                
+
                 shared_response_headers_buf[header_count] = .{
-                    .name = header_buf[name_start..name_start + name.len],
-                    .value = header_buf[value_start..value_start + value.len],
+                    .name = header_buf[name_start .. name_start + name.len],
+                    .value = header_buf[value_start .. value_start + value.len],
                 };
                 header_count += 1;
             }
         }
-        
+
         header_offset += bytes_consumed;
     }
-    
+
     return HTTP2HeaderDecodeResult{
         .status_code = status_code,
         .header_count = header_count,
@@ -1287,20 +1379,20 @@ fn decodeHTTP2Headers(this: *HTTPClient, headers_data: []const u8) !HTTP2HeaderD
 pub fn processHTTP2Settings(this: *HTTPClient, payload: []const u8, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     _ = this;
     _ = socket;
-    
+
     log("Processing HTTP/2 SETTINGS frame with {} bytes", .{payload.len});
-    
+
     // Each setting is 6 bytes: 2 bytes ID + 4 bytes value
     var offset: usize = 0;
     while (offset + 6 <= payload.len) {
         const setting_id = (@as(u16, payload[offset]) << 8) | @as(u16, payload[offset + 1]);
-        const setting_value = (@as(u32, payload[offset + 2]) << 24) | 
-                             (@as(u32, payload[offset + 3]) << 16) |
-                             (@as(u32, payload[offset + 4]) << 8) | 
-                             @as(u32, payload[offset + 5]);
-        
-        log("  Setting: ID={}, Value={}", .{setting_id, setting_value});
-        
+        const setting_value = (@as(u32, payload[offset + 2]) << 24) |
+            (@as(u32, payload[offset + 3]) << 16) |
+            (@as(u32, payload[offset + 4]) << 8) |
+            @as(u32, payload[offset + 5]);
+
+        log("  Setting: ID={}, Value={}", .{ setting_id, setting_value });
+
         // TODO: Store and apply these settings
         switch (setting_id) {
             0x1 => log("    SETTINGS_HEADER_TABLE_SIZE={}", .{setting_value}),
@@ -1311,16 +1403,16 @@ pub fn processHTTP2Settings(this: *HTTPClient, payload: []const u8, comptime is_
             0x6 => log("    SETTINGS_MAX_HEADER_LIST_SIZE={}", .{setting_value}),
             else => log("    Unknown setting ID", .{}),
         }
-        
+
         offset += 6;
     }
 }
 
 pub fn sendHTTP2SettingsAck(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     _ = this;
-    
+
     log("Sending HTTP/2 SETTINGS ACK", .{});
-    
+
     // SETTINGS ACK is an empty SETTINGS frame with ACK flag set
     var frame_header: [9]u8 = undefined;
     // Length: 0
@@ -1336,7 +1428,7 @@ pub fn sendHTTP2SettingsAck(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
     frame_header[6] = 0;
     frame_header[7] = 0;
     frame_header[8] = 0;
-    
+
     const bytes_written = socket.write(&frame_header);
     if (bytes_written != frame_header.len) {
         return error.HTTP2SettingsAckFailed;
@@ -1345,14 +1437,14 @@ pub fn sendHTTP2SettingsAck(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
 
 pub fn sendHTTP2PingAck(this: *HTTPClient, payload: []const u8, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     _ = this;
-    
+
     log("Sending HTTP/2 PING ACK", .{});
-    
+
     // PING frame must be exactly 8 bytes
     if (payload.len != 8) {
         return error.HTTP2InvalidPingPayload;
     }
-    
+
     // PING ACK echoes the same payload with ACK flag set
     var frame_header: [9]u8 = undefined;
     // Length: 8
@@ -1368,12 +1460,12 @@ pub fn sendHTTP2PingAck(this: *HTTPClient, payload: []const u8, comptime is_ssl:
     frame_header[6] = 0;
     frame_header[7] = 0;
     frame_header[8] = 0;
-    
+
     var bytes_written = socket.write(&frame_header);
     if (bytes_written != frame_header.len) {
         return error.HTTP2PingAckHeaderFailed;
     }
-    
+
     bytes_written = socket.write(payload);
     if (bytes_written != 8) {
         return error.HTTP2PingAckPayloadFailed;
@@ -1382,122 +1474,123 @@ pub fn sendHTTP2PingAck(this: *HTTPClient, payload: []const u8, comptime is_ssl:
 
 pub fn sendHTTP2Request(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
     const h2_frame_parser = @import("bun.js/api/bun/h2_frame_parser.zig");
-    
+
     log("Sending HTTP/2 request for {s}", .{this.url.href});
-    
+
     // Stream ID: We'll use stream 1 for our first request
     const stream_id: u32 = 1;
-    
+
     // Use the HPACK decoder we already have (it can also encode)
     const hpack = this.http2_hpack_decoder orelse return error.NoHPACKDecoder;
-    
+
     // Build pseudo-headers for HTTP/2
     var headers_buffer: [4096]u8 = undefined;
     var headers_len: usize = 0;
-    
+
     // Encode pseudo-headers in order (required by HTTP/2 spec)
     // :method
     const method_str = @tagName(this.method);
-    log("  Encoding :method = {s} at offset {}", .{method_str, headers_len});
+    log("  Encoding :method = {s} at offset {}", .{ method_str, headers_len });
     const new_len = try hpack.encode(":method", method_str, false, &headers_buffer, headers_len);
-    log("  After :method, offset {} -> {}, bytes written: {}", .{headers_len, new_len, new_len - headers_len});
+    log("  After :method, offset {} -> {}, bytes written: {}", .{ headers_len, new_len, new_len - headers_len });
     headers_len = new_len;
-    
-    // :scheme  
+
+    // :scheme
     const scheme = if (is_ssl) "https" else "http";
-    log("  Encoding :scheme = {s} at offset {}", .{scheme, headers_len});
+    log("  Encoding :scheme = {s} at offset {}", .{ scheme, headers_len });
     const new_len2 = try hpack.encode(":scheme", scheme, false, &headers_buffer, headers_len);
-    log("  After :scheme, offset {} -> {}, bytes written: {}", .{headers_len, new_len2, if (new_len2 > headers_len) new_len2 - headers_len else 0});
+    log("  After :scheme, offset {} -> {}, bytes written: {}", .{ headers_len, new_len2, if (new_len2 > headers_len) new_len2 - headers_len else 0 });
     if (new_len2 > headers_len) {
         headers_len = new_len2;
     } else {
         log("  WARNING: :scheme encoding failed or wrote 0 bytes!", .{});
     }
-    
+
     // :authority (host)
     const authority = this.url.hostname;
-    log("  Encoding :authority = {s} at offset {}", .{authority, headers_len});
+    log("  Encoding :authority = {s} at offset {}", .{ authority, headers_len });
     const new_len3 = try hpack.encode(":authority", authority, false, &headers_buffer, headers_len);
-    log("  After :authority, offset {} -> {}, bytes written: {}", .{headers_len, new_len3, if (new_len3 > headers_len) new_len3 - headers_len else 0});
+    log("  After :authority, offset {} -> {}, bytes written: {}", .{ headers_len, new_len3, if (new_len3 > headers_len) new_len3 - headers_len else 0 });
     headers_len = new_len3;
-    
+
     // :path
     var path_buf: [4096]u8 = undefined;
     const path = if (this.url.pathname.len > 0) blk: {
         var path_len: usize = 0;
-        @memcpy(path_buf[path_len..path_len + this.url.pathname.len], this.url.pathname);
+        @memcpy(path_buf[path_len .. path_len + this.url.pathname.len], this.url.pathname);
         path_len += this.url.pathname.len;
-        
+
         if (this.url.search.len > 0) {
-            @memcpy(path_buf[path_len..path_len + this.url.search.len], this.url.search);
+            @memcpy(path_buf[path_len .. path_len + this.url.search.len], this.url.search);
             path_len += this.url.search.len;
         }
         break :blk path_buf[0..path_len];
     } else "/";
-    
-    log("  Encoding :path = {s} at offset {}", .{path, headers_len});
+
+    log("  Encoding :path = {s} at offset {}", .{ path, headers_len });
     const new_len4 = try hpack.encode(":path", path, false, &headers_buffer, headers_len);
-    log("  After :path, offset {} -> {}, bytes written: {}", .{headers_len, new_len4, if (new_len4 > headers_len) new_len4 - headers_len else 0});
+    log("  After :path, offset {} -> {}, bytes written: {}", .{ headers_len, new_len4, if (new_len4 > headers_len) new_len4 - headers_len else 0 });
     if (new_len4 > headers_len) {
         headers_len = new_len4;
     } else {
         log("  WARNING: :path encoding failed or wrote 0 bytes!", .{});
     }
-    
+
     // Add regular headers from the request
     const header_entries = this.header_entries.slice();
     const header_names = header_entries.items(.name);
     const header_values = header_entries.items(.value);
-    
+
     for (header_names, header_values) |name_str, value_str| {
         const name = this.headerStr(name_str);
         const value = this.headerStr(value_str);
-        
+
         // Skip connection-specific headers (not allowed in HTTP/2)
-        if (strings.eqlComptime(name, "connection") or 
+        if (strings.eqlComptime(name, "connection") or
             strings.eqlComptime(name, "keep-alive") or
             strings.eqlComptime(name, "proxy-connection") or
             strings.eqlComptime(name, "transfer-encoding") or
-            strings.eqlComptime(name, "upgrade")) {
+            strings.eqlComptime(name, "upgrade"))
+        {
             continue;
         }
-        
+
         // Convert to lowercase for HTTP/2
         var lower_name_buf: [256]u8 = undefined;
         const lower_name = strings.copyLowercase(name, &lower_name_buf);
-        
+
         headers_len = try hpack.encode(lower_name, value, false, &headers_buffer, headers_len);
     }
-    
+
     // Use proper frame structures from h2_frame_parser
     var frame_header = h2_frame_parser.FrameHeader{
         .length = @intCast(headers_len),
         .type = @intFromEnum(h2_frame_parser.FrameType.HTTP_FRAME_HEADERS),
-        .flags = @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_HEADERS) | 
-                 if (this.method == .GET) @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_STREAM) else 0,
+        .flags = @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_HEADERS) |
+            if (this.method == .GET) @intFromEnum(h2_frame_parser.HeadersFrameFlags.END_STREAM) else 0,
         .streamIdentifier = stream_id,
     };
-    
+
     // Write frame header
     var frame_header_buf: [9]u8 = undefined;
     var stream = std.io.fixedBufferStream(&frame_header_buf);
     if (!frame_header.write(@TypeOf(stream.writer()), stream.writer())) {
         return error.HTTP2HeadersFrameHeaderFailed;
     }
-    
+
     var bytes_written = socket.write(&frame_header_buf);
     if (bytes_written != frame_header_buf.len) {
         return error.HTTP2HeadersFrameHeaderFailed;
     }
-    
+
     // Write headers payload
     bytes_written = socket.write(headers_buffer[0..headers_len]);
     if (bytes_written != headers_len) {
         return error.HTTP2HeadersFramePayloadFailed;
     }
-    
-    log("HTTP/2 HEADERS frame sent on stream {} with {} bytes", .{stream_id, headers_len});
-    
+
+    log("HTTP/2 HEADERS frame sent on stream {} with {} bytes", .{ stream_id, headers_len });
+
     // TODO: If we have a request body, send DATA frames
     if (this.method != .GET and this.method != .HEAD) {
         // Handle request body
@@ -2119,7 +2212,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     if (this.proxy_tunnel) |proxy| {
         proxy.onWritable(is_ssl, socket);
     }
-    
+
     // Don't send HTTP/1.1 request if we're using HTTP/2
     if (this.state.flags.is_http2) {
         log("onWritable called for HTTP/2 connection, ignoring", .{});
@@ -2511,7 +2604,7 @@ pub fn onData(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    bun.Output.prettyErrorln("[HTTPClient] onData {} bytes, is_http2={}, should_use_http2={}", .{incoming_data.len, this.state.flags.is_http2, this.should_use_http2});
+    bun.Output.prettyErrorln("[HTTPClient] onData {} bytes, is_http2={}, should_use_http2={}", .{ incoming_data.len, this.state.flags.is_http2, this.should_use_http2 });
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;

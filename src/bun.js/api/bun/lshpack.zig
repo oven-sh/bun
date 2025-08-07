@@ -30,18 +30,18 @@ pub const HPACK = extern struct {
     pub fn decode(self: *HPACK, src: []const u8) !DecodeResult {
         var header: lshpack_header = .{};
         const offset = lshpack_wrapper_decode(self, src.ptr, src.len, &header);
-        
+
         // Check for error codes returned by the C++ wrapper
         if (offset >= std.math.maxInt(usize) - 10) {
             const error_code = std.math.maxInt(usize) - offset;
             return switch (error_code) {
-                1 => error.BadHPACKData,      // LSHPACK_ERR_BAD_DATA
-                2 => error.HPACKHeaderTooLarge,  // LSHPACK_ERR_TOO_LARGE  
-                3 => error.HPACKNeedMoreBuffer,  // LSHPACK_ERR_MORE_BUF
+                1 => error.BadHPACKData, // LSHPACK_ERR_BAD_DATA
+                2 => error.HPACKHeaderTooLarge, // LSHPACK_ERR_TOO_LARGE
+                3 => error.HPACKNeedMoreBuffer, // LSHPACK_ERR_MORE_BUF
                 else => error.UnableToDecode,
             };
         }
-        
+
         if (offset == 0) return error.UnableToDecode;
         if (header.name_len == 0) return error.EmptyHeaderName;
 

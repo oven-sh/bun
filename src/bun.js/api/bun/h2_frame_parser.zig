@@ -39,7 +39,7 @@ pub const FrameType = enum(u8) {
     HTTP_FRAME_ORIGIN = 0x0C, // https://datatracker.ietf.org/doc/html/rfc8336#section-2
 };
 
-const PingFrameFlags = enum(u8) {
+pub const PingFrameFlags = enum(u8) {
     ACK = 0x1,
 };
 pub const DataFrameFlags = enum(u8) {
@@ -52,7 +52,7 @@ pub const HeadersFrameFlags = enum(u8) {
     PADDED = 0x8,
     PRIORITY = 0x20,
 };
-const SettingsFlags = enum(u8) {
+pub const SettingsFlags = enum(u8) {
     ACK = 0x1,
 };
 

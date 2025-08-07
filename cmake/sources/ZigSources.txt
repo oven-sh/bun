@@ -574,6 +574,9 @@ src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
+src/http/http2/Connection.zig
+src/http/http2/FrameParser.zig
+src/http/http2/Stream.zig
 src/http/HTTP2Client.zig
 src/http/HTTP2Integration.zig
 src/http/HTTPCertError.zig

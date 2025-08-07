@@ -35,7 +35,7 @@ request_stage: HTTPStage = .pending,
 response_stage: HTTPStage = .pending,
 certificate_info: ?CertificateInfo = null,
 
-pub const InternalStateFlags = packed struct(u8) {
+pub const InternalStateFlags = packed struct(u16) {
     allow_keepalive: bool = true,
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
@@ -43,7 +43,10 @@ pub const InternalStateFlags = packed struct(u8) {
     is_libdeflate_fast_path_disabled: bool = false,
     resend_request_body_on_redirect: bool = false,
     is_http2: bool = false,
-    _padding: u1 = 0,
+    http2_headers_received: bool = false,
+    http2_headers_complete: bool = false,
+    http2_stream_ended: bool = false,
+    _padding: u6 = 0,
 };
 
 pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {

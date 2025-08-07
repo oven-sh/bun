@@ -220,15 +220,15 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.http_thread.loop = loop;
     bun.http.http_thread.http_context.init();
     bun.http.http_thread.https_context.initWithThreadOpts(&opts) catch |err| opts.onInitError(err, opts);
-    
+
     // Initialize H1-only context (http/1.1 only)
     bun.http.http_thread.https_context_h1.initWithThreadOptsAndProtocol(&opts, .h1) catch |err| opts.onInitError(err, opts);
     threadlog("Initialized h1 context at {*}", .{&bun.http.http_thread.https_context_h1});
-    
+
     // Initialize H2-only context (h2 only)
     bun.http.http_thread.https_context_h2.initWithThreadOptsAndProtocol(&opts, .h2) catch |err| opts.onInitError(err, opts);
     threadlog("Initialized h2 context at {*}", .{&bun.http.http_thread.https_context_h2});
-    
+
     bun.http.http_thread.has_awoken.store(true, .monotonic);
     bun.http.http_thread.processEvents();
 }
@@ -288,11 +288,11 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
         }
     }
-    
+
     // Use the appropriate context based on protocol preference
     const ctx = this.contextWithProtocol(is_ssl, client.protocol);
-    threadlog("Using context for protocol={} ctx={*}, https_context={*}, https_context_h1={*}, https_context_h2={*}", .{client.protocol, ctx, &this.https_context, &this.https_context_h1, &this.https_context_h2});
-    
+    threadlog("Using context for protocol={} ctx={*}, https_context={*}, https_context_h1={*}, https_context_h2={*}", .{ client.protocol, ctx, &this.https_context, &this.https_context_h1, &this.https_context_h2 });
+
     if (client.http_proxy) |url| {
         if (url.href.len > 0) {
             // https://github.com/oven-sh/bun/issues/11343
@@ -311,7 +311,7 @@ pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
 
 pub fn contextWithProtocol(this: *@This(), comptime is_ssl: bool, protocol: HTTPClient.HTTPProtocol) *NewHTTPContext(is_ssl) {
     if (comptime !is_ssl) return &this.http_context;
-    
+
     return switch (protocol) {
         .h1 => &this.https_context_h1,
         .h2 => &this.https_context_h2,

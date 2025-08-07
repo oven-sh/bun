@@ -9,7 +9,7 @@ pub fn ParseSuffix(
 
         const parse_suffix_fns = struct {
             const Continuation = enum { next, done };
-            
+
             pub fn handleTypescriptAs(p: *P, level: Level) anyerror!Continuation {
                 if (is_typescript_enabled and level.lt(.compare) and !p.lexer.has_newline_before and (p.lexer.isContextualKeyword("as") or p.lexer.isContextualKeyword("satisfies"))) {
                     try p.lexer.next();
@@ -45,7 +45,7 @@ pub fn ParseSuffix(
                 }
                 return .done;
             }
-            
+
             pub fn t_dot(p: *P, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
                 try p.lexer.next();
                 const target = left.*;
@@ -939,6 +939,7 @@ const bun = @import("bun");
 const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
+const OptionalChain = js_ast.OptionalChain;
 
 const Op = js_ast.Op;
 const Level = js_ast.Op.Level;
@@ -952,4 +953,3 @@ const JSXTransformType = js_parser.JSXTransformType;
 const SideEffects = js_parser.SideEffects;
 const TypeScript = js_parser.TypeScript;
 const options = js_parser.options;
-const OptionalChain = js_ast.OptionalChain;

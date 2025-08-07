@@ -346,7 +346,7 @@ jobs:
   bump:
     name: "Bump version"
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'schedule' && env.BUN_LATEST == 'true' }}
+    if: ${{ github.event_name != 'schedule' }}
     permissions:
       pull-requests: write
       contents: write
@@ -379,6 +379,7 @@ jobs:
           '
   
       - name: Create Pull Request
+        if: ${{ env.BUN_LATEST == 'true' }}
         uses: peter-evans/create-pull-request@v7
         with:
           title: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"

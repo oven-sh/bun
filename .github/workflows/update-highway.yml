@@ -7,6 +7,7 @@ on:
 
 jobs:
   check-update:
+    if: ${{ github.repository == 'oven-sh/bun' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,7 +59,7 @@ jobs:
 
           TAG_OBJECT_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
           TAG_OBJECT_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
-          
+
           if [ -z "$TAG_OBJECT_SHA" ] || [ "$TAG_OBJECT_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1

@@ -969,6 +969,14 @@ pub const CommandLineReporter = struct {
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
+        var scoped_allocator = bun.AllocationScope.init(bun.default_allocator);
+        defer scoped_allocator.deinit();
+        const scoped = scoped_allocator.allocator();
+
+        var arena_allocator = bun.ArenaAllocator.init(scoped);
+        defer arena_allocator.deinit();
+        const arena = arena_allocator.allocator();
+
         const trace = if (reporters.text and reporters.lcov)
             bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
         else if (reporters.text)
@@ -997,7 +1005,7 @@ pub const CommandLineReporter = struct {
                 if (opts.ignore_patterns.len > 0) {
                     var should_ignore = false;
                     for (opts.ignore_patterns) |pattern| {
-                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                        if (bun.glob.match(arena, pattern, relative_path).matches()) {
                             should_ignore = true;
                             break;
                         }
@@ -1031,7 +1039,7 @@ pub const CommandLineReporter = struct {
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         }
 
-        var console_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var console_buffer = bun.MutableString.initEmpty(arena);
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
@@ -1082,7 +1090,7 @@ pub const CommandLineReporter = struct {
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        const ptr = try arena.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
                         ptr.* = .{
                             .end = 0,
                             .unbuffered_writer = writer,
@@ -1113,16 +1121,18 @@ pub const CommandLineReporter = struct {
         // Structure to hold HTML report data in memory
         const HtmlReportData = struct {
             report: CodeCoverageReport,
-            filename: []const u8,
-            html_filename: []const u8,
-            coverage: f64,
+            sidebar_item: CodeCoverageReport.Html.SidebarItem,
         };
-        var html_reports = if (comptime reporters.html) std.ArrayList(HtmlReportData).init(bun.default_allocator) else {};
+        var html_reports = if (comptime reporters.html) bun.MultiArrayList(HtmlReportData).empty else {};
         defer if (comptime reporters.html) {
-            for (html_reports.items) |*item| {
-                item.report.deinit(bun.default_allocator);
+            for (html_reports.items(.sidebar_item)) |*item| {
+                arena.free(item.filename);
+                arena.free(item.html_filename);
             }
-            html_reports.deinit();
+            for (html_reports.items(.report)) |*item| {
+                item.deinit(arena);
+            }
+            html_reports.deinit(arena);
         };
 
         // Ensure the directory exists for HTML reports
@@ -1137,10 +1147,6 @@ pub const CommandLineReporter = struct {
                 },
             );
         }
-
-        // Collect sidebar items for HTML reporter
-        var sidebar_items = if (comptime reporters.html) std.ArrayList(CodeCoverageReport.Html.SidebarItem).init(bun.default_allocator);
-        defer if (comptime reporters.html) sidebar_items.deinit();
 
         // --- HTML ---
 
@@ -1163,11 +1169,11 @@ pub const CommandLineReporter = struct {
                 }
             }
 
-            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            var report = CodeCoverageReport.generate(vm.global, arena, entry, opts.ignore_sourcemap) orelse continue;
             // Report deinit is now handled conditionally based on HTML reporter
             defer {
                 if (comptime !reporters.html) {
-                    report.deinit(bun.default_allocator);
+                    report.deinit(arena);
                 }
             }
 
@@ -1216,21 +1222,17 @@ pub const CommandLineReporter = struct {
                 const html_filename = std.fmt.bufPrint(&html_filename_buf, "{s}.html", .{safe_filename}) catch filename;
 
                 // Store filename strings in allocator so they remain valid
-                const stored_filename = try bun.default_allocator.dupe(u8, filename);
-                const stored_html_filename = try bun.default_allocator.dupe(u8, html_filename);
+                const stored_filename = try arena.dupe(u8, filename);
+                const stored_html_filename = try arena.dupe(u8, html_filename);
 
                 // Store the report data (transfer ownership instead of deinit)
-                try html_reports.append(.{
+                try html_reports.append(arena, .{
                     .report = report,
-                    .filename = stored_filename,
-                    .html_filename = stored_html_filename,
-                    .coverage = report.linesCoverageFraction(),
-                });
-                
-                try sidebar_items.append(.{
-                    .filename = stored_filename,
-                    .html_filename = stored_html_filename,
-                    .coverage = report.linesCoverageFraction(),
+                    .sidebar_item = .{
+                        .filename = stored_filename,
+                        .html_filename = stored_html_filename,
+                        .coverage = report.linesCoverageFraction(),
+                    },
                 });
             }
         }
@@ -1259,7 +1261,7 @@ pub const CommandLineReporter = struct {
                 },
                 .result => |f| {
                     defer f.close();
-                    
+
                     const buffered = buffered_writer: {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
@@ -1271,25 +1273,17 @@ pub const CommandLineReporter = struct {
                         break :buffered_writer ptr;
                     };
                     defer bun.default_allocator.destroy(buffered);
-                    
+
                     const html_writer = buffered.writer();
                     const html_any_writer = html_writer.any();
 
-                    // Write header and timestamp
-                    try CodeCoverageReport.Html.writeHeader(html_any_writer);
-                    try CodeCoverageReport.Html.writeTimestamp(html_any_writer);
+                    // Write the complete index page
+                    try CodeCoverageReport.Html.writeIndexPage(
+                        html_reports.items(.report),
+                        html_reports.items(.sidebar_item),
+                        html_any_writer,
+                    );
 
-                    // Write all report entries to index.html
-                    for (html_reports.items) |*item| {
-                        CodeCoverageReport.Html.writeFormat(
-                            &item.report,
-                            relative_dir,
-                            html_any_writer,
-                        ) catch continue;
-                    }
-
-                    // Write footer
-                    try CodeCoverageReport.Html.writeFooter(html_any_writer);
                     try buffered.flush();
                 },
             }
@@ -1311,21 +1305,15 @@ pub const CommandLineReporter = struct {
             };
 
             // Now generate all detail files with the complete sidebar
-            for (html_reports.items) |*item| {
-                const source_path = item.report.source_url.slice();
+            for (html_reports.items(.report)) |*report| {
+                const source_path = report.source_url.slice();
                 CodeCoverageReport.Html.createDetailFile(
-                    &item.report,
+                    report,
                     relative_dir,
                     opts.reports_directory,
                     source_path,
-                    sidebar_items.items,
+                    html_reports.items(.sidebar_item),
                 ) catch continue;
-            }
-
-            // Free the allocated strings
-            for (sidebar_items.items) |item| {
-                bun.default_allocator.free(item.filename);
-                bun.default_allocator.free(item.html_filename);
             }
         }
 

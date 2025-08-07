@@ -58,11 +58,7 @@ namespace SQLite {
   let lazy_bunSqliteModule: (typeof import("./sqlite.ts"))["default"];
   export function getBunSqliteModule() {
     if (!lazy_bunSqliteModule) {
-      try {
-        lazy_bunSqliteModule = require("./sqlite.ts");
-      } catch (error) {
-        throw error;
-      }
+      lazy_bunSqliteModule = require("./sqlite.ts");
     }
     return lazy_bunSqliteModule;
   }

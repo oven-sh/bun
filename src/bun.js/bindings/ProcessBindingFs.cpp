@@ -178,6 +178,7 @@ Structure* ProcessBindingFs::createStructure(VM& vm, JSGlobalObject* globalObjec
 
 void ProcessBindingFs::finishCreation(JSC::VM& vm)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
@@ -186,9 +187,13 @@ void ProcessBindingFs::finishCreation(JSC::VM& vm)
 
     putDirect(vm, Identifier::fromString(vm, "kFsStatsFieldsNumber"_s), jsNumber(18), 0);
     putDirect(vm, Identifier::fromString(vm, "statValues"_s), zigGlobal->m_statValues.get(zigGlobal), 0);
+    RETURN_IF_EXCEPTION(scope, );
     putDirect(vm, Identifier::fromString(vm, "bigintStatValues"_s), zigGlobal->m_bigintStatValues.get(zigGlobal), 0);
+    RETURN_IF_EXCEPTION(scope, );
     putDirect(vm, Identifier::fromString(vm, "statFsValues"_s), zigGlobal->m_statFsValues.get(zigGlobal), 0);
+    RETURN_IF_EXCEPTION(scope, );
     putDirect(vm, Identifier::fromString(vm, "bigintStatFsValues"_s), zigGlobal->m_bigintStatFsValues.get(zigGlobal), 0);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 template<typename Visitor>

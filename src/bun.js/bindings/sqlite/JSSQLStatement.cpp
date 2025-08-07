@@ -178,6 +178,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 #define DO_REBIND(param)                                                                                                \
     if (param.isObject()) {                                                                                             \
         JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, param, true, castedThis->version_db->db);            \
+        RETURN_IF_EXCEPTION(scope, {});                                                                                 \
         if (!reb.isNumber()) [[unlikely]] {                                                                             \
             return JSValue::encode(reb); /* this means an error */                                                      \
         }                                                                                                               \
@@ -201,7 +202,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 class VersionSqlite3 {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3, VersionSqlite3);
 
 public:
     explicit VersionSqlite3(sqlite3* db)

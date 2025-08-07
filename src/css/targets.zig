@@ -1,8 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
-const bits = bun.bits;
 
 const VendorPrefix = css.VendorPrefix;
 
@@ -346,3 +342,8 @@ pub const Features = packed struct(u32) {
         .space_separated_color_notation = true,
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const bits = bun.bits;

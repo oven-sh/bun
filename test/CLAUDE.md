@@ -44,8 +44,15 @@ test("spawns a Bun process", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+
+    // ReadableStream in Bun supports:
+    //  - `await stream.text()`
+    //  - `await stream.json()`
+    //  - `await stream.bytes()`
+    //  - `await stream.blob()`
+    proc.stdout.text(),
+    proc.stderr.text(),
+
     proc.exitCode,
   ]);
 
@@ -73,6 +80,14 @@ await promise;
 ```
 
 If it's several callbacks, it's okay to use callbacks. We aren't a stickler for this.
+
+### No timeouts
+
+**CRITICAL**: Do not set a timeout on tests. Bun already has timeouts.
+
+### Use port 0 to get a random port
+
+Most APIs in Bun support `port: 0` to get a random port. Never hardcode ports. Avoid using your own random port number function.
 
 ### Creating temporary files
 

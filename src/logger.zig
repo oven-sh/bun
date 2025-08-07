@@ -1,22 +1,3 @@
-const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const js = bun.JSC;
-const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const JSC = bun.JSC;
-const fs = @import("fs.zig");
-const assert = bun.assert;
-const StringBuilder = bun.StringBuilder;
-const Index = @import("./ast/base.zig").Index;
-const OOM = bun.OOM;
-const JSError = bun.JSError;
-
 pub const Kind = enum(u8) {
     err = 0,
     warn = 1,
@@ -39,7 +20,7 @@ pub const Kind = enum(u8) {
         };
     }
 
-    pub inline fn string(self: Kind) bun.string {
+    pub inline fn string(self: Kind) []const u8 {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -49,7 +30,7 @@ pub const Kind = enum(u8) {
         };
     }
 
-    pub inline fn toAPI(kind: Kind) Api.MessageLevel {
+    pub inline fn toAPI(kind: Kind) api.MessageLevel {
         return switch (kind) {
             .err => .err,
             .warn => .warn,
@@ -64,8 +45,8 @@ pub const Kind = enum(u8) {
 pub const Loc = struct {
     start: i32 = -1,
 
-    pub inline fn toNullable(loc: *Loc) ?Loc {
-        return if (loc.start == -1) null else loc.*;
+    pub inline fn toNullable(loc: Loc) ?Loc {
+        return if (loc.start == -1) null else loc;
     }
 
     pub const toUsize = i;
@@ -152,8 +133,8 @@ pub const Location = struct {
         };
     }
 
-    pub fn toAPI(this: *const Location) Api.Location {
-        return Api.Location{
+    pub fn toAPI(this: *const Location) api.Location {
+        return api.Location{
             .file = this.file,
             .namespace = this.namespace,
             .line = this.line,
@@ -266,8 +247,8 @@ pub const Data = struct {
         if (this.location) |loc| loc.count(builder);
     }
 
-    pub fn toAPI(this: *const Data) Api.MessageData {
-        return Api.MessageData{
+    pub fn toAPI(this: *const Data) api.MessageData {
+        return api.MessageData{
             .text = this.text,
             .location = if (this.location != null) this.location.?.toAPI() else null,
         };
@@ -420,8 +401,8 @@ pub const Msg = struct {
         return cost;
     }
 
-    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) bun.JSError!Msg {
-        var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.jsc.JSGlobalObject, file: string, err: bun.jsc.JSValue) bun.JSError!Msg {
+        var zig_exception_holder: bun.jsc.ZigException.Holder = bun.jsc.ZigException.Holder.init();
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
@@ -440,7 +421,7 @@ pub const Msg = struct {
         };
     }
 
-    pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.OOM!JSC.JSValue {
+    pub fn toJS(this: Msg, globalObject: *bun.jsc.JSGlobalObject, allocator: std.mem.Allocator) bun.OOM!jsc.JSValue {
         return switch (this.metadata) {
             .build => bun.api.BuildMessage.create(globalObject, allocator, this),
             .resolve => bun.api.ResolveMessage.create(globalObject, allocator, this, ""),
@@ -488,16 +469,16 @@ pub const Msg = struct {
         };
     };
 
-    pub fn toAPI(this: *const Msg, allocator: std.mem.Allocator) OOM!Api.Message {
+    pub fn toAPI(this: *const Msg, allocator: std.mem.Allocator) OOM!api.Message {
         var notes = try allocator.alloc(
-            Api.MessageData,
+            api.MessageData,
             this.notes.len,
         );
-        const msg = Api.Message{
+        const msg = api.Message{
             .level = this.kind.toAPI(),
             .data = this.data.toAPI(),
             .notes = notes,
-            .on = Api.MessageMeta{
+            .on = api.MessageMeta{
                 .resolve = if (this.metadata == .resolve) this.metadata.resolve.specifier.slice(this.data.text) else "",
                 .build = this.metadata == .build,
             },
@@ -510,8 +491,8 @@ pub const Msg = struct {
         return msg;
     }
 
-    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) OOM![]Api.Message {
-        var out_list = try allocator.alloc(Api.Message, list.items.len);
+    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) OOM![]api.Message {
+        var out_list = try allocator.alloc(api.Message, list.items.len);
         for (list.items, 0..) |item, i| {
             out_list[i] = try item.toAPI(allocator);
         }
@@ -653,7 +634,7 @@ pub const Log = struct {
         return (this.warnings + this.errors) > 0;
     }
 
-    pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !Api.Log {
+    pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !api.Log {
         var warnings: u32 = 0;
         var errors: u32 = 0;
         for (this.msgs.items) |msg| {
@@ -661,7 +642,7 @@ pub const Log = struct {
             warnings += @as(u32, @intCast(@intFromBool(msg.kind == .warn)));
         }
 
-        return Api.Log{
+        return api.Log{
             .warnings = warnings,
             .errors = errors,
             .msgs = try Msg.toAPIFromList(@TypeOf(this.msgs), this.msgs, allocator),
@@ -696,7 +677,7 @@ pub const Log = struct {
             .{ "error", Level.err },
         });
 
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) JSError!?Level {
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) JSError!?Level {
             if (value == .zero or value.isUndefined()) {
                 return null;
             }
@@ -742,9 +723,9 @@ pub const Log = struct {
         }
     }
 
-    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) bun.OOM!JSC.JSValue {
+    pub fn toJS(this: Log, global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, message: string) bun.JSError!jsc.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        var errors_stack: [256]JSC.JSValue = undefined;
+        var errors_stack: [256]jsc.JSValue = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
@@ -763,24 +744,24 @@ pub const Log = struct {
                         .resolve => try bun.api.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
-                const out = JSC.ZigString.init(message);
-                const agg = global.createAggregateError(errors_stack[0..count], &out);
+                const out = jsc.ZigString.init(message);
+                const agg = try global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },
         }
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) bun.JSError!JSC.JSValue {
+    pub fn toJSAggregateError(this: Log, global: *jsc.JSGlobalObject, message: bun.String) bun.JSError!jsc.JSValue {
         return global.createAggregateErrorWithArray(message, try this.toJSArray(global, bun.default_allocator));
     }
 
-    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!JSC.JSValue {
+    pub fn toJSArray(this: Log, global: *jsc.JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!jsc.JSValue {
         const msgs: []const Msg = this.msgs.items;
 
-        const arr = try JSC.JSValue.createEmptyArray(global, msgs.len);
+        const arr = try jsc.JSValue.createEmptyArray(global, msgs.len);
         for (msgs, 0..) |msg, i| {
-            arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
+            try arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
         }
 
         return arr;
@@ -1621,3 +1602,23 @@ pub const Source = struct {
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
     return Data{ .text = text, .location = Location.initOrNull(source, r) };
 }
+
+const string = []const u8;
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+const ImportKind = @import("./import_record.zig").ImportKind;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSError = bun.JSError;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const StringBuilder = bun.StringBuilder;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const js = bun.jsc;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const Index = bun.ast.Index;
+const api = bun.schema.api;

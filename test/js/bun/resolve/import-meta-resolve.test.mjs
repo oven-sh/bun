@@ -85,7 +85,10 @@ if (process.platform !== "win32") {
 }
 
 // will fail on deno because it is `npm:*` specifier not a file path
-fileUrlRelTo(() => import.meta.resolve("lodash"), "../../../node_modules/lodash/lodash.js");
+// fileUrlRelTo(() => import.meta.resolve("lodash"), "../../../node_modules/lodash/lodash.js");
+// will fail on isolated installs
+// + 'file:///src/bun/test/node_modules/.bun/lodash@4.17.21/node_modules/lodash/lodash.js'
+// - 'file:///src/bun/test/node_modules/lodash/lodash.js'
 
 exact(() => import.meta.resolve("node:path"), "node:path");
 exact(() => import.meta.resolve("path"), "node:path");

@@ -2,16 +2,7 @@
 //!
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
-const bun = @import("bun");
-const builtin = @import("builtin");
-const Output = bun.Output;
-const windows = std.os.windows;
-const w = std.os.windows;
-const win32 = windows;
-const log = bun.sys.syslog;
-const Maybe = bun.sys.Maybe;
 
-const c = bun.c;
 pub const ntdll = windows.ntdll;
 pub const kernel32 = windows.kernel32;
 pub const GetLastError = kernel32.GetLastError;
@@ -89,9 +80,6 @@ pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
-const std = @import("std");
-const Environment = bun.Environment;
-
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
@@ -162,8 +150,6 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 ) callconv(windows.WINAPI) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
-
-const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -3232,7 +3218,7 @@ pub const INPUT_RECORD = extern struct {
 };
 
 fn Bun__UVSignalHandle__init(
-    global: *bun.JSC.JSGlobalObject,
+    global: *bun.jsc.JSGlobalObject,
     signal_num: i32,
     callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
 ) callconv(.C) ?*libuv.uv_signal_t {
@@ -3506,7 +3492,7 @@ const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
+pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sys.Maybe(void) {
     const create_options_flags: ULONG = if (options.remove_dir)
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     else
@@ -3549,7 +3535,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         0,
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
-    if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .open)) |err| {
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);
@@ -3576,7 +3562,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
     );
     bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     switch (rc) {
-        .SUCCESS => return .{ .result = {} },
+        .SUCCESS => return .success,
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
         .INVALID_PARAMETER => {},
         // For all other statuses, fall down to the switch below to handle them.
@@ -3598,11 +3584,11 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         );
         bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     }
-    if (bun.JSC.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
         return err;
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION = -1;
@@ -3920,9 +3906,9 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
@@ -3983,9 +3969,9 @@ pub fn moveOpenedFileAt(
     }
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
@@ -4061,3 +4047,19 @@ pub fn renameAtW(
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const c = bun.c;
+
+const Maybe = bun.sys.Maybe;
+const SystemErrno = bun.sys.SystemErrno;
+const log = bun.sys.syslog;
+
+const w = std.os.windows;
+const win32 = windows;
+const windows = std.os.windows;

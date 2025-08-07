@@ -826,10 +826,8 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            lexicalGlobalObject,
-            newTarget,
-            getStructure<isBigInt>(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStructure<isBigInt>(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue dev = callFrame->argument(0);

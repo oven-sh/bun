@@ -18,7 +18,7 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
@@ -129,6 +129,10 @@ export interface DevServerTest {
   mainDir?: string;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
+  /**
+   * Only run this test.
+   */
+  only?: boolean;
 }
 
 let interactive = false;
@@ -314,7 +318,7 @@ export class Dev extends EventEmitter {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
         } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise, Bun.sleep(1000)]);
+          await Promise.race([seenFiles.promise]);
         }
         if (!fastBatches) {
           // Wait an extra delay to avoid double-triggering events.
@@ -1411,6 +1415,90 @@ async function installReactWithCache(root: string) {
   }
 }
 
+// Global React cache management
+let reactCachePromise: Promise<void> | null = null;
+
+/**
+ * Ensures the React cache is populated. This is a global operation that
+ * only happens once per test run.
+ */
+export async function ensureReactCache(): Promise<void> {
+  if (!reactCachePromise) {
+    reactCachePromise = (async () => {
+      const cacheFiles = ["node_modules", "package.json", "bun.lock"];
+      const cacheValid = cacheFiles.every(file => fs.existsSync(path.join(reactCacheDir, file)));
+
+      if (!cacheValid) {
+        // Create a temporary directory for installation
+        const tempInstallDir = fs.mkdtempSync(path.join(tempDir, "react-install-"));
+
+        // Create a minimal package.json
+        fs.writeFileSync(
+          path.join(tempInstallDir, "package.json"),
+          JSON.stringify({
+            name: "react-cache-install",
+            version: "1.0.0",
+            private: true,
+          }),
+        );
+
+        try {
+          // Install React packages
+          await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+            .cwd(tempInstallDir)
+            .env({ ...bunEnv })
+            .throws(true);
+
+          // Copy to cache
+          for (const file of cacheFiles) {
+            const src = path.join(tempInstallDir, file);
+            const dest = path.join(reactCacheDir, file);
+            if (fs.existsSync(src)) {
+              if (fs.statSync(src).isDirectory()) {
+                fs.cpSync(src, dest, { recursive: true, force: true });
+              } else {
+                fs.copyFileSync(src, dest);
+              }
+            }
+          }
+        } finally {
+          // Clean up temp directory
+          fs.rmSync(tempInstallDir, { recursive: true, force: true });
+        }
+      }
+    })();
+  }
+
+  return reactCachePromise;
+}
+
+/**
+ * Copies cached React dependencies to the specified directory.
+ * This ensures React is available without running install.
+ */
+export async function copyCachedReactDeps(root: string): Promise<void> {
+  // Ensure cache is populated
+  await ensureReactCache();
+
+  // Copy node_modules from cache to target directory
+  const src = path.join(reactCacheDir, "node_modules");
+  const dest = path.join(root, "node_modules");
+
+  if (fs.existsSync(src)) {
+    fs.cpSync(src, dest, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Creates a temporary directory with files and React dependencies pre-installed.
+ * This is a convenience wrapper that combines tempDirWithFiles with copyCachedReactDeps.
+ */
+export async function tempDirWithBakeDeps(name: string, files: Record<string, string>): Promise<string> {
+  const dir = tempDirWithFiles(name, files);
+  await copyCachedReactDeps(dir);
+  return dir;
+}
+
 const devTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
 const prodTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
 const counts: Record<string, number> = {};
@@ -1628,6 +1716,7 @@ function testImpl<T extends DevServerTest>(
       await writeAll(root, options.files);
       const runInstall = options.framework === "react";
       if (runInstall) {
+        // await copyCachedReactDeps(root);
         await installReactWithCache(root);
       }
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
@@ -1813,7 +1902,8 @@ function testImpl<T extends DevServerTest>(
       jest.test.todo(name, run);
       return options;
     }
-    jest.test(
+
+    (options.only ? jest.test.only : jest.test)(
       name,
       run,
       isStressTest
@@ -1928,6 +2018,17 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   return testImpl(description, options, "development", caller);
 }
+
+devTest.only = function (description: string, options: DevServerTest) {
+  // Capture the caller name as part of the test tempdir
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(
+    caller.startsWith(devTestRoot) || caller.includes("dev-and-prod"),
+    "dev server tests must be in test/bake/dev, not " + caller,
+  );
+  return testImpl(description, { ...options, only: true }, "development", caller);
+};
 
 export function prodTest<T extends DevServerTest>(description: string, options: T): T {
   const callerLocation = snapshotCallerLocation();

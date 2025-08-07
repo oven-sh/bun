@@ -1,10 +1,6 @@
-const bun = @import("bun");
-const std = @import("std");
 pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
-
-const mimalloc = bun.Mimalloc;
 
 pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
@@ -282,3 +278,8 @@ pub const BrotliCompressionStream = struct {
         return this.writerContext(writable).writer();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;

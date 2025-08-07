@@ -1,4 +1,57 @@
 declare module "bun" {
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   *
+   * @deprecated Use {@link ReadableStream.bytes}
+   */
+  function readableStreamToBytes(
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
+  ): Promise<Uint8Array<ArrayBuffer>> | Uint8Array<ArrayBuffer>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link Blob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
+   *
+   * @deprecated Use {@link ReadableStream.blob}
+   */
+  function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.text}
+   */
+  function readableStreamToText(stream: ReadableStream): Promise<string>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   *
+   * @deprecated Use {@link ReadableStream.json}
+   */
+  function readableStreamToJSON(stream: ReadableStream): Promise<any>;
+
   interface BunMessageEvent<T> {
     /**
      * @deprecated
@@ -14,10 +67,26 @@ declare module "bun" {
     ): void;
   }
 
+  /** @deprecated Use {@link SQL.Query Bun.SQL.Query} */
+  type SQLQuery<T = any> = SQL.Query<T>;
+
+  /** @deprecated Use {@link SQL.TransactionContextCallback Bun.SQL.TransactionContextCallback} */
+  type SQLTransactionContextCallback<T> = SQL.TransactionContextCallback<T>;
+
+  /** @deprecated Use {@link SQL.SavepointContextCallback Bun.SQL.SavepointContextCallback} */
+  type SQLSavepointContextCallback<T> = SQL.SavepointContextCallback<T>;
+
+  /** @deprecated Use {@link SQL.Options Bun.SQL.Options} */
+  type SQLOptions = SQL.Options;
+
   /**
    * @deprecated Renamed to `ErrorLike`
    */
   type Errorlike = ErrorLike;
+
+  /** @deprecated This is unused in Bun's types and may be removed in the future */
+  type ShellFunction = (input: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>;
+
   interface TLSOptions {
     /**
      * File path to a TLS key
@@ -27,6 +96,7 @@ declare module "bun" {
      * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
     keyFile?: string;
+
     /**
      * File path to a TLS certificate
      *
@@ -35,6 +105,7 @@ declare module "bun" {
      * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
     certFile?: string;
+
     /**
      *  File path to a .pem file for a custom root CA
      *
@@ -42,6 +113,9 @@ declare module "bun" {
      */
     caFile?: string;
   }
+
+  /** @deprecated This type is unused in Bun's declarations and may be removed in the future */
+  type ReadableIO = ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined;
 }
 
 declare namespace NodeJS {

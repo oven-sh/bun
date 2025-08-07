@@ -258,6 +258,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZSTD_INVALID_PARAM", RangeError],
   ["ERR_USE_AFTER_CLOSE", Error],
   ["ERR_WASI_NOT_STARTED", Error],
+  ["ERR_WEBASSEMBLY_RESPONSE", TypeError],
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
@@ -296,6 +297,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_VM_MODULE_DIFFERENT_CONTEXT", Error],
   ["ERR_VM_MODULE_LINK_FAILURE", Error],
   ["ERR_VM_MODULE_CACHED_DATA_REJECTED", Error],
+  ["ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING", TypeError],
   ["HPE_INVALID_HEADER_TOKEN", Error],
   ["HPE_HEADER_OVERFLOW", Error],
 ];

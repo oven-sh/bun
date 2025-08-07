@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 expect.extend({
@@ -765,7 +765,7 @@ it("aborts when the uncaughtException handler throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(7);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
@@ -773,7 +773,7 @@ it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(1);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {
@@ -1134,7 +1134,7 @@ it("process.versions", () => {
   expect(process.versions.modules).toEqual("137");
 });
 
-it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
+it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
   const subprocess = Bun.spawn({
     cmd: ["node", "--version"],
     stdout: "pipe",

@@ -11,6 +11,7 @@
 //!
 //! We also make `*IOWriter` reference counted, this simplifies management of
 //! the file descriptor.
+
 const IOWriter = @This();
 
 pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
@@ -27,10 +28,10 @@ buf: std.ArrayListUnmanaged(u8) = .{},
 winbuf: if (bun.Environment.isWindows) std.ArrayListUnmanaged(u8) else u0 = if (bun.Environment.isWindows) .empty else 0,
 writer_idx: usize = 0,
 total_bytes_written: usize = 0,
-err: ?JSC.SystemError = null,
-evtloop: JSC.EventLoopHandle,
-concurrent_task: JSC.EventLoopTask,
-concurrent_task2: JSC.EventLoopTask,
+err: ?jsc.SystemError = null,
+evtloop: jsc.EventLoopHandle,
+concurrent_task: jsc.EventLoopTask,
+concurrent_task2: jsc.EventLoopTask,
 is_writing: bool = false,
 async_deinit: AsyncDeinitWriter = .{},
 started: bool = false,
@@ -77,13 +78,13 @@ pub const Flags = packed struct(u8) {
     __unused: u4 = 0,
 };
 
-pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: JSC.EventLoopHandle) *IOWriter {
+pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) *IOWriter {
     const this = bun.new(IOWriter, .{
         .ref_count = .init(),
         .fd = fd,
         .evtloop = evtloop,
-        .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
-        .concurrent_task2 = JSC.EventLoopTask.fromEventLoop(evtloop),
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
+        .concurrent_task2 = jsc.EventLoopTask.fromEventLoop(evtloop),
     });
 
     this.writer.parent = this;
@@ -156,10 +157,10 @@ pub fn __start(this: *IOWriter) Maybe(void) {
         }
     }
 
-    return Maybe(void).success;
+    return .success;
 }
 
-pub fn eventLoop(this: *IOWriter) JSC.EventLoopHandle {
+pub fn eventLoop(this: *IOWriter) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
@@ -216,12 +217,13 @@ pub fn cancelChunks(this: *IOWriter, ptr_: anytype) void {
         ChildPtr => ptr_,
         else => ChildPtr.init(ptr_),
     };
+    const actual_ptr = ptr.ptr.repr._ptr;
     if (this.writers.len() == 0) return;
     const idx = this.writer_idx;
     const slice: []Writer = this.writers.sliceMutable();
     if (idx >= slice.len) return;
     for (slice[idx..]) |*w| {
-        if (w.ptr.ptr.repr._ptr == ptr.ptr.repr._ptr) {
+        if (w.ptr.ptr.repr._ptr == actual_ptr) {
             w.setDead();
         }
     }
@@ -232,6 +234,10 @@ const Writer = struct {
     len: usize,
     written: usize = 0,
     bytelist: ?*bun.ByteList = null,
+
+    pub fn format(this: Writer, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try std.fmt.format(writer, "Writer(0x{x}, {s})", .{ this.ptr.ptr.repr._ptr, @tagName(this.ptr.ptr.tag()) });
+    }
 
     pub fn wroteEverything(this: *const Writer) bool {
         return this.written >= this.len;
@@ -246,6 +252,7 @@ const Writer = struct {
     }
 
     pub fn setDead(this: *Writer) void {
+        log("Writer setDead {s}(0x{x})", .{ @tagName(this.ptr.ptr.tag()), this.ptr.ptr.repr._ptr });
         this.ptr.ptr = ChildPtrRaw.Null;
     }
 };
@@ -339,10 +346,10 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
             // We wrote everything
             if (!not_fully_written) return;
 
-            // We did not write everything.
-            // This seems to happen in a pipeline where the command which
-            // _reads_ the output of the previous command closes before the
-            // previous command.
+            // We did not write everything. This means the other end of the
+            // socket/pipe closed and we got EPIPE.
+            //
+            // An example:
             //
             // Example: `ls . | echo hi`
             //
@@ -357,7 +364,6 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
             // We don't support signals right now. In fact we don't even have a way to kill the shell.
             //
             // So for a quick hack we're just going to have all writes return an error.
-            bun.assert(this.flags.is_socket);
             bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data", .{ @intFromPtr(this), this.fd });
             this.flags.broken_pipe = true;
             this.brokenPipeForWriters();
@@ -387,15 +393,17 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
 pub fn brokenPipeForWriters(this: *IOWriter) void {
     bun.assert(this.flags.broken_pipe);
     var offset: usize = 0;
-    for (this.writers.sliceMutable()) |*w| {
+    const writers = this.writers.sliceMutable()[this.writer_idx..];
+    for (writers) |*w| {
         if (w.isDead()) {
             offset += w.len;
             continue;
         }
-        log("IOWriter(0x{x}, fd={}) brokenPipeForWriters {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(w.ptr.ptr.tag()), @intFromPtr(w.ptr.ptr.ptr()) });
-        const err: JSC.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
+        log("IOWriter(0x{x}, fd={}) brokenPipeForWriters Writer(0x{x}) {s}(0x{x})", .{ @intFromPtr(this), this.fd, @intFromPtr(w), @tagName(w.ptr.ptr.tag()), w.ptr.ptr.repr._ptr });
+        const err: jsc.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
         w.ptr.onIOWriterChunk(0, err).run();
         offset += w.len;
+        this.cancelChunks(w.ptr);
     }
 
     this.total_bytes_written = 0;
@@ -563,7 +571,7 @@ pub fn enqueueInternal(this: *IOWriter) Yield {
 
 pub fn handleBrokenPipe(this: *IOWriter, ptr: ChildPtr) ?Yield {
     if (this.flags.broken_pipe) {
-        const err: JSC.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
+        const err: jsc.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
         log("IOWriter(0x{x}, fd={}) broken pipe {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(ptr.ptr.tag()), @intFromPtr(ptr.ptr.ptr()) });
         return .{ .on_io_writer_chunk = .{ .child = ptr.asAnyOpaque(), .written = 0, .err = err } };
     }
@@ -684,7 +692,7 @@ pub const IOWriterChildPtr = struct {
     }
 
     /// Called when the IOWriter writes a complete chunk of data the child enqueued
-    pub fn onIOWriterChunk(this: IOWriterChildPtr, amount: usize, err: ?JSC.SystemError) Yield {
+    pub fn onIOWriterChunk(this: IOWriterChildPtr, amount: usize, err: ?jsc.SystemError) Yield {
         return this.ptr.call("onIOWriterChunk", .{ amount, err }, Yield);
     }
 };
@@ -722,7 +730,7 @@ pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
 
 /// TODO: This function and `drainBufferedData` are copy pastes from
 /// `PipeWriter.zig`, it would be nice to not have to do that
-fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) bun.io.WriteResult {
+fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) bun.sys.Maybe(usize)) bun.io.WriteResult {
     var offset: usize = 0;
 
     while (offset < buf.len) {
@@ -827,13 +835,16 @@ pub const AsyncDeinitWriter = struct {
     }
 };
 
+const log = bun.Output.scoped(.IOWriter, true);
+
+const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const Maybe = bun.sys.Maybe;
+
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
-const JSC = bun.JSC;
-const std = @import("std");
-const assert = bun.assert;
-const log = bun.Output.scoped(.IOWriter, true);
 const SmolList = shell.SmolList;
-const Maybe = JSC.Maybe;
+const Yield = bun.shell.Yield;

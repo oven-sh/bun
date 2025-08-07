@@ -43,14 +43,14 @@ const {
   Module: ModuleNative,
   createContext,
   isContext,
-  // runInNewContext: moduleRunInNewContext,
-  // runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
   kUnlinked,
   kLinked,
   kEvaluated,
   kErrored,
+  DONT_CONTEXTIFY,
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
 function runInContext(code, context, options) {
@@ -88,7 +88,7 @@ function measureMemory() {
 }
 
 function validateContext(contextifiedObject) {
-  if (!isContext(contextifiedObject) && contextifiedObject !== constants.DONT_CONTEXTIFY) {
+  if (contextifiedObject !== constants.DONT_CONTEXTIFY && !isContext(contextifiedObject)) {
     const error = new Error('The "contextifiedObject" argument must be an vm.Context');
     error.code = "ERR_INVALID_ARG_TYPE";
     error.name = "TypeError";
@@ -143,7 +143,6 @@ class Module {
       });
     }
 
-    let registry: any = { __proto__: null };
     if (sourceText !== undefined) {
       this[kNative] = new ModuleNative(
         identifier,
@@ -154,19 +153,8 @@ class Module {
         options.cachedData,
         options.initializeImportMeta,
         this,
+        options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
       );
-      registry = {
-        __proto__: null,
-        initializeImportMeta: options.initializeImportMeta,
-        importModuleDynamically: options.importModuleDynamically
-          ? importModuleDynamicallyWrap(options.importModuleDynamically)
-          : undefined,
-      };
-      // This will take precedence over the referrer as the object being
-      // passed into the callbacks.
-      registry.callbackReferrer = this;
-      // const { registerModule } = require("internal/modules/esm/utils");
-      // registerModule(this[kNative], registry);
     } else {
       $assert(syntheticEvaluationSteps);
       this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
@@ -442,8 +430,8 @@ class SyntheticModule extends Module {
 
 const constants = {
   __proto__: null,
-  USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol("vm_dynamic_import_main_context_default"),
-  DONT_CONTEXTIFY: Symbol("vm_context_no_contextify"),
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
+  DONT_CONTEXTIFY,
 };
 
 function isModule(object) {
@@ -452,7 +440,7 @@ function isModule(object) {
 
 function importModuleDynamicallyWrap(importModuleDynamically) {
   const importModuleDynamicallyWrapper = async (...args) => {
-    const m: any = importModuleDynamically.$apply(this, args);
+    const m: any = await importModuleDynamically.$apply(this, args);
     if (isModuleNamespaceObject(m)) {
       return m;
     }

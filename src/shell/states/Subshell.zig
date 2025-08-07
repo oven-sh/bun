@@ -57,7 +57,7 @@ pub fn initDupeShellState(
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
-) bun.JSC.Maybe(*Subshell) {
+) bun.sys.Maybe(*Subshell) {
     const subshell = parent.create(Subshell);
     subshell.* = .{
         .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
@@ -157,7 +157,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     bun.shell.unreachableState("Subshell.childDone", "expected Script or Expansion");
 }
 
-pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .wait_write_err);
     }
@@ -188,24 +188,25 @@ pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytyp
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+const jsc = bun.jsc;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Script = bun.shell.Interpreter.Script;
 const Binary = bun.shell.Interpreter.Binary;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
-const assert = bun.assert;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

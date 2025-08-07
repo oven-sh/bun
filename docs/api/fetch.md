@@ -267,7 +267,7 @@ const response = await fetch("s3://my-bucket/path/to/object", {
 
 Note: Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
 
-You can read more about Bun's S3 support in the [S3](https://bun.sh/docs/api/s3) documentation.
+You can read more about Bun's S3 support in the [S3](https://bun.com/docs/api/s3) documentation.
 
 #### File URLs - `file://`
 
@@ -376,14 +376,14 @@ To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful 
 ```ts
 import { dns } from "bun";
 
-dns.prefetch("bun.sh");
+dns.prefetch("bun.com");
 ```
 
 #### DNS caching
 
 By default, Bun caches and deduplicates DNS queries in-memory for up to 30 seconds. You can see the cache stats by calling `dns.getCacheStats()`:
 
-To learn more about DNS caching in Bun, see the [DNS caching](https://bun.sh/docs/api/dns) documentation.
+To learn more about DNS caching in Bun, see the [DNS caching](https://bun.com/docs/api/dns) documentation.
 
 ### Preconnect to a host
 
@@ -392,7 +392,7 @@ To preconnect to a host, you can use the `fetch.preconnect` API. This API is use
 ```ts
 import { fetch } from "bun";
 
-fetch.preconnect("https://bun.sh");
+fetch.preconnect("https://bun.com");
 ```
 
 Note: calling `fetch` immediately after `fetch.preconnect` will not make your request faster. Preconnecting only helps if you know you'll need to connect to a host soon, but you're not ready to make the request yet.
@@ -402,7 +402,7 @@ Note: calling `fetch` immediately after `fetch.preconnect` will not make your re
 To preconnect to a host at startup, you can pass `--fetch-preconnect`:
 
 ```sh
-$ bun --fetch-preconnect https://bun.sh ./my-script.ts
+$ bun --fetch-preconnect https://bun.com ./my-script.ts
 ```
 
 This is sort of like `<link rel="preconnect">` in HTML.

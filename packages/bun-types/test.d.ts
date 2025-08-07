@@ -56,6 +56,11 @@ declare module "bun:test" {
      * Restore the previous value of mocks.
      */
     restore(): void;
+
+    /**
+     * Reset all mock function state (calls, results, etc.) without restoring their original implementation.
+     */
+    clearAllMocks(): void;
   };
 
   /**
@@ -1185,14 +1190,6 @@ declare module "bun:test" {
      */
     toBeInstanceOf(value: unknown): void;
     /**
-     * Asserts that the expected value is an instance of value
-     *
-     * @example
-     * expect([]).toBeInstanceOf(Array);
-     * expect(null).toBeInstanceOf(Array); // fail
-     */
-    toBeInstanceOf(value: unknown): void;
-    /**
      * Asserts that a value is `undefined`.
      *
      * @example
@@ -1649,6 +1646,26 @@ declare module "bun:test" {
      * function threw an error, it will be considered a failure.
      */
     toHaveReturnedTimes(times: number): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on its last invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveLastReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on the nth invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected return value
+     */
+    toHaveNthReturnedWith(n: number, expected: unknown): void;
 
     /**
      * Ensures that a mock function is called.
@@ -2190,4 +2207,6 @@ declare module "bun:test" {
 
     export type UnknownFunction = (...args: unknown[]) => unknown;
   }
+
+  export const expectTypeOf: typeof import("./vendor/expect-type").expectTypeOf;
 }

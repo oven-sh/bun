@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -140,3 +139,5 @@ pub fn Rect(comptime T: type) type {
         }
     };
 }
+
+const std = @import("std");

@@ -1,6 +1,3 @@
-const enable_debug = bun.Environment.isDebug;
-const enable_single_threaded_checks = enable_debug;
-
 pub const RefCountOptions = struct {
     /// Defaults to the type basename.
     debug_name: ?[]const u8 = null,
@@ -276,6 +273,10 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn hasOneRef(counter: *const @This()) bool {
             if (enable_debug) counter.debug.assertValid();
             return counter.active_counts.load(.seq_cst) == 1;
+        }
+
+        pub fn getCount(counter: *const @This()) u32 {
+            return counter.active_counts.load(.seq_cst);
         }
 
         pub fn dumpActiveRefs(count: *@This()) void {
@@ -564,6 +565,10 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
 const unique_symbol = opaque {};
 
 const std = @import("std");
+
 const bun = @import("bun");
-const assert = bun.assert;
 const AllocationScope = bun.AllocationScope;
+const assert = bun.assert;
+
+const enable_debug = bun.Environment.isDebug;
+const enable_single_threaded_checks = enable_debug;

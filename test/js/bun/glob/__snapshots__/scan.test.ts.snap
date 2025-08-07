@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`fast-glob e2e tests patterns regular fixtures/*: fixtures/* 1`] = `
 [

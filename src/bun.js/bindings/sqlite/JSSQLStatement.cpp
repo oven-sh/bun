@@ -1531,17 +1531,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int rc = SQLITE_OK;
     const char* tail = nullptr;
     bool hasMultipleStatements = false;
-    
+
     if (
         // fast path: ascii latin1 string is utf8
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length())) {
         const char* sqlData = reinterpret_cast<const char*>(sqlString.span8().data());
         const char* sqlEnd = sqlData + sqlString.length();
         rc = sqlite3_prepare_v3(db, sqlData, sqlString.length(), flags, &statement, &tail);
-        
+
         // Check if there are remaining statements
         if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
-            while (tail < sqlEnd && *tail && isspace(*tail)) tail++;
+            while (tail < sqlEnd && *tail && isspace(*tail))
+                tail++;
             hasMultipleStatements = tail < sqlEnd && *tail != '\0';
         }
     } else {
@@ -1550,10 +1551,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         const char* sqlData = utf8.data();
         const char* sqlEnd = sqlData + utf8.length();
         rc = sqlite3_prepare_v3(db, sqlData, utf8.length(), flags, &statement, &tail);
-        
+
         // Check if there are remaining statements
         if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
-            while (tail < sqlEnd && *tail && isspace(*tail)) tail++;
+            while (tail < sqlEnd && *tail && isspace(*tail))
+                tail++;
             hasMultipleStatements = tail < sqlEnd && *tail != '\0';
         }
     }
@@ -2387,7 +2389,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetHasMultipleStatements, (JSGlobalObject
     JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
-    
+
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(castedThis->hasMultipleStatements)));
 }
 

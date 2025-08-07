@@ -266,7 +266,7 @@ interface DatabaseAdapter<Connection> {
   flush(): void;
   isConnected(): boolean;
   get closed(): boolean;
-  reserve<T>(sql: any, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T>;
+  reserve<T>(onReserveConnected: OnConnected<Connection>): Promise<T>;
   getBeginCommand(options?: string, distributedName?: string): string;
   getCommitCommand(distributedName?: string): string;
   getRollbackCommand(distributedName?: string): string;
@@ -950,9 +950,8 @@ namespace Postgres {
       return this.pool.isConnected();
     }
 
-    reserve<T>(sql: any, onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
-      // PostgreSQL uses connection pooling - get a reserved connection
-      const promiseWithResolvers = Promise.withResolvers();
+    reserve<T>(onReserveConnected: OnConnected<PooledPostgresConnection>): Promise<T> {
+      const promiseWithResolvers = Promise.withResolvers() as PromiseWithResolvers<T>;
       this.connect(onReserveConnected.bind(promiseWithResolvers), true);
       return promiseWithResolvers.promise;
     }
@@ -1293,8 +1292,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return !!this.db;
   }
 
-  reserve<T>(_sql: Bun.SQL, _onReserveConnected: (resolvers: PromiseWithResolvers<T>) => void): Promise<T> {
-    // SQLite doesn't use connection pooling, so reserve doesn't make sense
+  reserve<T>(): Promise<T> {
     return Promise.reject(new Error("SQLite doesn't support connection reservation (no connection pool)"));
   }
 
@@ -1670,12 +1668,12 @@ class PooledPostgresConnection {
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  connectionInfo: any;
+  options: Bun.SQL.__internal.DefinedPostgresOptions;
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
   #onConnected(err, _) {
-    const connectionInfo = this.connectionInfo;
+    const connectionInfo = this.options;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
     }
@@ -1702,7 +1700,7 @@ class PooledPostgresConnection {
     this.pool.release(this, true);
   }
   #onClose(err) {
-    const connectionInfo = this.connectionInfo;
+    const connectionInfo = this.options;
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);
     }
@@ -1728,15 +1726,15 @@ class PooledPostgresConnection {
 
     this.pool.release(this, true);
   }
-  constructor(connectionInfo, pool: Postgres.PostgresConnectionPool) {
+  constructor(options: Bun.SQL.__internal.DefinedPostgresOptions, pool: Postgres.PostgresConnectionPool) {
     this.state = PooledConnectionState.pending;
     this.pool = pool;
-    this.connectionInfo = connectionInfo;
+    this.options = options;
     this.#startConnection();
   }
   async #startConnection() {
     this.connection = (await createConnection(
-      this.connectionInfo,
+      this.options,
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
     )) as $ZigGeneratedClasses.PostgresSQLConnection;
@@ -2432,7 +2430,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onReserveConnected(err, pooledConnection) {
+  const onReserveConnected: OnConnected<PooledPostgresConnection> = function onReserveConnected(err, pooledConnection) {
     const { resolve, reject } = this;
     if (err) {
       return reject(err);
@@ -2631,7 +2629,7 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
-  }
+  };
   async function onTransactionConnected(
     callback,
     options,
@@ -3006,10 +3004,8 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.reserve = () => {
-    if (adapter.closed) {
-      return Promise.reject(connectionClosedError());
-    }
-    return adapter.reserve(sql, onReserveConnected);
+    if (adapter.closed) return Promise.reject(connectionClosedError());
+    return adapter.reserve(onReserveConnected);
   };
 
   sql.rollbackDistributed = async function (name: string) {

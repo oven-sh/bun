@@ -40,7 +40,7 @@ pub fn Parse(
             return p.parseExprCommon(level, null, flags, expr);
         }
 
-        pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags, expr: *Expr) anyerror!void {
+        pub noinline fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags, expr: *Expr) anyerror!void {
             if (!p.stack_check.isSafeToRecurse()) {
                 try bun.throwStackOverflow();
             }

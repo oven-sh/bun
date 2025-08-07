@@ -3145,7 +3145,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     const { resolve, reject, promise } = Promise.withResolvers();
 
-    const onConnected = (err: unknown, connection: PooledPostgresConnection | null) => {
+    const onConnected = (err: unknown, connection: $ZigGeneratedClasses.PostgresSQLConnection | null) => {
       if (err) {
         return reject(err);
       }

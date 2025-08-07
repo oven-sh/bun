@@ -268,7 +268,7 @@ pub fn ParseSuffix(
                 left.* = p.newExpr(E.Index{
                     .target = left.*,
                     .index = index,
-                    .optional_chain = optional_chain.*,
+                    .optional_chain = old_optional_chain,
                 }, left.loc);
                 optional_chain.* = old_optional_chain;
                 return .next;
@@ -284,7 +284,7 @@ pub fn ParseSuffix(
                         .target = left.*,
                         .args = list_loc.list,
                         .close_paren_loc = list_loc.loc,
-                        .optional_chain = optional_chain.*,
+                        .optional_chain = old_optional_chain,
                     },
                     left.loc,
                 );

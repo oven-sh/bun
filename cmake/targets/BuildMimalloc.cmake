@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    1cef3e8f4167733818f1883b2f3a9dd4754224cf
+    e047c6aac1529ae4145c09098958656fa5c87052
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -38,6 +38,10 @@ set(MIMALLOC_CMAKE_ARGS
   # ```
   -DMI_NO_THP=1
 )
+
+if (ABI STREQUAL "musl")
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_LIBC_MUSL=ON)
+endif()
 
 if(ENABLE_ASAN)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_TRACK_ASAN=ON)

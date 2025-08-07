@@ -23,8 +23,7 @@ pub const HPACK = extern struct {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
 
     pub fn init(max_capacity: u32) *HPACK {
-        if (!bun.use_mimalloc) return lshpack_wrapper_init(std.c.malloc, std.c.free, max_capacity) orelse bun.outOfMemory();
-        return lshpack_wrapper_init(mimalloc.mi_malloc, mimalloc.mi_free, max_capacity) orelse bun.outOfMemory();
+        return lshpack_wrapper_init(bun.default_malloc, bun.default_free, max_capacity) orelse bun.outOfMemory();
     }
 
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call

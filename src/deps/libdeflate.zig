@@ -14,8 +14,7 @@ pub extern fn libdeflate_gzip_compress_bound(compressor: *Compressor, in_nbytes:
 pub extern fn libdeflate_free_compressor(compressor: *Compressor) void;
 
 fn load_once() void {
-    if (!bun.use_mimalloc) return libdeflate_set_memory_allocator(std.c.malloc, std.c.free);
-    libdeflate_set_memory_allocator(bun.mimalloc.mi_malloc, bun.mimalloc.mi_free);
+    libdeflate_set_memory_allocator(bun.default_malloc, bun.default_free);
 }
 
 var loaded_once = std.once(load_once);

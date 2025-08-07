@@ -13,6 +13,7 @@
 #include <wtf/text/StringHash.h>
 #include <sys/stat.h>
 #include <JavaScriptCore/SourceCodeKey.h>
+#include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
 namespace Zig {

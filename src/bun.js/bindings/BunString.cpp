@@ -13,6 +13,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
+#include "mimalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>

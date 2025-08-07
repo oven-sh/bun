@@ -48,6 +48,7 @@ const BunBuildOptions = struct {
     /// enable debug logs in release builds
     enable_logs: bool = false,
     enable_asan: bool,
+    enable_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
@@ -94,6 +95,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
+        opts.addOption(bool, "enable_mimalloc", this.enable_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
@@ -272,6 +274,7 @@ pub fn build(b: *Build) !void {
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .enable_mimalloc = b.option(bool, "enable_mimalloc", "Enable m") orelse true,
     };
 
     // zig build obj
@@ -491,7 +494,6 @@ fn addMultiCheck(
                 .os = check.os,
                 .arch = check_target.result.cpu.arch,
                 .optimize = mode,
-
                 .canary_revision = root_build_options.canary_revision,
                 .sha = root_build_options.sha,
                 .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
@@ -500,6 +502,7 @@ fn addMultiCheck(
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
+                .enable_mimalloc = root_build_options.enable_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
 

@@ -619,7 +619,6 @@ pub const MarkedArrayBuffer = struct {
 };
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
-    const mimalloc = bun.mimalloc;
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
@@ -627,8 +626,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     //     bun.assert(mimalloc.mi_check_owned(bytes_) or
     //         mimalloc.mi_heap_check_owned(jsc.VirtualMachine.get().arena.heap.?, bytes_));
     // }
-    if (!bun.use_mimalloc) return std.c.free(bytes_);
-    mimalloc.mi_free(bytes_);
+    bun.default_free(bytes_);
 }
 
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {

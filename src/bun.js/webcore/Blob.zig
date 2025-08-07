@@ -4403,7 +4403,7 @@ pub const Internal = struct {
             defer out.deref();
             return out.toJS(globalThis);
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
+            var str = ZigString.init(this.take(bun.default_allocator));
             str.mark();
             return str.toExternalValue(globalThis);
         }
@@ -4439,6 +4439,12 @@ pub const Internal = struct {
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
 
+        return bytes;
+    }
+
+    pub fn take(this: *@This(), allocator: std.mem.Allocator) []u8 {
+        const bytes = allocator.dupe(u8, this.slice()) catch bun.outOfMemory();
+        this.clearAndFree();
         return bytes;
     }
 

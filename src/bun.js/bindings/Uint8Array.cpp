@@ -2,6 +2,7 @@
 
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/TypedArrayType.h"
+#include "mimalloc.h"
 
 namespace Bun {
 

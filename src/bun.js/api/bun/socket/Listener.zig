@@ -502,7 +502,7 @@ pub fn deinit(this: *Listener) void {
         this.protos = null;
         bun.default_allocator.free(protos);
     }
-    bun.default_allocator.destroy(this);
+    this.handlers.vm.allocator.destroy(this);
 }
 
 pub fn getConnectionsCount(this: *Listener, _: *jsc.JSGlobalObject) JSValue {

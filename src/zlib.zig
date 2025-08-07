@@ -132,13 +132,11 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         state: State = State.Uninitialized,
 
         pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-            if (!bun.use_mimalloc) return std.c.malloc(items * len);
-            return mimalloc.mi_malloc(items * len) orelse unreachable;
+            return bun.default_malloc(items * len) orelse unreachable;
         }
 
         pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-            if (!bun.use_mimalloc) return std.c.free(data);
-            mimalloc.mi_free(data);
+            bun.default_free(data);
         }
 
         pub fn deinit(this: *ZlibReader) void {
@@ -302,7 +300,7 @@ const ZlibAllocator = struct {
             return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
         }
 
-        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
+        return bun.default_calloc(items, len) orelse bun.outOfMemory();
     }
 
     pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
@@ -312,7 +310,7 @@ const ZlibAllocator = struct {
             return;
         }
 
-        mimalloc.mi_free(data);
+        bun.default_free(data);
     }
 };
 
@@ -755,13 +753,11 @@ pub const ZlibCompressorArrayList = struct {
     state: State = State.Uninitialized,
 
     pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        if (!bun.use_mimalloc) return std.c.malloc(items * len) orelse bun.outOfMemory();
-        return mimalloc.mi_malloc(items * len) orelse unreachable;
+        return bun.default_malloc(items * len) orelse unreachable;
     }
 
     pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        if (!bun.use_mimalloc) return std.c.free(data);
-        mimalloc.mi_free(data);
+        bun.default_free(data);
     }
 
     pub fn deinit(this: *ZlibCompressor) void {

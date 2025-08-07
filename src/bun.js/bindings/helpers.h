@@ -11,6 +11,7 @@
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
 #include <limits>
+#include "mimalloc.h"
 
 namespace Zig {
 class GlobalObject;
@@ -83,6 +84,8 @@ static const WTF::String toString(ZigString str)
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
+        ASSERT(!mi_is_in_heap_region(str.ptr));
+        ASSERT(!mi_is_in_heap_region(untag(str.ptr)));
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
         if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
@@ -91,8 +94,7 @@ static const WTF::String toString(ZigString str)
 
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.

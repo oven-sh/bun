@@ -318,7 +318,7 @@ pub fn start(
         .store_fd = this.store_fd,
         .graph = this.parent.standalone_module_graph,
     });
-    vm.allocator = bun.default_allocator;
+    vm.allocator = this.arena.?.allocator();
     vm.arena = &this.arena.?;
 
     var b = &vm.transpiler;

@@ -278,6 +278,7 @@ async function getHelpOutput(command: string[]): Promise<string> {
       cmd: [BUN_EXECUTABLE, ...command, "--help"],
       stdout: "pipe",
       stderr: "pipe",
+      cwd: import.meta.dirname,
     });
 
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);

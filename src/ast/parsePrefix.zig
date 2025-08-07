@@ -724,7 +724,6 @@ pub fn ParsePrefix(
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Output = bun.Output;
 const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;

@@ -279,7 +279,6 @@ interface DatabaseAdapter<Connection, Handle extends BaseQueryHandle<Connection>
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
   createQueryHandle(sqlString: string, values: unknown[], flags: number): Handle;
   calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number;
-  getOptions(): Bun.SQL.__internal.DefinedOptions;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
@@ -532,7 +531,9 @@ namespace Postgres {
     return [query, binding_values];
   }
 
-  export class PostgresConnectionPool {
+  export class PostgresAdapter
+    implements DatabaseAdapter<$ZigGeneratedClasses.PostgresSQLConnection, PostgresQueryHandle>
+  {
     options: Bun.SQL.__internal.DefinedPostgresOptions;
 
     connections: Array<PooledPostgresConnection | null>;
@@ -909,26 +910,6 @@ namespace Postgres {
         this.flushConcurrentQueries();
       }
     }
-  }
-
-  export class PostgresAdapter
-    implements DatabaseAdapter<$ZigGeneratedClasses.PostgresSQLConnection, PostgresQueryHandle>
-  {
-    private pool: PostgresConnectionPool;
-    private options: Bun.SQL.__internal.DefinedPostgresOptions;
-
-    get closed() {
-      return this.pool.closed;
-    }
-
-    constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
-      this.options = options;
-      this.pool = new PostgresConnectionPool(options);
-    }
-
-    getOptions(): Bun.SQL.__internal.DefinedOptions {
-      return this.options;
-    }
 
     calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number {
       let flags = SQLQueryFlags.none;
@@ -975,30 +956,6 @@ namespace Postgres {
         !!(flags & SQLQueryFlags.bigint),
         !!(flags & SQLQueryFlags.simple),
       );
-    }
-
-    connect(onConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection>, reserved: boolean = false): void {
-      if (!this.pool) throw new Error("Adapter not initialized");
-      this.pool.connect(onConnected, reserved);
-    }
-
-    release(connection: any, connectingEvent: boolean = false): void {
-      if (!this.pool) throw new Error("Adapter not initialized");
-      this.pool.release(connection, connectingEvent);
-    }
-
-    async close(options?: { timeout?: number }): Promise<void> {
-      if (!this.pool) throw new Error("Adapter not initialized");
-      return this.pool.close(options);
-    }
-
-    flush(): void {
-      if (!this.pool) throw new Error("Adapter not initialized");
-      this.pool.flush();
-    }
-
-    isConnected(): boolean {
-      return this.pool.isConnected();
     }
 
     reserve<T>(onReserveConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection>): Promise<T> {
@@ -1058,20 +1015,20 @@ class SQLiteConnection {
 
 class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHandle> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
-  private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
   get closed() {
     return this.db === null;
   }
 
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
-    this.options = options;
     const SQLiteModule = SQLite.getBunSqliteModule();
-    this.db = new SQLiteModule.Database(options.filename);
-  }
-
-  getOptions(): Bun.SQL.__internal.DefinedOptions {
-    return this.options;
+    this.db = new SQLiteModule.Database(options.filename, {
+      readonly: options.readonly === true,
+      create: options.create === true,
+      readwrite: options.readwrite === true,
+      safeIntegers: options.safeIntegers === true,
+      strict: options.strict === true,
+    });
   }
 
   calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number {
@@ -1693,7 +1650,7 @@ enum PooledConnectionFlags {
 }
 
 class PooledPostgresConnection {
-  pool: Postgres.PostgresConnectionPool;
+  pool: Postgres.PostgresAdapter;
   connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
@@ -1757,18 +1714,15 @@ class PooledPostgresConnection {
 
     this.pool.release(this, true);
   }
-  constructor(options: Bun.SQL.__internal.DefinedPostgresOptions, pool: Postgres.PostgresConnectionPool) {
+  constructor(options: Bun.SQL.__internal.DefinedPostgresOptions, pool: Postgres.PostgresAdapter) {
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.options = options;
     this.#startConnection();
   }
   async #startConnection() {
-    this.connection = (await createConnection(
-      this.options,
-      this.#onConnected.bind(this),
-      this.#onClose.bind(this),
-    )) as $ZigGeneratedClasses.PostgresSQLConnection;
+    this.connection =
+      (await createConnection(this.options, this.#onConnected.bind(this), this.#onClose.bind(this))) ?? null;
   }
 
   onClose(onClose: (err: Error) => void) {
@@ -1832,7 +1786,11 @@ class PooledPostgresConnection {
   }
 }
 
-async function createConnection(options: Bun.SQL.__internal.DefinedPostgresOptions, onConnected, onClose) {
+async function createConnection(
+  options: Bun.SQL.__internal.DefinedPostgresOptions,
+  onConnected,
+  onClose,
+): Promise<$ZigGeneratedClasses.PostgresSQLConnection | void> {
   const {
     hostname,
     port,

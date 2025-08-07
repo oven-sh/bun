@@ -182,6 +182,9 @@ if (isDockerEnabled()) {
   });
 
   describe("should work with more than the max inline capacity", () => {
+    const sql = postgres(options);
+    afterAll(() => sql.close());
+
     for (let size of [50, 60, 62, 64, 70, 100]) {
       for (let duplicated of [true, false]) {
         test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
@@ -333,6 +336,7 @@ if (isDockerEnabled()) {
   });
 
   test("query string memory leak test", async () => {
+    await using sql = postgres(options);
     Bun.gc(true);
     const rss = process.memoryUsage.rss();
     for (let potato of Array.from({ length: 8 * 1024 }, a => "okkk" + a)) {

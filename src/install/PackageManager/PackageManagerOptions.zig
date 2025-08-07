@@ -568,6 +568,7 @@ pub fn load(
         }
 
         this.do.update_to_latest = cli.latest;
+        this.do.recursive = cli.recursive;
 
         if (cli.positionals.len > 0) {
             this.positionals = cli.positionals;
@@ -666,7 +667,8 @@ pub const Do = packed struct(u16) {
     trust_dependencies_from_args: bool = false,
     update_to_latest: bool = false,
     analyze: bool = false,
-    _: u4 = 0,
+    recursive: bool = false,
+    _: u3 = 0,
 };
 
 pub const Enable = packed struct(u16) {

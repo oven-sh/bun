@@ -124,9 +124,21 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         }
         const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
-        // When before the first generated line, remap to the HMR runtime
+        // When before the first generated line, remap to the HMR runtime.
+        //
+        // Reminder that the HMR runtime is *not* sourcemapped. And appears
+        // first in the bundle. This means that the mappings usually looks like
+        // this:
+        //
+        // AAAA;;;;;;;;;;;ICGA,qCAA4B;
+        // ^              ^ generated_mappings[1], actual code
+        // ^
+        // ^ generated_mappings[0], we always start it with this
+        //
+        // So we can know if the frame is inside the HMR runtime if
+        // `frame.position.line < generated_mappings[1].lines`.
         const generated_mappings = result.mappings.generated();
-        if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines) {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;
@@ -147,11 +159,12 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             if (index >= 1 and (index - 1) < result.file_paths.len) {
                 const abs_path = result.file_paths[@intCast(index - 1)];
                 frame.source_url = .init(abs_path);
-                const rel_path = ctx.dev.relativePath(abs_path);
-                defer ctx.dev.releaseRelativePathBuf();
+                const relative_path_buf = ctx.dev.relative_path_buf.lock();
+                const rel_path = ctx.dev.relativePath(relative_path_buf, abs_path);
                 if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
                     frame.function_name = .empty;
                 }
+                ctx.dev.relative_path_buf.unlock();
                 frame.remapped = true;
 
                 if (runtime_lines == null) {
@@ -240,8 +253,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         const src_to_write = frame.source_url.value.ZigString.slice();
         if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
-            const file = ctx.dev.relativePath(src_to_write);
-            defer ctx.dev.releaseRelativePathBuf();
+            const relative_path_buf = ctx.dev.relative_path_buf.lock();
+            const file = ctx.dev.relativePath(relative_path_buf, src_to_write);
             try w.writeInt(u32, @intCast(file.len), .little);
             try w.writeAll(file);
         } else {

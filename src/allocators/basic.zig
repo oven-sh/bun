@@ -14,7 +14,7 @@ fn mimalloc_free(
     // let's only enable it in debug mode
     if (comptime Environment.isDebug) {
         assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-        if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
+        if (mimalloc.mustUseAlignedAlloc(alignment))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
         else
             mimalloc.mi_free_size(buf.ptr, buf.len);

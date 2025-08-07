@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { readFileSync } from "fs";
+import path from "path";
 
 // Issue #21680: HTMLRewriter crashes when calling before() without arguments
 // When used with fetch() responses, causes "ASSERTION FAILED" and crashes Bun with SIGABRT
@@ -8,43 +9,37 @@ test("HTMLRewriter element.before() crashes Bun when called without arguments on
   // CONFIRMED CRASH: This reproduces the exact issue from GitHub #21680
   // v1.2.19: "panic(main thread): unreachable" 
   // Current: "ASSERTION FAILED" + SIGABRT
-  // The exact URL from the original issue is needed to trigger the crash
+  // Uses test fixture to avoid external dependencies
   
-  const testScript = `
-    // Exact reproduction from GitHub issue #21680
-    const a = await fetch("https://loja.navesa.com.br/lateral-interna-do-paralama-dianteiro-esquerdo-para-renault-sandero-2014-ate-2023-cod-638313232r?_pid=xsbbc")
-    const rewriter = new HTMLRewriter().on("script", {
-        element(a) {
-            console.log(a.before())
-        },
-    });
-    rewriter.transform(a)
-  `;
-
-  const dir = tempDirWithFiles("htmlrewriter-crash-test", {
-    "crash-test.js": testScript,
-  });
-
-  // Run the test script in a separate Bun process to capture the crash
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "crash-test.js"],
-    cwd: dir,
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  // Read the crash-triggering HTML from test fixtures
+  const crashPagePath = path.join(__dirname, "../../fixtures/htmlrewriter-crash/crash-page.html");
+  const crashPageHTML = readFileSync(crashPagePath, "utf-8");
   
-  // This SHOULD crash - the issue is still present
-  // v1.2.19: "panic(main thread): unreachable" 
-  // Current: "ASSERTION FAILED" + SIGABRT
-  expect(exitCode).not.toBe(0);
-  expect(stderr).toMatch(/ASSERTION FAILED|panic.*unreachable|SIGABRT|Aborted/);
+  // Create a simple local server with the HTML that triggers the crash
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(crashPageHTML, {
+        headers: { "content-type": "text/html" }
+      });
+    }
+  });
+  
+  // Fetch from our local server (this mimics the original issue's fetch pattern)
+  const response = await fetch(`http://localhost:${server.port}/`);
+  
+  const rewriter = new HTMLRewriter().on("script", {
+    element(element) {
+      // This line causes the crash in issue #21680
+      // Should throw an error instead of crashing Bun
+      element.before();
+    },
+  });
+  
+  // This should not crash Bun - it should throw an error that we can catch
+  expect(() => {
+    rewriter.transform(response);
+  }).toThrow();
 });
 
 test("HTMLRewriter element.before() throws with local Response (current behavior)", () => {
@@ -70,7 +65,6 @@ test("HTMLRewriter element.before() throws with local Response (current behavior
 test("HTMLRewriter element content methods all have same issue", () => {
   // Test that all content methods have the same parameter validation issue
   const html = `<div>test</div>`;
-  const response = new Response(html);
   
   // All these methods should throw proper errors, not crash
   const rewriter1 = new HTMLRewriter().on("div", { element(el) { el.after(); } });

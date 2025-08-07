@@ -7,6 +7,131 @@ pub fn ParseProperty(
         const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const is_typescript_enabled = P.is_typescript_enabled;
 
+        fn parseMethodExpression(p: *P, kind: Property.Kind, opts: *PropertyOpts, is_computed: bool, key: *Expr, key_range: logger.Range) anyerror!?G.Property {
+            if (p.lexer.token == .t_open_paren and kind != .get and kind != .set) {
+                // markSyntaxFeature object extensions
+            }
+
+            const loc = p.lexer.loc();
+            const scope_index = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
+            var is_constructor = false;
+
+            // Forbid the names "constructor" and "prototype" in some cases
+            if (opts.is_class and !is_computed) {
+                switch (key.data) {
+                    .e_string => |str| {
+                        if (!opts.is_static and str.eqlComptime("constructor")) {
+                            if (kind == .get) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
+                            } else if (kind == .set) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a setter") catch unreachable;
+                            } else if (opts.is_async) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be an async function") catch unreachable;
+                            } else if (opts.is_generator) {
+                                p.log.addRangeError(p.source, key_range, "Class constructor cannot be a generator function") catch unreachable;
+                            } else {
+                                is_constructor = true;
+                            }
+                        } else if (opts.is_static and str.eqlComptime("prototype")) {
+                            p.log.addRangeError(p.source, key_range, "Invalid static method name \"prototype\"") catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            var func = try p.parseFn(null, FnOrArrowDataParse{
+                .async_range = opts.async_range,
+                .needs_async_loc = key.loc,
+                .has_async_range = !opts.async_range.isEmpty(),
+                .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+                .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
+                .allow_super_call = opts.class_has_extends and is_constructor,
+                .allow_super_property = true,
+                .allow_ts_decorators = opts.allow_ts_decorators,
+                .is_constructor = is_constructor,
+                .has_decorators = opts.ts_decorators.len > 0 or (opts.has_class_decorators and is_constructor),
+
+                // Only allow omitting the body if we're parsing TypeScript class
+                .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
+            });
+
+            opts.has_argument_decorators = opts.has_argument_decorators or p.fn_or_arrow_data_parse.has_argument_decorators;
+            p.fn_or_arrow_data_parse.has_argument_decorators = false;
+
+            // "class Foo { foo(): void; foo(): void {} }"
+            if (func.flags.contains(.is_forward_declaration)) {
+                // Skip this property entirely
+                p.popAndDiscardScope(scope_index);
+                return null;
+            }
+
+            p.popScope();
+            func.flags.insert(.is_unique_formal_parameters);
+            const value = p.newExpr(E.Function{ .func = func }, loc);
+
+            // Enforce argument rules for accessors
+            switch (kind) {
+                .get => {
+                    if (func.args.len > 0) {
+                        const r = js_lexer.rangeOfIdentifier(p.source, func.args[0].binding.loc);
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {s} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
+                    }
+                },
+                .set => {
+                    if (func.args.len != 1) {
+                        var r = js_lexer.rangeOfIdentifier(p.source, if (func.args.len > 0) func.args[0].binding.loc else loc);
+                        if (func.args.len > 1) {
+                            r = js_lexer.rangeOfIdentifier(p.source, func.args[1].binding.loc);
+                        }
+                        p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
+                    }
+                },
+                else => {},
+            }
+
+            // Special-case private identifiers
+            switch (key.data) {
+                .e_private_identifier => |*private| {
+                    const declare: Symbol.Kind = switch (kind) {
+                        .get => if (opts.is_static)
+                            .private_static_get
+                        else
+                            .private_get,
+
+                        .set => if (opts.is_static)
+                            .private_static_set
+                        else
+                            .private_set,
+                        else => if (opts.is_static)
+                            .private_static_method
+                        else
+                            .private_method,
+                    };
+
+                    const name = p.loadNameFromRef(private.ref);
+                    if (strings.eqlComptime(name, "#constructor")) {
+                        p.log.addRangeError(p.source, key_range, "Invalid method name \"#constructor\"") catch unreachable;
+                    }
+                    private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
+                },
+                else => {},
+            }
+
+            return G.Property{
+                .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                .kind = kind,
+                .flags = Flags.Property.init(.{
+                    .is_computed = is_computed,
+                    .is_method = true,
+                    .is_static = opts.is_static,
+                }),
+                .key = key.*,
+                .value = value,
+                .ts_metadata = .m_function,
+            };
+        }
+
         pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
             var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
             const key_range = p.lexer.range();
@@ -382,128 +507,7 @@ pub fn ParseProperty(
 
             // Parse a method expression
             if (p.lexer.token == .t_open_paren or kind != .normal or opts.is_class or opts.is_async or opts.is_generator) {
-                if (p.lexer.token == .t_open_paren and kind != .get and kind != .set) {
-                    // markSyntaxFeature object extensions
-                }
-
-                const loc = p.lexer.loc();
-                const scope_index = p.pushScopeForParsePass(.function_args, loc) catch unreachable;
-                var is_constructor = false;
-
-                // Forbid the names "constructor" and "prototype" in some cases
-                if (opts.is_class and !is_computed) {
-                    switch (key.data) {
-                        .e_string => |str| {
-                            if (!opts.is_static and str.eqlComptime("constructor")) {
-                                if (kind == .get) {
-                                    p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
-                                } else if (kind == .set) {
-                                    p.log.addRangeError(p.source, key_range, "Class constructor cannot be a setter") catch unreachable;
-                                } else if (opts.is_async) {
-                                    p.log.addRangeError(p.source, key_range, "Class constructor cannot be an async function") catch unreachable;
-                                } else if (opts.is_generator) {
-                                    p.log.addRangeError(p.source, key_range, "Class constructor cannot be a generator function") catch unreachable;
-                                } else {
-                                    is_constructor = true;
-                                }
-                            } else if (opts.is_static and str.eqlComptime("prototype")) {
-                                p.log.addRangeError(p.source, key_range, "Invalid static method name \"prototype\"") catch unreachable;
-                            }
-                        },
-                        else => {},
-                    }
-                }
-
-                var func = try p.parseFn(null, FnOrArrowDataParse{
-                    .async_range = opts.async_range,
-                    .needs_async_loc = key.loc,
-                    .has_async_range = !opts.async_range.isEmpty(),
-                    .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
-                    .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
-                    .allow_super_call = opts.class_has_extends and is_constructor,
-                    .allow_super_property = true,
-                    .allow_ts_decorators = opts.allow_ts_decorators,
-                    .is_constructor = is_constructor,
-                    .has_decorators = opts.ts_decorators.len > 0 or (opts.has_class_decorators and is_constructor),
-
-                    // Only allow omitting the body if we're parsing TypeScript class
-                    .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
-                });
-
-                opts.has_argument_decorators = opts.has_argument_decorators or p.fn_or_arrow_data_parse.has_argument_decorators;
-                p.fn_or_arrow_data_parse.has_argument_decorators = false;
-
-                // "class Foo { foo(): void; foo(): void {} }"
-                if (func.flags.contains(.is_forward_declaration)) {
-                    // Skip this property entirely
-                    p.popAndDiscardScope(scope_index);
-                    return null;
-                }
-
-                p.popScope();
-                func.flags.insert(.is_unique_formal_parameters);
-                const value = p.newExpr(E.Function{ .func = func }, loc);
-
-                // Enforce argument rules for accessors
-                switch (kind) {
-                    .get => {
-                        if (func.args.len > 0) {
-                            const r = js_lexer.rangeOfIdentifier(p.source, func.args[0].binding.loc);
-                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {s} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
-                        }
-                    },
-                    .set => {
-                        if (func.args.len != 1) {
-                            var r = js_lexer.rangeOfIdentifier(p.source, if (func.args.len > 0) func.args[0].binding.loc else loc);
-                            if (func.args.len > 1) {
-                                r = js_lexer.rangeOfIdentifier(p.source, func.args[1].binding.loc);
-                            }
-                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
-                        }
-                    },
-                    else => {},
-                }
-
-                // Special-case private identifiers
-                switch (key.data) {
-                    .e_private_identifier => |*private| {
-                        const declare: Symbol.Kind = switch (kind) {
-                            .get => if (opts.is_static)
-                                .private_static_get
-                            else
-                                .private_get,
-
-                            .set => if (opts.is_static)
-                                .private_static_set
-                            else
-                                .private_set,
-                            else => if (opts.is_static)
-                                .private_static_method
-                            else
-                                .private_method,
-                        };
-
-                        const name = p.loadNameFromRef(private.ref);
-                        if (strings.eqlComptime(name, "#constructor")) {
-                            p.log.addRangeError(p.source, key_range, "Invalid method name \"#constructor\"") catch unreachable;
-                        }
-                        private.ref = p.declareSymbol(declare, key.loc, name) catch unreachable;
-                    },
-                    else => {},
-                }
-
-                return G.Property{
-                    .ts_decorators = ExprNodeList.init(opts.ts_decorators),
-                    .kind = kind,
-                    .flags = Flags.Property.init(.{
-                        .is_computed = is_computed,
-                        .is_method = true,
-                        .is_static = opts.is_static,
-                    }),
-                    .key = key,
-                    .value = value,
-                    .ts_metadata = .m_function,
-                };
+                return parseMethodExpression(p, kind, opts, is_computed, &key, key_range);
             }
 
             // Parse an object key/value pair

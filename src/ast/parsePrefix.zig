@@ -698,7 +698,7 @@ pub fn ParsePrefix(
                 .t_numeric_literal => t_numeric_literal(p),
                 .t_big_integer_literal => t_big_integer_literal(p),
                 .t_string_literal, .t_no_substitution_template_literal => p.parseStringLiteral(),
-                .t_slash => t_slash(p),
+                .t_slash_equals, .t_slash => t_slash(p),
                 .t_void => t_void(p),
                 .t_typeof => t_typeof(p),
                 .t_delete => t_delete(p),

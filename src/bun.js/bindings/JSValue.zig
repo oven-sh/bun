@@ -1024,6 +1024,10 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
     // TODO: absorb this into className()
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
+        if (!this.isCell()) {
+            ret.* = ZigString.static("[not a class]").*;
+            return;
+        }
         return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
     }
 

@@ -100,7 +100,7 @@ interface CompletionData {
   };
 }
 
-const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "/workspace/bun/build/debug/bun-debug";
+const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "bun";
 
 /**
  * Parse flag line from help output

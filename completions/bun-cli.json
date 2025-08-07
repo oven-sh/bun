@@ -34,14 +34,6 @@
         "binaries": true
       }
     },
-    "lint": {
-      "name": "lint",
-      "description": "$ bunx oxlint --config=oxlint.json --format=github src/js --help",
-      "flags": [],
-      "positionalArgs": [],
-      "examples": [],
-      "dynamicCompletions": {}
-    },
     "test": {
       "name": "test",
       "description": "Run all matching test files and print the results to stdout",
@@ -210,6 +202,22 @@
       "aliases": [
         "bunx"
       ]
+    },
+    "repl": {
+      "name": "repl",
+      "description": "Options:",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "options",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [],
+      "usage": "Usage: bun repl [options]",
+      "dynamicCompletions": {}
     },
     "exec": {
       "name": "exec",
@@ -401,7 +409,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -718,7 +726,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1034,7 +1042,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1300,7 +1308,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1382,6 +1390,22 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "filter",
+          "description": "Update packages for the matching workspaces",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Update packages in all workspaces",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -1438,7 +1462,7 @@
     },
     "outdated": {
       "name": "outdated",
-      "description": "bun outdated v1.2.20 (73e737be)",
+      "description": "bun outdated v1.2.20-canary.166 (4deeadd5)",
       "flags": [
         {
           "name": "config",
@@ -1606,7 +1630,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1680,6 +1704,14 @@
           "description": "Display outdated dependencies for each matching workspace",
           "hasValue": true,
           "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Check outdated packages in all workspaces",
+          "hasValue": false,
           "required": false,
           "multiple": false
         }
@@ -1881,7 +1913,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2143,7 +2175,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2229,7 +2261,7 @@
     },
     "publish": {
       "name": "publish",
-      "description": "bun publish v1.2.20 (73e737be)",
+      "description": "bun publish v1.2.20-canary.166 (4deeadd5)",
       "flags": [
         {
           "name": "config",
@@ -2397,7 +2429,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2702,7 +2734,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3125,7 +3157,7 @@
         },
         {
           "name": "backend",
-          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3938,22 +3970,6 @@
       "multiple": false
     },
     {
-      "name": "breakpoint-resolve",
-      "description": "DEBUG MODE: breakpoint when resolving something that includes this string",
-      "hasValue": true,
-      "valueType": "val",
-      "required": false,
-      "multiple": false
-    },
-    {
-      "name": "breakpoint-print",
-      "description": "DEBUG MODE: breakpoint when printing something that includes this string",
-      "hasValue": true,
-      "valueType": "val",
-      "required": false,
-      "multiple": false
-    },
-    {
       "name": "env-file",
       "description": "Load environment variables from the specified file(s)",
       "hasValue": true,
@@ -3982,13 +3998,6 @@
       "name": "help",
       "shortName": "h",
       "description": "Display this menu and exit",
-      "hasValue": false,
-      "required": false,
-      "multiple": false
-    },
-    {
-      "name": "verbose-error-trace",
-      "description": "Dump error return traces",
       "hasValue": false,
       "required": false,
       "multiple": false

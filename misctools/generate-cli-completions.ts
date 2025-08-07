@@ -18,7 +18,7 @@
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 
 interface FlagInfo {
@@ -269,6 +269,19 @@ function parseUsage(usage: string): {
   return args;
 }
 
+const temppackagejson = mkdtempSync("package");
+writeFileSync(
+  join(temppackagejson, "package.json"),
+  JSON.stringify({
+    name: "test",
+    version: "1.0.0",
+    scripts: {},
+  }),
+);
+process.once("beforeExit", () => {
+  rmSync(temppackagejson, { recursive: true });
+});
+
 /**
  * Execute bun command and get help output
  */
@@ -278,7 +291,7 @@ async function getHelpOutput(command: string[]): Promise<string> {
       cmd: [BUN_EXECUTABLE, ...command, "--help"],
       stdout: "pipe",
       stderr: "pipe",
-      cwd: import.meta.dirname,
+      cwd: temppackagejson,
     });
 
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
@@ -528,7 +541,14 @@ async function getMainCommands(): Promise<string[]> {
     }
   }
 
-  return commands;
+  const commandsToRemove = ["lint"];
+
+  return commands.filter(a => {
+    if (commandsToRemove.includes(a)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 /**

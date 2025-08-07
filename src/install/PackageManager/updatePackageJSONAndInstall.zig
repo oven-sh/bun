@@ -22,6 +22,7 @@ pub fn updatePackageJSONAndInstallWithManager(
 
                 Global.exit(0);
             },
+            .update => {},
             else => {},
         }
     }

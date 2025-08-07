@@ -1126,11 +1126,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return [query, binding_values];
   }
 
-  createQueryHandle(sqlString: string, values: any[], flags: number, poolSize: number): any {
-    // SQLite doesn't support pooling, so we ignore the poolSize parameter
-    if (!this.db) {
-      throw new Error("SQLite database not initialized");
-    }
+  createQueryHandle(sqlString: string, values: any[] = [], flags: number = 0): any {
+    $assert(this.db, "SQLite database not initialized");
 
     // For simple queries (no parameters), check if we might have multiple statements
     // by looking for semicolons that aren't in strings
@@ -1158,7 +1155,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     }
 
     // Prepare the statement normally if not multi-statement
-    let statement = null;
+    let statement: InstanceType<(typeof import("./sqlite.ts"))["default"]["Statement"]> | null = null;
     if (!useMultiStatementMode) {
       statement = this.db.prepare(sqlString, values || [], 0);
     }
@@ -1217,7 +1214,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
 
           // For transaction control statements (BEGIN, COMMIT, ROLLBACK, SAVEPOINT, etc.)
           if (cmd === "BEGIN" || cmd === "COMMIT" || cmd === "ROLLBACK" || cmd === "SAVEPOINT" || cmd === "RELEASE") {
-            statement.run(...(values || []));
+            $assert(statement, "Statement is not initialized");
+            statement.run(...values);
             result = [];
             changes = 0;
           }
@@ -1226,12 +1224,14 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
             (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") &&
             !sqlString.toUpperCase().includes("RETURNING")
           ) {
-            const runResult = statement.run(...(values || []));
+            $assert(statement, "Statement is not initialized");
+            const runResult = statement.run(...values);
             changes = runResult.changes;
             result = [];
           } else {
             // Use all() for SELECT or queries with RETURNING clause
-            result = statement.all(...(values || []));
+            $assert(statement, "Statement is not initialized");
+            result = statement.all(...values);
 
             // For INSERT/UPDATE/DELETE with RETURNING, count the returned rows
             if (cmd === "INSERT" || cmd === "UPDATE" || cmd === "DELETE") {
@@ -1376,7 +1376,7 @@ class Query<T = any> extends PublicPromise<T> {
   }
 
   constructor(
-    strings: string | TemplateStringsArray,
+    strings: string | TemplateStringsArray | SQLHelper | Query<any>,
     values: any[],
     flags: number,
     poolSize: number,
@@ -2301,7 +2301,7 @@ const SQL: typeof Bun.SQL = function SQL(
     adapter.connect(onQueryConnected.bind(query, handle));
   }
 
-  function queryFromPool(strings, values) {
+  function queryFromPool(strings: string | TemplateStringsArray | SQLHelper | Query<any>, values: unknown[]) {
     try {
       return new Query(
         strings,
@@ -2316,7 +2316,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function unsafeQuery(strings, values) {
+  function unsafeQuery(strings: string | TemplateStringsArray, values: unknown[]) {
     try {
       let flags = resolvedOptions.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
       if ((values?.length ?? 0) === 0) {
@@ -2449,7 +2449,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function reserved_sql(strings: string | TemplateStringsArray, ...values: unknown[]) {
+    function reserved_sql(strings: string | TemplateStringsArray | object, ...values: unknown[]) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -2458,8 +2458,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
 
       if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+        if (!$isArray(strings.raw)) {
           return new SQLHelper(strings, values);
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
@@ -2982,10 +2981,9 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function sql(strings: TemplateStringsArray | object, ...values: unknown[]) {
+  function sql(strings: string | TemplateStringsArray | object, ...values: unknown[]) {
     if ($isArray(strings)) {
-      // detect if is tagged template
-      if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+      if (!$isArray(strings.raw)) {
         return new SQLHelper(strings, values);
       }
     } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {

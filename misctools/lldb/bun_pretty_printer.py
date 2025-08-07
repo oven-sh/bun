@@ -67,12 +67,225 @@ def add(debugger, *, category, regex=False, type, identifier=None, synth=False, 
             type
         ))
 
+def WTFStringImpl_SummaryProvider(value, _=None):
+    try:
+        # Get the raw pointer (it's already a pointer type)
+        value = value.GetNonSyntheticValue()
+        
+        # Check if it's a pointer type and dereference if needed
+        if value.type.IsPointerType():
+            struct = value.deref
+        else:
+            struct = value
+        
+        m_length = struct.GetChildMemberWithName('m_length').GetValueAsUnsigned()
+        m_hashAndFlags = struct.GetChildMemberWithName('m_hashAndFlags').GetValueAsUnsigned()
+        m_ptr = struct.GetChildMemberWithName('m_ptr')
+        
+        # Check if it's 8-bit (latin1) or 16-bit (utf16) string
+        s_hashFlag8BitBuffer = 1 << 2
+        is_8bit = (m_hashAndFlags & s_hashFlag8BitBuffer) != 0
+        
+        if m_length == 0:
+            return '""'
+        
+        if is_8bit:
+            # Latin1 string
+            latin1_ptr = m_ptr.GetChildMemberWithName('latin1')
+            process = value.process
+            error = lldb.SBError()
+            ptr_addr = latin1_ptr.GetValueAsUnsigned()
+            if ptr_addr:
+                byte_data = process.ReadMemory(ptr_addr, m_length, error)
+                if error.Success():
+                    string_val = byte_data.decode('latin1', errors='replace')
+                else:
+                    return '<read error: %s>' % error
+            else:
+                return '<null ptr>'
+        else:
+            # UTF16 string
+            utf16_ptr = m_ptr.GetChildMemberWithName('utf16')
+            process = value.process
+            error = lldb.SBError()
+            ptr_addr = utf16_ptr.GetValueAsUnsigned()
+            if ptr_addr:
+                byte_data = process.ReadMemory(ptr_addr, m_length * 2, error)
+                if error.Success():
+                    # Properly decode UTF16LE to string
+                    string_val = byte_data.decode('utf-16le', errors='replace')
+                else:
+                    return '<read error: %s>' % error
+            else:
+                return '<null ptr>'
+        
+        # Escape special characters
+        string_val = string_val.replace('\\', '\\\\')
+        string_val = string_val.replace('"', '\\"')
+        string_val = string_val.replace('\n', '\\n')
+        string_val = string_val.replace('\r', '\\r')
+        string_val = string_val.replace('\t', '\\t')
+        
+        # Truncate if too long
+        if len(string_val) > 100:
+            string_val = string_val[:97] + '...'
+        
+        # Add encoding info at the beginning
+        encoding = 'latin1' if is_8bit else 'utf16'
+        
+        return '[%s] "%s"' % (encoding, string_val)
+    except:
+        return '<error>'
+
+def ZigString_SummaryProvider(value, _=None):
+    try:
+        value = value.GetNonSyntheticValue()
+        
+        ptr = value.GetChildMemberWithName('_unsafe_ptr_do_not_use').GetValueAsUnsigned()
+        length = value.GetChildMemberWithName('len').GetValueAsUnsigned()
+        
+        if length == 0:
+            return '""'
+        
+        # Check encoding flags
+        is_16bit = (ptr & (1 << 63)) != 0
+        is_utf8 = (ptr & (1 << 61)) != 0
+        is_global = (ptr & (1 << 62)) != 0
+        
+        # Untag the pointer (keep only the lower 53 bits)
+        untagged_ptr = ptr & ((1 << 53) - 1)
+        
+        # Read the string data
+        process = value.process
+        error = lldb.SBError()
+        
+        if is_16bit:
+            # UTF16 string
+            byte_data = process.ReadMemory(untagged_ptr, length * 2, error)
+            if error.Success():
+                # Properly decode UTF16LE to string
+                string_val = byte_data.decode('utf-16le', errors='replace')
+            else:
+                return '<read error>'
+        else:
+            # UTF8 or Latin1 string
+            byte_data = process.ReadMemory(untagged_ptr, length, error)
+            if error.Success():
+                if is_utf8:
+                    string_val = byte_data.decode('utf-8', errors='replace')
+                else:
+                    string_val = byte_data.decode('latin1', errors='replace')
+            else:
+                return '<read error>'
+        
+        # Escape special characters
+        string_val = string_val.replace('\\', '\\\\')
+        string_val = string_val.replace('"', '\\"')
+        string_val = string_val.replace('\n', '\\n')
+        string_val = string_val.replace('\r', '\\r')
+        string_val = string_val.replace('\t', '\\t')
+        
+        # Truncate if too long
+        if len(string_val) > 100:
+            string_val = string_val[:97] + '...'
+        
+        # Add encoding info at the beginning
+        encoding = 'utf16' if is_16bit else ('utf8' if is_utf8 else 'latin1')
+        flags = ' global' if is_global else ''
+        
+        return '[%s%s] "%s"' % (encoding, flags, string_val)
+    except:
+        return '<error>'
+
+def bun_String_SummaryProvider(value, _=None):
+    try:
+        value = value.GetNonSyntheticValue()
+        
+        # Debug: Show the actual type name LLDB sees
+        type_name = value.GetTypeName()
+        
+        tag = value.GetChildMemberWithName('tag')
+        if not tag or not tag.IsValid():
+            # Try alternate field names
+            tag = value.GetChildMemberWithName('Tag')
+            if not tag or not tag.IsValid():
+                # Show type name to help debug
+                return '<no tag field in type: %s>' % type_name
+        
+        tag_value = tag.GetValueAsUnsigned()
+        
+        # Map tag values to names
+        tag_names = {
+            0: 'Dead',
+            1: 'WTFStringImpl', 
+            2: 'ZigString',
+            3: 'StaticZigString',
+            4: 'Empty'
+        }
+        
+        tag_name = tag_names.get(tag_value, 'Unknown')
+        
+        if tag_name == 'Empty':
+            return '""'
+        elif tag_name == 'Dead':
+            return '<dead>'
+        elif tag_name == 'WTFStringImpl':
+            value_union = value.GetChildMemberWithName('value')
+            if not value_union or not value_union.IsValid():
+                return '<no value field>'
+            impl_value = value_union.GetChildMemberWithName('WTFStringImpl')
+            if not impl_value or not impl_value.IsValid():
+                return '<no WTFStringImpl field>'
+            return WTFStringImpl_SummaryProvider(impl_value, _)
+        elif tag_name == 'ZigString' or tag_name == 'StaticZigString':
+            value_union = value.GetChildMemberWithName('value')
+            if not value_union or not value_union.IsValid():
+                return '<no value field>'
+            field_name = 'ZigString' if tag_name == 'ZigString' else 'StaticZigString'
+            zig_string_value = value_union.GetChildMemberWithName(field_name)
+            if not zig_string_value or not zig_string_value.IsValid():
+                return '<no %s field>' % field_name
+            result = ZigString_SummaryProvider(zig_string_value, _)
+            # Add static marker if needed
+            if tag_name == 'StaticZigString':
+                result = result.replace(']', ' static]')
+            return result
+        else:
+            return '<unknown tag %d>' % tag_value
+    except Exception as e:
+        return '<error: %s>' % str(e)
+
 def __lldb_init_module(debugger, _=None):
     # Initialize Bun Category
     debugger.HandleCommand('type category define --language c99 bun')
     
     # Initialize Bun Data Structures
     add(debugger, category='bun', regex=True, type='^baby_list\\.BabyList\\(.*\\)$', identifier='bun_BabyList', synth=True, expand=True, summary=True)
+    
+    # Add WTFStringImpl pretty printer - try multiple possible type names
+    add(debugger, category='bun', type='WTFStringImpl', identifier='WTFStringImpl', summary=True)
+    add(debugger, category='bun', type='*WTFStringImplStruct', identifier='WTFStringImpl', summary=True)
+    add(debugger, category='bun', type='string.WTFStringImpl', identifier='WTFStringImpl', summary=True)
+    add(debugger, category='bun', type='string.WTFStringImplStruct', identifier='WTFStringImpl', summary=True)
+    add(debugger, category='bun', type='*string.WTFStringImplStruct', identifier='WTFStringImpl', summary=True)
+    
+    # Add ZigString pretty printer - try multiple possible type names
+    add(debugger, category='bun', type='ZigString', identifier='ZigString', summary=True)
+    add(debugger, category='bun', type='bun.js.bindings.ZigString', identifier='ZigString', summary=True)
+    add(debugger, category='bun', type='bindings.ZigString', identifier='ZigString', summary=True)
+    
+    # Add bun.String pretty printer - try multiple possible type names
+    add(debugger, category='bun', type='String', identifier='bun_String', summary=True)
+    add(debugger, category='bun', type='bun.String', identifier='bun_String', summary=True)
+    add(debugger, category='bun', type='string.String', identifier='bun_String', summary=True)
+    add(debugger, category='bun', type='BunString', identifier='bun_String', summary=True)
+    add(debugger, category='bun', type='bun::String', identifier='bun_String', summary=True)
+    add(debugger, category='bun', type='bun::string::String', identifier='bun_String', summary=True)
+    
+    # Try regex patterns for more flexible matching
+    add(debugger, category='bun', regex=True, type='.*String$', identifier='bun_String', summary=True)
+    add(debugger, category='bun', regex=True, type='.*WTFStringImpl.*', identifier='WTFStringImpl', summary=True)
+    add(debugger, category='bun', regex=True, type='.*ZigString.*', identifier='ZigString', summary=True)
     
     # Enable the category
     debugger.HandleCommand('type category enable bun')

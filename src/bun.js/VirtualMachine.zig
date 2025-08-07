@@ -2781,8 +2781,8 @@ pub fn remapZigException(
         if (code.len > 0)
             source_code_slice.* = code;
 
-        top.position.line = Ordinal.fromZeroBased(mapping.original.lines.zeroBased());
-        top.position.column = Ordinal.fromZeroBased(mapping.original.columns.zeroBased());
+        top.position.line = mapping.original.lines;
+        top.position.column = mapping.original.columns;
 
         exception.remapped = true;
         top.remapped = true;
@@ -2833,8 +2833,8 @@ pub fn remapZigException(
                 }
                 const mapping = lookup.mapping;
                 frame.remapped = true;
-                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines.zeroBased());
-                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns.zeroBased());
+                frame.position.line = mapping.original.lines;
+                frame.position.column = mapping.original.columns;
             }
         }
     }

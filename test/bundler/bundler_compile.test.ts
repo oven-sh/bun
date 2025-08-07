@@ -639,7 +639,7 @@ error: Hello World`,
     },
     run: { stdout: "Hello, world!" },
   });
-  itBundled.skipIf(!isWindows, "compile/WindowsHideConsole", {
+  itBundled("compile/WindowsHideConsole", {
     compile: true,
     compileOptions: {
       windowsHideConsole: true,
@@ -649,7 +649,7 @@ error: Hello World`,
         console.log("Hello, world!");
       `,
     },
-    outfile: "out.exe",
+    outfile: isWindows ? "out.exe" : "out",
     onAfterBundle(api) {
       expect(getSubsystem(api.outfile)).toBe("GUI");
     },

@@ -88,7 +88,7 @@ pub const SocketContext = opaque {
 pub const ListenSocket = opaque {
     // Listen sockets are created by SocketContext.listen()
     // and typically don't need many methods beyond what's inherited
-    
+
     /// Get the port number this listen socket is bound to
     pub fn getPort(this: *ListenSocket) c_int {
         return us_quic_listen_socket_get_port(this);

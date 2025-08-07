@@ -1129,6 +1129,10 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  if (!ssl_context) {
+    *err = CREATE_BUN_SOCKET_ERROR_SSL_CONTEXT_CREATION_FAILED;
+    return NULL;
+  }
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1175,6 +1179,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
   } else if (options.cert && options.cert_count > 0) {
     for (unsigned int i = 0; i < options.cert_count; i++) {
       if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         free_ssl_context(ssl_context);
         return NULL;
       }
@@ -1192,6 +1197,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     for (unsigned int i = 0; i < options.key_count; i++) {
       if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i],
                                             SSL_FILETYPE_PEM) != 1) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         free_ssl_context(ssl_context);
         return NULL;
       }

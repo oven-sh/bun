@@ -24,6 +24,8 @@ pub const InternalLoopData = extern struct {
     parent_tag: c_char,
     iteration_nr: usize,
     jsc_vm: ?*jsc.VM,
+    quic_server_engine: ?*anyopaque, // lsquic_engine* for server
+    quic_client_engine: ?*anyopaque, // lsquic_engine* for client
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];

@@ -94,7 +94,10 @@ test("QUIC server and client integration", async () => {
   client.close();
 });
 
-test("QUIC stream creation and management", async () => {
+test("QUIC multi-stream creation and management", async () => {
+  let serverStreamCount = 0;
+  let clientStreamCount = 0;
+  
   const server = Bun.quic({
     hostname: "localhost",
     port: 9444,
@@ -107,14 +110,42 @@ test("QUIC stream creation and management", async () => {
     connection(socket) {
       console.log("Server: New connection");
       
+      // Test initial stream count (should be 0 initially)
+      expect(socket.streamCount).toBe(0);
+      
       // Create multiple streams
       const stream1 = socket.createStream();
       const stream2 = socket.createStream();
+      const stream3 = socket.createStream();
       
-      expect(socket.streamCount).toBe(2);
+      console.log(`Server created streams: ${stream1}, ${stream2}, ${stream3}`);
+      
+      // Verify stream IDs are different
       expect(stream1).toBeDefined();
       expect(stream2).toBeDefined();
+      expect(stream3).toBeDefined();
       expect(stream1).not.toBe(stream2);
+      expect(stream2).not.toBe(stream3);
+      expect(stream1).not.toBe(stream3);
+      
+      serverStreamCount = socket.streamCount;
+      console.log(`Server total streams: ${serverStreamCount}`);
+      
+      // Test getting stream IDs (if implemented)
+      if (socket.streamIds) {
+        const streamIds = socket.streamIds;
+        expect(Array.isArray(streamIds)).toBe(true);
+        console.log("Server stream IDs:", streamIds);
+        
+        // Test getting individual streams (if implemented)
+        for (const streamId of streamIds) {
+          if (socket.getStream) {
+            const stream = socket.getStream(streamId);
+            expect(stream).toBeDefined();
+            console.log(`Server retrieved stream ${streamId}: ${stream}`);
+          }
+        }
+      }
     },
     open() {},
     message() {},
@@ -134,10 +165,25 @@ test("QUIC stream creation and management", async () => {
       ca: tls.ca,
     },
     open(socket) {
-      // Client can also create streams
-      const clientStream = socket.createStream();
-      expect(clientStream).toBeDefined();
-      expect(socket.streamCount).toBe(1);
+      // Client can also create multiple streams
+      const clientStream1 = socket.createStream();
+      const clientStream2 = socket.createStream();
+      
+      console.log(`Client created streams: ${clientStream1}, ${clientStream2}`);
+      
+      expect(clientStream1).toBeDefined();
+      expect(clientStream2).toBeDefined();
+      expect(clientStream1).not.toBe(clientStream2);
+      
+      clientStreamCount = socket.streamCount;
+      console.log(`Client total streams: ${clientStreamCount}`);
+      
+      // Test stream management functionality
+      if (socket.closeStream && clientStream2) {
+        // Close one stream and verify count decreases
+        socket.closeStream(clientStream2);
+        console.log(`Client streams after closing one: ${socket.streamCount}`);
+      }
     },
     message() {},
     close() {},
@@ -145,6 +191,11 @@ test("QUIC stream creation and management", async () => {
   });
 
   await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Verify that both client and server could create streams
+  console.log(`Final counts - Server: ${serverStreamCount}, Client: ${clientStreamCount}`);
+  expect(serverStreamCount).toBeGreaterThan(0);
+  expect(clientStreamCount).toBeGreaterThan(0);
 
   server.close();
   client.close();

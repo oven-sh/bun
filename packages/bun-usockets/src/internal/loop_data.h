@@ -20,6 +20,9 @@
 
 #include <stdint.h>
 
+/* Forward declaration for lsquic engine type */
+struct lsquic_engine;
+
 #if defined(__APPLE__)
 #include <os/lock.h>
 typedef os_unfair_lock zig_mutex_t;
@@ -58,6 +61,9 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
+    /* QUIC engines - one per loop, shared by all contexts */
+    struct lsquic_engine *quic_server_engine;  /* Server engine for this loop */
+    struct lsquic_engine *quic_client_engine;  /* Client engine for this loop */
 };
 
 #endif // LOOP_DATA_H

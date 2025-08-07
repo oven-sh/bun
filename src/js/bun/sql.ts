@@ -259,7 +259,9 @@ type OnConnected<Connection> = (
 
 interface DatabaseAdapter<Connection> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]];
-  createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any;
+  createQueryHandle(sqlString: string, values: unknown[], flags: number): any;
+  calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number;
+  getOptions(): Bun.SQL.__internal.DefinedOptions;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
@@ -893,20 +895,49 @@ namespace Postgres {
 
   export class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection> {
     private pool: PostgresConnectionPool;
+    private options: Bun.SQL.__internal.DefinedPostgresOptions;
 
     get closed() {
       return this.pool.closed;
     }
 
     constructor(options: Bun.SQL.__internal.DefinedPostgresOptions) {
+      this.options = options;
       this.pool = new PostgresConnectionPool(options);
+    }
+
+    getOptions(): Bun.SQL.__internal.DefinedOptions {
+      return this.options;
+    }
+
+    calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number {
+      let flags = SQLQueryFlags.none;
+
+      if (this.options.bigint) {
+        flags |= SQLQueryFlags.bigint;
+      }
+
+      if (isUnsafe) {
+        flags |= SQLQueryFlags.unsafe;
+
+        if ((values?.length ?? 0) === 0) {
+          flags |= SQLQueryFlags.simple;
+        }
+      }
+
+      if (isTransaction) {
+        flags |= SQLQueryFlags.allowUnsafeTransaction;
+      }
+
+      return flags;
     }
 
     normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [string, unknown[]] {
       return normalizeQuery(strings, values);
     }
 
-    createQueryHandle(sqlString: string, values: unknown[], flags: number, poolSize: number): any {
+    createQueryHandle(sqlString: string, values: unknown[], flags: number): any {
+      const poolSize = this.options.max;
       if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
         if (poolSize !== 1) {
           const upperCaseSqlString = sqlString.toUpperCase().trim();
@@ -1007,14 +1038,44 @@ class SQLiteConnection {
 
 class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
   private db: InstanceType<(typeof import("./sqlite.ts"))["default"]["Database"]> | null = null;
+  private options: Bun.SQL.__internal.DefinedSQLiteOptions;
 
   get closed() {
     return this.db === null;
   }
 
   public constructor(options: Bun.SQL.__internal.DefinedSQLiteOptions) {
+    this.options = options;
     const SQLiteModule = SQLite.getBunSqliteModule();
     this.db = new SQLiteModule.Database(options.filename);
+  }
+
+  getOptions(): Bun.SQL.__internal.DefinedOptions {
+    return this.options;
+  }
+
+  calculateQueryFlags(values: unknown[], isUnsafe: boolean, isTransaction: boolean): number {
+    let flags = SQLQueryFlags.none;
+
+    // THIS DOES NOT EXIST IN SQLITE. POSTGRES FLAG ONLY
+    // // Set bigint flag based on options
+    // if (this.options.bigint) {
+    //   flags |= SQLQueryFlags.bigint;
+    // }
+
+    if (isUnsafe) {
+      flags |= SQLQueryFlags.unsafe;
+
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
+    }
+
+    if (isTransaction) {
+      flags |= SQLQueryFlags.allowUnsafeTransaction;
+    }
+
+    return flags;
   }
 
   normalizeQuery(strings: any, values: any): [string, any[]] {
@@ -1125,7 +1186,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return [query, binding_values];
   }
 
-  createQueryHandle(sqlString: string, values: any[] = [], flags: number = 0): any {
+  createQueryHandle(sqlString: string, values: any[] = [], flags: number): any {
     if (this.db === null) throw new Error("SQLite database not initialized");
 
     // For simple queries (no parameters), check if we might have multiple statements
@@ -1328,7 +1389,7 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return "ROLLBACK";
   }
 
-  getBeforeCommitOrRollbackCommand(_distributedName?: string): string | null {
+  getBeforeCommitOrRollbackCommand(): string | null {
     // SQLite doesn't require any command before COMMIT or ROLLBACK
     // (PostgreSQL needs this for distributed transactions)
     return null;
@@ -1338,11 +1399,11 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection> {
     return false;
   }
 
-  async commitDistributed(_name: string, _sql: any): Promise<any> {
+  async commitDistributed(): Promise<any> {
     throw new Error("SQLite doesn't support distributed transactions");
   }
 
-  async rollbackDistributed(_name: string, _sql: any): Promise<any> {
+  async rollbackDistributed(): Promise<any> {
     throw new Error("SQLite doesn't support distributed transactions");
   }
 }
@@ -1355,7 +1416,6 @@ class Query<T = any> extends PublicPromise<T> {
   [_queryStatus] = 0;
   [_strings];
   [_values];
-  [_poolSize]: number;
   [_flags]: number;
   [_results]: any;
 
@@ -1376,10 +1436,10 @@ class Query<T = any> extends PublicPromise<T> {
   constructor(
     strings: string | TemplateStringsArray | SQLHelper | Query<any>,
     values: any[],
-    flags: number,
-    poolSize: number,
-    handler: (query: Query<T>, handle) => any,
     adapter: DatabaseAdapter<any>,
+    queryFromHandler: (query: Query<T>, handle) => any,
+    isUnsafe: boolean,
+    isTransaction: boolean,
   ) {
     let resolve_: (value: T) => void, reject_: (reason?: any) => void;
     super((resolve, reject) => {
@@ -1387,26 +1447,22 @@ class Query<T = any> extends PublicPromise<T> {
       reject_ = reject;
     });
 
-    if (typeof strings === "string") {
-      if (!(flags & SQLQueryFlags.unsafe)) {
-        // identifier (cannot be executed in safe mode)
-        flags |= SQLQueryFlags.notTagged;
-        strings = escapeIdentifier(strings);
-      }
-    }
-
     this[_resolve] = resolve_!;
     this[_reject] = reject_!;
     this[_handle] = null;
-    this[_handler] = handler;
+    this[_handler] = queryFromHandler;
     this[_queryStatus] = 0;
-    this[_poolSize] = poolSize;
     this[_strings] = strings;
     this[_values] = values;
-    this[_flags] = flags;
-
     this[_results] = null;
     this.adapter = adapter;
+
+    this[_flags] = adapter.calculateQueryFlags(values, isUnsafe, isTransaction);
+
+    if (typeof strings === "string" && !(this[_flags] & SQLQueryFlags.unsafe)) {
+      this[_flags] |= SQLQueryFlags.notTagged;
+      this[_strings] = escapeIdentifier(strings);
+    }
   }
 
   private getQueryHandle() {
@@ -1414,7 +1470,7 @@ class Query<T = any> extends PublicPromise<T> {
     if (!handle) {
       try {
         const [sqlString, final_values] = this.adapter.normalizeQuery(this[_strings], this[_values]);
-        this[_handle] = handle = this.adapter.createQueryHandle(sqlString, final_values, this[_flags], this[_poolSize]);
+        this[_handle] = handle = this.adapter.createQueryHandle(sqlString, final_values, this[_flags]);
       } catch (err) {
         this[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
         this.reject(err);
@@ -2301,14 +2357,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   function queryFromPool(strings: string | TemplateStringsArray | SQLHelper | Query<any>, values: unknown[]) {
     try {
-      return new Query(
-        strings,
-        values,
-        resolvedOptions.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
-        resolvedOptions.max,
-        queryFromPoolHandler,
-        adapter,
-      );
+      return new Query(strings, values, adapter, queryFromPoolHandler, false, false);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -2316,11 +2365,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   function unsafeQuery(strings: string | TemplateStringsArray, values: unknown[]) {
     try {
-      let flags = resolvedOptions.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
-      if ((values?.length ?? 0) === 0) {
-        flags |= SQLQueryFlags.simple;
-      }
-      return new Query(strings, values, flags, resolvedOptions.max, queryFromPoolHandler, adapter);
+      return new Query(strings, values, adapter, queryFromPoolHandler, true, false);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -2381,12 +2426,10 @@ const SQL: typeof Bun.SQL = function SQL(
       const query = new Query(
         strings,
         values,
-        resolvedOptions.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction,
-        resolvedOptions.max,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         adapter,
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        false,
+        true,
       );
       transactionQueries.add(query);
       return query;
@@ -2396,20 +2439,13 @@ const SQL: typeof Bun.SQL = function SQL(
   }
   function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
-      let flags = resolvedOptions.bigint
-        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
-
-      if ((values?.length ?? 0) === 0) {
-        flags |= SQLQueryFlags.simple;
-      }
       const query = new Query(
         strings,
         values,
-        flags,
-        resolvedOptions.max,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         adapter,
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        true,
+        true,
       );
       transactionQueries.add(query);
       return query;
@@ -2741,16 +2777,17 @@ const SQL: typeof Bun.SQL = function SQL(
 
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
-    function transaction_sql(strings, ...values) {
+
+    function transaction_sql(strings: string | TemplateStringsArray | object, ...values: unknown[]) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
         return Promise.reject(connectionClosedError());
       }
+
       if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+        if (!$isArray(strings.raw)) {
           return new SQLHelper(strings, values);
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
@@ -2759,7 +2796,8 @@ const SQL: typeof Bun.SQL = function SQL(
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries, state);
     }
-    transaction_sql.unsafe = (string, args = []) => {
+
+    transaction_sql.unsafe = (string: string, args: unknown[] = []) => {
       // Check if this is a write operation in a read-only transaction
       if (state.readOnly) {
         const upperString = string.trim().toUpperCase();
@@ -2779,13 +2817,15 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
-    transaction_sql.file = async (path: string, args = []) => {
+
+    transaction_sql.file = async (path: string, args: unknown[] = []) => {
       return await Bun.file(path)
         .text()
         .then(text => {
           return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
         });
     };
+
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();

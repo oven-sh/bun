@@ -185,8 +185,8 @@ pub fn ParseStmt(
 
                                 const defaultName = try createDefaultName(p, loc);
 
-                                const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
-                                const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
+                                var expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
+                                try p.parseSuffix(&expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
                                 const value = js_ast.StmtOrExpr{ .expr = expr };
                                 p.has_export_default = true;
@@ -926,7 +926,8 @@ pub fn ParseStmt(
                         // "import.meta"
                         .t_open_paren, .t_dot => {
                             p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
-                            const expr = try p.parseSuffix(try p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
+                            var expr = try p.parseImportExpr(loc, .lowest);
+                            try p.parseSuffix(&expr, .lowest, null, Expr.EFlags.none);
                             try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.SExpr{
                                 .value = expr,
@@ -1164,7 +1165,8 @@ pub fn ParseStmt(
                             return try p.parseFnStmt(async_range.loc, opts, async_range);
                         }
 
-                        expr = try p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, .lowest), .lowest, null, Expr.EFlags.none);
+                        expr = try p.parseAsyncPrefixExpr(async_range, .lowest);
+                        try p.parseSuffix(&expr, .lowest, null, Expr.EFlags.none);
                     } else {
                         const exprOrLet = try p.parseExprOrLetStmt(opts);
                         switch (exprOrLet.stmt_or_expr) {

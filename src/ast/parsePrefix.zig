@@ -381,8 +381,14 @@ pub fn ParsePrefix(
                         return p.newExpr(E.NewTarget{ .range = range }, loc);
                     }
 
-                    const target = try p.parseExprWithFlags(.member, flags);
-                    var args = ExprNodeList{};
+                    // This wil become the new expr
+                    var new = p.newExpr(E.New{
+                        .target = undefined,
+                        .args = undefined,
+                        .close_parens_loc = undefined,
+                    }, loc);
+
+                    try p.parseExprWithFlags(.member, flags, &new.data.e_new.target);
 
                     if (comptime is_typescript_enabled) {
                         // Skip over TypeScript type arguments here if there are any
@@ -391,18 +397,15 @@ pub fn ParsePrefix(
                         }
                     }
 
-                    var close_parens_loc = logger.Loc.Empty;
                     if (p.lexer.token == .t_open_paren) {
                         const call_args = try p.parseCallArgs();
-                        args = call_args.list;
-                        close_parens_loc = call_args.loc;
+                        new.data.e_new.args = call_args.list;
+                        new.data.e_new.close_parens_loc = call_args.loc;
+                    } else {
+                        new.data.e_new.close_parens_loc = .Empty;
                     }
 
-                    return p.newExpr(E.New{
-                        .target = target,
-                        .args = args,
-                        .close_parens_loc = close_parens_loc,
-                    }, loc);
+                    return new;
                 },
                 .t_open_bracket => {
                     try p.lexer.next();
@@ -426,9 +429,11 @@ pub fn ParsePrefix(
 
                                 const dots_loc = p.lexer.loc();
                                 try p.lexer.next();
-                                items.append(
-                                    p.newExpr(E.Spread{ .value = try p.parseExprOrBindings(.comma, &self_errors) }, dots_loc),
-                                ) catch unreachable;
+                                try items.ensureUnusedCapacity(1);
+                                const spread_expr: *Expr = &items.unusedCapacitySlice()[0];
+                                spread_expr.* = p.newExpr(E.Spread{ .value = undefined }, dots_loc);
+                                try p.parseExprOrBindings(.comma, &self_errors, &spread_expr.data.e_spread.value);
+                                items.items.len += 1;
 
                                 // Commas are not allowed here when destructuring
                                 if (p.lexer.token == .t_comma) {
@@ -436,9 +441,10 @@ pub fn ParsePrefix(
                                 }
                             },
                             else => {
-                                items.append(
-                                    try p.parseExprOrBindings(.comma, &self_errors),
-                                ) catch unreachable;
+                                try items.ensureUnusedCapacity(1);
+                                const item: *Expr = &items.unusedCapacitySlice()[0];
+                                try p.parseExprOrBindings(.comma, &self_errors, item);
+                                items.items.len += 1;
                             },
                         }
 
@@ -496,7 +502,19 @@ pub fn ParsePrefix(
                     while (p.lexer.token != .t_close_brace) {
                         if (p.lexer.token == .t_dot_dot_dot) {
                             try p.lexer.next();
-                            properties.append(G.Property{ .kind = .spread, .value = try p.parseExpr(.comma) }) catch unreachable;
+                            try properties.ensureUnusedCapacity(1);
+                            const property: *G.Property = &properties.unusedCapacitySlice()[0];
+                            property.* = .{
+                                .kind = .spread,
+                                .value = Expr.empty,
+                            };
+
+                            try p.parseExprOrBindings(
+                                .comma,
+                                &self_errors,
+                                &(property.value.?),
+                            );
+                            properties.items.len += 1;
 
                             // Commas are not allowed here when destructuring
                             if (p.lexer.token == .t_comma) {

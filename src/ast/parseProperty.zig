@@ -508,16 +508,17 @@ pub fn ParseProperty(
 
             // Parse an object key/value pair
             try p.lexer.expect(.t_colon);
-            const value = try p.parseExprOrBindings(.comma, errors);
-
-            return G.Property{
+            var property: G.Property = .{
                 .kind = kind,
                 .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
                 }),
                 .key = key,
-                .value = value,
+                .value = Expr{ .data = .e_missing, .loc = .{} },
             };
+
+            try p.parseExprOrBindings(.comma, errors, &property.value.?);
+            return property;
         }
     };
 }

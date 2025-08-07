@@ -891,7 +891,19 @@ fn HandlerCallback(
                     JSValue.zero,
                 &.{wrapper.toJS(this.global)},
             ) catch {
-                // If there's an error, we'll propagate it to the caller.
+                // If there's an error, we need to properly handle the JavaScript exception
+                // to prevent it from causing assertion failures later.
+                // Store the exception for later retrieval by createLOLHTMLError
+                if (this.global.tryTakeException()) |exception| {
+                    if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                        exception.ensureStillAlive();
+                        exception.protect();
+                        err_ptr.* = exception;
+                    }
+                    // Note: The capture mechanism is set up for both synchronous and
+                    // asynchronous processing, so the exception will be properly
+                    // retrieved and thrown by createLOLHTMLError.
+                }
                 return true;
             };
 

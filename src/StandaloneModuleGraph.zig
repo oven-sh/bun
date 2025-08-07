@@ -649,10 +649,10 @@ pub const StandaloneModuleGraph = struct {
 
                 bun.windows.rescle.setIcon(tempfile.ptr, icon) catch |err| {
                     switch (err) {
-                        error.ExecutableLoadFailed => Output.err("Failed to set executable icon", "Cannot load executable file", .{}),
-                        error.IconSetFailed => Output.err("Failed to set executable icon", "Cannot read or parse icon file", .{}),
-                        error.ExecutableCommitFailed => Output.err("Failed to set executable icon", "Cannot commit changes to executable", .{}),
-                        else => Output.errGeneric("Failed to set executable icon", .{}),
+                        error.ExecutableLoadFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot load executable file"}),
+                        error.IconSetFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot read or parse icon file"}),
+                        error.ExecutableCommitFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot commit changes to executable"}),
+                        else => Output.prettyErrorln("Failed to set executable icon", .{}),
                     }
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);

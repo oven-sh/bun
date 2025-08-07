@@ -8,18 +8,18 @@ const bun = @This();
 
 pub const Environment = @import("./env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = !Environment.enable_asan;
 
 pub const default_allocator: std.mem.Allocator = if (use_mimalloc)
     allocators.c_allocator
 else
-    std.heap.c_allocator;
+    std.heap.raw_c_allocator;
 
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = if (use_mimalloc)
     allocators.z_allocator
 else
-    std.heap.c_allocator;
+    std.heap.raw_c_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;

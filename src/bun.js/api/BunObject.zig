@@ -1468,7 +1468,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
+        if (!bun.use_mimalloc) return std.c.free(ctx);
         bun.mimalloc.mi_free(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
@@ -1753,7 +1753,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
+        if (!bun.use_mimalloc) return std.c.free(ctx);
         bun.mimalloc.mi_free(ctx);
     }
 

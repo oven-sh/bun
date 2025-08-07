@@ -1776,6 +1776,7 @@ pub const TestCommand = struct {
         };
 
         var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
+        defer arena.deinit();
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();

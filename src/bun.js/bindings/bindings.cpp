@@ -5368,7 +5368,10 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
     arg0->heap.deprecatedReportExtraMemory(arg1);
 }
 
-void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject) {}
+void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
+{
+}
+
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
 {
     arg0->drainMicrotasks();

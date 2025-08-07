@@ -23,6 +23,7 @@ pub const HPACK = extern struct {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
 
     pub fn init(max_capacity: u32) *HPACK {
+        if (!bun.use_mimalloc) return lshpack_wrapper_init(std.c.malloc, std.c.free, max_capacity) orelse bun.outOfMemory();
         return lshpack_wrapper_init(mimalloc.mi_malloc, mimalloc.mi_free, max_capacity) orelse bun.outOfMemory();
     }
 
@@ -62,5 +63,6 @@ extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
 
+const std = @import("std");
 const bun = @import("bun");
 const mimalloc = bun.mimalloc;

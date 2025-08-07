@@ -348,9 +348,9 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
-        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([bytesDeallocator](void* p) {
             if (bytesDeallocator)
-                bytesDeallocator(p, ctx);
+                bytesDeallocator(p, NULL);
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);
@@ -519,7 +519,6 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
         case WebCore::BufferEncodingType::hex: {
-
             result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }

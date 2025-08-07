@@ -35,8 +35,8 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         const next = next_name;
         pub const queue_padding_length = cache_line_length / 2;
 
-        back: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
-        front: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
+        back: std.atomic.Value(?*T) = .init(null),
+        front: std.atomic.Value(?*T) = .init(null),
 
         pub fn push(self: *Self, item: *T) void {
             self.pushBatch(item, item);

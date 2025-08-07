@@ -13,7 +13,6 @@
 #include <wtf/text/StringHash.h>
 #include <sys/stat.h>
 #include <JavaScriptCore/SourceCodeKey.h>
-#include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
 namespace Zig {
@@ -94,7 +93,7 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
-                mi_free(const_cast<void*>(ptr));
+                bun_free(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.

@@ -256,7 +256,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (this.len > 0 and (!bun.use_mimalloc or !bun.mimalloc.mi_is_in_heap_region(this.ptr))) {
             log("toJS but will never free: {d} bytes", .{this.len});
 
             if (this.typed_array_type == .ArrayBuffer) {
@@ -627,7 +627,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     //     bun.assert(mimalloc.mi_check_owned(bytes_) or
     //         mimalloc.mi_heap_check_owned(jsc.VirtualMachine.get().arena.heap.?, bytes_));
     // }
-
+    if (!bun.use_mimalloc) return std.c.free(bytes_);
     mimalloc.mi_free(bytes_);
 }
 

@@ -102,4 +102,17 @@
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
 
+#if __has_feature(address_sanitizer)
+#define ENABLE_MIMALLOC 0
+#else
+#define ENABLE_MIMALLOC 1
+#endif
+
+#if ENABLE_MIMALLOC
+#include "mimalloc.h"
+#define bun_free(ptr) mi_free(ptr)
+#else
+#define bun_free(ptr) free(ptr)
+#endif
+
 #endif

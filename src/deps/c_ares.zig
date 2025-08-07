@@ -773,6 +773,19 @@ fn libraryInit() void {
     if (ares_has_loaded.swap(true, .monotonic))
         return;
 
+    if (!bun.use_mimalloc) {
+        const rc = ares_library_init_mem(
+            ARES_LIB_INIT_ALL,
+            std.c.malloc,
+            std.c.free,
+            std.c.realloc,
+        );
+        if (rc != ARES_SUCCESS) {
+            std.debug.panic("ares_library_init_mem failed: {any}", .{rc});
+            unreachable;
+        }
+        return;
+    }
     const rc = ares_library_init_mem(
         ARES_LIB_INIT_ALL,
         bun.mimalloc.mi_malloc,

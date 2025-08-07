@@ -627,7 +627,7 @@ pub const Command = struct {
     /// function or that stack space is used up forever.
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
-            if (bun.getenvZ("MI_VERBOSE") == null) {
+            if (bun.getenvZ("MI_VERBOSE") == null and bun.use_mimalloc) {
                 bun.mimalloc.mi_option_set_enabled(.verbose, false);
             }
         }

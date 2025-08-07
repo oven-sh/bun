@@ -24,6 +24,12 @@ declare module "stream/web" {
   }
 }
 
+declare module "url" {
+  interface URLSearchParams {
+    toJSON(): Record<string, string>;
+  }
+}
+
 declare global {
   namespace NodeJS {
     interface ProcessEnv extends Bun.Env {}

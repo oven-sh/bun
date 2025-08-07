@@ -847,6 +847,7 @@ pub const SideEffects = enum(u1) {
                 .module_exports,
                 .resolved_specifier_string,
                 .hot_data,
+                .import_meta_glob,
                 => {},
                 .hot_accept,
                 .hot_accept_visited,

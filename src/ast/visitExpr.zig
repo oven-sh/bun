@@ -1355,6 +1355,9 @@ pub fn VisitExpr(
                             if (!p.options.features.hot_module_reloading)
                                 return .{ .data = .e_undefined, .loc = expr.loc };
                         },
+                        .import_meta_glob => {
+                            return p.handleImportMetaGlobCall(e_, expr.loc);
+                        },
                         else => {},
                     };
 

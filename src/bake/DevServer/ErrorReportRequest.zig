@@ -126,7 +126,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         // When before the first generated line, remap to the HMR runtime
         const generated_mappings = result.mappings.generated();
-        if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+        if (frame.position.line.oneBased() < generated_mappings[1].lines.oneBased()) {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;

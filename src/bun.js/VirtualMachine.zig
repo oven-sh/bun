@@ -2605,8 +2605,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFr
                 frame.source_url = source_url;
             }
             const mapping = lookup.mapping;
-            frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-            frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+            frame.position.line = mapping.original.lines;
+            frame.position.column = mapping.original.columns;
             frame.remapped = true;
         } else {
             // we don't want it to be remapped again
@@ -2722,8 +2722,8 @@ pub fn remapZigException(
             .mapping = .{
                 .generated = .{},
                 .original = .{
-                    .lines = @max(top.position.line.zeroBased(), 0),
-                    .columns = @max(top.position.column.zeroBased(), 0),
+                    .lines = bun.Ordinal.fromZeroBased(@max(top.position.line.zeroBased(), 0)),
+                    .columns = bun.Ordinal.fromZeroBased(@max(top.position.column.zeroBased(), 0)),
                 },
                 .source_index = 0,
             },
@@ -2781,8 +2781,8 @@ pub fn remapZigException(
         if (code.len > 0)
             source_code_slice.* = code;
 
-        top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-        top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+        top.position.line = Ordinal.fromZeroBased(mapping.original.lines.zeroBased());
+        top.position.column = Ordinal.fromZeroBased(mapping.original.columns.zeroBased());
 
         exception.remapped = true;
         top.remapped = true;
@@ -2833,8 +2833,8 @@ pub fn remapZigException(
                 }
                 const mapping = lookup.mapping;
                 frame.remapped = true;
-                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines.zeroBased());
+                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns.zeroBased());
             }
         }
     }

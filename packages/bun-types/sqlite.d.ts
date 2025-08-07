@@ -776,6 +776,17 @@ declare module "bun:sqlite" {
     readonly paramsCount: number;
 
     /**
+     * Whether the statement has multiple statements.
+     * @example
+     * ```ts
+     * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?; SELECT * FROM baz WHERE bar = ?");
+     * console.log(stmt.hasMultipleStatements);
+     * // => true
+     * ```
+     */
+    readonly hasMultipleStatements: boolean;
+
+    /**
      * The actual SQLite column types from the first row of the result set.
      * Useful for expressions and computed columns, which are not covered by `declaredTypes`
      *

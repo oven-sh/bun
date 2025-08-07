@@ -338,13 +338,13 @@ describe("@types/bun integration test", () => {
         code: 2345,
       },
       {
-        line: "index.ts:193:14",
+        line: "index.ts:189:14",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
         code: 2345,
       },
       {
-        line: "index.ts:323:29",
+        line: "index.ts:319:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         code: 2345,

@@ -266,7 +266,7 @@ interface BaseQueryHandle<Connection> {
   setPendingValue?(value: any): void;
 }
 
-interface PostgresQueryHandle extends BaseQueryHandle<PooledPostgresConnection> {
+interface PostgresQueryHandle extends BaseQueryHandle<$ZigGeneratedClasses.PostgresSQLConnection> {
   setPendingValue(value: any): void;
   done(): void;
   cancel(): void;
@@ -800,7 +800,7 @@ namespace Postgres {
      * @param {function} onConnected - The callback function to be called when the connection is established.
      * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
      */
-    connect(onConnected: OnConnected<PooledPostgresConnection>, reserved = false): void {
+    connect(onConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection>, reserved = false): void {
       if (this.closed) {
         return onConnected(connectionClosedError(), null);
       }
@@ -911,7 +911,9 @@ namespace Postgres {
     }
   }
 
-  export class PostgresAdapter implements DatabaseAdapter<PooledPostgresConnection, PostgresQueryHandle> {
+  export class PostgresAdapter
+    implements DatabaseAdapter<$ZigGeneratedClasses.PostgresSQLConnection, PostgresQueryHandle>
+  {
     private pool: PostgresConnectionPool;
     private options: Bun.SQL.__internal.DefinedPostgresOptions;
 
@@ -975,7 +977,7 @@ namespace Postgres {
       );
     }
 
-    connect(onConnected: OnConnected<PooledPostgresConnection>, reserved: boolean = false): void {
+    connect(onConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection>, reserved: boolean = false): void {
       if (!this.pool) throw new Error("Adapter not initialized");
       this.pool.connect(onConnected, reserved);
     }
@@ -999,7 +1001,7 @@ namespace Postgres {
       return this.pool.isConnected();
     }
 
-    reserve<T>(onReserveConnected: OnConnected<PooledPostgresConnection>): Promise<T> {
+    reserve<T>(onReserveConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection>): Promise<T> {
       const promiseWithResolvers = Promise.withResolvers() as PromiseWithResolvers<T>;
       this.connect(onReserveConnected.bind(promiseWithResolvers), true);
       return promiseWithResolvers.promise;
@@ -1049,7 +1051,7 @@ class SQLiteConnection {
     this.db = db;
   }
 
-  getDatabase() {
+  get connection() {
     return this.db;
   }
 }
@@ -1215,10 +1217,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHand
     const useMultiStatementMode = statement?.hasMultipleStatements === true;
 
     const handle: SQLiteQueryHandle = {
-      run: (connection, query) => {
+      run: ({ connection: db }, query) => {
         try {
-          const db = connection.getDatabase();
-
           if (useMultiStatementMode) {
             statement.finalize();
 
@@ -1998,6 +1998,9 @@ function parseOptions(
     throw new UnsupportedAdapterError(options);
   }
 
+  // @ts-expect-error Compatibility
+  if (options.adapter === "postgresql") options.adapter = "postgres";
+
   assertIsOptionsOfAdapter(options, "postgres");
 
   // TODO: Better typing for these vars
@@ -2006,7 +2009,7 @@ function parseOptions(
     username: string | null | undefined,
     password: string | (() => Bun.MaybePromise<string>) | undefined | null,
     database: any,
-    tls,
+    tls: Bun.TLSOptions | boolean | undefined,
     url: URL | undefined,
     query: string,
     idleTimeout: number | null | undefined,
@@ -2288,11 +2291,11 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onQueryConnected<T>(
-    this: Query<T>,
+  function onQueryConnected(
+    this: Query<any>,
     handle: ReturnType<typeof adapter.createQueryHandle>,
     err: Error | null,
-    connection: any,
+    connection: PooledPostgresConnection | SQLiteConnection,
   ) {
     const query = this;
     if (err) {
@@ -2309,11 +2312,10 @@ const SQL: typeof Bun.SQL = function SQL(
     // For SQLite, we just run the query directly
     if (resolvedOptions.adapter === "postgres") {
       const pooledConnection = connection as PooledPostgresConnection;
-      pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
-      handle.run(pooledConnection.connection, query);
+      pooledConnection.bindQuery(query, onQueryDisconnected.bind(query) as (e: Error | null) => void);
+      handle.run(pooledConnection.connection!, query);
     } else {
-      // SQLite - run the query directly
-      handle.run(connection, query);
+      handle.run(connection as SQLiteConnection, query);
     }
   }
 
@@ -2335,7 +2337,10 @@ const SQL: typeof Bun.SQL = function SQL(
     adapter.connect(onQueryConnected.bind(query, handle));
   }
 
-  function queryFromPool(strings: string | TemplateStringsArray | SQLHelper | Query<any>, values: unknown[]) {
+  function queryFromPool(
+    strings: string | TemplateStringsArray | SQLHelper | Query<any>,
+    values: unknown[],
+  ): Query | Promise<never> {
     try {
       return new Query(strings, values, adapter, queryFromPoolHandler, false, false);
     } catch (err) {
@@ -2361,7 +2366,8 @@ const SQL: typeof Bun.SQL = function SQL(
     handle: ReturnType<typeof adapter.createQueryHandle> | null,
     err: Error | null,
   ) {
-    const pooledConnection = this as PooledPostgresConnection | SQLiteConnection;
+    const pooledConnection = this as $ZigGeneratedClasses.PostgresSQLConnection | SQLiteConnection;
+
     if (err) {
       transactionQueries.delete(query);
       return query.reject(err);
@@ -2376,13 +2382,19 @@ const SQL: typeof Bun.SQL = function SQL(
     // For SQLite, pooledConnection is the connection itself
     // For PostgreSQL, pooledConnection.connection is the actual connection
     const actualConnection = pooledConnection.connection || pooledConnection;
+
+    if (!handle) {
+      transactionQueries.delete(query);
+      return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
+    }
+
     handle.run(actualConnection, query);
   }
 
   function queryFromTransaction(
     strings: string | TemplateStringsArray | SQLHelper | Query<any>,
     values: unknown[],
-    pooledConnection: PooledPostgresConnection | SQLiteConnection,
+    pooledConnection: $ZigGeneratedClasses.PostgresSQLConnection | SQLiteConnection,
     transactionQueries: Set<Query<any>>,
     state?: { readOnly?: boolean },
   ) {
@@ -2432,7 +2444,7 @@ const SQL: typeof Bun.SQL = function SQL(
   function unsafeQueryFromTransaction(
     strings: string | TemplateStringsArray | SQLHelper | Query<any>,
     values: unknown[],
-    pooledConnection: PooledPostgresConnection | SQLiteConnection,
+    pooledConnection: $ZigGeneratedClasses.PostgresSQLConnection | SQLiteConnection,
     transactionQueries: Set<Query<any>>,
   ) {
     try {
@@ -2463,7 +2475,10 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  const onReserveConnected: OnConnected<PooledPostgresConnection> = function onReserveConnected(err, pooledConnection) {
+  const onReserveConnected: OnConnected<$ZigGeneratedClasses.PostgresSQLConnection> = function onReserveConnected(
+    err,
+    pooledConnection,
+  ) {
     const { resolve, reject } = this;
     if (err) {
       return reject(err);

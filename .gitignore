@@ -188,3 +188,4 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 # autocopied in build script
 packages/bun-types/CLAUDE.md
+scripts/lldb-inline

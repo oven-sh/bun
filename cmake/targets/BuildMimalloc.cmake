@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    d0b7c26cdf7bb4104d7d64c7dd05e8f0d5a7d9d4
+    1cef3e8f4167733818f1883b2f3a9dd4754224cf
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -62,6 +62,12 @@ endif()
 
 if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
+endif()
+
+# Enable SIMD optimizations when not building for baseline (older CPUs)
+if(NOT ENABLE_BASELINE)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
 endif()
 
 if(DEBUG)

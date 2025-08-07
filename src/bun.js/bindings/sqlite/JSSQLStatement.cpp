@@ -1535,22 +1535,26 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     if (
         // fast path: ascii latin1 string is utf8
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length())) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length(), flags, &statement, &tail);
+        const char* sqlData = reinterpret_cast<const char*>(sqlString.span8().data());
+        const char* sqlEnd = sqlData + sqlString.length();
+        rc = sqlite3_prepare_v3(db, sqlData, sqlString.length(), flags, &statement, &tail);
         
         // Check if there are remaining statements
-        if (rc == SQLITE_OK && tail != nullptr) {
-            while (*tail && isspace(*tail)) tail++;
-            hasMultipleStatements = *tail != '\0';
+        if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
+            while (tail < sqlEnd && *tail && isspace(*tail)) tail++;
+            hasMultipleStatements = tail < sqlEnd && *tail != '\0';
         }
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();
-        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), flags, &statement, &tail);
+        const char* sqlData = utf8.data();
+        const char* sqlEnd = sqlData + utf8.length();
+        rc = sqlite3_prepare_v3(db, sqlData, utf8.length(), flags, &statement, &tail);
         
         // Check if there are remaining statements
-        if (rc == SQLITE_OK && tail != nullptr) {
-            while (*tail && isspace(*tail)) tail++;
-            hasMultipleStatements = *tail != '\0';
+        if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
+            while (tail < sqlEnd && *tail && isspace(*tail)) tail++;
+            hasMultipleStatements = tail < sqlEnd && *tail != '\0';
         }
     }
 

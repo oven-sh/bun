@@ -70,13 +70,7 @@ export fn OPENSSL_memory_free(ptr: *anyopaque) void {
 }
 
 export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
-    if (!bun.use_mimalloc) return switch (bun.Environment.os) {
-        .mac => std.c.malloc_size(ptr),
-        .linux => std.c.malloc_usable_size(ptr),
-        .windows => std.c._msize(@constCast(ptr)), // https://github.com/ziglang/zig/pull/24725
-        .wasm => @compileError("unreachable"),
-    };
-    return bun.mimalloc.mi_usable_size(ptr);
+    return bun.default_malloc_usable_size(ptr);
 }
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;

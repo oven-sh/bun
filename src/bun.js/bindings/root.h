@@ -102,7 +102,7 @@
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
 
-#if ENABLE_ASAN
+#if ASAN_ENABLED
 #define ENABLE_MIMALLOC 0
 #else
 #define ENABLE_MIMALLOC 1

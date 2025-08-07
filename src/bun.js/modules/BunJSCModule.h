@@ -359,7 +359,6 @@ JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
 JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     (JSGlobalObject * globalObject, CallFrame*))
 {
-
     size_t elapsed_msecs = 0;
     size_t user_msecs = 0;
     size_t system_msecs = 0;
@@ -372,6 +371,10 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
 #if ENABLE_MIMALLOC
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
+#else
+    (void)elapsed_msecs;
+    (void)user_msecs;
+    (void)system_msecs;
 #endif
 
     // mi_process_info produces incorrect rss size on linux.

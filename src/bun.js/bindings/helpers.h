@@ -84,8 +84,10 @@ static const WTF::String toString(ZigString str)
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
+#if !ENABLE_MIMALLOC
         ASSERT(!mi_is_in_heap_region(str.ptr));
         ASSERT(!mi_is_in_heap_region(untag(str.ptr)));
+#endif
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
         if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));

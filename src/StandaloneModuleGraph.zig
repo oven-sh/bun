@@ -635,13 +635,6 @@ pub const StandaloneModuleGraph = struct {
         };
 
         if (Environment.isWindows) {
-            if (inject_options.windows_hide_console) {
-                bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
-                    Output.err(err, "failed to disable console on executable", .{});
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                };
-            }
             // this should be done before embedding the content because rescle sanitizes the file
             if (inject_options.windows_icon) |icon_utf8| {
                 const tempfile_buf = bun.WPathBufferPool.get();
@@ -742,6 +735,14 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 input_result.bytes.deinit();
+
+                if (inject_options.windows_hide_console) {
+                    pe_file.setSubsystem(bun.pe.PEFile.Subsystem.GUI) catch |err| {
+                        Output.prettyErrorln("Failed to disable console on executable: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
+                }
 
                 switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {

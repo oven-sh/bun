@@ -260,6 +260,10 @@ type OnConnected<Connection> = (
 // Base interface for all query handles
 interface BaseQueryHandle<Connection> {
   run(connection: Connection, query: Query<any>): void;
+  done?(): void;
+  cancel?(): void;
+  setMode?(mode: SQLQueryResultMode): void;
+  setPendingValue?(value: any): void;
 }
 
 interface PostgresQueryHandle extends BaseQueryHandle<PooledPostgresConnection> {
@@ -1370,8 +1374,8 @@ class SQLiteAdapter implements DatabaseAdapter<SQLiteConnection, SQLiteQueryHand
 class Query<T = any> extends PublicPromise<T> {
   [_resolve]: (value: T) => void;
   [_reject]: (reason?: any) => void;
-  [_handle];
-  [_handler];
+  [_handle]: BaseQueryHandle<any> | null;
+  [_handler]: (query: Query<T>, handle: BaseQueryHandle<any>, ...rest: any[]) => any;
   [_queryStatus] = 0;
   [_strings];
   [_values];
@@ -1395,8 +1399,8 @@ class Query<T = any> extends PublicPromise<T> {
   constructor(
     strings: string | TemplateStringsArray | SQLHelper | Query<any>,
     values: any[],
-    adapter: DatabaseAdapter<any>,
-    queryFromHandler: (query: Query<T>, handle) => any,
+    adapter: DatabaseAdapter<any, any>,
+    queryFromHandler: (query: Query<T>, handle: BaseQueryHandle<any>, ...rest: any[]) => any,
     isUnsafe: boolean,
     isTransaction: boolean,
   ) {
@@ -1424,7 +1428,7 @@ class Query<T = any> extends PublicPromise<T> {
     }
   }
 
-  private getQueryHandle() {
+  private getQueryHandle(): BaseQueryHandle<any> | null {
     let handle = this[_handle];
     if (!handle) {
       try {
@@ -1605,8 +1609,10 @@ initPostgres(
         return;
       }
       $assert(result instanceof SQLResultArray, "Invalid result array");
-      // prepare for next query
-      query[_handle].setPendingValue(new SQLResultArray());
+
+      if (query[_handle] && query[_handle].setPendingValue) {
+        query[_handle].setPendingValue(new SQLResultArray());
+      }
 
       if (typeof commandTag === "string") {
         if (commandTag.length > 0) {
@@ -2311,11 +2317,16 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function queryFromPoolHandler(query, handle, err) {
+  function queryFromPoolHandler(
+    query: Query<any>,
+    handle: ReturnType<typeof adapter.createQueryHandle> | null,
+    err: Error | null,
+  ) {
     if (err) {
       // fail to create query
       return query.reject(err);
     }
+
     // query is cancelled
     if (!handle || query.cancelled) {
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
@@ -2344,8 +2355,13 @@ const SQL: typeof Bun.SQL = function SQL(
     const transactionQueries = this;
     transactionQueries.delete(query);
   }
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
-    const pooledConnection = this;
+  function queryFromTransactionHandler(
+    transactionQueries: Set<Query<any>>,
+    query: Query<any>,
+    handle: ReturnType<typeof adapter.createQueryHandle> | null,
+    err: Error | null,
+  ) {
+    const pooledConnection = this as PooledPostgresConnection | SQLiteConnection;
     if (err) {
       transactionQueries.delete(query);
       return query.reject(err);
@@ -2362,7 +2378,14 @@ const SQL: typeof Bun.SQL = function SQL(
     const actualConnection = pooledConnection.connection || pooledConnection;
     handle.run(actualConnection, query);
   }
-  function queryFromTransaction(strings, values, pooledConnection, transactionQueries, state?) {
+
+  function queryFromTransaction(
+    strings: string | TemplateStringsArray | SQLHelper | Query<any>,
+    values: unknown[],
+    pooledConnection: PooledPostgresConnection | SQLiteConnection,
+    transactionQueries: Set<Query<any>>,
+    state?: { readOnly?: boolean },
+  ) {
     try {
       // Check if this is a write operation in a read-only transaction
       if (state?.readOnly) {
@@ -2406,7 +2429,12 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.reject(err);
     }
   }
-  function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
+  function unsafeQueryFromTransaction(
+    strings: string | TemplateStringsArray | SQLHelper | Query<any>,
+    values: unknown[],
+    pooledConnection: PooledPostgresConnection | SQLiteConnection,
+    transactionQueries: Set<Query<any>>,
+  ) {
     try {
       const query = new Query(
         strings,

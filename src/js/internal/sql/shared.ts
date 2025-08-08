@@ -39,7 +39,7 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   }
 
   if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected options to be of adapter ${adapter}, but got ${options.adapter}`);
+    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
   }
 }
 

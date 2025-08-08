@@ -245,5 +245,3 @@ const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-
-const std = @import("std");

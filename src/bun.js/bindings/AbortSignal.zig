@@ -142,6 +142,7 @@ pub const AbortSignal = opaque {
         event_loop_timer: jsc.API.Timer.EventLoopTimer,
 
         // The `Timeout`'s lifetime is owned by the AbortSignal.
+        // But this does have a ref count increment.
         signal: *AbortSignal,
 
         /// "epoch" is reused.
@@ -181,22 +182,25 @@ pub const AbortSignal = opaque {
             this.event_loop_timer.state = .FIRED;
             this.cancel(vm);
 
-            if (this.signal.aborted()) {
-                // This lifetime is owned by the AbortSignal.
-                return;
-            }
+            // Dispatching the signal may cause the Timeout to get freed.
+            dispatch(vm, this.signal);
+        }
 
+        fn dispatch(vm: *jsc.VirtualMachine, signal_ptr: *AbortSignal) void {
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
-            this.signal.signal(vm.global, .Timeout);
+            signal_ptr.signal(vm.global, .Timeout);
+            signal_ptr.unref();
         }
 
+        // This may run inside the "signal" call.
         fn deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
             this.cancel(vm);
             bun.destroy(this);
         }
 
+        /// Caller is expected to have already ref'd the AbortSignal.
         export fn AbortSignal__Timeout__create(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
             return Timeout.init(vm, signal_, milliseconds);
         }

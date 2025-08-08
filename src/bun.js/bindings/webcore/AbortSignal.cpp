@@ -68,6 +68,7 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     auto signal = adoptRef(*new AbortSignal(&context));
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
+    signal->ref();
     return signal;
 }
 
@@ -91,7 +92,7 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
     , m_reason(reason)
-    , m_aborted(aborted == Aborted::Yes)
+    , m_flags(aborted == Aborted::Yes ? static_cast<uint32_t>(AbortSignalFlags::Aborted) : 0)
 {
     ASSERT(reason);
 }
@@ -140,22 +141,23 @@ void AbortSignal::cancelTimer()
     }
 }
 
-// https://dom.spec.whatwg.org/#abortsignal-signal-abort
-void AbortSignal::signalAbort(JSC::JSValue reason)
+void AbortSignal::markAborted(JSC::JSValue reason)
 {
-    // 1. If signal's aborted flag is set, then return.
-    if (m_aborted)
-        return;
-
-    // 2. Set signal’s aborted flag.
-    m_aborted = true;
+    applyFlags(static_cast<uint32_t>(AbortSignalFlags::Aborted) | static_cast<uint32_t>(AbortSignalFlags::IsFiringEventListeners));
     m_sourceSignals.clear();
-    cancelTimer();
 
     // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
     // https://bugs.webkit.org/show_bug.cgi?id=236353
     ASSERT(reason);
     m_reason.setWeakly(reason);
+
+    cancelTimer();
+}
+
+void AbortSignal::runAbortSteps()
+{
+    auto reason = m_reason.getValue();
+    ASSERT(reason);
 
     auto callbacks = std::exchange(m_native_callbacks, {});
     for (auto callback : callbacks) {
@@ -163,22 +165,46 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
         func(ctx, JSC::JSValue::encode(reason));
     }
 
-    auto algorithms = std::exchange(m_algorithms, {});
-    for (auto& algorithm : algorithms)
+    // 1. For each algorithm of signal's abort algorithms: run algorithm.
+    //    2. Empty signal's abort algorithms. (std::exchange empties)
+    for (auto& algorithm : std::exchange(m_algorithms, {}))
         algorithm.second(reason);
 
-    // 5. Fire an event named abort at signal.
+    // 3. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
+}
 
-    // 6. For each dependent signal of signal, call signal's signalAbort method with reason.
-    for (Ref dependentSignal : std::exchange(m_dependentSignals, {}))
-        dependentSignal->signalAbort(reason);
+// https://dom.spec.whatwg.org/#abortsignal-signal-abort
+void AbortSignal::signalAbort(JSC::JSValue reason)
+{
+    // 1. If signal's aborted flag is set, then return.
+    if (aborted())
+        return;
+
+    // 2. Set signal’s abort reason to reason if it is given; otherwise to a new "AbortError" DOMException.
+    markAborted(reason);
+
+    Vector<Ref<AbortSignal>> dependentSignalsToAbort;
+
+    for (Ref dependentSignal : std::exchange(m_dependentSignals, {})) {
+        if (!dependentSignal->aborted()) {
+            dependentSignal->markAborted(reason);
+            dependentSignalsToAbort.append(WTFMove(dependentSignal));
+        }
+    }
+
+    // 5. Run the abort steps
+    runAbortSteps();
+
+    // 6. For each dependentSignal of dependentSignalsToAbort, run the abort steps for dependentSignal.
+    for (auto& dependentSignal : dependentSignalsToAbort)
+        dependentSignal->runAbortSteps();
 }
 
 void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
 {
     // 1. If signal's aborted flag is set, then return.
-    if (m_aborted)
+    if (aborted())
         return;
 
     m_commonReason = reason;
@@ -219,7 +245,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
+    setHasAbortEventListener(hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty());
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

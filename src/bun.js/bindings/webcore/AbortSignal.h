@@ -62,6 +62,14 @@ typedef void* AbortSignalTimeout;
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
+private:
+    enum class AbortSignalFlags : uint32_t {
+        Dependent = 1,
+        Aborted = 2,
+        HasAbortEventListener = 4,
+        IsFiringEventListeners = 8,
+    };
+
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
     WEBCORE_EXPORT ~AbortSignal();
@@ -78,7 +86,10 @@ public:
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
-    bool aborted() const { return m_aborted; }
+    bool aborted() const { return m_flags & static_cast<uint32_t>(AbortSignalFlags::Aborted); }
+    void markAborted(JSC::JSValue reason);
+    void runAbortSteps();
+
     const JSValueInWrappedObject& reason() const { return m_reason; }
     JSValue jsReason(JSC::JSGlobalObject& globalObject);
     CommonAbortReason commonReason() const { return m_commonReason; }
@@ -87,7 +98,8 @@ public:
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
-    bool hasAbortEventListener() const { return m_hasAbortEventListener; }
+    bool hasAbortEventListener() const { return m_flags & static_cast<uint32_t>(AbortSignalFlags::HasAbortEventListener); }
+    bool isFiringEventListeners() const { return m_flags & static_cast<uint32_t>(AbortSignalFlags::IsFiringEventListeners); }
 
     using RefCounted::deref;
     using RefCounted::ref;
@@ -108,7 +120,7 @@ public:
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
-    bool isDependent() const { return m_isDependent; }
+    bool isDependent() const { return m_flags & static_cast<uint32_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;
 
@@ -119,10 +131,44 @@ private:
     };
     explicit AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
 
-    void markAsDependent() { m_isDependent = true; }
+    void markAsDependent() { setIsDependent(true); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
     void cancelTimer();
+
+    void applyFlags(uint32_t flags) { m_flags |= flags; }
+    void setIsDependent(bool isDependent)
+    {
+        if (isDependent) {
+            m_flags |= static_cast<uint32_t>(AbortSignalFlags::Dependent);
+        } else {
+            m_flags &= ~static_cast<uint32_t>(AbortSignalFlags::Dependent);
+        }
+    }
+    void setAborted(bool aborted)
+    {
+        if (aborted) {
+            m_flags |= static_cast<uint32_t>(AbortSignalFlags::Aborted);
+        } else {
+            m_flags &= ~static_cast<uint32_t>(AbortSignalFlags::Aborted);
+        }
+    }
+    void setHasAbortEventListener(bool hasAbortEventListener)
+    {
+        if (hasAbortEventListener) {
+            m_flags |= static_cast<uint32_t>(AbortSignalFlags::HasAbortEventListener);
+        } else {
+            m_flags &= ~static_cast<uint32_t>(AbortSignalFlags::HasAbortEventListener);
+        }
+    }
+    void setIsFiringEventListeners(bool isFiringEventListeners)
+    {
+        if (isFiringEventListeners) {
+            m_flags |= static_cast<uint32_t>(AbortSignalFlags::IsFiringEventListeners);
+        } else {
+            m_flags &= ~static_cast<uint32_t>(AbortSignalFlags::IsFiringEventListeners);
+        }
+    }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return AbortSignalEventTargetInterfaceType; }
@@ -141,9 +187,7 @@ private:
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
-    bool m_aborted : 1 = false;
-    bool m_hasAbortEventListener : 1 = false;
-    bool m_isDependent : 1 = false;
+    uint32_t m_flags { 0 };
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

@@ -1462,10 +1462,6 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
     }
 }
 
-pub const fast_debug_build_cmd = .None;
-pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
-    Environment.isDebug;
-
 pub const renamer = @import("./renamer.zig");
 // TODO: Rename to SourceMap as this is a struct.
 pub const sourcemap = @import("./sourcemap/sourcemap.zig");
@@ -1481,10 +1477,8 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 }
 
 comptime {
-    if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
-        _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
-        _ = @import("./cli/upgrade_command.zig").Version;
-    }
+    _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
+    _ = @import("./cli/upgrade_command.zig").Version;
 }
 
 pub fn DebugOnlyDisabler(comptime Type: type) type {
@@ -3372,7 +3366,13 @@ pub fn OrdinalT(comptime Int: type) type {
             return @intFromEnum(ord) + 1;
         }
 
-        pub fn add(ord: @This(), inc: Int) @This() {
+        /// Add two ordinal numbers together. Both are converted to zero-based before addition.
+        pub fn add(ord: @This(), b: @This()) @This() {
+            return fromZeroBased(ord.zeroBased() + b.zeroBased());
+        }
+
+        /// Add a scalar value to an ordinal number
+        pub fn addScalar(ord: @This(), inc: Int) @This() {
             return fromZeroBased(ord.zeroBased() + inc);
         }
 
@@ -3532,6 +3532,10 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
             pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            }
+
+            pub inline fn unwrapGet(oi: Optional) ?backing_int {
+                return if (oi == .none) null else @intFromEnum(oi);
             }
         };
     };

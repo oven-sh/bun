@@ -260,6 +260,10 @@ describe("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("prevents underflow when unref called on zero refcount", async () => {
+      // This tests the fix for napi_reference_unref underflow protection
+      await checkSameOutput("test_ref_unref_underflow", []);
+    });
   });
 
   describe("napi_async_work", () => {
@@ -472,6 +476,12 @@ describe("napi", () => {
   describe("create_bigint_words", () => {
     it("works", async () => {
       await checkSameOutput("test_create_bigint_words", []);
+    });
+
+    it("returns correct word count with small buffer", async () => {
+      // This tests the fix for the BigInt word count bug
+      // When buffer is smaller than needed, word_count should still return actual words needed
+      await checkSameOutput("test_bigint_word_count", []);
     });
   });
 

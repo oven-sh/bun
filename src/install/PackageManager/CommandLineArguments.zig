@@ -67,7 +67,9 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
     clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
-    clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
+    clap.parseParam("--filter <STR>...                     Update packages for the matching workspaces") catch unreachable,
+    clap.parseParam("-r, --recursive                       Update packages in all workspaces") catch unreachable,
+    clap.parseParam("<POS> ...                             \"name\" of packages to update") catch unreachable,
 });
 
 pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -123,7 +125,8 @@ const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
     // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-    clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
+    clap.parseParam("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace") catch unreachable,
+    clap.parseParam("-r, --recursive                        Check outdated packages in all workspaces") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });
 
@@ -190,6 +193,7 @@ no_summary: bool = false,
 latest: bool = false,
 interactive: bool = false,
 json_output: bool = false,
+recursive: bool = false,
 filters: []const string = &.{},
 
 pack_destination: string = "",
@@ -789,6 +793,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .outdated) {
         // fake --dry-run, we don't actually resolve+clean the lockfile
         cli.dry_run = true;
+        cli.recursive = args.flag("--recursive");
         // cli.json_output = args.flag("--json");
     }
 
@@ -904,6 +909,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
         cli.interactive = args.flag("--interactive");
+        cli.recursive = args.flag("--recursive");
     }
 
     const specified_backend: ?PackageInstall.Method = brk: {

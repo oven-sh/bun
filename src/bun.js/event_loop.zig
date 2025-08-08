@@ -523,13 +523,6 @@ pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void
     this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
 }
 
-pub fn callTask(timer: *uws.Timer) callconv(.C) void {
-    const task = Task.from(timer.as(*anyopaque));
-    defer timer.deinit(true);
-
-    VirtualMachine.get().enqueueTask(task);
-}
-
 pub fn ensureWaker(this: *EventLoop) void {
     jsc.markBinding(@src());
     if (this.virtual_machine.event_loop_handle == null) {

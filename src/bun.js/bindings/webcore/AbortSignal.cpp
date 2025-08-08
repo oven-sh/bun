@@ -92,7 +92,7 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
     , m_reason(reason)
-    , m_flags(aborted == Aborted::Yes ? static_cast<uint32_t>(AbortSignalFlags::Aborted) : 0)
+    , m_flags(aborted == Aborted::Yes ? static_cast<uint8_t>(AbortSignalFlags::Aborted) : 0)
 {
     ASSERT(reason);
 }
@@ -143,7 +143,7 @@ void AbortSignal::cancelTimer()
 
 void AbortSignal::markAborted(JSC::JSValue reason)
 {
-    applyFlags(static_cast<uint32_t>(AbortSignalFlags::Aborted) | static_cast<uint32_t>(AbortSignalFlags::IsFiringEventListeners));
+    applyFlags(static_cast<uint8_t>(AbortSignalFlags::Aborted) | static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
     m_sourceSignals.clear();
 
     // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.

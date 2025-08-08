@@ -6,6 +6,34 @@ enum SSLMode {
   verify_full = 4,
 }
 
+enum SQLCommand {
+  insert = 0,
+  update = 1,
+  updateSet = 2,
+  where = 3,
+  whereIn = 4,
+  none = -1,
+}
+
+function commandToString(command: SQLCommand): string {
+  switch (command) {
+    case SQLCommand.insert:
+      return "INSERT";
+    case SQLCommand.updateSet:
+    case SQLCommand.update:
+      return "UPDATE";
+    case SQLCommand.whereIn:
+    case SQLCommand.where:
+      return "WHERE";
+    default:
+      return "";
+  }
+}
+
+function escapeIdentifier(str: string) {
+  return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+}
+
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {
     return SSLMode.disable;
@@ -214,4 +242,112 @@ function normalizeQuery(
   return [query, binding_values];
 }
 
-export default { SSLMode, normalizeSSLMode, normalizeQuery };
+function detectCommand(query: string): SQLCommand {
+  const text = query.toLowerCase().trim();
+  const text_len = text.length;
+
+  let token = "";
+  let command = SQLCommand.none;
+  let quoted = false;
+  for (let i = 0; i < text_len; i++) {
+    const char = text[i];
+    switch (char) {
+      case " ": // Space
+      case "\n": // Line feed
+      case "\t": // Tab character
+      case "\r": // Carriage return
+      case "\f": // Form feed
+      case "\v": {
+        switch (token) {
+          case "insert": {
+            if (command === SQLCommand.none) {
+              return SQLCommand.insert;
+            }
+            return command;
+          }
+          case "update": {
+            if (command === SQLCommand.none) {
+              command = SQLCommand.update;
+              token = "";
+              continue; // try to find SET
+            }
+            return command;
+          }
+          case "where": {
+            command = SQLCommand.where;
+            token = "";
+            continue; // try to find IN
+          }
+          case "set": {
+            if (command === SQLCommand.update) {
+              command = SQLCommand.updateSet;
+              token = "";
+              continue; // try to find WHERE
+            }
+            return command;
+          }
+          case "in": {
+            if (command === SQLCommand.where) {
+              return SQLCommand.whereIn;
+            }
+            return command;
+          }
+          default: {
+            token = "";
+            continue;
+          }
+        }
+      }
+      default: {
+        // skip quoted commands
+        if (char === '"') {
+          quoted = !quoted;
+          continue;
+        }
+        if (!quoted) {
+          token += char;
+        }
+      }
+    }
+  }
+  if (token) {
+    switch (command) {
+      case SQLCommand.none: {
+        switch (token) {
+          case "insert":
+            return SQLCommand.insert;
+          case "update":
+            return SQLCommand.update;
+          case "where":
+            return SQLCommand.where;
+          default:
+            return SQLCommand.none;
+        }
+      }
+      case SQLCommand.update: {
+        if (token === "set") {
+          return SQLCommand.updateSet;
+        }
+        return SQLCommand.update;
+      }
+      case SQLCommand.where: {
+        if (token === "in") {
+          return SQLCommand.whereIn;
+        }
+        return SQLCommand.where;
+      }
+    }
+  }
+
+  return command;
+}
+
+export default {
+  SSLMode,
+  normalizeSSLMode,
+  normalizeQuery,
+  escapeIdentifier,
+  SQLCommand,
+  commandToString,
+  detectCommand,
+};

@@ -3916,15 +3916,14 @@ uint8_t GlobalObject::drainMicrotasks()
         }
         scope.clearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
-        return 0;
     }
 
     return 0;
 }
 
-extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
+extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
-    globalObject->drainMicrotasks();
+    return globalObject->drainMicrotasks();
 }
 
 extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)

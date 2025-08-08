@@ -568,7 +568,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: unifiedTests ? undefined : os === "darwin" ? 7 : 10,
+    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     command:
       os === "windows"

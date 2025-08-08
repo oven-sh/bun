@@ -523,13 +523,6 @@ pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void
     this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
 }
 
-pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-    // TODO: make this more efficient!
-    const loop = this.virtual_machine.uwsLoop();
-    var timer = uws.Timer.createFallthrough(loop, task.ptr());
-    timer.set(task.ptr(), callTask, timeout, 0);
-}
-
 pub fn callTask(timer: *uws.Timer) callconv(.C) void {
     const task = Task.from(timer.as(*anyopaque));
     defer timer.deinit(true);

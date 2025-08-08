@@ -650,34 +650,6 @@ pub const PEFile = struct {
         try writer.writeAll(self.data.items[0..file_size]);
     }
 
-    /// Validate the PE file structure
-    pub fn validate(self: *const PEFile) !void {
-        // Check DOS header
-        const dos_header = self.getDosHeader();
-        if (dos_header.e_magic != DOS_SIGNATURE) {
-            return error.InvalidDOSSignature;
-        }
-
-        // Check PE header
-        const pe_header = self.getPEHeader();
-        if (pe_header.signature != PE_SIGNATURE) {
-            return error.InvalidPESignature;
-        }
-
-        // Check optional header
-        const optional_header = self.getOptionalHeader();
-        if (optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
-            return error.UnsupportedPEFormat;
-        }
-
-        // Validate section headers
-        const section_headers = self.getSectionHeaders();
-        for (section_headers) |section| {
-            if (section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len) {
-                return error.InvalidSectionData;
-            }
-        }
-    }
 
     // Resource editing functionality
     fn getResourceSection(self: *const PEFile) ?*SectionHeader {
@@ -702,65 +674,6 @@ pub const PEFile = struct {
         return @ptrCast(@alignCast(self.data.items.ptr + rsrc_section.pointer_to_raw_data));
     }
 
-    fn findResourceEntry(self: *const PEFile, dir_offset: u32, resource_type: u32, resource_id: u32, language_id: u16) !?*ResourceDataEntry {
-        const rsrc_section = self.getResourceSection() orelse return null;
-        const rsrc_base = rsrc_section.pointer_to_raw_data;
-
-        // Level 1: Type
-        const type_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + dir_offset));
-        const type_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + dir_offset + @sizeOf(ResourceDirectoryTable))));
-
-        const total_entries = type_dir.number_of_name_entries + type_dir.number_of_id_entries;
-        var type_entry: ?*ResourceDirectoryEntry = null;
-
-        for (0..total_entries) |i| {
-            const v = type_entries[i].name_or_id;
-            if ((v & 0x80000000) != 0) continue; // skip named types
-            if ((v & 0x7FFFFFFF) == resource_type) {
-                type_entry = &type_entries[i];
-                break;
-            }
-        }
-
-        if (type_entry == null) return null;
-        if ((type_entry.?.offset_to_data & 0x80000000) == 0) return null; // Must be directory
-
-        // Level 2: Name/ID
-        const name_dir_offset = type_entry.?.offset_to_data & 0x7FFFFFFF;
-        const name_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset));
-        const name_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset + @sizeOf(ResourceDirectoryTable))));
-
-        const name_total = name_dir.number_of_name_entries + name_dir.number_of_id_entries;
-        var name_entry: ?*ResourceDirectoryEntry = null;
-        for (0..name_total) |i| {
-            const v = name_entries[i].name_or_id;
-            if ((v & 0x80000000) != 0) continue; // skip named resources
-            if ((v & 0x7FFFFFFF) == resource_id) {
-                name_entry = &name_entries[i];
-                break;
-            }
-        }
-
-        if (name_entry == null) return null;
-        if ((name_entry.?.offset_to_data & 0x80000000) == 0) return null; // Must be directory
-
-        // Level 3: Language
-        const lang_dir_offset = name_entry.?.offset_to_data & 0x7FFFFFFF;
-        const lang_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset));
-        const lang_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset + @sizeOf(ResourceDirectoryTable))));
-
-        const lang_total = lang_dir.number_of_name_entries + lang_dir.number_of_id_entries;
-        for (0..lang_total) |i| {
-            if ((lang_entries[i].name_or_id & 0x7FFFFFFF) == language_id) {
-                if ((lang_entries[i].offset_to_data & 0x80000000) == 0) {
-                    // This is a data entry
-                    return @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_entries[i].offset_to_data));
-                }
-            }
-        }
-
-        return null;
-    }
 
     pub fn applyWindowsSettings(self: *PEFile, settings: *const bun.options.WindowsSettings, allocator: Allocator) !void {
         // Clear Security directory if present (any modification invalidates signature)
@@ -1635,15 +1548,6 @@ const ResourceBuilder = struct {
 };
 
 /// Align size to the nearest multiple of alignment
-/// @deprecated Use alignSizeChecked instead for proper error handling
-fn alignSize(size: u32, alignment: u32) u32 {
-    if (alignment == 0) return size;
-    // Check for overflow
-    if (size > std.math.maxInt(u32) - alignment + 1) return std.math.maxInt(u32);
-    return (size + alignment - 1) & ~(alignment - 1);
-}
-
-/// Align size to the nearest multiple of alignment (fallible version)
 fn alignSizeChecked(size: u32, alignment: u32) !u32 {
     if (alignment == 0) return size;
     const add = alignment - 1;

@@ -250,7 +250,8 @@ pub const PEFile = struct {
 
         // Validate e_lfanew offset is within file bounds
         if (dos_header.e_lfanew < @sizeOf(DOSHeader) or
-            dos_header.e_lfanew + @sizeOf(PEHeader) > data.items.len) {
+            dos_header.e_lfanew + @sizeOf(PEHeader) > data.items.len)
+        {
             return error.InvalidPEFile;
         }
 
@@ -289,7 +290,7 @@ pub const PEFile = struct {
         // The SizeOfHeaders field in OptionalHeader tells us the total size of headers
         const headers_end = optional_header.size_of_headers;
         const needed_space = section_headers_offset + @sizeOf(SectionHeader) * (pe_header.number_of_sections + 1);
-        
+
         if (needed_space > headers_end) {
             // Mark that we'll need header growth if adding sections
             // This will be checked in addBunSection
@@ -323,12 +324,12 @@ pub const PEFile = struct {
         if (self.num_sections >= 95) { // PE limit is 96 sections
             return error.TooManySections;
         }
-        
+
         // Check if we have space for the new section header
         const headers_end = optional_header.size_of_headers;
         const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
         const needed_space = new_section_offset + @sizeOf(SectionHeader);
-        
+
         if (needed_space > headers_end) {
             // Not enough space in headers for a new section
             // Header growth would be needed but is not implemented
@@ -458,7 +459,7 @@ pub const PEFile = struct {
     /// Calculate PE checksum using the standard Windows algorithm
     pub fn calculateChecksum(self: *const PEFile) u32 {
         const data = self.data.items;
-        
+
         // Calculate actual file size from section headers
         var actual_size: usize = self.data.items.len;
         const sections = self.getSectionHeaders();
@@ -472,7 +473,7 @@ pub const PEFile = struct {
         if (actual_end > 0 and actual_end < actual_size) {
             actual_size = actual_end;
         }
-        
+
         const file_size = actual_size;
 
         // Find checksum field offset
@@ -898,7 +899,8 @@ pub const PEFile = struct {
                         var debug_section: ?*SectionHeader = null;
                         for (self.getSectionHeaders()) |*sec| {
                             if (sec.virtual_address <= debug_dir.virtual_address and
-                                sec.virtual_address + sec.virtual_size > debug_dir.virtual_address) {
+                                sec.virtual_address + sec.virtual_size > debug_dir.virtual_address)
+                            {
                                 debug_section = sec;
                                 break;
                             }
@@ -907,13 +909,13 @@ pub const PEFile = struct {
                         if (debug_section) |sec| {
                             const debug_offset = sec.pointer_to_raw_data + (debug_dir.virtual_address - sec.virtual_address);
                             const debug_entries = debug_dir.size / @sizeOf(DebugDirectory);
-                            
+
                             if (debug_offset + debug_dir.size <= self.data.items.len) {
                                 var i: u32 = 0;
                                 while (i < debug_entries) : (i += 1) {
                                     const entry_offset = debug_offset + i * @sizeOf(DebugDirectory);
                                     if (entry_offset + @sizeOf(DebugDirectory) > self.data.items.len) break;
-                                    
+
                                     const debug_entry: *DebugDirectory = @ptrCast(@alignCast(self.data.items.ptr + entry_offset));
                                     if (debug_entry.pointer_to_raw_data >= move_start) {
                                         debug_entry.pointer_to_raw_data += @intCast(size_increase);

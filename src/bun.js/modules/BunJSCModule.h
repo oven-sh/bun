@@ -54,7 +54,21 @@
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
+// Add mach-o related headers for reading sections
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#include <mach-o/nlist.h>
 #endif
+#endif
+#endif
+
+#if OS(LINUX)
+#if ASSERT_ENABLED
+// Add ELF related headers for reading sections
+#include <elf.h>
+#include <link.h>
+#include <dlfcn.h>
 #endif
 #endif
 
@@ -348,6 +362,213 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
             zoneSizesObject);
+    }
+
+    // Read Zig allocation counters dynamically from the BUNHEAPCNT section
+    {
+        const struct mach_header_64* header = (struct mach_header_64*)_dyld_get_image_header(0);
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        const struct load_command* cmd = (const struct load_command*)(header + 1);
+
+        const struct section_64* target_sect = NULL;
+        uint8_t target_index = 0;
+        const struct symtab_command* symtab = NULL;
+
+        uint8_t sect_index = 1;
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (cmd->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64* seg = (const struct segment_command_64*)cmd;
+                const struct section_64* sect = (const struct section_64*)(seg + 1);
+                for (uint32_t j = 0; j < seg->nsects; j++) {
+                    if (strcmp(sect[j].segname, "__DATA") == 0 && strcmp(sect[j].sectname, "BUNHEAPCNT") == 0) {
+                        target_sect = &sect[j];
+                        target_index = sect_index;
+                    }
+                    sect_index++;
+                }
+            } else if (cmd->cmd == LC_SYMTAB) {
+                symtab = (const struct symtab_command*)cmd;
+            }
+            cmd = (const struct load_command*)((const char*)cmd + cmd->cmdsize);
+        }
+
+        if (symtab && target_sect) {
+            const char* base = (const char*)header;
+            const struct nlist_64* symbols = (const struct nlist_64*)(base + symtab->symoff);
+            const char* strtab = base + symtab->stroff;
+
+            uint64_t sect_start = target_sect->addr;
+            uint64_t sect_end = sect_start + target_sect->size;
+
+            Vector<std::pair<Identifier, size_t>> zigCounts;
+
+            for (uint32_t i = 0; i < symtab->nsyms; i++) {
+                const struct nlist_64* sym = &symbols[i];
+                if (!(sym->n_type & N_SECT) || sym->n_sect != target_index) continue;
+                if (sym->n_value < sect_start || sym->n_value >= sect_end) continue;
+
+                uintptr_t* ptr = (uintptr_t*)(sym->n_value + slide);
+                const char* name = strtab + sym->n_un.n_strx;
+
+                // Parse the type name from the symbol name
+                // Symbol format: "Bun__allocationCounter__Bun__TypeName"
+                const char* prefix = "Bun__allocationCounter__Bun__";
+                size_t prefix_len = strlen(prefix);
+                if (strncmp(name, prefix, prefix_len) == 0) {
+                    const char* type_name = name + prefix_len;
+                    size_t count = *ptr;
+                    if (count > 0) {
+                        zigCounts.append(std::make_pair(
+                            Identifier::fromString(vm, String::fromUTF8(type_name)),
+                            count));
+                    }
+                }
+            }
+
+            if (!zigCounts.isEmpty()) {
+                // Sort by count first, then by name
+                std::sort(zigCounts.begin(), zigCounts.end(),
+                    [](const std::pair<Identifier, size_t>& a,
+                        const std::pair<Identifier, size_t>& b) {
+                        if (a.second == b.second) {
+                            WTF::StringView left = a.first.string();
+                            WTF::StringView right = b.first.string();
+                            return WTF::codePointCompare(left, right) == std::strong_ordering::less;
+                        }
+                        return a.second > b.second;
+                    });
+
+                auto* zigObject = constructEmptyObject(globalObject);
+                for (auto& it : zigCounts) {
+                    zigObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+                }
+
+                object->putDirect(vm, Identifier::fromString(vm, "zig"_s), zigObject);
+            }
+        }
+    }
+#endif
+#endif
+
+#if OS(LINUX)
+#if ASSERT_ENABLED
+    // Read Zig allocation counters dynamically from the .bunheapcnt section on Linux
+    {
+        // Get information about the current executable
+        struct CallbackData {
+            Vector<std::pair<Identifier, size_t>>* zigCounts;
+            VM* vm;
+        };
+        
+        CallbackData data = { 
+            .zigCounts = new Vector<std::pair<Identifier, size_t>>(),
+            .vm = &vm
+        };
+        
+        auto callback = [](struct dl_phdr_info* info, size_t size, void* user_data) -> int {
+            CallbackData* data = static_cast<CallbackData*>(user_data);
+            
+            // Only process the main executable (first entry with empty name)
+            if (info->dlpi_name && strlen(info->dlpi_name) > 0) {
+                return 0;
+            }
+            
+            const ElfW(Phdr)* phdr = info->dlpi_phdr;
+            for (int i = 0; i < info->dlpi_phnum; i++) {
+                if (phdr[i].p_type == PT_LOAD && (phdr[i].p_flags & PF_R)) {
+                    // Map the segment to find ELF header
+                    ElfW(Ehdr)* ehdr = (ElfW(Ehdr)*)(info->dlpi_addr + phdr[i].p_vaddr - phdr[i].p_offset);
+                    
+                    // Check if this looks like a valid ELF header
+                    if (ehdr->e_ident[EI_MAG0] != ELFMAG0 || 
+                        ehdr->e_ident[EI_MAG1] != ELFMAG1 ||
+                        ehdr->e_ident[EI_MAG2] != ELFMAG2 || 
+                        ehdr->e_ident[EI_MAG3] != ELFMAG3) {
+                        continue;
+                    }
+                    
+                    // Find section header table
+                    ElfW(Shdr)* shdr = (ElfW(Shdr)*)((char*)ehdr + ehdr->e_shoff);
+                    char* shstrtab = (char*)ehdr + shdr[ehdr->e_shstrndx].sh_offset;
+                    
+                    ElfW(Shdr)* target_sect = nullptr;
+                    ElfW(Shdr)* symtab_sect = nullptr;
+                    ElfW(Shdr)* strtab_sect = nullptr;
+                    
+                    // Find .bunheapcnt section and symbol table
+                    for (int j = 0; j < ehdr->e_shnum; j++) {
+                        const char* sect_name = shstrtab + shdr[j].sh_name;
+                        if (strcmp(sect_name, ".bunheapcnt") == 0) {
+                            target_sect = &shdr[j];
+                        } else if (shdr[j].sh_type == SHT_SYMTAB) {
+                            symtab_sect = &shdr[j];
+                            strtab_sect = &shdr[shdr[j].sh_link];
+                        }
+                    }
+                    
+                    if (target_sect && symtab_sect && strtab_sect) {
+                        ElfW(Sym)* symbols = (ElfW(Sym)*)((char*)ehdr + symtab_sect->sh_offset);
+                        char* strtab = (char*)ehdr + strtab_sect->sh_offset;
+                        size_t num_symbols = symtab_sect->sh_size / sizeof(ElfW(Sym));
+                        
+                        uintptr_t sect_start = info->dlpi_addr + target_sect->sh_addr;
+                        uintptr_t sect_end = sect_start + target_sect->sh_size;
+                        
+                        for (size_t k = 0; k < num_symbols; k++) {
+                            ElfW(Sym)* sym = &symbols[k];
+                            if (sym->st_shndx == SHN_UNDEF) continue;
+                            
+                            uintptr_t sym_addr = info->dlpi_addr + sym->st_value;
+                            if (sym_addr < sect_start || sym_addr >= sect_end) continue;
+                            
+                            const char* name = strtab + sym->st_name;
+                            
+                            // Parse the type name from the symbol name
+                            // Symbol format: "Bun__allocationCounter__Bun__TypeName"
+                            const char* prefix = "Bun__allocationCounter__Bun__";
+                            size_t prefix_len = strlen(prefix);
+                            if (strncmp(name, prefix, prefix_len) == 0) {
+                                const char* type_name = name + prefix_len;
+                                uintptr_t* counter_ptr = (uintptr_t*)sym_addr;
+                                size_t count = *counter_ptr;
+                                if (count > 0) {
+                                    data->zigCounts->append(std::make_pair(
+                                        Identifier::fromString(*data->vm, String::fromUTF8(type_name)),
+                                        count));
+                                }
+                            }
+                        }
+                    }
+                    return 1; // Stop after processing main executable
+                }
+            }
+            return 0;
+        };
+        
+        dl_iterate_phdr(callback, &data);
+        
+        if (!data.zigCounts->isEmpty()) {
+            // Sort by count first, then by name
+            std::sort(data.zigCounts->begin(), data.zigCounts->end(),
+                [](const std::pair<Identifier, size_t>& a,
+                    const std::pair<Identifier, size_t>& b) {
+                    if (a.second == b.second) {
+                        WTF::StringView left = a.first.string();
+                        WTF::StringView right = b.first.string();
+                        return WTF::codePointCompare(left, right) == std::strong_ordering::less;
+                    }
+                    return a.second > b.second;
+                });
+
+            auto* zigObject = constructEmptyObject(globalObject);
+            for (auto& it : *data.zigCounts) {
+                zigObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+            }
+
+            object->putDirect(vm, Identifier::fromString(vm, "zig"_s), zigObject);
+        }
+        
+        delete data.zigCounts;
     }
 #endif
 #endif

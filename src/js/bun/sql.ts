@@ -68,34 +68,6 @@ type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) =
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
-function normalizeSSLMode(value: string): SSLMode {
-  if (!value) {
-    return SSLMode.disable;
-  }
-
-  value = (value + "").toLowerCase();
-  switch (value) {
-    case "disable":
-      return SSLMode.disable;
-    case "prefer":
-      return SSLMode.prefer;
-    case "require":
-    case "required":
-      return SSLMode.require;
-    case "verify-ca":
-    case "verify_ca":
-      return SSLMode.verify_ca;
-    case "verify-full":
-    case "verify_full":
-      return SSLMode.verify_full;
-    default: {
-      break;
-    }
-  }
-
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
-}
-
 enum SQLQueryFlags {
   none = 0,
   allowUnsafeTransaction = 1 << 0,

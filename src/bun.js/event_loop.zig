@@ -106,16 +106,21 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     }
 }
 
-extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) void;
+const DrainMicrotasksResult = enum(u8) {
+    success = 0,
+    JSExecutionTerminated = 1,
+};
+extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
     jsc.markBinding(@src());
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalObject, @src());
-    defer scope.deinit();
-
     jsc_vm.releaseWeakRefs();
-    JSC__JSGlobalObject__drainMicrotasks(globalObject);
-    try scope.assertNoExceptionExceptTermination();
+
+    switch (JSC__JSGlobalObject__drainMicrotasks(globalObject)) {
+        .success => {},
+        .JSExecutionTerminated => {
+            return bun.JSExecutionTerminated.Terminated;
+        },
+    }
 
     this.virtual_machine.is_inside_deferred_task_queue = true;
     this.deferred_tasks.run();

@@ -83,6 +83,17 @@ pub const PEFile = struct {
         size: u32,
     };
 
+    const DebugDirectory = extern struct {
+        characteristics: u32,
+        time_date_stamp: u32,
+        major_version: u16,
+        minor_version: u16,
+        type: u32,
+        size_of_data: u32,
+        address_of_raw_data: u32,
+        pointer_to_raw_data: u32,
+    };
+
     const SectionHeader = extern struct {
         name: [8]u8, // Section name
         virtual_size: u32, // Virtual size
@@ -237,8 +248,9 @@ pub const PEFile = struct {
             return error.InvalidDOSSignature;
         }
 
-        // Validate e_lfanew offset (should be reasonable)
-        if (dos_header.e_lfanew < @sizeOf(DOSHeader) or dos_header.e_lfanew > 0x1000) {
+        // Validate e_lfanew offset is within file bounds
+        if (dos_header.e_lfanew < @sizeOf(DOSHeader) or
+            dos_header.e_lfanew + @sizeOf(PEHeader) > data.items.len) {
             return error.InvalidPEFile;
         }
 
@@ -274,9 +286,13 @@ pub const PEFile = struct {
         }
 
         // Check if we have space for at least one more section header (for future addition)
-        const max_sections_space = section_headers_offset + @sizeOf(SectionHeader) * 96; // PE max sections
-        if (data.items.len < max_sections_space) {
-            // Not enough space to add sections - we'll need to handle this in addBunSection
+        // The SizeOfHeaders field in OptionalHeader tells us the total size of headers
+        const headers_end = optional_header.size_of_headers;
+        const needed_space = section_headers_offset + @sizeOf(SectionHeader) * (pe_header.number_of_sections + 1);
+        
+        if (needed_space > headers_end) {
+            // Mark that we'll need header growth if adding sections
+            // This will be checked in addBunSection
         }
 
         self.* = .{
@@ -306,6 +322,17 @@ pub const PEFile = struct {
         // Check if we can add another section
         if (self.num_sections >= 95) { // PE limit is 96 sections
             return error.TooManySections;
+        }
+        
+        // Check if we have space for the new section header
+        const headers_end = optional_header.size_of_headers;
+        const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        const needed_space = new_section_offset + @sizeOf(SectionHeader);
+        
+        if (needed_space > headers_end) {
+            // Not enough space in headers for a new section
+            // Header growth would be needed but is not implemented
+            return error.InsufficientHeaderSpace;
         }
 
         // Find the last section to determine where to place the new one
@@ -347,14 +374,14 @@ pub const PEFile = struct {
         @memset(self.data.items[last_section_end..new_data_size], 0);
 
         // Write the section header - use our stored offset
-        const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        const section_write_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
 
         // Check bounds before writing
-        if (new_section_offset + @sizeOf(SectionHeader) > self.data.items.len) {
+        if (section_write_offset + @sizeOf(SectionHeader) > self.data.items.len) {
             return error.InsufficientSpace;
         }
 
-        const new_section_ptr: *SectionHeader = @ptrCast(@alignCast(self.data.items.ptr + new_section_offset));
+        const new_section_ptr: *SectionHeader = @ptrCast(@alignCast(self.data.items.ptr + section_write_offset));
         new_section_ptr.* = new_section;
 
         // Write the data with size header
@@ -368,9 +395,9 @@ pub const PEFile = struct {
         self.num_sections += 1;
 
         // Update optional header - get fresh pointer after resize
-        const updated_optional_header = self.getOptionalHeader();
-        updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
-        updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
+        const updated_opt = self.getOptionalHeader();
+        updated_opt.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_opt.section_alignment);
+        updated_opt.size_of_initialized_data += new_section.size_of_raw_data;
 
         // Update PE checksum after adding section
         self.updateChecksum();
@@ -431,7 +458,22 @@ pub const PEFile = struct {
     /// Calculate PE checksum using the standard Windows algorithm
     pub fn calculateChecksum(self: *const PEFile) u32 {
         const data = self.data.items;
-        const file_size = data.len;
+        
+        // Calculate actual file size from section headers
+        var actual_size: usize = self.data.items.len;
+        const sections = self.getSectionHeaders();
+        var actual_end: u32 = 0;
+        for (sections) |*sec| {
+            const sec_end = sec.pointer_to_raw_data + sec.size_of_raw_data;
+            if (sec_end > actual_end) {
+                actual_end = sec_end;
+            }
+        }
+        if (actual_end > 0 and actual_end < actual_size) {
+            actual_size = actual_end;
+        }
+        
+        const file_size = actual_size;
 
         // Find checksum field offset
         const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
@@ -538,7 +580,7 @@ pub const PEFile = struct {
     fn getResourceSection(self: *const PEFile) ?*SectionHeader {
         const section_headers = self.getSectionHeaders();
         for (section_headers) |*section| {
-            if (strings.eqlComptime(section.name[0..6], ".rsrc\x00")) {
+            if (std.mem.eql(u8, &section.name, ".rsrc\x00\x00\x00")) {
                 return section;
             }
         }
@@ -569,7 +611,9 @@ pub const PEFile = struct {
         var type_entry: ?*ResourceDirectoryEntry = null;
 
         for (0..total_entries) |i| {
-            if ((type_entries[i].name_or_id & 0x7FFFFFFF) == resource_type) {
+            const v = type_entries[i].name_or_id;
+            if ((v & 0x80000000) != 0) continue; // skip named types
+            if ((v & 0x7FFFFFFF) == resource_type) {
                 type_entry = &type_entries[i];
                 break;
             }
@@ -583,9 +627,12 @@ pub const PEFile = struct {
         const name_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset));
         const name_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + name_dir_offset + @sizeOf(ResourceDirectoryTable))));
 
+        const name_total = name_dir.number_of_name_entries + name_dir.number_of_id_entries;
         var name_entry: ?*ResourceDirectoryEntry = null;
-        for (0..name_dir.number_of_name_entries + name_dir.number_of_id_entries) |i| {
-            if ((name_entries[i].name_or_id & 0x7FFFFFFF) == resource_id) {
+        for (0..name_total) |i| {
+            const v = name_entries[i].name_or_id;
+            if ((v & 0x80000000) != 0) continue; // skip named resources
+            if ((v & 0x7FFFFFFF) == resource_id) {
                 name_entry = &name_entries[i];
                 break;
             }
@@ -599,7 +646,8 @@ pub const PEFile = struct {
         const lang_dir: *ResourceDirectoryTable = @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset));
         const lang_entries = @as([*]ResourceDirectoryEntry, @ptrCast(@alignCast(self.data.items.ptr + rsrc_base + lang_dir_offset + @sizeOf(ResourceDirectoryTable))));
 
-        for (0..lang_dir.number_of_named_entries + lang_dir.number_of_id_entries) |i| {
+        const lang_total = lang_dir.number_of_name_entries + lang_dir.number_of_id_entries;
+        for (0..lang_total) |i| {
             if ((lang_entries[i].name_or_id & 0x7FFFFFFF) == language_id) {
                 if ((lang_entries[i].offset_to_data & 0x80000000) == 0) {
                     // This is a data entry
@@ -612,6 +660,15 @@ pub const PEFile = struct {
     }
 
     pub fn applyWindowsSettings(self: *PEFile, settings: *const bun.options.WindowsSettings, allocator: Allocator) !void {
+        // Clear Security directory if present (any modification invalidates signature)
+        const opt = self.getOptionalHeader();
+        const sec = &opt.data_directories[4]; // SECURITY
+        if (sec.virtual_address != 0 or sec.size != 0) {
+            sec.virtual_address = 0;
+            sec.size = 0;
+            // Signature cleared due to modifications
+        }
+
         // Handle hide console first (simple modification)
         if (settings.hide_console) {
             const optional_header = self.getOptionalHeader();
@@ -832,6 +889,39 @@ pub const PEFile = struct {
                     const dst_slice = self.data.items[move_start + size_increase .. move_start + size_increase + move_size];
 
                     std.mem.copyBackwards(u8, dst_slice, src_slice);
+
+                    // Update Debug Directory pointers if present
+                    const opt_header = self.getOptionalHeader();
+                    const debug_dir = &opt_header.data_directories[6]; // DEBUG
+                    if (debug_dir.virtual_address != 0 and debug_dir.size != 0) {
+                        // Find the debug section
+                        var debug_section: ?*SectionHeader = null;
+                        for (self.getSectionHeaders()) |*sec| {
+                            if (sec.virtual_address <= debug_dir.virtual_address and
+                                sec.virtual_address + sec.virtual_size > debug_dir.virtual_address) {
+                                debug_section = sec;
+                                break;
+                            }
+                        }
+
+                        if (debug_section) |sec| {
+                            const debug_offset = sec.pointer_to_raw_data + (debug_dir.virtual_address - sec.virtual_address);
+                            const debug_entries = debug_dir.size / @sizeOf(DebugDirectory);
+                            
+                            if (debug_offset + debug_dir.size <= self.data.items.len) {
+                                var i: u32 = 0;
+                                while (i < debug_entries) : (i += 1) {
+                                    const entry_offset = debug_offset + i * @sizeOf(DebugDirectory);
+                                    if (entry_offset + @sizeOf(DebugDirectory) > self.data.items.len) break;
+                                    
+                                    const debug_entry: *DebugDirectory = @ptrCast(@alignCast(self.data.items.ptr + entry_offset));
+                                    if (debug_entry.pointer_to_raw_data >= move_start) {
+                                        debug_entry.pointer_to_raw_data += @intCast(size_increase);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Re-get section headers after resize and data move
@@ -871,8 +961,10 @@ pub const PEFile = struct {
         // Update section header
         section.virtual_size = @intCast(data.len);
 
-        // Update data directory
-        self.getOptionalHeader().data_directories[2].size = @intCast(data.len);
+        // Update data directory for resources (both RVA and size)
+        const opt = self.getOptionalHeader();
+        opt.data_directories[2].virtual_address = section.virtual_address;
+        opt.data_directories[2].size = section.virtual_size;
     }
 };
 
@@ -1444,6 +1536,15 @@ fn alignSize(size: u32, alignment: u32) u32 {
     // Check for overflow
     if (size > std.math.maxInt(u32) - alignment + 1) return std.math.maxInt(u32);
     return (size + alignment - 1) & ~(alignment - 1);
+}
+
+/// Align size to the nearest multiple of alignment (fallible version)
+fn alignSizeChecked(size: u32, alignment: u32) !u32 {
+    if (alignment == 0) return size;
+    const add = alignment - 1;
+    if (size > std.math.maxInt(u32) - add) return error.Overflow;
+    const s = size + add;
+    return s & ~(alignment - 1);
 }
 
 /// Utilities for PE file detection and validation

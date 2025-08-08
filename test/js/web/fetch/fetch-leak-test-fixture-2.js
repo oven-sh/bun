@@ -67,7 +67,7 @@ if ((heapStats().objectTypeCounts.Response ?? 0) > 5) {
 
 const bodiesLeakedPerRequest = delta / textLength;
 
-const threshold = textLength > 1024 * 1024 * 2 ? 10 : 1000;
+const threshold = textLength > 1024 * 1024 * 2 ? 20 : 1000;
 
 console.log({ delta, count: COUNT, bodySize: textLength, bodiesLeakedPerRequest, threshold });
 

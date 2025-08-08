@@ -173,7 +173,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
-        bun.default_allocator,
+        ctx.allocator,
         this.store.?,
         ctx,
         NewInternalReadFileHandler(Handler, Function).run,

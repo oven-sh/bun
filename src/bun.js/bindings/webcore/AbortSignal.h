@@ -105,8 +105,8 @@ public:
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
     // https://github.com/oven-sh/bun/issues/4517
-    void incrementPendingActivityCount();
-    void decrementPendingActivityCount();
+    void incrementPendingActivityCount() { ++pendingActivityCount; }
+    void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
     bool isDependent() const { return m_isDependent; }
 

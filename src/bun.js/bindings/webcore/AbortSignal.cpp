@@ -47,7 +47,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 extern "C" void AbortSignal__Timeout__run(AbortSignalTimeout timeout, void* vm);
 extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout, void*);
-extern "C" void AbortSignal__Timeout__setKeepingEventLoopAlive(AbortSignalTimeout timeout, int is_keeping_event_loop_alive);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -87,25 +86,6 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
         resultSignal->addSourceSignal(*signal);
 
     return resultSignal;
-}
-
-void AbortSignal::incrementPendingActivityCount()
-{
-    const auto new_pending_activity_count = ++pendingActivityCount;
-    if (new_pending_activity_count == 1) {
-        if (m_timeout) {
-            AbortSignal__Timeout__setKeepingEventLoopAlive(m_timeout, true);
-        }
-    }
-}
-void AbortSignal::decrementPendingActivityCount()
-{
-    const auto new_pending_activity_count = --pendingActivityCount;
-    if (new_pending_activity_count == 0) {
-        if (m_timeout) {
-            AbortSignal__Timeout__setKeepingEventLoopAlive(m_timeout, false);
-        }
-    }
 }
 
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)

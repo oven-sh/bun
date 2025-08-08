@@ -144,7 +144,7 @@ pub const AbortSignal = opaque {
         // The `Timeout`'s lifetime is owned by the AbortSignal.
         signal: *AbortSignal,
 
-        /// "epoch" and "is_keeping_event_loop_alive" are reused.
+        /// "epoch" is reused.
         flags: jsc.API.Timer.TimerObjectInternals.Flags = .{},
 
         const new = bun.TrivialNew(Timeout);
@@ -171,31 +171,7 @@ pub const AbortSignal = opaque {
             return this;
         }
 
-        fn setKeepingEventLoopAlive(this: *Timeout, vm: *jsc.VirtualMachine, is_keeping_event_loop_alive: bool) void {
-            // If we've already run, don't run again.
-            // If we've cancelled, then just ignore it.
-            if (this.event_loop_timer.state != .ACTIVE) {
-                return;
-            }
-
-            // If we're not changing anything, do nothing.
-            if (is_keeping_event_loop_alive == this.flags.is_keeping_event_loop_alive) {
-                return;
-            }
-
-            this.flags.is_keeping_event_loop_alive = is_keeping_event_loop_alive;
-            if (is_keeping_event_loop_alive) {
-                vm.timer.incrementTimerRef(1);
-            } else {
-                vm.timer.incrementTimerRef(-1);
-            }
-        }
         fn cancel(this: *Timeout, vm: *jsc.VirtualMachine) void {
-            if (this.flags.is_keeping_event_loop_alive) {
-                this.flags.is_keeping_event_loop_alive = false;
-                vm.timer.incrementTimerRef(-1);
-            }
-
             if (this.event_loop_timer.state == .ACTIVE) {
                 vm.timer.remove(&this.event_loop_timer);
             }
@@ -231,10 +207,6 @@ pub const AbortSignal = opaque {
 
         export fn AbortSignal__Timeout__deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
             this.deinit(vm);
-        }
-
-        export fn AbortSignal__Timeout__setKeepingEventLoopAlive(this: *Timeout, vm: *jsc.VirtualMachine, is_keeping_event_loop_alive: i32) void {
-            this.setKeepingEventLoopAlive(vm, is_keeping_event_loop_alive == 1);
         }
     };
 };

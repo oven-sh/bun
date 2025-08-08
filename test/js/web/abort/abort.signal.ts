@@ -2,9 +2,12 @@ import type { Server } from "bun";
 
 using server = Bun.serve({
   port: 0,
+  error(error) {
+    return new Response(error.message, { status: 500 });
+  },
   async fetch() {
     const signal = AbortSignal.timeout(1);
-    return await fetch("https://example.com", { signal });
+    await fetch("https://example.com", { signal });
   },
 });
 

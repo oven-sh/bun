@@ -325,8 +325,14 @@ function getLinkBunAgent(platform, options) {
     };
   }
 
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    });
+  }
+
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
   });
 }
 

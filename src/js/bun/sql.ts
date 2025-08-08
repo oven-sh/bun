@@ -2510,12 +2510,10 @@ defineProperties(defaultSQLObject, {
   },
 });
 
-var exportsObject = {
+export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,
   SQL,
   Query,
   postgres: SQL,
 };
-
-export default exportsObject;

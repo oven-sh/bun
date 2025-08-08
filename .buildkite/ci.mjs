@@ -326,7 +326,7 @@ function getLinkBunAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: "r8g.large",
+    instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
   });
 }
 

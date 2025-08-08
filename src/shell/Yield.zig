@@ -101,6 +101,13 @@ pub const Yield = union(enum) {
         // execution. Don't touch it.
         state: switch (this) {
             .pipeline => |x| {
+                if (x.state == .done) {
+                    // remove it from the pipeline stack as calling `.next()` will now deinit it
+                    if (std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x)) |idx| {
+                        _ = pipeline_stack.swapRemove(idx);
+                    }
+                    continue :state x.next();
+                }
                 pipeline_stack.append(x) catch bun.outOfMemory();
                 continue :state x.next();
             },

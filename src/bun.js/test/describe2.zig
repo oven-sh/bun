@@ -15,6 +15,7 @@ const js_fns = struct {
 
 /// this will be a JSValue (returned by `Bun.jest(...)`)
 pub const BunTest = struct {
+    allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
 
     phase: enum {
@@ -24,13 +25,21 @@ pub const BunTest = struct {
     scheduling: Scheduling,
     execution: TestExecution,
 
-    pub fn init(gpa: std.mem.Allocator) BunTest {
+    pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+        var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
+        const gpa = allocation_scope.allocator();
         return .{
+            .allocation_scope = allocation_scope,
             .gpa = gpa,
             .phase = .scheduling,
             .scheduling = .init(gpa),
-            .execution = .init(),
+            .execution = .init(gpa),
         };
+    }
+    pub fn deinit(this: *BunTest) void {
+        const backing = this.allocation_scope.parent;
+        this.allocation_scope.deinit();
+        backing.destroy(this.allocation_scope);
     }
 
     // fn ref(this: *BunTest) *const anyopaque {
@@ -143,12 +152,13 @@ const Scheduling = struct {
 const DescribeScope = struct {
     parent: ?*DescribeScope,
     entries: std.ArrayList(TestScheduleEntry2),
-    name: jsc.Strong,
+    name: jsc.Strong.Optional,
 
     fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
             .entries = std.ArrayList(TestScheduleEntry2).init(gpa),
             .parent = parent,
+            .name = .empty,
         };
     }
     fn deinit(this: *DescribeScope, buntest: *BunTest) void {
@@ -187,7 +197,11 @@ const TestScheduleEntry2 = union(enum) {
     }
 };
 
-const TestExecution = struct {};
+const TestExecution = struct {
+    pub fn init(_: std.mem.Allocator) TestExecution {
+        return .{};
+    }
+};
 
 // here's how to execute describe blocks:
 // - when you call describe:

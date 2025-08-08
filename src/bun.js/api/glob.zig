@@ -259,8 +259,6 @@ fn makeGlobWalker(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Glob {
-    const alloc = bun.default_allocator;
-
     const arguments_ = callframe.arguments_old(1);
     var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -274,21 +272,16 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
 
-    const glob = alloc.create(Glob) catch bun.outOfMemory();
+    const glob = bun.default_allocator.create(Glob) catch bun.outOfMemory();
     glob.* = .{ .pattern = pat_str };
 
     return glob;
 }
 
-pub fn finalize(
-    this: *Glob,
-) callconv(.C) void {
-    const alloc = jsc.VirtualMachine.get().allocator;
-    alloc.free(this.pattern);
-    if (this.pattern_codepoints) |*codepoints| {
-        codepoints.deinit();
-    }
-    alloc.destroy(this);
+pub fn finalize(this: *Glob) callconv(.C) void {
+    bun.default_allocator.free(this.pattern);
+    if (this.pattern_codepoints) |*codepoints| codepoints.deinit();
+    bun.default_allocator.destroy(this);
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {

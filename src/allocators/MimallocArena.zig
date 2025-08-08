@@ -1,6 +1,6 @@
 const Self = @This();
 
-heap: ?*mimalloc.Heap = null,
+heap: *mimalloc.Heap,
 
 const log = bun.Output.scoped(.mimalloc, true);
 
@@ -13,13 +13,13 @@ pub fn getThreadlocalDefault() Allocator {
 }
 
 pub fn backingAllocator(self: Self) Allocator {
-    var arena = Self{ .heap = self.heap.?.backing() };
+    var arena = Self{ .heap = self.heap.backing() };
     return arena.allocator();
 }
 
 pub fn allocator(self: Self) Allocator {
     @setRuntimeSafety(false);
-    return Allocator{ .ptr = self.heap.?, .vtable = &c_allocator_vtable };
+    return Allocator{ .ptr = self.heap, .vtable = &c_allocator_vtable };
 }
 
 pub fn dumpThreadStats(self: *Self) void {
@@ -47,14 +47,15 @@ pub fn dumpStats(self: *Self) void {
 }
 
 pub fn deinit(self: *Self) void {
-    mimalloc.mi_heap_destroy(bun.take(&self.heap).?);
+    mimalloc.mi_heap_destroy(self.heap);
+    self.* = undefined;
 }
 pub fn init() !Self {
     return .{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
 }
 
 pub fn gc(self: Self) void {
-    mimalloc.mi_heap_collect(self.heap orelse return, false);
+    mimalloc.mi_heap_collect(self.heap, false);
 }
 
 pub inline fn helpCatchMemoryIssues(self: Self) void {

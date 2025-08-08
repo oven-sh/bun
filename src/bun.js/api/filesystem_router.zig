@@ -382,6 +382,7 @@ pub const FileSystemRouter = struct {
 };
 
 pub const MatchedRoute = struct {
+    allocator: std.mem.Allocator,
     route: *const Router.Match,
     route_holder: Router.Match = undefined,
     query_string_map: ?QueryStringMap = null,
@@ -413,6 +414,7 @@ pub const MatchedRoute = struct {
         var route = try allocator.create(MatchedRoute);
 
         route.* = MatchedRoute{
+            .allocator = allocator,
             .route_holder = match,
             .route = undefined,
             .asset_prefix = asset_prefix,
@@ -443,22 +445,19 @@ pub const MatchedRoute = struct {
                 bun.mimalloc.mi_free(@constCast(this.route.pathname.ptr));
             }
 
-            this.params_list_holder.deinit(bun.default_allocator);
+            this.params_list_holder.deinit(this.allocator);
             this.params_list_holder = .{};
         }
-
         if (this.origin) |o| {
             o.deref();
         }
-
         if (this.asset_prefix) |prefix| {
             prefix.deref();
         }
-
-        if (this.base_dir) |base|
+        if (this.base_dir) |base| {
             base.deref();
-
-        bun.default_allocator.destroy(this);
+        }
+        this.allocator.destroy(this);
     }
 
     pub fn getFilePath(

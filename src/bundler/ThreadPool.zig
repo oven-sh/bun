@@ -202,7 +202,7 @@ pub const ThreadPool = struct {
     }
 
     pub const Worker = struct {
-        heap: ThreadLocalArena = ThreadLocalArena{},
+        heap: MimallocArena = undefined,
 
         /// Thread-local memory allocator
         /// All allocations are freed in `deinit` at the very end of bundling.
@@ -284,7 +284,7 @@ pub const ThreadPool = struct {
 
             this.has_created = true;
             Output.Source.configureThread();
-            this.heap = ThreadLocalArena.init() catch unreachable;
+            this.heap = MimallocArena.init() catch unreachable;
             this.allocator = this.heap.allocator();
 
             const allocator = this.allocator;
@@ -357,7 +357,7 @@ const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 
 const allocators = bun.allocators;
-const ThreadLocalArena = bun.allocators.MimallocArena;
+const MimallocArena = bun.allocators.MimallocArena;
 
 const BundleV2 = bun.bundle_v2.BundleV2;
 const LinkerContext = bun.bundle_v2.LinkerContext;

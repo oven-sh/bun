@@ -738,7 +738,7 @@ pub fn finalize(this: *JSTranspiler) void {
     // bun.default_allocator.free(this.transpiler_options.tsconfig_buf);
     // bun.default_allocator.free(this.transpiler_options.macros_buf);
     this.arena.deinit();
-    jsc.VirtualMachine.get().allocator.destroy(this);
+    bun.default_allocator.destroy(this);
 }
 
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
@@ -801,14 +801,11 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     this.transpiler.setAllocator(allocator);
+    defer this.transpiler.setAllocator(prev_allocator);
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
     this.transpiler.setLog(&log);
-    defer {
-        this.transpiler.setLog(&this.transpiler_options.log);
-        this.transpiler.setAllocator(prev_allocator);
-        arena.deinit();
-    }
+    defer this.transpiler.setLog(&this.transpiler_options.log);
     var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
@@ -998,7 +995,6 @@ pub fn transformSync(
     buffer_writer = printer.ctx;
     var out = jsc.ZigString.init(buffer_writer.written);
     out.setOutputEncoding();
-
     return out.toJS(globalThis);
 }
 
@@ -1084,14 +1080,11 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     defer ast_scope.exit();
 
     this.transpiler.setAllocator(allocator);
+    defer this.transpiler.setAllocator(prev_allocator);
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
     this.transpiler.setLog(&log);
-    defer {
-        this.transpiler.setLog(&this.transpiler_options.log);
-        this.transpiler.setAllocator(prev_allocator);
-        arena.deinit();
-    }
+    defer this.transpiler.setLog(&this.transpiler_options.log);
 
     const source = logger.Source.initPathString(loader.stdinName(), code);
     var transpiler = &this.transpiler;

@@ -183,7 +183,7 @@ pub const BuildMessage = struct {
     }
 
     pub fn finalize(this: *BuildMessage) void {
-        this.msg.deinit(bun.default_allocator);
+        this.msg.deinit(this.allocator);
     }
 };
 

@@ -10,7 +10,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     js_ast.Expr.Data.Store.create();
     js_ast.Stmt.Data.Store.create();
 
-    defer chunk.renamer.deinit(bun.default_allocator);
+    defer chunk.renamer.deinit(worker.allocator);
 
     var arena = bun.ArenaAllocator.init(worker.allocator);
     defer arena.deinit();

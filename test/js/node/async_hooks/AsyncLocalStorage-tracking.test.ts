@@ -17,14 +17,15 @@ describe("AsyncLocalStorage passes context to callbacks", () => {
     const file = basename(filepath).replaceAll("async-context-", "").replaceAll(".js", "");
     test(file, async () => {
       async function run(exe) {
-        const { exited } = Bun.spawn({
+        const proc = Bun.spawn({
           cmd: [exe, filepath],
           stdout: "inherit",
           stderr: "inherit",
           env: bunEnv,
         });
 
-        if (await exited) {
+        await proc.exited;
+        if (proc.exitCode || proc.signalCode) {
           throw new Error(`${basename(exe)} failed in ${filepath}`);
         }
       }

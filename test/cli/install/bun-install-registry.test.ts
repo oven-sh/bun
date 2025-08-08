@@ -26,8 +26,6 @@ import {
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
-const { iniInternals } = require("bun:internal-for-testing");
-const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,

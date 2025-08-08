@@ -1817,6 +1817,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    ASSERT(mi_is_in_heap_region(ptr) == (ENABLE_MIMALLOC == 1));
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
     }));

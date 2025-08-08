@@ -532,19 +532,18 @@ Hello World! pwd=C:\Users\Demo
 
 Bun Shell is a small programming language in Bun that is implemented in Zig. It includes a handwritten lexer, parser, and interpreter. Unlike bash, zsh, and other shells, Bun Shell runs operations concurrently.
 
+## Security in the Bun shell
 
-## Security in the Bun shell 
-
-By design, the Bun shell *does not invoke a system shell* (like `/bin/sh`) and
+By design, the Bun shell _does not invoke a system shell_ (like `/bin/sh`) and
 is instead a re-implementation of bash that runs in the same Bun process,
-designed with security in mind. 
+designed with security in mind.
 
-When parsing command arguments, it treats all *interpolated variables* as single, literal strings.
+When parsing command arguments, it treats all _interpolated variables_ as single, literal strings.
 
 This protects the Bun shell against **command injection**:
 
 ```js
-import { $ } from 'bun'
+import { $ } from "bun";
 
 const userInput = "my-file.txt; rm -rf /";
 
@@ -566,7 +565,6 @@ execute a command which spawns a new shell (e.g. `bash -c`) with arguments.
 
 When you do this, you hand off control, and Bun's built-in protections no
 longer apply to the string interpreted by that new shell.
-
 
 ```js
 import { $ } from "bun";
@@ -603,5 +601,3 @@ The responsibility for validating arguments rests with your application code.
 ## Credits
 
 Large parts of this API were inspired by [zx](https://github.com/google/zx), [dax](https://github.com/dsherret/dax), and [bnx](https://github.com/wobsoriano/bnx). Thank you to the authors of those projects.
-
-

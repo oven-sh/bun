@@ -60,6 +60,8 @@ const CurrentFile = struct {
     }
 };
 
+const Describe2 = @import("describe2.zig");
+
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
@@ -107,6 +109,8 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
+
+    describe2: Describe2.BunTest,
 
     pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 

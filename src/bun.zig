@@ -644,7 +644,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
-pub const MimallocArena = allocators.MimallocArena;
+pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
 pub const AllocationScope = allocators.AllocationScope;
 pub const NullableAllocator = allocators.NullableAllocator;
 pub const MaxHeapAllocator = allocators.MaxHeapAllocator;

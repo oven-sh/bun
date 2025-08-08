@@ -239,6 +239,7 @@ pub const BuildCommand = struct {
                     try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
                         options.defines.RawDefines,
                         allocator,
+                        user_defines.keys.len + 4,
                         user_defines.keys,
                         user_defines.values,
                     ), ctx.args.drop, log, allocator)

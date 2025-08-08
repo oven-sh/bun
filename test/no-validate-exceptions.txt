@@ -200,6 +200,7 @@ test/cli/install/isolated-install.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/cli/update_interactive_formatting.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -269,22 +270,38 @@ test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_error/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_finalizer/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_promise/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_properties/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_string/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
 test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_buffer/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_callback_scope/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_init_order/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

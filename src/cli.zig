@@ -669,79 +669,66 @@ pub const Command = struct {
             .ReservedCommand => return try ReservedCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
             .InfoCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InfoCommand) unreachable;
-
                 try @"bun info"(allocator, log);
                 return;
             },
             .BuildCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
                 try BuildCommand.exec(ctx, null);
             },
             .InstallCompletionsCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
                 try InstallCompletionsCommand.exec(allocator);
                 return;
             },
             .InstallCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .UpdateCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
                 return;
             },
             .PatchCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PatchCommand);
 
                 try PatchCommand.exec(ctx);
                 return;
             },
             .PatchCommitCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommitCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PatchCommitCommand);
 
                 try PatchCommitCommand.exec(ctx);
                 return;
             },
             .OutdatedCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .OutdatedCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .OutdatedCommand);
 
                 try OutdatedCommand.exec(ctx);
                 return;
             },
             .UpdateInteractiveCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateInteractiveCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .UpdateInteractiveCommand);
 
                 try UpdateInteractiveCommand.exec(ctx);
                 return;
             },
             .PublishCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PublishCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PublishCommand);
 
                 try PublishCommand.exec(ctx);
                 return;
             },
             .AuditCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AuditCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .AuditCommand);
                 try AuditCommand.exec(ctx);
             },
@@ -751,7 +738,6 @@ pub const Command = struct {
                 return;
             },
             .BunxCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
@@ -759,7 +745,6 @@ pub const Command = struct {
             },
             .ReplCommand => {
                 // TODO: Put this in native code.
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 var ctx = try Command.init(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv[0..];
@@ -768,52 +753,44 @@ pub const Command = struct {
                 return;
             },
             .RemoveCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
                 try @"bun getcompletes"(allocator, log);
                 return;
             },
             .CreateCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .CreateCommand) unreachable;
                 try @"bun create"(allocator, log);
                 return;
             },
             .RunCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
@@ -833,20 +810,16 @@ pub const Command = struct {
                 }
             },
             .RunAsNodeCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .RunAsNodeCommand);
                 bun.assert(pretend_to_be_node);
                 try RunCommand.execAsIfNode(ctx);
             },
             .UpgradeCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
-
                 const ctx = Command.init(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {

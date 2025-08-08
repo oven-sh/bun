@@ -6,10 +6,10 @@ pub fn GuardedValue(comptime Value: type, comptime Mutex: type) type {
 
         /// The raw value. Don't use this if there might be concurrent accesses.
         unsynchronized_value: Value,
-        mutex: Mutex = .{},
+        mutex: Mutex,
 
-        pub fn init(value: Value) Self {
-            return .{ .unsynchronized_value = value };
+        pub fn init(value: Value, mutex: Mutex) Self {
+            return .{ .unsynchronized_value = value, .mutex = mutex };
         }
 
         /// Lock the mutex and return a pointer to the value. Remember to call `unlock`!
@@ -24,3 +24,9 @@ pub fn GuardedValue(comptime Value: type, comptime Mutex: type) type {
         }
     };
 }
+
+pub fn DebugGuardedValue(comptime Value: type) type {
+    return GuardedValue(Value, bun.DebugThreadLock);
+}
+
+const bun = @import("bun");

@@ -57,6 +57,8 @@ enum class CommonAbortReason : uint8_t {
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
 
+typedef void* AbortSignalTimeout;
+
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
@@ -84,7 +86,7 @@ public:
     void cleanNativeBindings(void* ref);
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
-    bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
+    bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     bool hasAbortEventListener() const { return m_hasAbortEventListener; }
 
     using RefCounted::deref;
@@ -103,8 +105,8 @@ public:
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
     // https://github.com/oven-sh/bun/issues/4517
-    void incrementPendingActivityCount() { ++pendingActivityCount; }
-    void decrementPendingActivityCount() { --pendingActivityCount; }
+    void incrementPendingActivityCount();
+    void decrementPendingActivityCount();
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
     bool isDependent() const { return m_isDependent; }
 
@@ -117,11 +119,10 @@ private:
     };
     explicit AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
 
-    void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
-
     void markAsDependent() { m_isDependent = true; }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
+    void cancelTimer();
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return AbortSignalEventTargetInterfaceType; }
@@ -139,8 +140,8 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
+    AbortSignalTimeout m_timeout { nullptr };
     bool m_aborted : 1 = false;
-    bool m_hasActiveTimeoutTimer : 1 = false;
     bool m_hasAbortEventListener : 1 = false;
     bool m_isDependent : 1 = false;
 };

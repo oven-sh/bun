@@ -44,6 +44,11 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
+extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
+extern "C" void AbortSignal__Timeout__run(AbortSignalTimeout timeout, void* vm);
+extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout, void*);
+extern "C" void AbortSignal__Timeout__setKeepingEventLoopAlive(AbortSignalTimeout timeout, int is_keeping_event_loop_alive);
+
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
     return adoptRef(*new AbortSignal(context));
@@ -62,22 +67,8 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t milliseconds)
 {
     auto signal = adoptRef(*new AbortSignal(&context));
-    signal->setHasActiveTimeoutTimer(true);
-    auto action = [signal](ScriptExecutionContext& context) mutable {
-        auto* globalObject = defaultGlobalObject(context.globalObject());
-        auto& vm = JSC::getVM(globalObject);
-        Locker locker { vm.apiLock() };
-        signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
-        signal->setHasActiveTimeoutTimer(false);
-    };
-
-    if (milliseconds == 0) {
-        // immediately write to task queue
-        context.postTask(WTFMove(action));
-    } else {
-        context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds));
-    }
-
+    signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
+    ASSERT(signal->m_timeout);
     return signal;
 }
 
@@ -98,6 +89,25 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
     return resultSignal;
 }
 
+void AbortSignal::incrementPendingActivityCount()
+{
+    const auto new_pending_activity_count = ++pendingActivityCount;
+    if (new_pending_activity_count == 1) {
+        if (m_timeout) {
+            AbortSignal__Timeout__setKeepingEventLoopAlive(m_timeout, true);
+        }
+    }
+}
+void AbortSignal::decrementPendingActivityCount()
+{
+    const auto new_pending_activity_count = --pendingActivityCount;
+    if (new_pending_activity_count == 0) {
+        if (m_timeout) {
+            AbortSignal__Timeout__setKeepingEventLoopAlive(m_timeout, false);
+        }
+    }
+}
+
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
     , m_reason(reason)
@@ -106,7 +116,10 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
     ASSERT(reason);
 }
 
-AbortSignal::~AbortSignal() = default;
+AbortSignal::~AbortSignal()
+{
+    cancelTimer();
+}
 
 JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
 {
@@ -140,6 +153,13 @@ void AbortSignal::addDependentSignal(AbortSignal& signal)
     m_dependentSignals.add(signal);
 }
 
+void AbortSignal::cancelTimer()
+{
+    if (auto timeout = std::exchange(m_timeout, nullptr)) {
+        AbortSignal__Timeout__deinit(timeout, bunVM(scriptExecutionContext()->vm()));
+    }
+}
+
 // https://dom.spec.whatwg.org/#abortsignal-signal-abort
 void AbortSignal::signalAbort(JSC::JSValue reason)
 {
@@ -150,6 +170,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // 2. Set signal’s aborted flag.
     m_aborted = true;
     m_sourceSignals.clear();
+    cancelTimer();
 
     // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
     // https://bugs.webkit.org/show_bug.cgi?id=236353

@@ -22,7 +22,7 @@ describe("AbortSignal", () => {
   test("AbortSignal.timeout(n) should not freeze the process", async () => {
     const fileName = join(import.meta.dir, "abort.signal.ts");
 
-    const server = Bun.spawn({
+    await using server = Bun.spawn({
       cmd: [bunExe(), fileName],
       env: bunEnv,
       cwd: tmpdir(),

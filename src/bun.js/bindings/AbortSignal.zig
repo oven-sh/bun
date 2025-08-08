@@ -137,6 +137,106 @@ pub const AbortSignal = opaque {
         jsc.markBinding(@src());
         return WebCore__AbortSignal__new(global);
     }
+
+    pub const Timeout = struct {
+        event_loop_timer: jsc.API.Timer.EventLoopTimer,
+
+        // The `Timeout`'s lifetime is owned by the AbortSignal.
+        signal: *AbortSignal,
+
+        /// "epoch" and "is_keeping_event_loop_alive" are reused.
+        flags: jsc.API.Timer.TimerObjectInternals.Flags = .{},
+
+        const new = bun.TrivialNew(Timeout);
+
+        fn init(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
+            const this: *Timeout = .new(.{
+                .signal = signal_,
+                .event_loop_timer = .{
+                    .next = bun.timespec.now().addMs(@intCast(milliseconds)),
+                    .tag = .AbortSignalTimeout,
+                    .state = .CANCELLED,
+                },
+            });
+
+            if (comptime bun.Environment.ci_assert) {
+                if (signal_.aborted()) {
+                    @panic("unreachable: signal is already aborted");
+                }
+            }
+
+            // We default to not keeping the event loop alive with this timeout.
+            vm.timer.insert(&this.event_loop_timer);
+
+            return this;
+        }
+
+        fn setKeepingEventLoopAlive(this: *Timeout, vm: *jsc.VirtualMachine, is_keeping_event_loop_alive: bool) void {
+            // If we've already run, don't run again.
+            // If we've cancelled, then just ignore it.
+            if (this.event_loop_timer.state != .ACTIVE) {
+                return;
+            }
+
+            // If we're not changing anything, do nothing.
+            if (is_keeping_event_loop_alive == this.flags.is_keeping_event_loop_alive) {
+                return;
+            }
+
+            this.flags.is_keeping_event_loop_alive = is_keeping_event_loop_alive;
+            if (is_keeping_event_loop_alive) {
+                vm.timer.incrementTimerRef(1);
+            } else {
+                vm.timer.incrementTimerRef(-1);
+            }
+        }
+        fn cancel(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            if (this.flags.is_keeping_event_loop_alive) {
+                this.flags.is_keeping_event_loop_alive = false;
+                vm.timer.incrementTimerRef(-1);
+            }
+
+            if (this.event_loop_timer.state == .ACTIVE) {
+                vm.timer.remove(&this.event_loop_timer);
+            }
+        }
+
+        pub fn run(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.event_loop_timer.state = .FIRED;
+            this.cancel(vm);
+
+            if (this.signal.aborted()) {
+                // This lifetime is owned by the AbortSignal.
+                return;
+            }
+
+            const loop = vm.eventLoop();
+            loop.enter();
+            defer loop.exit();
+            this.signal.signal(vm.global, .Timeout);
+        }
+
+        fn deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.cancel(vm);
+            bun.destroy(this);
+        }
+
+        export fn AbortSignal__Timeout__create(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
+            return Timeout.init(vm, signal_, milliseconds);
+        }
+
+        export fn AbortSignal__Timeout__run(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.run(vm);
+        }
+
+        export fn AbortSignal__Timeout__deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
+            this.deinit(vm);
+        }
+
+        export fn AbortSignal__Timeout__setKeepingEventLoopAlive(this: *Timeout, vm: *jsc.VirtualMachine, is_keeping_event_loop_alive: i32) void {
+            this.setKeepingEventLoopAlive(vm, is_keeping_event_loop_alive == 1);
+        }
+    };
 };
 
 const bun = @import("bun");
@@ -145,3 +245,5 @@ const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+
+const std = @import("std");

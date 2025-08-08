@@ -71,7 +71,7 @@ export function renderToHtml(
           if (!signal.aborted) {
             // console.error(error);
             // Abort the rendering and close the stream
-            signal.aborted = true;
+            signal.aborted = error;
             abort();
             if (signal.abort) signal.abort();
             if (stream) {
@@ -88,8 +88,10 @@ export function renderToHtml(
       return stream.finished;
     },
     cancel(err) {
-      // console.error("renderToHtml.cancel");
-      signal.abort();
+      if (!signal.aborted) {
+        signal.aborted = err;
+        signal.abort(err);
+      }
       abort?.();
     },
   } as Bun.DirectUnderlyingSource as any);

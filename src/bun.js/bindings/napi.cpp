@@ -1145,6 +1145,11 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     NAPI_CHECK_ARG(env, ref);
 
     NapiRef* napiRef = toJS(ref);
+
+    if (napiRef->refCount == 0) {
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+
     napiRef->unref();
     if (result) [[likely]] {
         *result = napiRef->refCount;
@@ -2466,7 +2471,13 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
 
     std::span<uint64_t> writable_words(words, *word_count);
     *sign_bit = static_cast<int>(bigInt->sign());
-    *word_count = bigInt->toWordsArray(writable_words);
+
+    // Always set word_count to the actual number of words needed
+    size_t actual_word_count = bigInt->length();
+    // Copy as many words as fit in the provided buffer
+    bigInt->toWordsArray(writable_words);
+    *word_count = actual_word_count;
+
     ensureStillAliveHere(bigInt);
     NAPI_RETURN_SUCCESS(env);
 }

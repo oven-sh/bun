@@ -138,7 +138,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         // So we can know if the frame is inside the HMR runtime if
         // `frame.position.line < generated_mappings[1].lines`.
         const generated_mappings = result.mappings.generated();
-        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines) {
+        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines.zeroBased()) {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;

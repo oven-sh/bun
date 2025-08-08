@@ -10,8 +10,8 @@ class bun_BabyList_SynthProvider:
 
         try:
             self.ptr = self.value.GetChildMemberWithName('ptr')
-            self.len = self.value.GetChildMemberWithName('len').unsigned
-            self.cap = self.value.GetChildMemberWithName('cap').unsigned
+            self.len = self.value.GetChildMemberWithName('len').GetValueAsUnsigned()
+            self.cap = self.value.GetChildMemberWithName('cap').GetValueAsUnsigned()
             self.elem_type = self.ptr.type.GetPointeeType()
             self.elem_size = self.elem_type.size
         except:
@@ -46,7 +46,7 @@ def bun_BabyList_SummaryProvider(value, _=None):
         value = value.GetNonSyntheticValue()
         len_val = value.GetChildMemberWithName('len')
         cap_val = value.GetChildMemberWithName('cap')
-        return 'len=%d cap=%d' % (len_val.unsigned, cap_val.unsigned)
+        return 'len=%d cap=%d' % (len_val.GetValueAsUnsigned(), cap_val.GetValueAsUnsigned())
     except:
         return 'len=? cap=?'
 
@@ -87,7 +87,25 @@ def WTFStringImpl_SummaryProvider(value, _=None):
         is_8bit = (m_hashAndFlags & s_hashFlag8BitBuffer) != 0
         
         if m_length == 0:
-            return '""'
+            return '[%s] ""' % ('latin1' if is_8bit else 'utf16')
+        
+        # Limit memory reads to 1MB for performance
+        MAX_BYTES = 1024 * 1024  # 1MB
+        MAX_DISPLAY_CHARS = 200  # Maximum characters to display
+        
+        # Calculate how much to read
+        bytes_per_char = 1 if is_8bit else 2
+        total_bytes = m_length * bytes_per_char
+        truncated = False
+        
+        if total_bytes > MAX_BYTES:
+            # Read only first part of very large strings
+            chars_to_read = MAX_BYTES // bytes_per_char
+            bytes_to_read = chars_to_read * bytes_per_char
+            truncated = True
+        else:
+            chars_to_read = m_length
+            bytes_to_read = total_bytes
         
         if is_8bit:
             # Latin1 string
@@ -96,13 +114,13 @@ def WTFStringImpl_SummaryProvider(value, _=None):
             error = lldb.SBError()
             ptr_addr = latin1_ptr.GetValueAsUnsigned()
             if ptr_addr:
-                byte_data = process.ReadMemory(ptr_addr, m_length, error)
+                byte_data = process.ReadMemory(ptr_addr, min(chars_to_read, m_length), error)
                 if error.Success():
                     string_val = byte_data.decode('latin1', errors='replace')
                 else:
-                    return '<read error: %s>' % error
+                    return '[latin1] <read error: %s>' % error
             else:
-                return '<null ptr>'
+                return '[latin1] <null ptr>'
         else:
             # UTF16 string
             utf16_ptr = m_ptr.GetChildMemberWithName('utf16')
@@ -110,14 +128,14 @@ def WTFStringImpl_SummaryProvider(value, _=None):
             error = lldb.SBError()
             ptr_addr = utf16_ptr.GetValueAsUnsigned()
             if ptr_addr:
-                byte_data = process.ReadMemory(ptr_addr, m_length * 2, error)
+                byte_data = process.ReadMemory(ptr_addr, bytes_to_read, error)
                 if error.Success():
                     # Properly decode UTF16LE to string
                     string_val = byte_data.decode('utf-16le', errors='replace')
                 else:
-                    return '<read error: %s>' % error
+                    return '[utf16] <read error: %s>' % error
             else:
-                return '<null ptr>'
+                return '[utf16] <null ptr>'
         
         # Escape special characters
         string_val = string_val.replace('\\', '\\\\')
@@ -126,14 +144,23 @@ def WTFStringImpl_SummaryProvider(value, _=None):
         string_val = string_val.replace('\r', '\\r')
         string_val = string_val.replace('\t', '\\t')
         
-        # Truncate if too long
-        if len(string_val) > 100:
-            string_val = string_val[:97] + '...'
+        # Truncate display if too long
+        display_truncated = truncated or len(string_val) > MAX_DISPLAY_CHARS
+        if len(string_val) > MAX_DISPLAY_CHARS:
+            string_val = string_val[:MAX_DISPLAY_CHARS]
         
-        # Add encoding info at the beginning
+        # Add encoding and size info at the beginning
         encoding = 'latin1' if is_8bit else 'utf16'
         
-        return '[%s] "%s"' % (encoding, string_val)
+        if display_truncated:
+            size_info = ' %d chars' % m_length
+            if total_bytes >= 1024 * 1024:
+                size_info += ' (%.1fMB)' % (total_bytes / (1024.0 * 1024.0))
+            elif total_bytes >= 1024:
+                size_info += ' (%.1fKB)' % (total_bytes / 1024.0)
+            return '[%s%s] "%s..." <truncated>' % (encoding, size_info, string_val)
+        else:
+            return '[%s] "%s"' % (encoding, string_val)
     except:
         return '<error>'
 
@@ -144,39 +171,53 @@ def ZigString_SummaryProvider(value, _=None):
         ptr = value.GetChildMemberWithName('_unsafe_ptr_do_not_use').GetValueAsUnsigned()
         length = value.GetChildMemberWithName('len').GetValueAsUnsigned()
         
-        if length == 0:
-            return '""'
-        
         # Check encoding flags
         is_16bit = (ptr & (1 << 63)) != 0
         is_utf8 = (ptr & (1 << 61)) != 0
         is_global = (ptr & (1 << 62)) != 0
         
+        # Determine encoding
+        encoding = 'utf16' if is_16bit else ('utf8' if is_utf8 else 'latin1')
+        flags = ' global' if is_global else ''
+        
+        if length == 0:
+            return '[%s%s] ""' % (encoding, flags)
+        
         # Untag the pointer (keep only the lower 53 bits)
         untagged_ptr = ptr & ((1 << 53) - 1)
+        
+        # Limit memory reads to 1MB for performance
+        MAX_BYTES = 1024 * 1024  # 1MB
+        MAX_DISPLAY_CHARS = 200  # Maximum characters to display
+        
+        # Calculate how much to read
+        bytes_per_char = 2 if is_16bit else 1
+        total_bytes = length * bytes_per_char
+        truncated = False
+        
+        if total_bytes > MAX_BYTES:
+            # Read only first part of very large strings
+            chars_to_read = MAX_BYTES // bytes_per_char
+            bytes_to_read = chars_to_read * bytes_per_char
+            truncated = True
+        else:
+            bytes_to_read = total_bytes
         
         # Read the string data
         process = value.process
         error = lldb.SBError()
         
+        byte_data = process.ReadMemory(untagged_ptr, bytes_to_read, error)
+        if not error.Success():
+            return '[%s%s] <read error>' % (encoding, flags)
+        
+        # Decode based on encoding
         if is_16bit:
-            # UTF16 string
-            byte_data = process.ReadMemory(untagged_ptr, length * 2, error)
-            if error.Success():
-                # Properly decode UTF16LE to string
-                string_val = byte_data.decode('utf-16le', errors='replace')
-            else:
-                return '<read error>'
+            string_val = byte_data.decode('utf-16le', errors='replace')
+        elif is_utf8:
+            string_val = byte_data.decode('utf-8', errors='replace')
         else:
-            # UTF8 or Latin1 string
-            byte_data = process.ReadMemory(untagged_ptr, length, error)
-            if error.Success():
-                if is_utf8:
-                    string_val = byte_data.decode('utf-8', errors='replace')
-                else:
-                    string_val = byte_data.decode('latin1', errors='replace')
-            else:
-                return '<read error>'
+            string_val = byte_data.decode('latin1', errors='replace')
         
         # Escape special characters
         string_val = string_val.replace('\\', '\\\\')
@@ -185,15 +226,21 @@ def ZigString_SummaryProvider(value, _=None):
         string_val = string_val.replace('\r', '\\r')
         string_val = string_val.replace('\t', '\\t')
         
-        # Truncate if too long
-        if len(string_val) > 100:
-            string_val = string_val[:97] + '...'
+        # Truncate display if too long
+        display_truncated = truncated or len(string_val) > MAX_DISPLAY_CHARS
+        if len(string_val) > MAX_DISPLAY_CHARS:
+            string_val = string_val[:MAX_DISPLAY_CHARS]
         
-        # Add encoding info at the beginning
-        encoding = 'utf16' if is_16bit else ('utf8' if is_utf8 else 'latin1')
-        flags = ' global' if is_global else ''
-        
-        return '[%s%s] "%s"' % (encoding, flags, string_val)
+        # Build the output
+        if display_truncated:
+            size_info = ' %d chars' % length
+            if total_bytes >= 1024 * 1024:
+                size_info += ' (%.1fMB)' % (total_bytes / (1024.0 * 1024.0))
+            elif total_bytes >= 1024:
+                size_info += ' (%.1fKB)' % (total_bytes / 1024.0)
+            return '[%s%s%s] "%s..." <truncated>' % (encoding, flags, size_info, string_val)
+        else:
+            return '[%s%s] "%s"' % (encoding, flags, string_val)
     except:
         return '<error>'
 

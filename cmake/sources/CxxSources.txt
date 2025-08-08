@@ -3,6 +3,7 @@ packages/bun-usockets/src/crypto/sni_tree.cpp
 src/bake/BakeGlobalObject.cpp
 src/bake/BakeProduction.cpp
 src/bake/BakeSourceProvider.cpp
+src/bake/DevServerSourceProvider.cpp
 src/bun.js/bindings/ActiveDOMCallback.cpp
 src/bun.js/bindings/AsymmetricKeyValue.cpp
 src/bun.js/bindings/AsyncContextFrame.cpp

@@ -86,11 +86,13 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   const signal: MiniAbortSignal = { aborted: false, abort: null! };
   ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
     onError: err => {
+      // console.error("onError renderToPipeableStream", !!signal.aborted);
       if (signal.aborted) return;
 
       // Mark as aborted and call the abort function
-      signal.aborted = true;
-      signal.abort();
+      signal.aborted = err;
+      signal.abort(err);
+      rscPayload.destroy(err);
       // For PassThrough streams, we need to properly close them
       // when an error occurs during React rendering
       // process.nextTick(() => {
@@ -106,8 +108,9 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   pipe(rscPayload);
 
   rscPayload.on("error", err => {
+    // console.error("rscPayload.on('error')", !!signal.aborted);
     if (signal.aborted) return;
-    console.error(err);
+    // console.error(err);
   });
 
   if (skipSSR) {

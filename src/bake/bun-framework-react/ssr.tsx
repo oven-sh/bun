@@ -58,8 +58,8 @@ export function renderToHtml(
 
       // If the signal is already aborted, we should not proceed
       if (signal.aborted) {
-        controller.close();
-        return Promise.resolve();
+        controller.close(signal.aborted);
+        return Promise.reject(signal.aborted);
       }
 
       // `renderToPipeableStream` is what actually generates HTML.
@@ -69,7 +69,7 @@ export function renderToHtml(
         bootstrapModules,
         onError(error) {
           if (!signal.aborted) {
-            console.error(error);
+            // console.error(error);
             // Abort the rendering and close the stream
             signal.aborted = true;
             abort();
@@ -87,8 +87,8 @@ export function renderToHtml(
       // Promise resolved after all data is combined.
       return stream.finished;
     },
-    cancel() {
-      signal.aborted = true;
+    cancel(err) {
+      // console.error("renderToHtml.cancel");
       signal.abort();
       abort?.();
     },
@@ -306,7 +306,7 @@ class StaticRscInjectionStream extends EventEmitter {
   }
 
   destroy(error) {
-    console.error(error);
+    // console.error(error);
     this.reject(error);
   }
 }

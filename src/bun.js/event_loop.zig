@@ -118,7 +118,7 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalOb
     switch (JSC__JSGlobalObject__drainMicrotasks(globalObject)) {
         .success => {},
         .JSExecutionTerminated => {
-            return bun.JSExecutionTerminated.Terminated;
+            return bun.JSExecutionTerminated;
         },
     }
 

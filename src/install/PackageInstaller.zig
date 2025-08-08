@@ -773,7 +773,7 @@ pub const PackageInstaller = struct {
         };
 
         var installer = PackageInstall{
-            .progress = this.progress,
+            .progress = if (this.manager.options.log_level.showProgress()) this.progress else null,
             .cache_dir = undefined,
             .destination_dir_subpath = destination_dir_subpath,
             .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,

@@ -1,5 +1,14 @@
 const { SSLMode, normalizeSSLMode } = require("./postgres.ts");
 
+class UnsupportedAdapterError extends Error {
+  public options: Bun.SQL.Options;
+
+  constructor(options: Bun.SQL.Options) {
+    super(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite"`);
+    this.options = options;
+  }
+}
+
 function parseDefinitelySqliteUrl(value: string | URL): string | null {
   const str = value instanceof URL ? value.toString() : value;
 
@@ -308,4 +317,10 @@ function parseOptions(
   return ret;
 }
 
-export default { parseDefinitelySqliteUrl, isOptionsOfAdapter, assertIsOptionsOfAdapter, parseOptions };
+export default {
+  parseDefinitelySqliteUrl,
+  isOptionsOfAdapter,
+  assertIsOptionsOfAdapter,
+  parseOptions,
+  UnsupportedAdapterError,
+};

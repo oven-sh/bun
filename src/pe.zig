@@ -314,11 +314,113 @@ pub const PEFile = struct {
         self.allocator.destroy(self);
     }
 
+    /// Grow PE headers to accommodate additional section headers
+    fn growHeaders(self: *PEFile, needed_space: u32) !void {
+        const optional_header = self.getOptionalHeader();
+        const file_alignment = optional_header.file_alignment;
+        
+        // Calculate new header size aligned to file alignment
+        const new_headers_size = try alignSizeChecked(needed_space, file_alignment);
+        const old_headers_size = optional_header.size_of_headers;
+        
+        if (new_headers_size <= old_headers_size) {
+            return; // No growth needed
+        }
+        
+        const size_increase = new_headers_size - old_headers_size;
+        
+        // Find where sections start (should be right after headers)
+        const sections = self.getSectionHeaders();
+        var first_section_start: u32 = std.math.maxInt(u32);
+        for (sections) |section| {
+            if (section.pointer_to_raw_data < first_section_start and section.pointer_to_raw_data > 0) {
+                first_section_start = section.pointer_to_raw_data;
+            }
+        }
+        
+        // Verify sections start after current headers
+        if (first_section_start < old_headers_size) {
+            return error.InvalidPELayout;
+        }
+        
+        // Calculate total file size
+        var file_end: u32 = 0;
+        for (sections) |section| {
+            const section_end = section.pointer_to_raw_data + section.size_of_raw_data;
+            if (section_end > file_end) {
+                file_end = section_end;
+            }
+        }
+        
+        // Resize buffer to accommodate shift
+        const new_file_size = file_end + size_increase;
+        try self.data.resize(new_file_size);
+        
+        // Move all section data forward by size_increase
+        // Must copy backwards to avoid overwriting
+        if (file_end > first_section_start) {
+            const move_size = file_end - first_section_start;
+            const src_start = first_section_start;
+            const dst_start = first_section_start + size_increase;
+            
+            const src_slice = self.data.items[src_start..src_start + move_size];
+            const dst_slice = self.data.items[dst_start..dst_start + move_size];
+            std.mem.copyBackwards(u8, dst_slice, src_slice);
+        }
+        
+        // Zero out the new header space
+        @memset(self.data.items[old_headers_size..new_headers_size], 0);
+        
+        // Update all section headers with new pointer_to_raw_data
+        const updated_sections = self.getSectionHeaders();
+        for (updated_sections) |*section| {
+            if (section.pointer_to_raw_data > 0) {
+                section.pointer_to_raw_data += @intCast(size_increase);
+            }
+        }
+        
+        // Update optional header
+        const updated_optional_header = self.getOptionalHeader();
+        updated_optional_header.size_of_headers = new_headers_size;
+        
+        // Update Debug Directory pointers if present
+        const debug_dir = &updated_optional_header.data_directories[6];
+        if (debug_dir.virtual_address != 0 and debug_dir.size != 0) {
+            // Find the debug section
+            var debug_section: ?*SectionHeader = null;
+            for (updated_sections) |*sec| {
+                if (sec.virtual_address <= debug_dir.virtual_address and
+                    sec.virtual_address + sec.virtual_size > debug_dir.virtual_address) {
+                    debug_section = sec;
+                    break;
+                }
+            }
+            
+            if (debug_section) |sec| {
+                const debug_offset = sec.pointer_to_raw_data + (debug_dir.virtual_address - sec.virtual_address);
+                const debug_entries = debug_dir.size / @sizeOf(DebugDirectory);
+                
+                if (debug_offset + debug_dir.size <= self.data.items.len) {
+                    var i: u32 = 0;
+                    while (i < debug_entries) : (i += 1) {
+                        const entry_offset = debug_offset + i * @sizeOf(DebugDirectory);
+                        if (entry_offset + @sizeOf(DebugDirectory) > self.data.items.len) break;
+                        
+                        const debug_entry: *DebugDirectory = @ptrCast(@alignCast(self.data.items.ptr + entry_offset));
+                        if (debug_entry.pointer_to_raw_data >= first_section_start) {
+                            debug_entry.pointer_to_raw_data += @intCast(size_increase);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Add a new section to the PE file for storing Bun module data
     pub fn addBunSection(self: *PEFile, data_to_embed: []const u8) !void {
         const section_name = ".bun\x00\x00\x00\x00";
         const optional_header = self.getOptionalHeader();
-        const aligned_size = alignSize(@intCast(data_to_embed.len + @sizeOf(u32)), optional_header.file_alignment);
+        const aligned_size = try alignSizeChecked(@intCast(data_to_embed.len + @sizeOf(u32)), optional_header.file_alignment);
 
         // Check if we can add another section
         if (self.num_sections >= 95) { // PE limit is 96 sections
@@ -331,9 +433,8 @@ pub const PEFile = struct {
         const needed_space = new_section_offset + @sizeOf(SectionHeader);
 
         if (needed_space > headers_end) {
-            // Not enough space in headers for a new section
-            // Header growth would be needed but is not implemented
-            return error.InsufficientHeaderSpace;
+            // Need to grow headers to accommodate new section
+            try self.growHeaders(@intCast(needed_space));
         }
 
         // Find the last section to determine where to place the new one
@@ -343,7 +444,7 @@ pub const PEFile = struct {
         const section_headers = self.getSectionHeaders();
         for (section_headers) |section| {
             const section_file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-            const section_virtual_end = section.virtual_address + alignSize(section.virtual_size, optional_header.section_alignment);
+            const section_virtual_end = section.virtual_address + (alignSizeChecked(section.virtual_size, optional_header.section_alignment) catch section.virtual_size);
 
             if (section_file_end > last_section_end) {
                 last_section_end = section_file_end;
@@ -357,9 +458,9 @@ pub const PEFile = struct {
         const new_section = SectionHeader{
             .name = section_name.*,
             .virtual_size = @intCast(data_to_embed.len + @sizeOf(u32)),
-            .virtual_address = alignSize(last_virtual_end, optional_header.section_alignment),
+            .virtual_address = try alignSizeChecked(last_virtual_end, optional_header.section_alignment),
             .size_of_raw_data = aligned_size,
-            .pointer_to_raw_data = alignSize(last_section_end, optional_header.file_alignment),
+            .pointer_to_raw_data = try alignSizeChecked(last_section_end, optional_header.file_alignment),
             .pointer_to_relocations = 0,
             .pointer_to_line_numbers = 0,
             .number_of_relocations = 0,
@@ -397,7 +498,7 @@ pub const PEFile = struct {
 
         // Update optional header - get fresh pointer after resize
         const updated_opt = self.getOptionalHeader();
-        updated_opt.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_opt.section_alignment);
+        updated_opt.size_of_image = try alignSizeChecked(new_section.virtual_address + new_section.virtual_size, updated_opt.section_alignment);
         updated_opt.size_of_initialized_data += new_section.size_of_raw_data;
 
         // Update PE checksum after adding section
@@ -815,7 +916,7 @@ pub const PEFile = struct {
         const section_alignment = self.getOptionalHeader().section_alignment;
 
         // Calculate aligned size
-        const aligned_size = alignSize(@intCast(data.len), file_alignment);
+        const aligned_size = try alignSizeChecked(@intCast(data.len), file_alignment);
 
         var section = initial_section;
 
@@ -851,7 +952,7 @@ pub const PEFile = struct {
 
                 // Update image size in optional header
                 const opt_header = self.getOptionalHeader();
-                opt_header.size_of_image = alignSize(section.virtual_address + section.virtual_size, section_alignment);
+                opt_header.size_of_image = try alignSizeChecked(section.virtual_address + section.virtual_size, section_alignment);
             } else {
                 // Not the last section - need to move all following sections
                 // IMPORTANT: Get values we need before resize, as pointers will be invalidated
@@ -942,7 +1043,7 @@ pub const PEFile = struct {
                 // Update image size
                 const last_section = &sections[sections.len - 1];
                 const opt_header = self.getOptionalHeader();
-                opt_header.size_of_image = alignSize(last_section.virtual_address + last_section.virtual_size, section_alignment);
+                opt_header.size_of_image = try alignSizeChecked(last_section.virtual_address + last_section.virtual_size, section_alignment);
             }
         }
 
@@ -1533,6 +1634,7 @@ const ResourceBuilder = struct {
 };
 
 /// Align size to the nearest multiple of alignment
+/// @deprecated Use alignSizeChecked instead for proper error handling
 fn alignSize(size: u32, alignment: u32) u32 {
     if (alignment == 0) return size;
     // Check for overflow

@@ -318,17 +318,17 @@ pub const PEFile = struct {
     fn growHeaders(self: *PEFile, needed_space: u32) !void {
         const optional_header = self.getOptionalHeader();
         const file_alignment = optional_header.file_alignment;
-        
+
         // Calculate new header size aligned to file alignment
         const new_headers_size = try alignSizeChecked(needed_space, file_alignment);
         const old_headers_size = optional_header.size_of_headers;
-        
+
         if (new_headers_size <= old_headers_size) {
             return; // No growth needed
         }
-        
+
         const size_increase = new_headers_size - old_headers_size;
-        
+
         // Find where sections start (should be right after headers)
         const sections = self.getSectionHeaders();
         var first_section_start: u32 = std.math.maxInt(u32);
@@ -337,12 +337,12 @@ pub const PEFile = struct {
                 first_section_start = section.pointer_to_raw_data;
             }
         }
-        
+
         // Verify sections start after current headers
         if (first_section_start < old_headers_size) {
             return error.InvalidPELayout;
         }
-        
+
         // Calculate total file size
         var file_end: u32 = 0;
         for (sections) |section| {
@@ -351,26 +351,26 @@ pub const PEFile = struct {
                 file_end = section_end;
             }
         }
-        
+
         // Resize buffer to accommodate shift
         const new_file_size = file_end + size_increase;
         try self.data.resize(new_file_size);
-        
+
         // Move all section data forward by size_increase
         // Must copy backwards to avoid overwriting
         if (file_end > first_section_start) {
             const move_size = file_end - first_section_start;
             const src_start = first_section_start;
             const dst_start = first_section_start + size_increase;
-            
-            const src_slice = self.data.items[src_start..src_start + move_size];
-            const dst_slice = self.data.items[dst_start..dst_start + move_size];
+
+            const src_slice = self.data.items[src_start .. src_start + move_size];
+            const dst_slice = self.data.items[dst_start .. dst_start + move_size];
             std.mem.copyBackwards(u8, dst_slice, src_slice);
         }
-        
+
         // Zero out the new header space
         @memset(self.data.items[old_headers_size..new_headers_size], 0);
-        
+
         // Update all section headers with new pointer_to_raw_data
         const updated_sections = self.getSectionHeaders();
         for (updated_sections) |*section| {
@@ -378,11 +378,11 @@ pub const PEFile = struct {
                 section.pointer_to_raw_data += @intCast(size_increase);
             }
         }
-        
+
         // Update optional header
         const updated_optional_header = self.getOptionalHeader();
         updated_optional_header.size_of_headers = new_headers_size;
-        
+
         // Update Debug Directory pointers if present
         const debug_dir = &updated_optional_header.data_directories[6];
         if (debug_dir.virtual_address != 0 and debug_dir.size != 0) {
@@ -390,22 +390,23 @@ pub const PEFile = struct {
             var debug_section: ?*SectionHeader = null;
             for (updated_sections) |*sec| {
                 if (sec.virtual_address <= debug_dir.virtual_address and
-                    sec.virtual_address + sec.virtual_size > debug_dir.virtual_address) {
+                    sec.virtual_address + sec.virtual_size > debug_dir.virtual_address)
+                {
                     debug_section = sec;
                     break;
                 }
             }
-            
+
             if (debug_section) |sec| {
                 const debug_offset = sec.pointer_to_raw_data + (debug_dir.virtual_address - sec.virtual_address);
                 const debug_entries = debug_dir.size / @sizeOf(DebugDirectory);
-                
+
                 if (debug_offset + debug_dir.size <= self.data.items.len) {
                     var i: u32 = 0;
                     while (i < debug_entries) : (i += 1) {
                         const entry_offset = debug_offset + i * @sizeOf(DebugDirectory);
                         if (entry_offset + @sizeOf(DebugDirectory) > self.data.items.len) break;
-                        
+
                         const debug_entry: *DebugDirectory = @ptrCast(@alignCast(self.data.items.ptr + entry_offset));
                         if (debug_entry.pointer_to_raw_data >= first_section_start) {
                             debug_entry.pointer_to_raw_data += @intCast(size_increase);

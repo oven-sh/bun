@@ -14,8 +14,8 @@ const js_fns = struct {
 };
 
 /// this will be a JSValue (returned by `Bun.jest(...)`)
-const BunTest = struct {
-    gpa: *std.mem.Allocator,
+pub const BunTest = struct {
+    gpa: std.mem.Allocator,
 
     phase: enum {
         scheduling,
@@ -24,12 +24,21 @@ const BunTest = struct {
     scheduling: Scheduling,
     execution: TestExecution,
 
-    fn ref(this: *BunTest) *const anyopaque {
-        // TODO jsvalue(this).protect()
+    pub fn init(gpa: std.mem.Allocator) BunTest {
+        return .{
+            .gpa = gpa,
+            .phase = .scheduling,
+            .scheduling = .init(gpa),
+            .execution = .init(),
+        };
     }
-    fn unref(this: *BunTest) void {
-        // TODO jsvalue(this).unprotect()
-    }
+
+    // fn ref(this: *BunTest) *const anyopaque {
+    //     // TODO jsvalue(this).protect()
+    // }
+    // fn unref(this: *BunTest) void {
+    //     // TODO jsvalue(this).unprotect()
+    // }
 };
 
 const NameAndCallback = struct {
@@ -51,6 +60,16 @@ const Scheduling = struct {
     active_scope: *DescribeScope,
     _previous_scope: ?*DescribeScope,
 
+    pub fn init(gpa: std.mem.Allocator) Scheduling {
+        const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null));
+
+        return .{
+            .describe_callback_queue = std.ArrayList(NameAndCallback).init(gpa),
+            .root_scope = root_scope,
+            .active_scope = root_scope,
+            ._previous_scope = null,
+        };
+    }
     pub fn deinit(this: *Scheduling) void {
         this.root_scope.deinitTree();
         this.schedule.deinit();
@@ -126,7 +145,7 @@ const DescribeScope = struct {
     entries: std.ArrayList(TestScheduleEntry2),
     name: jsc.Strong,
 
-    fn init(gpa: *std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
+    fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
             .entries = std.ArrayList(TestScheduleEntry2).init(gpa),
             .parent = parent,

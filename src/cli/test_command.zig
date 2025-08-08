@@ -1333,6 +1333,7 @@ pub const TestCommand = struct {
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
+                .describe2 = .init(ctx.allocator),
             },
             .callback = undefined,
         };

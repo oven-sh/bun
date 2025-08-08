@@ -419,6 +419,7 @@ pub fn ParsePrefix(
                 new.data.e_new.close_parens_loc = call_args.loc;
             } else {
                 new.data.e_new.close_parens_loc = .Empty;
+                new.data.e_new.args = .{};
             }
 
             return new;

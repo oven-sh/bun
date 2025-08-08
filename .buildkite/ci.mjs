@@ -310,6 +310,27 @@ function getCppAgent(platform, options) {
 }
 
 /**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getLinkBunAgent(platform, options) {
+  const { os, arch, distro } = platform;
+
+  if (os === "darwin") {
+    return {
+      queue: `build-${os}`,
+      os,
+      arch,
+    };
+  }
+
+  return getEc2Agent(platform, options, {
+    instanceType: "r8g.large",
+  });
+}
+
+/**
  * @returns {Platform}
  */
 function getZigPlatform() {
@@ -502,7 +523,7 @@ function getLinkBunStep(platform, options) {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
     depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
-    agents: getCppAgent(platform, options),
+    agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {

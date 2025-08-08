@@ -650,7 +650,6 @@ pub const PEFile = struct {
         try writer.writeAll(self.data.items[0..file_size]);
     }
 
-
     // Resource editing functionality
     fn getResourceSection(self: *const PEFile) ?*SectionHeader {
         const section_headers = self.getSectionHeaders();
@@ -673,7 +672,6 @@ pub const PEFile = struct {
 
         return @ptrCast(@alignCast(self.data.items.ptr + rsrc_section.pointer_to_raw_data));
     }
-
 
     pub fn applyWindowsSettings(self: *PEFile, settings: *const bun.options.WindowsSettings, allocator: Allocator) !void {
         // Clear Security directory if present (any modification invalidates signature)

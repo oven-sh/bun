@@ -38,6 +38,9 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         back: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
         front: std.atomic.Value(?*T) align(queue_padding_length) = .init(null),
 
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
+
         pub fn push(self: *Self, item: *T) void {
             self.pushBatch(item, item);
         }

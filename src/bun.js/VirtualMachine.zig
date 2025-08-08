@@ -903,8 +903,9 @@ pub fn enableMacroMode(this: *VirtualMachine) void {
         this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
         this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
         this.macro_event_loop.global = this.global;
+        this.macro_event_loop.concurrent_tasks = jsc.EventLoop.ConcurrentTask.Queue.new(.{});
         this.macro_event_loop.virtual_machine = this;
-        this.macro_event_loop.concurrent_tasks = .{};
+
         ensureSourceCodePrinter(this);
     }
 
@@ -994,7 +995,7 @@ pub fn initWithModuleGraph(
     );
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-    vm.regular_event_loop.concurrent_tasks = .{};
+    vm.regular_event_loop.concurrent_tasks = jsc.EventLoop.ConcurrentTask.Queue.new(.{});
     vm.event_loop = &vm.regular_event_loop;
 
     vm.transpiler.macro_context = null;
@@ -1117,7 +1118,7 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-    vm.regular_event_loop.concurrent_tasks = .{};
+    vm.regular_event_loop.concurrent_tasks = jsc.EventLoop.ConcurrentTask.Queue.new(.{});
     vm.event_loop = &vm.regular_event_loop;
 
     vm.transpiler.macro_context = null;
@@ -1277,7 +1278,7 @@ pub fn initWorker(
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-    vm.regular_event_loop.concurrent_tasks = .{};
+    vm.regular_event_loop.concurrent_tasks = jsc.EventLoop.ConcurrentTask.Queue.new(.{});
     vm.event_loop = &vm.regular_event_loop;
     vm.hot_reload = worker.parent.hot_reload;
     vm.transpiler.macro_context = null;
@@ -1369,7 +1370,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-    vm.regular_event_loop.concurrent_tasks = .{};
+    vm.regular_event_loop.concurrent_tasks = jsc.EventLoop.ConcurrentTask.Queue.new(.{});
     vm.event_loop = &vm.regular_event_loop;
     if (comptime bun.Environment.isWindows) {
         vm.eventLoop().ensureWaker();
@@ -1903,10 +1904,8 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
     }
 }
 
-// TODO:
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
-
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();
         print.ctx.written = &.{};
@@ -1916,6 +1915,8 @@ pub fn deinit(this: *VirtualMachine) void {
         rare_data.deinit();
     }
     this.overridden_main.deinit();
+    this.transpiler_store.deinit();
+    this.event_loop.deinit();
     this.has_terminated = true;
 }
 

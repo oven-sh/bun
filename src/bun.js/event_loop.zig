@@ -14,7 +14,9 @@ tasks: Queue = undefined,
 immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
 
-concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
+// Heap-allocate to prevent over-alignment.
+concurrent_tasks: *ConcurrentTask.Queue = undefined,
+
 global: *jsc.JSGlobalObject = undefined,
 virtual_machine: *VirtualMachine = undefined,
 waker: ?Waker = null,
@@ -615,6 +617,13 @@ pub fn unrefConcurrently(this: *EventLoop) void {
     // TODO maybe this should be AcquireRelease
     _ = this.concurrent_ref.fetchSub(1, .seq_cst);
     this.wakeup();
+}
+
+pub fn deinit(this: *EventLoop) void {
+    this.concurrent_tasks.deinit();
+    this.immediate_tasks.clearAndFree(bun.default_allocator);
+    this.next_immediate_tasks.clearAndFree(bun.default_allocator);
+    this.tasks.deinit();
 }
 
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;

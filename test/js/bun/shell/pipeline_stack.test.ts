@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
 import { $ } from "bun";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { describe } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createTestBuilder } from "./util";
 
 const TestBuilder = createTestBuilder(import.meta.path);

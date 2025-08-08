@@ -172,6 +172,8 @@ void AbortSignal::runAbortSteps()
 
     // 3. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+    setIsFiringEventListeners(false);
 }
 
 // https://dom.spec.whatwg.org/#abortsignal-signal-abort

@@ -1073,6 +1073,15 @@ fn handleCorked(globalObject: *jsc.JSGlobalObject, function: jsc.JSValue, result
     };
 }
 
+pub fn memoryCost(this: *const NodeHTTPResponse) usize {
+    var counter: usize = @sizeOf(NodeHTTPResponse);
+    counter += this.buffered_request_body_data_during_pause.memoryCost();
+    if (!this.flags.socket_closed) {
+        counter += this.raw_response.memoryCost();
+    }
+    return counter;
+}
+
 pub fn setTimeout(this: *NodeHTTPResponse, seconds: u8) void {
     if (this.flags.request_has_completed or this.flags.socket_closed) {
         return;

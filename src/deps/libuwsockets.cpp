@@ -1807,6 +1807,14 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  size_t uws_res_memory_cost(int ssl, uws_res_r res) {
+    if (ssl) {
+      return ((uWS::HttpResponse<true>*)res)->memoryCost();
+    } else {
+      return ((uWS::HttpResponse<false>*)res)->memoryCost();
+    }
+  }
+
   size_t uws_ws_memory_cost(int ssl, uws_websocket_t *ws) {
     if (ssl) {
       return ((TLSWebSocket*)ws)->memoryCost();

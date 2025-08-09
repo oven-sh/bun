@@ -168,9 +168,6 @@ pub const AbortSignal = opaque {
 
             // We default to not keeping the event loop alive with this timeout.
             vm.timer.insert(&this.event_loop_timer);
-            if (comptime bun.Environment.isWindows) {
-                vm.timer.incrementTimerRef(1);
-            }
 
             return this;
         }
@@ -178,19 +175,10 @@ pub const AbortSignal = opaque {
         fn cancel(this: *Timeout, vm: *jsc.VirtualMachine) void {
             if (this.event_loop_timer.state == .ACTIVE) {
                 vm.timer.remove(&this.event_loop_timer);
-                if (comptime bun.Environment.isWindows) {
-                    vm.timer.incrementTimerRef(-1);
-                }
             }
         }
 
         pub fn run(this: *Timeout, vm: *jsc.VirtualMachine) void {
-            if (comptime bun.Environment.isWindows) {
-                if (this.event_loop_timer.state == .ACTIVE) {
-                    vm.timer.incrementTimerRef(-1);
-                }
-            }
-
             this.event_loop_timer.state = .FIRED;
             this.cancel(vm);
 

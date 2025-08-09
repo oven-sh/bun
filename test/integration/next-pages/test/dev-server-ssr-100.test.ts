@@ -6,7 +6,7 @@ import { cp, rm } from "fs/promises";
 import PQueue from "p-queue";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { bunEnv, bunExe, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });

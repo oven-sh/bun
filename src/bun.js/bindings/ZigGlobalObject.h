@@ -321,7 +321,7 @@ public:
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    void drainMicrotasks();
+    uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();

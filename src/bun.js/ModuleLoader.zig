@@ -2132,14 +2132,19 @@ pub const RuntimeTranspilerStore = struct {
     generation_number: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     store: TranspilerJob.Store,
     enabled: bool = true,
-    queue: Queue = Queue{},
+    queue: *Queue,
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
     pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
             .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
+            .queue = Queue.new(.{}),
         };
+    }
+
+    pub fn deinit(this: *RuntimeTranspilerStore) void {
+        this.queue.deinit();
     }
 
     pub fn runFromJSThread(this: *RuntimeTranspilerStore, event_loop: *jsc.EventLoop, global: *jsc.JSGlobalObject, vm: *jsc.VirtualMachine) void {

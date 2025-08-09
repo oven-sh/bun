@@ -5020,7 +5020,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 
         switch (type) {
         case JSC::SymbolType: {
-            except->message = Bun::toStringRef(jsCast<JSC::Symbol*>(cell)->descriptiveString());
+            except->message = Bun::toStringRef(jsCast<JSC::Symbol*>(cell)->description());
             return;
         }
 

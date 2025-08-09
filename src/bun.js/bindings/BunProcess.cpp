@@ -1120,7 +1120,7 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto decodedReason = JSValue::decode(reason);
     if (decodedReason.isSymbol()) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString())));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->description())));
     }
 
     if (decodedReason.isInt32())

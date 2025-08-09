@@ -279,6 +279,10 @@ class Statement {
     return this.#raw.paramsCount;
   }
 
+  get hasMultipleStatements() {
+    return this.#raw.hasMultipleStatements;
+  }
+
   finalize(...args) {
     this.isFinalized = true;
     return this.#raw.finalize(...args);
@@ -296,8 +300,9 @@ class Statement {
 }
 
 var cachedCount = Symbol.for("Bun.Database.cache.count");
-class Database {
-  constructor(filenameGiven, options) {
+
+class Database implements SqliteTypes.Database {
+  constructor(filenameGiven: string | URL | undefined, options?: SqliteTypes.DatabaseOptions | number) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
@@ -476,7 +481,7 @@ class Database {
     return createChangesObject();
   }
 
-  prepare(query, params, flags) {
+  prepare(query: string, params: any[], flags: number = 0) {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

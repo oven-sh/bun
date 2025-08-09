@@ -31,7 +31,7 @@ async function findRandomPort() {
   });
 }
 async function waitForPostgres(port) {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
         idle_timeout: 20,
@@ -43,7 +43,7 @@ async function waitForPostgres(port) {
       console.log("PostgreSQL is ready!");
       return true;
     } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      console.log(`Waiting for PostgreSQL... (${i + 1}/5)`, error);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -182,6 +182,9 @@ if (isDockerEnabled()) {
   });
 
   describe("should work with more than the max inline capacity", () => {
+    const sql = postgres(options);
+    afterAll(() => sql.close());
+
     for (let size of [50, 60, 62, 64, 70, 100]) {
       for (let duplicated of [true, false]) {
         test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
@@ -333,6 +336,7 @@ if (isDockerEnabled()) {
   });
 
   test("query string memory leak test", async () => {
+    await using sql = postgres(options);
     Bun.gc(true);
     const rss = process.memoryUsage.rss();
     for (let potato of Array.from({ length: 8 * 1024 }, a => "okkk" + a)) {
@@ -11107,5 +11111,15 @@ describe("should proper handle connection errors", () => {
       stderr: "pipe",
     });
     expect(result.stderr?.toString()).toBeFalsy();
+  });
+});
+
+describe("Misc", () => {
+  test("UnsupportedAdapterError exists", () => {
+    expect(Bun.SQL.UnsupportedAdapterError).toBeDefined();
+    expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toHaveProperty("options");
+    expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toMatchInlineSnapshot(
+      `[UnsupportedAdapterError: Unsupported adapter: sqlite. Supported adapters: "postgres", "sqlite"]`,
+    );
   });
 });

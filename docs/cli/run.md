@@ -62,14 +62,16 @@ To run a file in watch mode, use the `--watch` flag. When a file is changed, the
 
 By default, `--watch` monitors the entry point and all imported files. You can also specify additional files or directories to watch using glob patterns.
 
+You can provide multiple values either by repeating `--watch` or by passing a comma-separated list.
+
 ```bash
 # Watch all .ts files in the src directory
 $ bun --watch=src/**/*.ts run index.tsx
 
-# Watch all .ts files in src and lib
+# Watch all .ts files in src and lib (comma-separated)
 $ bun --watch="src/**/*.ts,lib/**/*.ts" run index.tsx
 
-# The --watch flag can also be repeated
+# Or repeat the flag
 $ bun --watch=src/**/*.ts --watch=lib/**/*.ts run index.tsx
 ```
 

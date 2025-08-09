@@ -74,7 +74,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
-    clap.parseParam("--watch <STR>?...                 Automatically restart the process on file change. Optionally, specify a list of paths to watch.") catch unreachable,
+clap.parseParam("--watch <STR>...                  Automatically restart the process on file change. Accepts multiple values via repeated --watch flags and/or a comma-separated list. Supports glob patterns.") catch unreachable,
     clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
     clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
@@ -139,7 +139,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
-    clap.parseParam("--watch <STR>?...                 Automatically restart the process on file change. Optionally, specify a list of paths to watch.") catch unreachable,
+clap.parseParam("--watch <STR>...                  Automatically restart the process on file change. Accepts multiple values via repeated --watch flags and/or a comma-separated list. Supports glob patterns.") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
     clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,

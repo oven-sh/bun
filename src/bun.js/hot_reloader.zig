@@ -73,13 +73,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             };
 
             clear_screen = clear_screen_flag;
-            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |e| {
+                bun.handleErrorReturnTrace(e, null);
+                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(e)});
             };
-            watcher.start() catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.panic("Failed to start File Watcher: {s}", .{@errorName(err)});
+            watcher.start() catch |e| {
+                bun.handleErrorReturnTrace(e, null);
+                Output.panic("Failed to start File Watcher: {s}", .{@errorName(e)});
             };
             return watcher;
         }
@@ -206,9 +206,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.transpiler.fs,
                         bun.default_allocator,
-                    ) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    ) catch |e| {
+                        bun.handleErrorReturnTrace(e, null);
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(e)});
                     } }
                 else
                     .{ .hot = Watcher.init(
@@ -216,9 +216,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.transpiler.fs,
                         bun.default_allocator,
-                    ) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    ) catch |e| {
+                        bun.handleErrorReturnTrace(e, null);
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(e)});
                     } };
 
                 if (reload_immediately) {
@@ -232,9 +232,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     reloader,
                     this.transpiler.fs,
                     bun.default_allocator,
-                ) catch |err| {
-                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                ) catch |e| {
+                    bun.handleErrorReturnTrace(e, null);
+                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(e)});
                 };
                 this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
@@ -246,11 +246,15 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             if (watch_globs.items.len > 0) {
                 var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
-                const allocator = arena.allocator();
+
+                // Collect watched files for clearer logging
+                var watched_files = std.ArrayListUnmanaged([]const u8).empty;
+                defer watched_files.deinit(arena.allocator());
 
                 for (watch_globs.items) |pattern| {
                     var glob_walker = bun.glob.BunGlobWalker{};
-                    if (glob_walker.init(
+                    // init returns error!Maybe(void, sys.Error)
+                    const init_res = glob_walker.init(
                         &arena,
                         pattern,
                         false,
@@ -258,16 +262,27 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         false,
                         true,
                         true,
-                    )) |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Invalid glob pattern \"{s}\": {s}", .{ pattern, @errorName(err) });
+                    ) catch |e| {
+                        Output.prettyErrorln("\r\x1b[31merror\r\x1b[0m: Invalid glob pattern \"{s}\": {s}", .{ pattern, @errorName(e) });
                         continue;
+                    };
+                    switch (init_res) {
+                        .result => {},
+                        .err => |err| {
+                            Output.prettyErrorln("\r\x1b[31merror\r\x1b[0m: Invalid glob pattern \"{s}\": {s}", .{ pattern, err.name() });
+                            continue;
+                        },
                     }
                     defer glob_walker.deinit(true);
 
-                    switch (glob_walker.walk()) {
+                    const walk_res = glob_walker.walk() catch |e| {
+                        Output.prettyErrorln("\r\x1b[31merror\r\x1b[0m: Failed to walk glob pattern \"{s}\": {s}", .{ pattern, @errorName(e) });
+                        continue;
+                    };
+                    switch (walk_res) {
                         .result => {},
                         .err => |err| {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to walk glob pattern \"{s}\": {s}", .{ pattern, @errorName(err) });
+                            Output.prettyErrorln("\r\x1b[31merror\r\x1b[0m: Failed to walk glob pattern \"{s}\": {s}", .{ pattern, err.name() });
                             continue;
                         },
                     }
@@ -275,18 +290,36 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     var iter = glob_walker.matchedPaths.iterator();
                     while (iter.next()) |entry| {
                         const file_path = entry.key_ptr.*;
-                        const fd = bun.sys.open(file_path, bun.O.RDONLY, 0) catch continue;
-                        const loader = Fs.PathName.init(file_path).loader(&this.transpiler.options.loaders) orelse .file;
+                        const path_z = file_path.toUTF8(bun.default_allocator).sliceZ();
+                        defer bun.default_allocator.free(path_z);
+                        const open_res = bun.sys.open(path_z, bun.O.RDONLY, 0);
+                        const fd = switch (open_res) {
+                            .result => |fdv| fdv,
+                            .err => continue,
+                        };
+                        const loader = Fs.Path.init(file_path.byteSlice()).loader(&this.transpiler.options.loaders) orelse .file;
 
                         _ = watcher.addFile(
                             fd,
-                            file_path,
-                            Watcher.getHash(file_path),
+                            file_path.byteSlice(),
+                            Watcher.getHash(file_path.byteSlice()),
                             loader,
                             bun.invalid_fd,
                             null,
                             true,
                         );
+
+                        // Track for logging later
+                        watched_files.append(arena.allocator(), file_path.byteSlice()) catch bun.outOfMemory();
+                    }
+                }
+
+                // Verbose logging: enumerate all watched files
+                if (reloader.verbose and watched_files.items.len > 0) {
+                    const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
+                    Reloader.debug("Watching {d} paths:", .{watched_files.items.len});
+                    for (watched_files.items) |p| {
+                        Reloader.debug(" - {s}", .{fs.relativeTo(p)});
                     }
                 }
             }

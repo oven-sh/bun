@@ -309,7 +309,7 @@ pub const BuildCommand = struct {
                 &this_transpiler,
                 allocator,
                 bun.jsc.AnyEventLoop.init(ctx.allocator),
-                if (ctx.debug.hot_reload == .watch) &ctx.debug.watch_globs else null,
+                if (ctx.debug.hot_reload == .watch) ctx.debug.watch_globs else null,
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,

@@ -1663,7 +1663,7 @@ pub fn startAsyncBundle(
         },
         allocator,
         .{ .js = dev.vm.eventLoop() },
-        false, // watching is handled separately
+        null, // watching is handled separately
         jsc.WorkPool.get(),
         heap,
     );

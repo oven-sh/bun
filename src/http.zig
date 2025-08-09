@@ -1665,6 +1665,33 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
     }
 }
 
+pub const HTTPClientCallback = struct {
+    ctx: *anyopaque,
+    function: Function,
+
+    pub const Function = *const fn (*anyopaque, *AsyncHTTP, HTTPClientResult) void;
+
+    pub fn run(self: HTTPClientCallback, async_http: *AsyncHTTP, result: HTTPClientResult) void {
+        self.function(self.ctx, async_http, result);
+    }
+
+    pub fn New(comptime Type: type, comptime callback: anytype) type {
+        return struct {
+            pub fn init(this: Type) HTTPClientCallback {
+                return HTTPClientCallback{
+                    .ctx = this,
+                    .function = @This().wrapped_callback,
+                };
+            }
+
+            pub fn wrapped_callback(ptr: *anyopaque, async_http: *AsyncHTTP, result: HTTPClientResult) void {
+                const casted = @as(Type, @ptrCast(@alignCast(ptr)));
+                @call(bun.callmod_inline, callback, .{ casted, async_http, result });
+            }
+        };
+    }
+};
+
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
@@ -1713,32 +1740,7 @@ pub const HTTPClientResult = struct {
         return if (this.fail) |e| (e == error.Aborted or e == error.AbortedBeforeConnecting) else false;
     }
 
-    pub const Callback = struct {
-        ctx: *anyopaque,
-        function: Function,
-
-        pub const Function = *const fn (*anyopaque, *AsyncHTTP, HTTPClientResult) void;
-
-        pub fn run(self: Callback, async_http: *AsyncHTTP, result: HTTPClientResult) void {
-            self.function(self.ctx, async_http, result);
-        }
-
-        pub fn New(comptime Type: type, comptime callback: anytype) type {
-            return struct {
-                pub fn init(this: Type) Callback {
-                    return Callback{
-                        .ctx = this,
-                        .function = @This().wrapped_callback,
-                    };
-                }
-
-                pub fn wrapped_callback(ptr: *anyopaque, async_http: *AsyncHTTP, result: HTTPClientResult) void {
-                    const casted = @as(Type, @ptrCast(@alignCast(ptr)));
-                    @call(bun.callmod_inline, callback, .{ casted, async_http, result });
-                }
-            };
-        }
-    };
+    pub const Callback = HTTPClientCallback;
 };
 
 pub fn toResult(this: *HTTPClient) HTTPClientResult {

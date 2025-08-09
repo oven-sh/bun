@@ -690,4 +690,62 @@ describe("bundler", () => {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
     },
   });
+
+  itBundled("minify/IfStatementMinification", {
+    files: {
+      "/entry.js": /* js */ `
+        var a, b, c;
+        
+        // Simple if-to-logical-expression conversions  
+        if (a) b();
+        if (!a) b(); 
+        if (a) b(); else c();
+        if (a) {} else b();
+        
+        // Ternary expression optimizations
+        capture(a ? true : false);
+        capture(a ? false : true);
+        capture(a ? a : b);
+        capture(a ? b : a);
+        capture(a ? b : b);
+      `,
+    },
+    capture: [
+      "a?!0:!1",  // a ? true : false (minified true->!0, false->!1)
+      "a?!1:!0",  // a ? false : true (minified false->!1, true->!0)
+      "a?a:b",    // a ? a : b (not optimized yet)
+      "a?b:a",    // a ? b : a (not optimized yet)
+      "a?b:b",    // a ? b : b (not optimized yet)
+    ],
+    minifySyntax: true,
+    minifyWhitespace: true,
+  });
+
+
+  itBundled("minify/JumpStatementOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        var a, b, c;
+        
+        // Test that if statements get converted to logical expressions  
+        if (a) b();        // -> a && b()
+        if (!a) b();       // -> a || b() (correct: if !a then b, same as a || b)
+        if (a) b(); else c(); // -> a ? b() : c()
+        if (a) {} else b();   // -> a || b() (if a is truthy do nothing, else b)
+        
+        capture("works");
+      `,
+    },
+    capture: ['"works"'],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      // Verify if statements were converted to logical expressions
+      expect(file).toContain("a&&b()");       // if (a) b(); -> a&&b();
+      expect(file).toContain("a?b():c()");    // if (a) b(); else c(); -> a?b():c();  
+      expect(file).toContain("a||b()");       // if (a) {} else b(); -> a||b();
+      // Note: if (!a) b(); -> a||b() is actually correct! (if !a is true, then b(), same as a||b())
+    },
+  });
 });

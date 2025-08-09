@@ -4483,6 +4483,286 @@ pub fn NewParser_(
             return;
         }
 
+        pub fn mangleIf(p: *P, stmts: *ListManaged(Stmt), loc: logger.Loc, if_stmt: *S.If) !void {
+            // Constant folding using the test expression
+            const effects = SideEffects.toBoolean(p, &if_stmt.test_.data);
+            if (effects.ok) {
+                if (effects.value) {
+                    // The test is truthy
+                    if (if_stmt.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(if_stmt.no.?, p.allocator)) {
+                        // We can drop the "no" branch
+                        if (effects.side_effects == .could_have_side_effects) {
+                            // Keep the condition if it could have side effects (but is still known to be truthy)
+                            if (SideEffects.simplifyUnusedExpr(p, if_stmt.test_)) |test_| {
+                                try stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc));
+                            }
+                        }
+                        return try p.appendIfBodyPreservingScope(stmts, if_stmt.yes);
+                    } else {
+                        // We have to keep the "no" branch
+                    }
+                } else {
+                    // The test is falsy
+                    if (!SideEffects.shouldKeepStmtInDeadControlFlow(if_stmt.yes, p.allocator)) {
+                        // We can drop the "yes" branch
+                        if (effects.side_effects == .could_have_side_effects) {
+                            // Keep the condition if it could have side effects (but is still known to be falsy)
+                            if (SideEffects.simplifyUnusedExpr(p, if_stmt.test_)) |test_| {
+                                try stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc));
+                            }
+                        }
+                        if (if_stmt.no == null) {
+                            return;
+                        }
+                        return try p.appendIfBodyPreservingScope(stmts, if_stmt.no.?);
+                    } else {
+                        // We have to keep the "yes" branch
+                    }
+                }
+                // Use "1" and "0" instead of "true" and "false" to be shorter
+                if (effects.side_effects == .no_side_effects) {
+                    if (effects.value) {
+                        if_stmt.test_.data = .{ .e_number = .{ .value = 1 } };
+                    } else {
+                        if_stmt.test_.data = .{ .e_number = .{ .value = 0 } };
+                    }
+                }
+            }
+
+            var expr: ?Expr = null;
+            if (if_stmt.yes.data == .s_expr) {
+                const yes_expr = if_stmt.yes.data.s_expr;
+                // "yes" is an expression
+                if (if_stmt.no == null) {
+                    if (if_stmt.test_.data == .e_unary and if_stmt.test_.data.e_unary.op == .un_not) {
+                        const not = if_stmt.test_.data.e_unary;
+                        // "if (!a) b();" => "a || b();"
+                        expr = Expr.joinWithLeftAssociativeOp(.bin_logical_or, not.value, yes_expr.value, p.allocator);
+                    } else {
+                        // "if (a) b();" => "a && b();"
+                        expr = Expr.joinWithLeftAssociativeOp(.bin_logical_and, if_stmt.test_, yes_expr.value, p.allocator);
+                    }
+                } else if (if_stmt.no.?.data == .s_expr) {
+                    const no_expr = if_stmt.no.?.data.s_expr;
+                    // "if (a) b(); else c();" => "a ? b() : c();"
+                    expr = p.mangleIfExpr(loc, if_stmt.test_, yes_expr.value, no_expr.value);
+                }
+            } else if (if_stmt.yes.data == .s_empty) {
+                // "yes" is missing
+                if (if_stmt.no == null) {
+                    // "yes" and "no" are both missing
+                    if (p.exprCanBeRemovedIfUnused(&if_stmt.test_)) {
+                        // "if (1) {}" => ""
+                        return;
+                    } else {
+                        // "if (a) {}" => "a;"
+                        expr = if_stmt.test_;
+                    }
+                } else if (if_stmt.no.?.data == .s_expr) {
+                    const no_expr = if_stmt.no.?.data.s_expr;
+                    if (if_stmt.test_.data == .e_unary and if_stmt.test_.data.e_unary.op == .un_not) {
+                        const not = if_stmt.test_.data.e_unary;
+                        // "if (!a) {} else b();" => "a && b();"
+                        expr = Expr.joinWithLeftAssociativeOp(.bin_logical_and, not.value, no_expr.value, p.allocator);
+                    } else {
+                        // "if (a) {} else b();" => "a || b();"
+                        expr = Expr.joinWithLeftAssociativeOp(.bin_logical_or, if_stmt.test_, no_expr.value, p.allocator);
+                    }
+                } else {
+                    // "yes" is missing and "no" is not missing (and is not an expression)
+                    if (if_stmt.test_.data == .e_unary and if_stmt.test_.data.e_unary.op == .un_not) {
+                        const not = if_stmt.test_.data.e_unary;
+                        // "if (!a) {} else throw b;" => "if (a) throw b;"
+                        if_stmt.test_ = not.value;
+                        if_stmt.yes = if_stmt.no.?;
+                        if_stmt.no = null;
+                    } else {
+                        // "if (a) {} else throw b;" => "if (!a) throw b;"
+                        if_stmt.test_ = p.newExpr(E.Unary{ .op = .un_not, .value = if_stmt.test_ }, if_stmt.test_.loc);
+                        if_stmt.yes = if_stmt.no.?;
+                        if_stmt.no = null;
+                    }
+                }
+            } else {
+                // "yes" is not missing (and is not an expression)
+                if (if_stmt.no) |no| {
+                    // "yes" is not missing (and is not an expression) and "no" is not missing
+                    if (if_stmt.test_.data == .e_unary and if_stmt.test_.data.e_unary.op == .un_not) {
+                        const not = if_stmt.test_.data.e_unary;
+                        // "if (!a) return b; else return c;" => "if (a) return c; else return b;"
+                        if_stmt.test_ = not.value;
+                        const temp = if_stmt.yes;
+                        if_stmt.yes = no;
+                        if_stmt.no = temp;
+                    }
+                } else {
+                    // "no" is missing
+                    if (if_stmt.yes.data == .s_if) {
+                        const nested_if = if_stmt.yes.data.s_if;
+                        if (nested_if.no == null) {
+                            // "if (a) if (b) return c;" => "if (a && b) return c;"
+                            if_stmt.test_ = Expr.joinWithLeftAssociativeOp(.bin_logical_and, if_stmt.test_, nested_if.test_, p.allocator);
+                            if_stmt.yes = nested_if.yes;
+                        }
+                    }
+                }
+            }
+
+            // Return an expression if we replaced the if statement with an expression above
+            if (expr) |e| {
+                const simplified = SideEffects.simplifyUnusedExpr(p, e) orelse e;
+                return try stmts.append(p.s(S.SExpr{ .value = simplified }, loc));
+            }
+            
+            return try stmts.append(Stmt{ .loc = loc, .data = .{ .s_if = if_stmt } });
+        }
+
+        pub fn mangleIfExpr(p: *P, loc: logger.Loc, test_: Expr, yes: Expr, no: Expr) Expr {
+            var test_expr = test_;
+            var yes_expr = yes;
+            var no_expr = no;
+
+            // "(a, b) ? c : d" => "a, b ? c : d"
+            if (test_expr.data == .e_binary) {
+                const comma = test_expr.data.e_binary;
+                if (comma.op == .bin_comma) {
+                    return Expr.joinWithComma(
+                        comma.left, 
+                        p.mangleIfExpr(comma.right.loc, comma.right, yes_expr, no_expr),
+                        p.allocator
+                    );
+                }
+            }
+
+            // "!a ? b : c" => "a ? c : b"
+            if (test_expr.data == .e_unary) {
+                const not = test_expr.data.e_unary;
+                if (not.op == .un_not) {
+                    test_expr = not.value;
+                    const temp = yes_expr;
+                    yes_expr = no_expr;
+                    no_expr = temp;
+                }
+            }
+
+            if (yes_expr.data.eqlPtr(&no_expr.data)) {
+                // "/* @__PURE__ */ a() ? b : b" => "b"
+                if (p.exprCanBeRemovedIfUnused(&test_expr)) {
+                    return yes_expr;
+                }
+
+                // "a ? b : b" => "a, b"
+                return Expr.joinWithComma(test_expr, yes_expr, p.allocator);
+            }
+
+            // "a ? true : false" => "!!a"
+            // "a ? false : true" => "!a"
+            if (yes_expr.data == .e_boolean and no_expr.data == .e_boolean) {
+                const y = yes_expr.data.e_boolean;
+                const n = no_expr.data.e_boolean;
+                if (y.value and !n.value) {
+                    return p.newExpr(E.Unary{ 
+                        .op = .un_not, 
+                        .value = p.newExpr(E.Unary{ .op = .un_not, .value = test_expr }, test_expr.loc) 
+                    }, test_expr.loc);
+                }
+                if (!y.value and n.value) {
+                    return p.newExpr(E.Unary{ .op = .un_not, .value = test_expr }, test_expr.loc);
+                }
+            }
+
+            if (test_expr.data == .e_identifier) {
+                const id = test_expr.data.e_identifier;
+                // "a ? a : b" => "a || b"
+                if (yes_expr.data == .e_identifier and yes_expr.data.e_identifier.ref.eql(id.ref)) {
+                    return Expr.joinWithLeftAssociativeOp(.bin_logical_or, test_expr, no_expr, p.allocator);
+                }
+                // "a ? b : a" => "a && b"
+                if (no_expr.data == .e_identifier and no_expr.data.e_identifier.ref.eql(id.ref)) {
+                    return Expr.joinWithLeftAssociativeOp(.bin_logical_and, test_expr, yes_expr, p.allocator);
+                }
+            }
+
+            // "a ? b ? c : d : d" => "a && b ? c : d"
+            if (yes_expr.data == .e_if) {
+                const yes_if = yes_expr.data.e_if;
+                if (yes_if.no.data.eqlPtr(&no_expr.data)) {
+                    return p.newExpr(E.If{
+                        .test_ = Expr.joinWithLeftAssociativeOp(.bin_logical_and, test_expr, yes_if.test_, p.allocator),
+                        .yes = yes_if.yes,
+                        .no = no_expr,
+                    }, loc);
+                }
+            }
+
+            // "a ? b : c ? b : d" => "a || c ? b : d"
+            if (no_expr.data == .e_if) {
+                const no_if = no_expr.data.e_if;
+                if (yes_expr.data.eqlPtr(&no_if.yes.data)) {
+                    return p.newExpr(E.If{
+                        .test_ = Expr.joinWithLeftAssociativeOp(.bin_logical_or, test_expr, no_if.test_, p.allocator),
+                        .yes = yes_expr,
+                        .no = no_if.no,
+                    }, loc);
+                }
+            }
+
+            // "a ? c : (b, c)" => "(a || b), c"
+            if (no_expr.data == .e_binary) {
+                const comma = no_expr.data.e_binary;
+                if (comma.op == .bin_comma and yes_expr.data.eqlPtr(&comma.right.data)) {
+                    return Expr.joinWithComma(
+                        Expr.joinWithLeftAssociativeOp(.bin_logical_or, test_expr, comma.left, p.allocator),
+                        comma.right,
+                        p.allocator
+                    );
+                }
+            }
+
+            // "a ? (b, c) : c" => "(a && b), c"
+            if (yes_expr.data == .e_binary) {
+                const comma = yes_expr.data.e_binary;
+                if (comma.op == .bin_comma and comma.right.data.eqlPtr(&no_expr.data)) {
+                    return Expr.joinWithComma(
+                        Expr.joinWithLeftAssociativeOp(.bin_logical_and, test_expr, comma.left, p.allocator),
+                        comma.right,
+                        p.allocator
+                    );
+                }
+            }
+
+            // "a ? b || c : c" => "(a && b) || c"
+            if (yes_expr.data == .e_binary) {
+                const binary = yes_expr.data.e_binary;
+                if (binary.op == .bin_logical_or and binary.right.data.eqlPtr(&no_expr.data)) {
+                    return p.newExpr(E.Binary{
+                        .op = .bin_logical_or,
+                        .left = Expr.joinWithLeftAssociativeOp(.bin_logical_and, test_expr, binary.left, p.allocator),
+                        .right = binary.right,
+                    }, loc);
+                }
+            }
+
+            // "a ? c : b && c" => "(a || b) && c"
+            if (no_expr.data == .e_binary) {
+                const binary = no_expr.data.e_binary;
+                if (binary.op == .bin_logical_and and yes_expr.data.eqlPtr(&binary.right.data)) {
+                    return p.newExpr(E.Binary{
+                        .op = .bin_logical_and,
+                        .left = Expr.joinWithLeftAssociativeOp(.bin_logical_or, test_expr, binary.left, p.allocator),
+                        .right = binary.right,
+                    }, loc);
+                }
+            }
+
+            // Don't mutate the original AST
+            return p.newExpr(E.If{
+                .test_ = test_expr,
+                .yes = yes_expr,
+                .no = no_expr,
+            }, loc);
+        }
+
         fn markExportedBindingInsideNamespace(p: *P, ref: Ref, binding: BindingNodeIndex) void {
             switch (binding.data) {
                 .b_missing => {},

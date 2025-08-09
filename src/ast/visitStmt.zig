@@ -1069,31 +1069,7 @@ pub fn VisitStmt(
                         }
                     }
 
-                    // TODO: more if statement syntax minification
-                    const can_remove_test = p.exprCanBeRemovedIfUnused(&data.test_);
-                    switch (data.yes.data) {
-                        .s_expr => |yes_expr| {
-                            if (yes_expr.value.isMissing()) {
-                                if (data.no == null) {
-                                    if (can_remove_test) {
-                                        return;
-                                    }
-                                } else if (data.no.?.isMissingExpr() and can_remove_test) {
-                                    return;
-                                }
-                            }
-                        },
-                        .s_empty => {
-                            if (data.no == null) {
-                                if (can_remove_test) {
-                                    return;
-                                }
-                            } else if (data.no.?.isMissingExpr() and can_remove_test) {
-                                return;
-                            }
-                        },
-                        else => {},
-                    }
+                    return try p.mangleIf(stmts, stmt.loc, data);
                 }
 
                 try stmts.append(stmt.*);
@@ -1531,6 +1507,7 @@ pub fn VisitStmt(
                 );
                 return;
             }
+
         };
     };
 }

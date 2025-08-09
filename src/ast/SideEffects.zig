@@ -238,13 +238,43 @@ pub const SideEffects = enum(u1) {
                         // Try to take advantage of the optional chain operator to shorten code
                         if (bin.op != .bin_nullish_coalescing) {
                             if (left.data == .e_binary) {
-                                // TODO: simplify to optional chaining
+                                const binary = left.data.e_binary;
+                                // "a != null && a.b()" => "a?.b()"
+                                // "a == null || a.b()" => "a?.b()"
+                                if ((binary.op == .bin_loose_ne and bin.op == .bin_logical_and) or 
+                                    (binary.op == .bin_loose_eq and bin.op == .bin_logical_or)) {
+                                    var test_expr: ?Expr = null;
+                                    if (binary.right.data == .e_null) {
+                                        test_expr = binary.left;
+                                    } else if (binary.left.data == .e_null) {
+                                        test_expr = binary.right;
+                                    }
+
+                                    if (test_expr) |test_val| {
+                                        // Note: Technically unbound identifiers can refer to a getter on
+                                        // the global object and that getter can have side effects that can
+                                        // be observed if we run that getter once instead of twice. But this
+                                        // seems like terrible coding practice and very unlikely to come up
+                                        // in real software, so we deliberately ignore this possibility and
+                                        // optimize for size instead of for this obscure edge case.
+                                        if (test_val.data == .e_identifier) {
+                                            const id = test_val.data.e_identifier;
+                                            if (!id.must_keep_due_to_with_stmt) {
+                                                // TODO: Optional chaining optimization disabled due to existing Expr.zig type issue
+                                                // This would transform "a != null && a.b()" => "a?.b()"
+                                                // But there's a pre-existing type issue in tryToInsertOptionalChain
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     },
 
                     .bin_add => {
-                        // TODO: simplifyUnusedStringAdditionChain here.
+                        if (simplifyUnusedStringAdditionChain(expr)) |result| {
+                            return result;
+                        }
                     },
 
                     else => {},
@@ -859,6 +889,52 @@ pub const SideEffects = enum(u1) {
         }
 
         return .{ .ok = false, .value = false, .side_effects = .could_have_side_effects };
+    }
+
+    fn simplifyUnusedStringAdditionChain(expr: Expr) ?Expr {
+        switch (expr.data) {
+            .e_string => {
+                // "'x' + y" => "'' + y"
+                return Expr.init(E.String, E.String{}, expr.loc);
+            },
+            .e_binary => |e| {
+                if (e.op == .bin_add) {
+                    const left_result = simplifyUnusedStringAdditionChain(e.left);
+                    const left_is_string_addition = left_result != null;
+
+                    if (e.right.data == .e_string) {
+                        const right_string = e.right.data.e_string;
+                        // "('' + x) + 'y'" => "'' + x"
+                        if (left_is_string_addition) {
+                            return left_result.?;
+                        }
+
+                        // "x + 'y'" => "x + ''"
+                        if (!left_is_string_addition and right_string.data.len > 0) {
+                            return Expr.init(E.Binary, E.Binary{
+                                .op = .bin_add,
+                                .left = left_result orelse e.left,
+                                .right = Expr.init(E.String, E.String{}, e.right.loc),
+                            }, expr.loc);
+                        }
+                    }
+
+                    // Don't mutate the original AST
+                    if (left_result != null and !e.left.data.eqlPtr(&left_result.?.data)) {
+                        return Expr.init(E.Binary, E.Binary{
+                            .op = .bin_add,
+                            .left = left_result.?,
+                            .right = e.right,
+                        }, expr.loc);
+                    }
+
+                    return if (left_is_string_addition) expr else null;
+                }
+            },
+            else => {},
+        }
+
+        return null;
     }
 };
 

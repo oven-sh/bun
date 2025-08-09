@@ -486,8 +486,6 @@ fn buildExpansionTable(tokens: []Token, table: *std.ArrayList(ExpansionVariant))
 
 pub const Lexer = NewLexer(.ascii);
 
-const BraceLexerError = Allocator.Error;
-
 pub fn NewLexer(comptime encoding: Encoding) type {
     const Chars = NewChars(encoding);
     return struct {
@@ -736,4 +734,6 @@ const assert = bun.assert;
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const t = std.testing;
+
 const Allocator = std.mem.Allocator;
+const BraceLexerError = Allocator.Error;

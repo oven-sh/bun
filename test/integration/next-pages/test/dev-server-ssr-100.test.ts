@@ -138,7 +138,8 @@ test(
     expect(lockfile).toMatchSnapshot();
     const controller = new AbortController();
 
-    const queue = new PQueue({ concurrency: 16 });
+    // On an arm64 mac, it doesn't get faster if you increase it beyond 4 as of August, 2025.
+    const queue = new PQueue({ concurrency: 4 });
 
     async function run(i: number) {
       const x = await fetch(`${baseUrl}/?i=${i}`, {

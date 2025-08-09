@@ -153,6 +153,8 @@ pub const Special = union(enum) {
     hot_accept_visited,
     /// Prints the resolved specifier string for an import record.
     resolved_specifier_string: ImportRecord.Index,
+    /// `import.meta.glob`
+    import_meta_glob,
 };
 
 pub const Call = struct {

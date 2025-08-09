@@ -189,7 +189,7 @@ pub fn decodeShiftJIS(
                 }
 
                 // Lookup in JIS0208 table
-                if (getJIS0208CodePoint(pointer)) |codepoint| {
+                if (jis_table.getJIS0208CodePoint(pointer)) |codepoint| {
                     if (codepoint <= 0xFFFF) {
                         try output.append(bun.default_allocator, @as(u16, @intCast(codepoint)));
                     } else {
@@ -440,24 +440,4 @@ const JSUint8Array = jsc.JSUint8Array;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const EncodingLabel = jsc.WebCore.EncodingLabel;
-
-// Minimal JIS X 0208 character mapping for Shift JIS support
-fn getJIS0208CodePoint(pointer: u16) ?u21 {
-    // Mappings calculated from actual Shift JIS byte sequences
-    return switch (pointer) {
-        // Hiragana あいうえお (0x82A0, 0x82A2, 0x82A4, 0x82A6, 0x82A8)
-        283 => 0x3042, // あ (0x82, 0xA0)
-        285 => 0x3044, // い (0x82, 0xA2)  
-        287 => 0x3046, // う (0x82, 0xA4)
-        289 => 0x3048, // え (0x82, 0xA6)
-        291 => 0x304A, // お (0x82, 0xA8)
-        
-        // Kanji 日 (0x93FA) = (0x93-0x81)*188 + (0xFA-0x41) = 18*188 + 185 = 3569
-        3569 => 0x65E5, // 日
-        
-        // Kanji 本 (0x967B) = (0x96-0x81)*188 + (0x7B-0x40) = 21*188 + 59 = 4007  
-        4007 => 0x672C, // 本
-        
-        else => null,
-    };
-}
+const jis_table = @import("jis_table.zig");

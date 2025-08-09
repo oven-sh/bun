@@ -304,6 +304,7 @@ src/bun.js/webcore/EncodingLabel.zig
 src/bun.js/webcore/fetch.zig
 src/bun.js/webcore/FileReader.zig
 src/bun.js/webcore/FileSink.zig
+src/bun.js/webcore/jis_table.zig
 src/bun.js/webcore/ObjectURLRegistry.zig
 src/bun.js/webcore/prompt.zig
 src/bun.js/webcore/ReadableStream.zig

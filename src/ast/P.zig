@@ -748,20 +748,20 @@ pub fn NewParser_(
                                     }
                                 },
                                 .s_if => |if_statement| {
-                                    const result = SideEffects.toBoolean(p, if_statement.test_.data);
+                                    const result = SideEffects.toBoolean(p, &if_statement.test_.data);
                                     if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                         break :can_remove_part false;
                                     }
                                 },
                                 .s_while => |while_statement| {
-                                    const result = SideEffects.toBoolean(p, while_statement.test_.data);
+                                    const result = SideEffects.toBoolean(p, &while_statement.test_.data);
                                     if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                         break :can_remove_part false;
                                     }
                                 },
                                 .s_for => |for_statement| {
                                     if (for_statement.test_) |expr| {
-                                        const result = SideEffects.toBoolean(p, expr.data);
+                                        const result = SideEffects.toBoolean(p, &expr.data);
                                         if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                             break :can_remove_part false;
                                         }

@@ -985,7 +985,7 @@ pub fn VisitStmt(
                 data.body = p.visitLoopBody(data.body);
 
                 data.test_ = SideEffects.simplifyBoolean(p, data.test_);
-                const result = SideEffects.toBoolean(p, data.test_.data);
+                const result = SideEffects.toBoolean(p, &data.test_.data);
                 if (result.ok and result.side_effects == .no_side_effects) {
                     data.test_ = p.newExpr(E.Boolean{ .value = result.value }, data.test_.loc);
                 }
@@ -1006,7 +1006,7 @@ pub fn VisitStmt(
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 }
 
-                const effects = SideEffects.toBoolean(p, data.test_.data);
+                const effects = SideEffects.toBoolean(p, &data.test_.data);
                 if (effects.ok and !effects.value) {
                     const old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -1108,7 +1108,7 @@ pub fn VisitStmt(
                 if (data.test_) |test_| {
                     data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
 
-                    const result = SideEffects.toBoolean(p, data.test_.?.data);
+                    const result = SideEffects.toBoolean(p, &data.test_.?.data);
                     if (result.ok and result.value and result.side_effects == .no_side_effects) {
                         data.test_ = null;
                     }

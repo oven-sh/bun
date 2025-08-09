@@ -18,11 +18,11 @@ pub const SideEffects = enum(u1) {
         if (!p.options.features.dead_code_elimination) return expr;
 
         var result: Expr = expr;
-        _simplifyBoolean(p, &result);
+        _simplifyBoolean(&result);
         return result;
     }
 
-    fn _simplifyBoolean(p: anytype, expr: *Expr) void {
+    fn _simplifyBoolean(expr: *Expr) void {
         while (true) {
             switch (expr.data) {
                 .e_unary => |e| {
@@ -33,13 +33,13 @@ pub const SideEffects = enum(u1) {
                             continue;
                         }
 
-                        _simplifyBoolean(p, &e.value);
+                        _simplifyBoolean(&e.value);
                     }
                 },
                 .e_binary => |e| {
                     switch (e.op) {
                         .bin_logical_and => {
-                            const effects = SideEffects.toBoolean(p, e.right.data);
+                            const effects = _toBoolean(&e.right.data);
                             if (effects.ok and effects.value and effects.side_effects == .no_side_effects) {
                                 // "if (anything && truthyNoSideEffects)" => "if (anything)"
                                 expr.* = e.left;
@@ -47,7 +47,7 @@ pub const SideEffects = enum(u1) {
                             }
                         },
                         .bin_logical_or => {
-                            const effects = SideEffects.toBoolean(p, e.right.data);
+                            const effects = _toBoolean(&e.right.data);
                             if (effects.ok and !effects.value and effects.side_effects == .no_side_effects) {
                                 // "if (anything || falsyNoSideEffects)" => "if (anything)"
                                 expr.* = e.left;
@@ -66,23 +66,27 @@ pub const SideEffects = enum(u1) {
     pub const toNumber = Expr.Data.toNumber;
     pub const typeof = Expr.Data.toTypeof;
 
-    pub fn isPrimitiveToReorder(data: Expr.Data) bool {
-        return switch (data) {
+    pub fn isPrimitiveToReorder(data: *const Expr.Data) bool {
+        return switch (data.*) {
             .e_null,
             .e_undefined,
             .e_string,
             .e_boolean,
             .e_number,
             .e_big_int,
-            .e_inlined_enum,
             .e_require_main,
             => true,
+            .e_inlined_enum => |e| isPrimitiveToReorder(&e.value.data),
             else => false,
         };
     }
 
-    pub fn simplifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
-        if (!p.options.features.dead_code_elimination) return expr;
+    const SimplifyUnusedExprContext = struct {
+        symbols: *const std.ArrayList(js_ast.Symbol),
+        allocator: std.mem.Allocator,
+    };
+
+    fn _simplifyUnusedExpr(ctx: *const SimplifyUnusedExprContext, expr: Expr) ?Expr {
         switch (expr.data) {
             .e_null,
             .e_undefined,
@@ -109,17 +113,17 @@ pub const SideEffects = enum(u1) {
                     return expr;
                 }
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
+                if (ident.can_be_removed_if_unused or ctx.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
                     return null;
                 }
             },
             .e_if => |ternary| {
-                ternary.yes = simplifyUnusedExpr(p, ternary.yes) orelse ternary.yes.toEmpty();
-                ternary.no = simplifyUnusedExpr(p, ternary.no) orelse ternary.no.toEmpty();
+                ternary.yes = _simplifyUnusedExpr(ctx, ternary.yes) orelse ternary.yes.toEmpty();
+                ternary.no = _simplifyUnusedExpr(ctx, ternary.no) orelse ternary.no.toEmpty();
 
                 // "foo() ? 1 : 2" => "foo()"
                 if (ternary.yes.isEmpty() and ternary.no.isEmpty()) {
-                    return simplifyUnusedExpr(p, ternary.test_);
+                    return _simplifyUnusedExpr(ctx, ternary.test_);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
@@ -128,7 +132,7 @@ pub const SideEffects = enum(u1) {
                         .bin_logical_or,
                         ternary.test_,
                         ternary.no,
-                        p.allocator,
+                        ctx.allocator,
                     );
                 }
 
@@ -138,7 +142,7 @@ pub const SideEffects = enum(u1) {
                         .bin_logical_and,
                         ternary.test_,
                         ternary.yes,
-                        p.allocator,
+                        ctx.allocator,
                     );
                 }
             },
@@ -147,7 +151,7 @@ pub const SideEffects = enum(u1) {
                 // such as "toString" or "valueOf". They must also never throw any exceptions.
                 switch (un.op) {
                     .un_void, .un_not => {
-                        return simplifyUnusedExpr(p, un.value);
+                        return _simplifyUnusedExpr(ctx, un.value);
                     },
                     .un_typeof => {
                         // "typeof x" must not be transformed into if "x" since doing so could
@@ -157,7 +161,7 @@ pub const SideEffects = enum(u1) {
                             return null;
                         }
 
-                        return simplifyUnusedExpr(p, un.value);
+                        return _simplifyUnusedExpr(ctx, un.value);
                     },
 
                     else => {},
@@ -169,7 +173,7 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused != .never) {
                     if (call.args.len > 0) {
-                        const joined = Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                        const joined = Expr.joinAllWithCommaCallback(call.args.slice(), *const SimplifyUnusedExprContext, ctx, comptime _simplifyUnusedExpr, ctx.allocator);
                         if (joined != null and call.can_be_unwrapped_if_unused == .if_unused_and_toString_safe) {
                             @branchHint(.unlikely);
                             // For now, only support this for 1 argument.
@@ -185,13 +189,17 @@ pub const SideEffects = enum(u1) {
             },
 
             .e_binary => |bin| {
+                var left = bin.left;
+                var right = bin.right;
+
                 switch (bin.op) {
                     // These operators must not have any type conversions that can execute code
                     // such as "toString" or "valueOf". They must also never throw any exceptions.
-                    .bin_strict_eq,
-                    .bin_strict_ne,
-                    .bin_comma,
-                    => return simplifyUnusedBinaryCommaExpr(p, expr),
+                    .bin_strict_eq, .bin_strict_ne, .bin_comma => return Expr.joinWithComma(
+                        _simplifyUnusedExpr(ctx, left) orelse left.toEmpty(),
+                        _simplifyUnusedExpr(ctx, right) orelse right.toEmpty(),
+                        ctx.allocator,
+                    ),
 
                     // We can simplify "==" and "!=" even though they can call "toString" and/or
                     // "valueOf" if we can statically determine that the types of both sides are
@@ -200,34 +208,58 @@ pub const SideEffects = enum(u1) {
                     .bin_loose_eq,
                     .bin_loose_ne,
                     => {
-                        if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
+                        if (left.data.mergeKnownPrimitive(right.data) != .unknown) {
                             return Expr.joinWithComma(
-                                simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-                                simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
-                                p.allocator,
+                                _simplifyUnusedExpr(ctx, left) orelse left.toEmpty(),
+                                _simplifyUnusedExpr(ctx, right) orelse right.toEmpty(),
+                                ctx.allocator,
                             );
-                        }
-                        // If one side is a number, the number can be printed as
-                        // `0` since the result being unused doesnt matter, we
-                        // only care to invoke the coercion.
-                        if (bin.left.data == .e_number) {
-                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
-                        } else if (bin.right.data == .e_number) {
-                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
                         }
                     },
 
-                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
-                        bin.right = simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
+                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => |op| {
+
+                        // If this is a boolean logical operation and the result is unused, then
+                        // we know the left operand will only be used for its boolean value and
+                        // can be simplified under that assumption
+                        if (op != .bin_nullish_coalescing) {
+                            _simplifyBoolean(&left);
+                        }
+
+                        right = _simplifyUnusedExpr(ctx, right) orelse Expr.empty;
+
                         // Preserve short-circuit behavior: the left expression is only unused if
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
+                        if (right.isEmpty()) {
+                            return _simplifyUnusedExpr(ctx, left);
+                        }
 
-                        if (bin.right.isEmpty())
-                            return simplifyUnusedExpr(p, bin.left);
+                        // Try to take advantage of the optional chain operator to shorten code
+                        if (bin.op != .bin_nullish_coalescing) {
+                            if (left.data == .e_binary) {
+                                // TODO: simplify to optional chaining
+                            }
+                        }
+                    },
+
+                    .bin_add => {
+                        // TODO: simplifyUnusedStringAdditionChain here.
                     },
 
                     else => {},
+                }
+
+                if (!bin.left.data.eqlPtr(&left.data) or !bin.right.data.eqlPtr(&right.data)) {
+                    return Expr.init(
+                        E.Binary,
+                        E.Binary{
+                            .op = bin.op,
+                            .left = left,
+                            .right = right,
+                        },
+                        expr.loc,
+                    );
                 }
             },
 
@@ -237,24 +269,24 @@ pub const SideEffects = enum(u1) {
                 // the other items instead and leave the object expression there.
                 var properties_slice = expr.data.e_object.properties.slice();
                 var end: usize = 0;
-                for (properties_slice) |spread| {
+                for (properties_slice) |*spread| {
                     end = 0;
                     if (spread.kind == .spread) {
                         // Spread properties must always be evaluated
-                        for (properties_slice) |prop_| {
-                            var prop = prop_;
-                            if (prop_.kind != .spread) {
-                                const value = simplifyUnusedExpr(p, prop.value.?);
+                        for (properties_slice) |*prop_| {
+                            var prop = prop_.*;
+                            if (prop.kind != .spread) {
+                                const value = _simplifyUnusedExpr(ctx, prop.value.?);
                                 if (value != null) {
                                     prop.value = value;
                                 } else if (!prop.flags.contains(.is_computed)) {
                                     continue;
                                 } else {
-                                    prop.value = p.newExpr(E.Number{ .value = 0.0 }, prop.value.?.loc);
+                                    prop.value = Expr.init(E.Number, E.Number{ .value = 0.0 }, prop.value.?.loc);
                                 }
                             }
 
-                            properties_slice[end] = prop_;
+                            properties_slice[end] = prop;
                             end += 1;
                         }
 
@@ -268,24 +300,25 @@ pub const SideEffects = enum(u1) {
 
                 // Otherwise, the object can be completely removed. We only need to keep any
                 // object properties with side effects. Apply this simplification recursively.
-                for (properties_slice) |prop| {
+                for (properties_slice) |*prop| {
                     if (prop.flags.contains(.is_computed)) {
                         // Make sure "ToString" is still evaluated on the key
                         result = result.joinWithComma(
-                            p.newExpr(
+                            Expr.init(
+                                E.Binary,
                                 E.Binary{
                                     .op = .bin_add,
                                     .left = prop.key.?,
-                                    .right = p.newExpr(E.String{}, prop.key.?.loc),
+                                    .right = Expr.init(E.String, E.String{}, prop.key.?.loc),
                                 },
                                 prop.key.?.loc,
                             ),
-                            p.allocator,
+                            ctx.allocator,
                         );
                     }
                     result = result.joinWithComma(
-                        simplifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
-                        p.allocator,
+                        _simplifyUnusedExpr(ctx, prop.value.?) orelse prop.value.?.toEmpty(),
+                        ctx.allocator,
                     );
                 }
 
@@ -314,10 +347,10 @@ pub const SideEffects = enum(u1) {
                 // array items with side effects. Apply this simplification recursively.
                 return Expr.joinAllWithCommaCallback(
                     items,
-                    @TypeOf(p),
-                    p,
-                    comptime simplifyUnusedExpr,
-                    p.allocator,
+                    *const SimplifyUnusedExprContext,
+                    ctx,
+                    comptime _simplifyUnusedExpr,
+                    ctx.allocator,
                 );
             },
 
@@ -327,55 +360,18 @@ pub const SideEffects = enum(u1) {
         return expr;
     }
 
+    pub fn simplifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
+        if (!p.options.features.dead_code_elimination) return expr;
+        var ctx = SimplifyUnusedExprContext{
+            .symbols = &p.symbols,
+            .allocator = p.allocator,
+        };
+        return _simplifyUnusedExpr(&ctx, expr);
+    }
+
     pub const BinaryExpressionSimplifyVisitor = struct {
         bin: *E.Binary,
     };
-
-    ///
-    fn simplifyUnusedBinaryCommaExpr(p: anytype, expr: Expr) ?Expr {
-        if (Environment.allow_assert) {
-            assert(expr.data == .e_binary);
-            assert(switch (expr.data.e_binary.op) {
-                .bin_strict_eq,
-                .bin_strict_ne,
-                .bin_comma,
-                => true,
-                else => false,
-            });
-        }
-        const stack: *std.ArrayList(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
-        const stack_bottom = stack.items.len;
-        defer stack.shrinkRetainingCapacity(stack_bottom);
-
-        stack.append(.{ .bin = expr.data.e_binary }) catch bun.outOfMemory();
-
-        // Build stack up of expressions
-        var left: Expr = expr.data.e_binary.left;
-        while (left.data.as(.e_binary)) |left_bin| {
-            switch (left_bin.op) {
-                .bin_strict_eq,
-                .bin_strict_ne,
-                .bin_comma,
-                => {
-                    stack.append(.{ .bin = left_bin }) catch bun.outOfMemory();
-                    left = left_bin.left;
-                },
-                else => break,
-            }
-        }
-
-        // Ride the stack downwards
-        var i = stack.items.len;
-        var result = simplifyUnusedExpr(p, left) orelse Expr.empty;
-        while (i > stack_bottom) {
-            i -= 1;
-            const top = stack.items[i];
-            const visited_right = simplifyUnusedExpr(p, top.bin.right) orelse Expr.empty;
-            result = result.joinWithComma(visited_right, p.allocator);
-        }
-
-        return if (result.isMissing()) null else result;
-    }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
         switch (binding.data) {
@@ -518,8 +514,8 @@ pub const SideEffects = enum(u1) {
     // Returns true if this expression is known to result in a primitive value (i.e.
     // null, undefined, boolean, number, bigint, or string), even if the expression
     // cannot be removed due to side effects.
-    pub fn isPrimitiveWithSideEffects(data: Expr.Data) bool {
-        switch (data) {
+    pub fn isPrimitiveWithSideEffects(data: *const Expr.Data) bool {
+        switch (data.*) {
             .e_null,
             .e_undefined,
             .e_boolean,
@@ -604,16 +600,16 @@ pub const SideEffects = enum(u1) {
                     .bin_logical_or_assign,
                     .bin_nullish_coalescing_assign,
                     => {
-                        return isPrimitiveWithSideEffects(e.left.data) and isPrimitiveWithSideEffects(e.right.data);
+                        return isPrimitiveWithSideEffects(&e.left.data) and isPrimitiveWithSideEffects(&e.right.data);
                     },
                     .bin_comma => {
-                        return isPrimitiveWithSideEffects(e.right.data);
+                        return isPrimitiveWithSideEffects(&e.right.data);
                     },
                     else => {},
                 }
             },
             .e_if => |e| {
-                return isPrimitiveWithSideEffects(e.yes.data) and isPrimitiveWithSideEffects(e.no.data);
+                return isPrimitiveWithSideEffects(&e.yes.data) and isPrimitiveWithSideEffects(&e.no.data);
             },
             else => {},
         }
@@ -622,24 +618,28 @@ pub const SideEffects = enum(u1) {
 
     pub const toTypeOf = Expr.Data.typeof;
 
-    pub fn toNullOrUndefined(p: anytype, exp: Expr.Data) Result {
+    pub fn toNullOrUndefined(p: anytype, exp: *const Expr.Data) Result {
         if (!p.options.features.dead_code_elimination) {
             // value should not be read if ok is false, all existing calls to this function already adhere to this
             return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
         }
-        switch (exp) {
+        return _toNullOrUndefined(exp);
+    }
+
+    fn _toNullOrUndefined(exp: *const Expr.Data) Result {
+        switch (exp.*) {
             // Never null or undefined
             .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
-                return Result{ .value = false, .side_effects = .no_side_effects, .ok = true };
+                return .{ .value = false, .side_effects = .no_side_effects, .ok = true };
             },
 
             .e_object, .e_array, .e_class => {
-                return Result{ .value = false, .side_effects = .could_have_side_effects, .ok = true };
+                return .{ .value = false, .side_effects = .could_have_side_effects, .ok = true };
             },
 
             // always a null or undefined
             .e_null, .e_undefined => {
-                return Result{ .value = true, .side_effects = .no_side_effects, .ok = true };
+                return .{ .value = true, .side_effects = .no_side_effects, .ok = true };
             },
 
             .e_unary => |e| {
@@ -658,12 +658,12 @@ pub const SideEffects = enum(u1) {
                     .un_typeof,
                     .un_delete,
                     => {
-                        return Result{ .ok = true, .value = false, .side_effects = SideEffects.could_have_side_effects };
+                        return .{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                     },
 
                     // Always undefined
                     .un_void => {
-                        return Result{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
+                        return .{ .value = true, .side_effects = .could_have_side_effects, .ok = true };
                     },
 
                     else => {},
@@ -710,74 +710,74 @@ pub const SideEffects = enum(u1) {
                     .bin_strict_eq,
                     .bin_strict_ne,
                     => {
-                        return Result{ .ok = true, .value = false, .side_effects = SideEffects.could_have_side_effects };
+                        return .{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                     },
 
                     .bin_comma => {
-                        const res = toNullOrUndefined(p, e.right.data);
+                        const res = _toNullOrUndefined(&e.right.data);
                         if (res.ok) {
-                            return Result{ .ok = true, .value = res.value, .side_effects = SideEffects.could_have_side_effects };
+                            return .{ .ok = true, .value = res.value, .side_effects = .could_have_side_effects };
                         }
                     },
                     else => {},
                 }
             },
             .e_inlined_enum => |inlined| {
-                return toNullOrUndefined(p, inlined.value.data);
+                return _toNullOrUndefined(&inlined.value.data);
             },
             else => {},
         }
 
-        return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
+        return .{ .ok = false, .value = false, .side_effects = .could_have_side_effects };
     }
 
-    pub fn toBoolean(p: anytype, exp: Expr.Data) Result {
+    pub fn toBoolean(p: anytype, exp: *const Expr.Data) Result {
         // Only do this check once.
         if (!p.options.features.dead_code_elimination) {
             // value should not be read if ok is false, all existing calls to this function already adhere to this
-            return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
+            return .{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
         }
 
-        return toBooleanWithoutDCECheck(exp);
+        return _toBoolean(exp);
     }
 
     // Avoid passing through *P
     // This is a very recursive function.
-    fn toBooleanWithoutDCECheck(exp: Expr.Data) Result {
-        switch (exp) {
+    fn _toBoolean(exp: *const Expr.Data) Result {
+        switch (exp.*) {
             .e_null, .e_undefined => {
-                return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = false, .side_effects = .no_side_effects };
             },
             .e_boolean => |e| {
-                return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
             },
             .e_number => |e| {
-                return Result{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = e.value != 0.0 and !std.math.isNan(e.value), .side_effects = .no_side_effects };
             },
             .e_big_int => |e| {
-                return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
             .e_string => |e| {
-                return Result{ .ok = true, .value = e.isPresent(), .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = e.isPresent(), .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
-                return Result{ .ok = true, .value = true, .side_effects = .no_side_effects };
+                return .{ .ok = true, .value = true, .side_effects = .no_side_effects };
             },
             .e_object, .e_array, .e_class => {
-                return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                return .{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
             },
             .e_unary => |e_| {
                 switch (e_.op) {
                     .un_void => {
-                        return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
+                        return .{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                     },
                     .un_typeof => {
                         // Never an empty string
 
-                        return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                        return .{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                     },
                     .un_not => {
-                        const result = toBooleanWithoutDCECheck(e_.value.data);
+                        const result = _toBoolean(&e_.value.data);
                         if (result.ok) {
                             return .{ .ok = true, .value = !result.value, .side_effects = result.side_effects };
                         }
@@ -789,21 +789,21 @@ pub const SideEffects = enum(u1) {
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
-                        const result = toBooleanWithoutDCECheck(e_.right.data);
+                        const result = _toBoolean(&e_.right.data);
                         if (result.value and result.ok) {
-                            return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                            return .{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_logical_and => {
                         // "anything && falsy" is falsy
-                        const result = toBooleanWithoutDCECheck(e_.right.data);
+                        const result = _toBoolean(&e_.right.data);
                         if (!result.value and result.ok) {
-                            return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
+                            return .{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_comma => {
                         // "anything, truthy/falsy" is truthy/falsy
-                        var result = toBooleanWithoutDCECheck(e_.right.data);
+                        var result = _toBoolean(&e_.right.data);
                         if (result.ok) {
                             result.side_effects = .could_have_side_effects;
                             return result;
@@ -812,28 +812,28 @@ pub const SideEffects = enum(u1) {
                     .bin_gt => {
                         if (e_.left.data.toFiniteNumber()) |left_num| {
                             if (e_.right.data.toFiniteNumber()) |right_num| {
-                                return Result{ .ok = true, .value = left_num > right_num, .side_effects = .no_side_effects };
+                                return .{ .ok = true, .value = left_num > right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_lt => {
                         if (e_.left.data.toFiniteNumber()) |left_num| {
                             if (e_.right.data.toFiniteNumber()) |right_num| {
-                                return Result{ .ok = true, .value = left_num < right_num, .side_effects = .no_side_effects };
+                                return .{ .ok = true, .value = left_num < right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_le => {
                         if (e_.left.data.toFiniteNumber()) |left_num| {
                             if (e_.right.data.toFiniteNumber()) |right_num| {
-                                return Result{ .ok = true, .value = left_num <= right_num, .side_effects = .no_side_effects };
+                                return .{ .ok = true, .value = left_num <= right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_ge => {
                         if (e_.left.data.toFiniteNumber()) |left_num| {
                             if (e_.right.data.toFiniteNumber()) |right_num| {
-                                return Result{ .ok = true, .value = left_num >= right_num, .side_effects = .no_side_effects };
+                                return .{ .ok = true, .value = left_num >= right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
@@ -841,7 +841,7 @@ pub const SideEffects = enum(u1) {
                 }
             },
             .e_inlined_enum => |inlined| {
-                return toBooleanWithoutDCECheck(inlined.value.data);
+                return _toBoolean(&inlined.value.data);
             },
             .e_special => |special| switch (special) {
                 .module_exports,
@@ -858,7 +858,7 @@ pub const SideEffects = enum(u1) {
             else => {},
         }
 
-        return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
+        return .{ .ok = false, .value = false, .side_effects = .could_have_side_effects };
     }
 };
 

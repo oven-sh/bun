@@ -29,7 +29,7 @@ pub fn CreateBinaryExpressionVisitor(
                 // Mark the control flow as dead if the branch is never taken
                 switch (e_.op) {
                     .bin_logical_or => {
-                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        const side_effects = SideEffects.toBoolean(p, &e_.left.data);
                         if (side_effects.ok and side_effects.value) {
                             // "true || dead"
                             const old = p.is_control_flow_dead;
@@ -41,7 +41,7 @@ pub fn CreateBinaryExpressionVisitor(
                         }
                     },
                     .bin_logical_and => {
-                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        const side_effects = SideEffects.toBoolean(p, &e_.left.data);
                         if (side_effects.ok and !side_effects.value) {
                             // "false && dead"
                             const old = p.is_control_flow_dead;
@@ -53,7 +53,7 @@ pub fn CreateBinaryExpressionVisitor(
                         }
                     },
                     .bin_nullish_coalescing => {
-                        const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        const side_effects = SideEffects.toNullOrUndefined(p, &e_.left.data);
                         if (side_effects.ok and !side_effects.value) {
                             // "notNullOrUndefined ?? dead"
                             const old = p.is_control_flow_dead;
@@ -74,7 +74,7 @@ pub fn CreateBinaryExpressionVisitor(
                 // can only reorder expressions that do not have any side effects.
                 switch (e_.op) {
                     .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
-                        if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
+                        if (SideEffects.isPrimitiveToReorder(&e_.left.data) and !SideEffects.isPrimitiveToReorder(&e_.right.data)) {
                             const _left = e_.left;
                             const _right = e_.right;
                             e_.left = _right;
@@ -170,7 +170,7 @@ pub fn CreateBinaryExpressionVisitor(
                         }
                     },
                     .bin_nullish_coalescing => {
-                        const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        const nullorUndefined = SideEffects.toNullOrUndefined(p, &e_.left.data);
                         if (nullorUndefined.ok) {
                             if (!nullorUndefined.value) {
                                 return e_.left;
@@ -187,7 +187,7 @@ pub fn CreateBinaryExpressionVisitor(
                         }
                     },
                     .bin_logical_or => {
-                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        const side_effects = SideEffects.toBoolean(p, &e_.left.data);
                         if (side_effects.ok and side_effects.value) {
                             return e_.left;
                         } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
@@ -202,7 +202,7 @@ pub fn CreateBinaryExpressionVisitor(
                         }
                     },
                     .bin_logical_and => {
-                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        const side_effects = SideEffects.toBoolean(p, &e_.left.data);
                         if (side_effects.ok) {
                             if (!side_effects.value) {
                                 return e_.left;

@@ -101,7 +101,7 @@ pub fn ParseSuffix(
 
             // Remove unnecessary optional chains
             if (p.options.features.minify_syntax) {
-                const result = SideEffects.toNullOrUndefined(p, left.data);
+                const result = SideEffects.toNullOrUndefined(p, &left.data);
                 if (result.ok and !result.value) {
                     optional_start = null;
                 }

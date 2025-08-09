@@ -732,7 +732,7 @@ pub fn VisitExpr(
                                 if (p.options.features.minify_syntax)
                                     e_.value = SideEffects.simplifyBoolean(p, e_.value);
 
-                                const side_effects = SideEffects.toBoolean(p, e_.value.data);
+                                const side_effects = SideEffects.toBoolean(p, &e_.value.data);
                                 if (side_effects.ok) {
                                     return p.newExpr(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                 }
@@ -749,7 +749,7 @@ pub fn VisitExpr(
                             },
                             .un_cpl => {
                                 if (p.should_fold_typescript_constant_expressions) {
-                                    if (SideEffects.toNumber(e_.value.data)) |value| {
+                                    if (SideEffects.toNumber(&e_.value.data)) |value| {
                                         return p.newExpr(E.Number{
                                             .value = @floatFromInt(~floatToInt32(value)),
                                         }, expr.loc);
@@ -762,12 +762,12 @@ pub fn VisitExpr(
                                 }
                             },
                             .un_pos => {
-                                if (SideEffects.toNumber(e_.value.data)) |num| {
+                                if (SideEffects.toNumber(&e_.value.data)) |num| {
                                     return p.newExpr(E.Number{ .value = num }, expr.loc);
                                 }
                             },
                             .un_neg => {
-                                if (SideEffects.toNumber(e_.value.data)) |num| {
+                                if (SideEffects.toNumber(&e_.value.data)) |num| {
                                     return p.newExpr(E.Number{ .value = -num }, expr.loc);
                                 }
                             },
@@ -921,7 +921,7 @@ pub fn VisitExpr(
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 
-                const side_effects = SideEffects.toBoolean(p, e_.test_.data);
+                const side_effects = SideEffects.toBoolean(p, &e_.test_.data);
 
                 if (!side_effects.ok) {
                     e_.yes = p.visitExpr(e_.yes);

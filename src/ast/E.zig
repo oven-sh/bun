@@ -108,6 +108,11 @@ pub const Binary = struct {
 
 pub const Boolean = struct {
     value: bool,
+
+    pub fn eql(a: Boolean, b: Boolean) bool {
+        return a.value == b.value;
+    }
+
     pub fn toJS(this: @This(), ctx: *jsc.JSGlobalObject) jsc.C.JSValueRef {
         return jsc.C.JSValueMakeBoolean(ctx, this.value);
     }
@@ -135,6 +140,10 @@ pub const ImportMetaMain = struct {
     /// instead of wrapping in a unary not. This way, the printer can easily
     /// print `require.main != module` instead of `!(require.main == module)`
     inverted: bool = false,
+
+    pub fn eql(a: ImportMetaMain, b: ImportMetaMain) bool {
+        return a.inverted == b.inverted;
+    }
 };
 
 pub const Special = union(enum) {
@@ -153,6 +162,18 @@ pub const Special = union(enum) {
     hot_accept_visited,
     /// Prints the resolved specifier string for an import record.
     resolved_specifier_string: ImportRecord.Index,
+
+    pub fn eql(a: *const Special, b: *const Special) bool {
+        return switch (a.*) {
+            .module_exports => b.* == .module_exports,
+            .hot_enabled => b.* == .hot_enabled,
+            .hot_disabled => b.* == .hot_disabled,
+            .hot_data => b.* == .hot_data,
+            .hot_accept => b.* == .hot_accept,
+            .hot_accept_visited => b.* == .hot_accept_visited,
+            .resolved_specifier_string => b.* == .resolved_specifier_string and a.resolved_specifier_string == b.resolved_specifier_string,
+        };
+    }
 };
 
 pub const Call = struct {
@@ -260,6 +281,13 @@ pub const Identifier = struct {
     // the call target but keeping any arguments with side effects.
     call_can_be_unwrapped_if_unused: bool = false,
 
+    pub fn eql(a: *const Identifier, b: *const Identifier) bool {
+        return a.ref.eql(b.ref) and
+            a.must_keep_due_to_with_stmt == b.must_keep_due_to_with_stmt and
+            a.can_be_removed_if_unused == b.can_be_removed_if_unused and
+            a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused;
+    }
+
     pub inline fn init(ref: Ref) Identifier {
         return Identifier{
             .ref = ref,
@@ -296,6 +324,11 @@ pub const ImportIdentifier = struct {
     /// false, this could potentially have been a member access expression such
     /// as "ns.foo" off of an imported namespace object.
     was_originally_identifier: bool = false,
+
+    pub fn eql(a: ImportIdentifier, b: ImportIdentifier) bool {
+        return a.ref.eql(b.ref) and
+            a.was_originally_identifier == b.was_originally_identifier;
+    }
 };
 
 /// This is a dot expression on exports, such as `exports.<ref>`. It is given
@@ -315,6 +348,11 @@ pub const CommonJSExportIdentifier = struct {
         exports,
         module_dot_exports,
     };
+
+    pub fn eql(a: *const CommonJSExportIdentifier, b: *const CommonJSExportIdentifier) bool {
+        return a.ref.eql(b.ref) and
+            a.base == b.base;
+    }
 };
 
 // This is similar to EIdentifier but it represents class-private fields and
@@ -322,6 +360,10 @@ pub const CommonJSExportIdentifier = struct {
 // EIndex and Property.
 pub const PrivateIdentifier = struct {
     ref: Ref,
+
+    pub fn eql(a: PrivateIdentifier, b: PrivateIdentifier) bool {
+        return a.ref.eql(b.ref);
+    }
 };
 
 /// In development mode, the new JSX transform has a few special props
@@ -404,6 +446,10 @@ pub const Number = struct {
         return toStringFromF64(this.value, allocator);
     }
 
+    pub fn eql(a: Number, b: Number) bool {
+        return a.value == b.value;
+    }
+
     pub fn toStringFromF64(value: f64, allocator: std.mem.Allocator) ?string {
         if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
             const int_value = @as(i64, @intFromFloat(value));
@@ -475,6 +521,10 @@ pub const BigInt = struct {
     value: string,
 
     pub var empty = BigInt{ .value = "" };
+
+    pub fn eql(a: BigInt, b: BigInt) bool {
+        return std.mem.eql(u8, a.value, b.value);
+    }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
         return try writer.write(self.value);
@@ -1356,12 +1406,21 @@ pub const RequireString = struct {
     import_record_index: u32 = 0,
 
     unwrapped_id: u32 = std.math.maxInt(u32),
+
+    pub fn eql(a: RequireString, b: RequireString) bool {
+        return a.import_record_index == b.import_record_index and
+            a.unwrapped_id == b.unwrapped_id;
+    }
 };
 
 pub const RequireResolveString = struct {
     import_record_index: u32,
 
     // close_paren_loc: logger.Loc = logger.Loc.Empty,
+
+    pub fn eql(a: RequireResolveString, b: RequireResolveString) bool {
+        return a.import_record_index == b.import_record_index;
+    }
 };
 
 pub const InlinedEnum = struct {

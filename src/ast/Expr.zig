@@ -605,7 +605,7 @@ pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
     }
 }
 
-pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, comptime callback: (fn (ctx: anytype, expr: Expr) ?Expr), allocator: std.mem.Allocator) ?Expr {
+pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, comptime callback: (fn (ctx: Context, expr: Expr) ?Expr), allocator: std.mem.Allocator) ?Expr {
     switch (all.len) {
         0 => return null,
         1 => {
@@ -2058,6 +2058,53 @@ pub inline fn knownPrimitive(self: @This()) PrimitiveType {
     return self.data.knownPrimitive();
 }
 
+/// Try to insert an optional chain operator to optimize expressions like:
+/// "a != null && a.b()" => "a?.b()"
+/// "a == null || a.b()" => "a?.b()"
+pub fn tryToInsertOptionalChain(check_expr: Expr, expr: *Expr) bool {
+    switch (expr.data) {
+        .e_dot => |*dot| {
+            if (check_expr.data.eqlPtr(&dot.target.data)) {
+                dot.optional_chain = .start;
+                return true;
+            }
+            if (tryToInsertOptionalChain(check_expr, &dot.target)) {
+                if (dot.optional_chain == null) {
+                    dot.optional_chain = .cont;
+                }
+                return true;
+            }
+        },
+        .e_index => |*index| {
+            if (check_expr.data.eqlPtr(&index.target.data)) {
+                index.optional_chain = .start;
+                return true;
+            }
+            if (tryToInsertOptionalChain(check_expr, &index.target)) {
+                if (index.optional_chain == null) {
+                    index.optional_chain = .cont;
+                }
+                return true;
+            }
+        },
+        .e_call => |*call| {
+            if (check_expr.data.eqlPtr(&call.target.data)) {
+                call.optional_chain = .start;
+                return true;
+            }
+            if (tryToInsertOptionalChain(check_expr, &call.target)) {
+                if (call.optional_chain == null) {
+                    call.optional_chain = .cont;
+                }
+                return true;
+            }
+        },
+        else => {},
+    }
+
+    return false;
+}
+
 pub const PrimitiveType = enum {
     unknown,
     mixed,
@@ -2803,8 +2850,8 @@ pub const Data = union(Tag) {
         return @as(Expr.Tag, data).typeof();
     }
 
-    pub fn toNumber(data: Expr.Data) ?f64 {
-        return switch (data) {
+    pub fn toNumber(data: *const Expr.Data) ?f64 {
+        return switch (data.*) {
             .e_null => 0,
             .e_undefined => std.math.nan(f64),
             .e_string => |str| {
@@ -2831,8 +2878,8 @@ pub const Data = union(Tag) {
         };
     }
 
-    pub fn toFiniteNumber(data: Expr.Data) ?f64 {
-        return switch (data) {
+    pub fn toFiniteNumber(data: *const Expr.Data) ?f64 {
+        return switch (data.*) {
             .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
             .e_number => if (std.math.isFinite(data.e_number.value))
                 data.e_number.value
@@ -2876,6 +2923,60 @@ pub const Data = union(Tag) {
         pub const @"false" = Equality{ .ok = true, .equal = false };
         pub const unknown = Equality{ .ok = false };
     };
+
+    pub fn eqlPtr(lhs: *const Expr.Data, rhs: *const Expr.Data) bool {
+        if (@as(Expr.Tag, lhs.*) != @as(Expr.Tag, rhs.*)) return false;
+
+        return switch (lhs.*) {
+            .e_array => |l| l == rhs.e_array,
+            .e_unary => |l| l == rhs.e_unary,
+            .e_binary => |l| l == rhs.e_binary,
+            .e_class => |l| l == rhs.e_class,
+            .e_new => |l| l == rhs.e_new,
+            .e_function => |l| l == rhs.e_function,
+            .e_call => |l| l == rhs.e_call,
+            .e_dot => |l| l == rhs.e_dot,
+            .e_index => |l| l == rhs.e_index,
+            .e_arrow => |l| l == rhs.e_arrow,
+            .e_jsx_element => |l| l == rhs.e_jsx_element,
+            .e_object => |l| l == rhs.e_object,
+            .e_spread => |l| l == rhs.e_spread,
+            .e_template => |l| l == rhs.e_template,
+            .e_reg_exp => |l| l == rhs.e_reg_exp,
+            .e_await => |l| l == rhs.e_await,
+            .e_yield => |l| l == rhs.e_yield,
+            .e_if => |l| l == rhs.e_if,
+            .e_import => |l| l == rhs.e_import,
+            .e_big_int => |l| l == rhs.e_big_int,
+            .e_string => |l| l == rhs.e_string,
+            .e_inlined_enum => |l| l == rhs.e_inlined_enum,
+            .e_name_of_symbol => |l| l == rhs.e_name_of_symbol,
+
+            // For value types, fall back to value equality since they don't have pointer identity
+            .e_identifier => |l| l.eql(&rhs.e_identifier),
+            .e_import_identifier => |l| l.eql(rhs.e_import_identifier),
+            .e_private_identifier => |l| l.eql(rhs.e_private_identifier),
+            .e_commonjs_export_identifier => |l| l.eql(&rhs.e_commonjs_export_identifier),
+            .e_boolean => |l| l.eql(rhs.e_boolean),
+            .e_number => |l| l.eql(rhs.e_number),
+            .e_require_string => |l| l.eql(rhs.e_require_string),
+            .e_require_resolve_string => |l| l.eql(rhs.e_require_resolve_string),
+            .e_import_meta_main => |l| l.eql(rhs.e_import_meta_main),
+            .e_special => |l| l.eql(&rhs.e_special),
+
+            .e_missing,
+            .e_this,
+            .e_super,
+            .e_null,
+            .e_undefined,
+            .e_new_target,
+            .e_import_meta,
+            .e_require_main,
+            .e_require_call_target,
+            .e_require_resolve_call_target,
+            => true,
+        };
+    }
 
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is

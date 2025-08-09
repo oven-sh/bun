@@ -94,7 +94,7 @@ function normalizeOutput(stdout: string) {
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
       // normalize "Compiled successfully in Xms" timestamps
-      .replace(/Compiled successfully in \d+(ms|s)/gi, "Compiled successfully in 1000ms")
+      .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
       .split("\n")
       .map(x => x.trim())
       .join("\n")

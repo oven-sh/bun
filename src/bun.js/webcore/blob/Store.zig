@@ -546,17 +546,6 @@ pub const Bytes = struct {
         this.len = 0;
         this.cap = 0;
     }
-
-    pub fn asArrayList(this: Bytes) std.ArrayListUnmanaged(u8) {
-        return this.asArrayListLeak();
-    }
-
-    pub fn asArrayListLeak(this: Bytes) std.ArrayListUnmanaged(u8) {
-        return .{
-            .items = this.ptr[0..this.len],
-            .capacity = this.cap,
-        };
-    }
 };
 
 const std = @import("std");

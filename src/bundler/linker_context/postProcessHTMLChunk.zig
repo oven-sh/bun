@@ -11,7 +11,7 @@ pub fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, c
     const compile_results = chunk.compile_results_for_chunk;
 
     for (compile_results) |compile_result| {
-        j.push(compile_result.code(), bun.default_allocator);
+        j.push(compile_result.code(), compile_result.allocator());
     }
 
     j.ensureNewlineAtEnd();

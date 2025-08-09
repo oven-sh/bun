@@ -181,7 +181,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             const source_index = compile_result.sourceIndex();
             if (source_index != Index.runtime.value) break;
             line_offset.advance(compile_result.code());
-            j.push(compile_result.code(), bun.default_allocator);
+            j.push(compile_result.code(), compile_result.allocator());
         }
     }
 
@@ -294,10 +294,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         if (is_runtime) {
             if (c.options.output_format != .internal_bake_dev) {
                 line_offset.advance(compile_result.code());
-                j.push(compile_result.code(), bun.default_allocator);
+                j.push(compile_result.code(), compile_result.allocator());
             }
         } else {
-            j.push(compile_result.code(), bun.default_allocator);
+            j.push(compile_result.code(), compile_result.allocator());
 
             if (compile_result.sourceMapChunk()) |source_map_chunk| {
                 if (c.options.source_maps != .none) {

@@ -105,7 +105,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             var heap = try ThreadLocalArena.init();
             defer heap.deinit();
 
-            const allocator = heap.allocator();
+            const allocator = bun.default_allocator;
             var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
             ast_memory_allocator.* = .{ .allocator = allocator };
             ast_memory_allocator.reset();

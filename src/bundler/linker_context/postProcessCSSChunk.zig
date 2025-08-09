@@ -60,7 +60,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
         }
 
         // Save the offset to the start of the stored JavaScript
-        j.push(compile_result.code(), bun.default_allocator);
+        j.push(compile_result.code(), compile_result.allocator());
 
         if (compile_result.sourceMapChunk()) |source_map_chunk| {
             if (c.options.source_maps != .none) {

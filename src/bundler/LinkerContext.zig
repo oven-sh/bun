@@ -771,11 +771,11 @@ pub const LinkerContext = struct {
 
             var start_state = sourcemap.SourceMapState{
                 .source_index = mapping_source_index,
-                .generated_line = offset.lines,
-                .generated_column = offset.columns,
+                .generated_line = offset.lines.zeroBased(),
+                .generated_column = offset.columns.zeroBased(),
             };
 
-            if (offset.lines == 0) {
+            if (offset.lines.zeroBased() == 0) {
                 start_state.generated_column += prev_column_offset;
             }
 

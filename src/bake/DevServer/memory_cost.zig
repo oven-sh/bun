@@ -48,7 +48,6 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .server_register_update_callback = {},
         .server_fetch_function_callback = {},
         .watcher_atomics = {},
-        .relative_path_buf = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},

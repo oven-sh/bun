@@ -313,7 +313,7 @@ pub fn start(
     this.arena = try bun.MimallocArena.init();
     defer this.arena.?.deinit();
     var vm = try jsc.VirtualMachine.initWorker(this, .{
-        .allocator = bun.default_allocator,
+        .allocator = this.arena.?.allocator(),
         .args = transform_options,
         .store_fd = this.store_fd,
         .graph = this.parent.standalone_module_graph,

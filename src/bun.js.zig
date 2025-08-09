@@ -31,7 +31,7 @@ pub const Run = struct {
 
         run = .{
             .vm = try VirtualMachine.initWithModuleGraph(.{
-                .allocator = bun.default_allocator,
+                .allocator = arena.allocator(),
                 .log = ctx.log,
                 .args = ctx.args,
                 .graph = graph_ptr,
@@ -165,7 +165,7 @@ pub const Run = struct {
         run = .{
             .vm = try VirtualMachine.init(
                 .{
-                    .allocator = bun.default_allocator,
+                    .allocator = arena.allocator(),
                     .log = ctx.log,
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
@@ -187,7 +187,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = run.arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

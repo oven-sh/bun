@@ -141,7 +141,7 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
 }
 
 pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
-    var arena = bun.MimallocArena.init() catch unreachable;
+    var arena = bun.MimallocArena.init();
     Output.Source.configureNamedThread("Debugger");
     log("startJSDebuggerThread", .{});
     jsc.markBinding(@src());

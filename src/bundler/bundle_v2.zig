@@ -140,7 +140,7 @@ pub const BundleV2 = struct {
     /// You can find which callbacks are run by looking at the
     /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
-    thread_lock: bun.DebugThreadLock,
+    thread_lock: bun.safety.ThreadLock,
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -817,7 +817,7 @@ pub const BundleV2 = struct {
             .plugins = null,
             .completion = null,
             .source_code_length = 0,
-            .thread_lock = bun.DebugThreadLock.initLocked(),
+            .thread_lock = .initLocked(),
         };
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
@@ -1384,7 +1384,7 @@ pub const BundleV2 = struct {
             event_loop,
             enable_reloading,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1448,7 +1448,7 @@ pub const BundleV2 = struct {
             event_loop,
             false,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 

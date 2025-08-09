@@ -613,6 +613,7 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 pub const HTTPThread = @import("./http.zig").HTTPThread;
 pub const http = @import("./http.zig");
 
+pub const ptr = @import("./ptr.zig");
 pub const TaggedPointer = ptr.TaggedPointer;
 pub const TaggedPointerUnion = ptr.TaggedPointerUnion;
 
@@ -1837,9 +1838,9 @@ pub const Futex = threading.Futex;
 pub const ThreadPool = threading.ThreadPool;
 pub const UnboundedQueue = threading.UnboundedQueue;
 
-pub fn threadlocalAllocator() std.mem.Allocator {
+pub fn threadLocalAllocator() std.mem.Allocator {
     if (comptime use_mimalloc) {
-        return MimallocArena.getThreadlocalDefault();
+        return MimallocArena.getThreadLocalDefault();
     }
 
     return default_allocator;
@@ -2632,11 +2633,11 @@ pub inline fn new(comptime T: type, init: T) *T {
         break :pointer pointer;
     };
 
-    // TODO::
-    // if (comptime Environment.allow_assert) {
-    //     const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-    //     logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
-    // }
+    if (comptime Environment.allow_assert) {
+        const enable_logs = @hasDecl(T, "logAllocations");
+        const logAlloc = Output.scoped(.alloc, !enable_logs);
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), pointer });
+    }
 
     return pointer;
 }
@@ -2645,21 +2646,22 @@ pub inline fn new(comptime T: type, init: T) *T {
 /// For single-item heap pointers, prefer bun.new/destroy over default_allocator
 ///
 /// Destruction performs additional safety checks:
-/// - Generic assertions can be added to T.assertMayDeinit()
+/// - Generic assertions can be added to T.assertBeforeDestroy()
 /// - Automatic integration with `RefCount`
 pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        const enable_logs = @hasDecl(T, "logAllocations");
+        const logAlloc = Output.scoped(.alloc, !enable_logs);
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
 
         // If this type implements a RefCount, make sure it is zero.
-        @import("./ptr/ref_count.zig").maybeAssertNoRefs(T, pointer);
+        ptr.ref_count.maybeAssertNoRefs(T, pointer);
 
         switch (@typeInfo(T)) {
-            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertMayDeinit"))
-                pointer.assertMayDeinit(),
+            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertBeforeDestroy"))
+                pointer.assertBeforeDestroy(),
             else => {},
         }
     }
@@ -3415,56 +3417,10 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
+
 pub fn getTotalMemorySize() usize {
     return cpp.Bun__ramSize();
 }
-
-pub const DebugThreadLock = if (Environment.isDebug)
-    struct {
-        owning_thread: ?std.Thread.Id,
-        locked_at: crash_handler.StoredTrace,
-
-        pub const unlocked: DebugThreadLock = .{
-            .owning_thread = null,
-            .locked_at = crash_handler.StoredTrace.empty,
-        };
-
-        pub fn lock(impl: *@This()) void {
-            if (impl.owning_thread) |thread| {
-                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
-                crash_handler.dumpStackTrace(impl.locked_at.trace(), .{ .frame_count = 10, .stop_at_jsc_llint = true });
-                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
-            }
-            impl.owning_thread = std.Thread.getCurrentId();
-            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
-        }
-
-        pub fn unlock(impl: *@This()) void {
-            impl.assertLocked();
-            impl.* = unlocked;
-        }
-
-        pub fn assertLocked(impl: *const @This()) void {
-            assert(impl.owning_thread != null); // not locked
-            assert(impl.owning_thread == std.Thread.getCurrentId());
-        }
-
-        pub fn initLocked() @This() {
-            var impl = DebugThreadLock.unlocked;
-            impl.lock();
-            return impl;
-        }
-    }
-else
-    struct {
-        pub const unlocked: @This() = .{};
-        pub fn lock(_: *@This()) void {}
-        pub fn unlock(_: *@This()) void {}
-        pub fn assertLocked(_: *const @This()) void {}
-        pub fn initLocked() @This() {
-            return .{};
-        }
-    };
 
 pub const bytecode_extension = ".jsc";
 
@@ -3740,7 +3696,6 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
-pub const ptr = @import("./ptr.zig");
 
 /// Memory is typically not decommitted immediately when freed.
 /// Sensitive information that's kept in memory can be read in various ways until the OS

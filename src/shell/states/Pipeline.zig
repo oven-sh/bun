@@ -254,7 +254,7 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
             }
         }
         this.state = .{ .done = .{ .exit_code = last_exit_code } };
-        return this.next();
+        return .{ .pipeline = this };
     }
 
     return .suspended;

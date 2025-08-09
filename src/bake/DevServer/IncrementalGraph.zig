@@ -1454,8 +1454,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // the error list as it changes while also supporting a REPL
             log.print(Output.errorWriter()) catch {};
             const failure = failure: {
-                const relative_path_buf = dev.relative_path_buf.lock();
-                defer dev.relative_path_buf.unlock();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
                 // this string is just going to be memcpy'd into the log buffer
                 const owner_display_name = dev.relativePath(relative_path_buf, gop.key_ptr.*);
                 break :failure try SerializedFailure.initFromLog(
@@ -1684,8 +1684,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.writeAll("}, {\n  main: ");
                         const initial_response_entry_point = options.initial_response_entry_point;
                         if (initial_response_entry_point.len > 0) {
-                            const relative_path_buf = g.owner().relative_path_buf.lock();
-                            defer g.owner().relative_path_buf.unlock();
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
                                 g.owner().relativePath(relative_path_buf, initial_response_entry_point),
                                 @TypeOf(w),
@@ -1710,8 +1710,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
-                            const relative_path_buf = g.owner().relative_path_buf.lock();
-                            defer g.owner().relative_path_buf.unlock();
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
                                 g.owner().relativePath(relative_path_buf, options.react_refresh_entry_point),
                                 @TypeOf(w),

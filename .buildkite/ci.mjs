@@ -356,15 +356,6 @@ function getTestAgent(platform, options) {
     };
   }
 
-  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
-  if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: "c7i.2xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
-    });
-  }
-
   if (arch === "aarch64") {
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",

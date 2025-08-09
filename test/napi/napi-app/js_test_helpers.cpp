@@ -320,6 +320,101 @@ static napi_value create_weird_bigints(const Napi::CallbackInfo &info) {
   return array;
 }
 
+static napi_value test_bigint_actual_word_count(const Napi::CallbackInfo &info) {
+  // Test that napi_get_value_bigint_words returns the actual word count needed
+  // even when the provided buffer is smaller than the actual word count
+  napi_env env = info.Env();
+  
+  if (info.Length() < 1) {
+    napi_throw_type_error(env, nullptr, "Expected 1 argument");
+    return nullptr;
+  }
+  
+  napi_value bigint_value = info[0];
+  
+  // First, query the word count with null buffers
+  size_t queried_word_count = 0;
+  napi_status status = napi_get_value_bigint_words(env, bigint_value, nullptr, &queried_word_count, nullptr);
+  if (status != napi_ok) {
+    napi_throw_error(env, nullptr, "Failed to get word count");
+    return nullptr;
+  }
+  
+  // Now test with a buffer that's smaller than needed
+  // For a 2-word BigInt, provide only 1 word of buffer
+  uint64_t small_buffer[1];
+  int sign_bit = 0;
+  size_t actual_word_count = 1; // Provide space for only 1 word
+  
+  status = napi_get_value_bigint_words(env, bigint_value, &sign_bit, &actual_word_count, small_buffer);
+  // The function should succeed even with smaller buffer
+  // and actual_word_count should be updated to the real count needed
+  
+  // Create result object
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  
+  napi_value queried_val, actual_val, sign_val;
+  NODE_API_CALL(env, napi_create_uint32(env, queried_word_count, &queried_val));
+  NODE_API_CALL(env, napi_create_uint32(env, actual_word_count, &actual_val));
+  NODE_API_CALL(env, napi_create_int32(env, sign_bit, &sign_val));
+  
+  NODE_API_CALL(env, napi_set_named_property(env, result, "queriedWordCount", queried_val));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "actualWordCount", actual_val));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "signBit", sign_val));
+  
+  return result;
+}
+
+static napi_value test_reference_unref_underflow(const Napi::CallbackInfo &info) {
+  // Test that napi_reference_unref correctly handles refCount == 0
+  // It should return an error instead of underflowing
+  napi_env env = info.Env();
+  
+  if (info.Length() < 1) {
+    napi_throw_type_error(env, nullptr, "Expected 1 argument");
+    return nullptr;
+  }
+  
+  // Create a reference with initial ref count of 1
+  napi_ref ref;
+  napi_status status = napi_create_reference(env, info[0], 1, &ref);
+  if (status != napi_ok) {
+    napi_throw_error(env, nullptr, "Failed to create reference");
+    return nullptr;
+  }
+  
+  // Unref once - should succeed and set refCount to 0
+  uint32_t ref_count;
+  status = napi_reference_unref(env, ref, &ref_count);
+  if (status != napi_ok) {
+    napi_delete_reference(env, ref);
+    napi_throw_error(env, nullptr, "First unref failed");
+    return nullptr;
+  }
+  
+  // Try to unref again when refCount is already 0
+  // This should fail with napi_generic_failure
+  uint32_t ref_count_after;
+  status = napi_reference_unref(env, ref, &ref_count_after);
+  
+  // Create result object
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  
+  napi_value first_unref_count, second_status;
+  NODE_API_CALL(env, napi_create_uint32(env, ref_count, &first_unref_count));
+  NODE_API_CALL(env, napi_create_uint32(env, status, &second_status));
+  
+  NODE_API_CALL(env, napi_set_named_property(env, result, "firstUnrefCount", first_unref_count));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "secondUnrefStatus", second_status));
+  
+  // Clean up the reference
+  napi_delete_reference(env, ref);
+  
+  return result;
+}
+
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
@@ -333,6 +428,8 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);
   REGISTER_FUNCTION(env, exports, create_weird_bigints);
+  REGISTER_FUNCTION(env, exports, test_bigint_actual_word_count);
+  REGISTER_FUNCTION(env, exports, test_reference_unref_underflow);
 }
 
 } // namespace napitests

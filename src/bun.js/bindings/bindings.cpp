@@ -4194,9 +4194,9 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
 
     JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
 
-    auto result = symbol->tryGetDescriptiveString();
-    if (result.has_value()) {
-        *arg2 = Zig::toZigString(result.value());
+    auto result = symbol->description();
+    if (!result.isEmpty()) {
+        *arg2 = Zig::toZigString(result);
     } else {
         *arg2 = ZigStringEmpty;
     }
@@ -5025,11 +5025,10 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         switch (type) {
         case JSC::SymbolType: {
             auto* symbol = asSymbol(cell);
-            auto result = symbol->tryGetDescriptiveString();
-            if (result.has_value()) {
-                except->message = Bun::toStringRef(result.value());
-            } else {
+            if (symbol->description().isEmpty()) {
                 except->message = BunStringEmpty;
+            } else {
+                except->message = Bun::toStringRef(symbol->description());
             }
             return;
         }

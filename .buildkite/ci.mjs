@@ -381,18 +381,16 @@ function getTestAgent(platform, options) {
     };
   }
 
-  if (arch === "aarch64") {
+  if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: "c8g.xlarge",
+      instanceType: arch === "aarch64" ? "c8g.xlarge" : "c7i.xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
     });
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: "c7i.xlarge",
-    cpuCount: 2,
-    threadsPerCore: 1,
+    instanceType: arch === "aarch64" ? "c8g.large" : "c7i.large",
   });
 }
 

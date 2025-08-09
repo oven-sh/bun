@@ -122,7 +122,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 null, // TODO: Kit
                 allocator,
                 jsc.AnyEventLoop.init(allocator),
-                false,
+                null,
                 jsc.WorkPool.get(),
                 heap,
             );

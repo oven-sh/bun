@@ -39,7 +39,13 @@ jobs:
           bun install
       - name: Install LLVM
         run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
+          source /etc/os-release
+          BASE_URL="http://apt.llvm.org"
+          LLVM_VERSION="19"
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          add-apt-repository -y "deb ${BASE_URL}/${UBUNTU_CODENAME}/  llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_VERSION} main"
+          apt-get update
+          apt-get install -y clang-format-${LLVM_VERSION}
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
         with:

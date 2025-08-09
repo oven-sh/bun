@@ -1,13 +1,13 @@
 import { Subprocess } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, promises } from "fs";
+import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
+import PQueue from "p-queue";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
-import PQueue from "p-queue";
 
 expect.extend({ toMatchNodeModulesAt });
 

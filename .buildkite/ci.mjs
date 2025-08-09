@@ -381,6 +381,15 @@ function getTestAgent(platform, options) {
     };
   }
 
+  // TODO: delete this block when we upgrade to mimalloc v3
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
+
   if (arch === "aarch64") {
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",

@@ -11,6 +11,16 @@ pub const WriteDestination = enum {
     // eventually: wasm
 };
 
+pub const WindowsSettings = struct {
+    hide_console: bool = false,
+    icon: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    publisher: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
+};
+
 pub fn validatePath(
     log: *logger.Log,
     _: *Fs.FileSystem.Implementation,

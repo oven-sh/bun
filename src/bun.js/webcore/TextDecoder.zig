@@ -256,6 +256,18 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             // Experiment: using mimalloc directly is slightly slower
             return ZigString.init(input).toJS(globalThis);
         },
+        EncodingLabel.@"windows-1250" => {
+            if (strings.isAllASCII(buffer_slice)) {
+                return ZigString.init(buffer_slice).toJS(globalThis);
+            }
+
+            // Windows-1250 is similar to Latin1 but with different character mappings for bytes 128-255
+            const out_length = strings.elementLengthWindows1250IntoUTF16([]const u8, buffer_slice);
+            const bytes = try globalThis.allocator().alloc(u16, out_length);
+
+            const out = strings.copyWindows1250IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+            return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
+        },
 
         inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| {
             const bom = if (comptime utf16_encoding == .@"UTF-16LE") "\xff\xfe" else "\xfe\xff";

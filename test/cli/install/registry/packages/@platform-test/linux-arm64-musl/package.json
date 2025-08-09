@@ -1,0 +1,40 @@
+{
+	"name": "@platform-test/linux-arm64-musl",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/linux-arm64-musl",
+			"version": "1.0.0",
+			"description": "Platform test package for linux-arm64-musl",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"libc": [
+				"musl"
+			],
+			"_id": "@platform-test/linux-arm64-musl@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/linux-arm64-musl/-/platform-test-linux-arm64-musl-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.098Z",
+		"created": "2025-07-18T16:17:21.098Z",
+		"1.0.0": "2025-07-18T16:17:21.098Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/linux-arm64-musl"
+}

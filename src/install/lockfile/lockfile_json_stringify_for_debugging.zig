@@ -289,7 +289,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 }
             }
 
-            if (@as(u16, @intFromEnum(pkg.meta.arch)) != Npm.Architecture.all_value) {
+            if (pkg.meta.arch != .all) {
                 try w.objectField("arch");
                 try w.beginArray();
                 defer w.endArray() catch {};
@@ -301,13 +301,25 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 }
             }
 
-            if (@as(u16, @intFromEnum(pkg.meta.os)) != Npm.OperatingSystem.all_value) {
+            if (pkg.meta.os != .all) {
                 try w.objectField("os");
                 try w.beginArray();
                 defer w.endArray() catch {};
 
                 for (Npm.OperatingSystem.NameMap.kvs) |kv| {
                     if (pkg.meta.os.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            if (pkg.meta.libc != .none) {
+                try w.objectField("libc");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.Libc.NameMap.kvs) |kv| {
+                    if (pkg.meta.libc.has(kv.value)) {
                         try w.write(kv.key);
                     }
                 }

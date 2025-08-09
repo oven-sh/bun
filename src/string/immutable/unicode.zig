@@ -895,8 +895,8 @@ pub fn copyWindows1250IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Ty
     }
 
     return .{
-        .read = @as(u32, @truncate(buf_.len - buf.len)),
-        .written = @as(u32, @truncate(win1250_.len - win1250.len)),
+        .read = @as(u32, @truncate(win1250_.len - win1250.len)),
+        .written = @as(u32, @truncate(buf_.len - buf.len)),
     };
 }
 

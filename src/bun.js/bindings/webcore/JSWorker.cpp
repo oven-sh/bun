@@ -272,7 +272,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         // string for Symbols instead of throwing like JSValue::toString does.
         // may throw an exception!
         auto coerceToIsolatedString = [lexicalGlobalObject](JSValue v) -> String {
-            String original = v.isSymbol() ? asSymbol(v)->description() : v.toWTFString(lexicalGlobalObject);
+            String original = v.isSymbol() ? asSymbol(v)->tryGetDescriptiveString().value_or(String()) : v.toWTFString(lexicalGlobalObject);
             return original.isolatedCopy();
         };
 

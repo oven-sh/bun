@@ -1109,9 +1109,10 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     //      ObjectPrototypeHasOwnProperty(obj, 'stack');
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!obj.isObject()) return false;
+    auto object = obj.getObject();
+    if (!object)
+        return false;
 
-    auto* object = JSC::jsCast<JSC::JSObject*>(obj);
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
@@ -1120,7 +1121,11 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto decodedReason = JSValue::decode(reason);
     if (decodedReason.isSymbol()) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->description())));
+        auto result = asSymbol(decodedReason)->tryGetDescriptiveString();
+        if (result.has_value()) {
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), result.value())));
+        }
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(vm.smallStrings.symbolString()));
     }
 
     if (decodedReason.isInt32())
@@ -1151,7 +1156,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
-    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));

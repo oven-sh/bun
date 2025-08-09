@@ -92,7 +92,7 @@ export function renderToHtml(
         signal.aborted = err;
         signal.abort(err);
       }
-      abort?.();
+      abort?.(err);
     },
   } as Bun.DirectUnderlyingSource as any);
 }

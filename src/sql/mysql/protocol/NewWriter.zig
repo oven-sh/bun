@@ -1,0 +1,119 @@
+pub fn NewWriterWrap(
+    comptime Context: type,
+    comptime offsetFn_: (fn (ctx: Context) usize),
+    comptime writeFunction_: (fn (ctx: Context, bytes: []const u8) anyerror!void),
+    comptime pwriteFunction_: (fn (ctx: Context, bytes: []const u8, offset: usize) anyerror!void),
+) type {
+    return struct {
+        wrapped: Context,
+
+        const writeFn = writeFunction_;
+        const pwriteFn = pwriteFunction_;
+        const offsetFn = offsetFn_;
+        pub const Ctx = Context;
+
+        pub const is_wrapped = true;
+
+        pub const WrappedWriter = @This();
+
+        pub inline fn writeArray(this: @This(), data: anytype) anyerror!void {
+            try writeFn(this.wrapped, data.slice());
+        }
+
+        pub fn write(this: @This(), data: []const u8) anyerror!void {
+            try writeFn(this.wrapped, data);
+        }
+
+        const Packet = struct {
+            header: PacketHeader,
+            offset: usize,
+            ctx: WrappedWriter,
+
+            pub fn end(this: *@This()) !void {
+                const new_offset = offsetFn(this.ctx.wrapped);
+                const length = new_offset - (this.offset + PacketHeader.size); // Adjust start position
+                this.header.length = @intCast(length);
+                try pwrite(this.ctx, &this.header.encode(), this.offset);
+            }
+        };
+
+        pub fn start(this: @This(), sequence_id: u8) !Packet {
+            const o = offsetFn(this.wrapped);
+            try this.write(&[_]u8{0} ** PacketHeader.size);
+            return .{
+                .header = .{ .sequence_id = sequence_id, .length = 0 },
+                .offset = o,
+                .ctx = this,
+            };
+        }
+
+        pub fn offset(this: @This()) usize {
+            return offsetFn(this.wrapped);
+        }
+
+        pub fn pwrite(this: @This(), data: []const u8, i: usize) anyerror!void {
+            try pwriteFn(this.wrapped, data, i);
+        }
+
+        pub fn int4(this: @This(), value: MySQLInt32) !void {
+            try this.write(&std.mem.toBytes(value));
+        }
+
+        pub fn int8(this: @This(), value: MySQLInt64) !void {
+            try this.write(&std.mem.toBytes(value));
+        }
+
+        pub fn int1(this: @This(), value: u8) !void {
+            try this.write(&[_]u8{value});
+        }
+
+        pub fn writeZ(this: @This(), value: []const u8) !void {
+            try this.write(value);
+            if (value.len == 0 or value[value.len - 1] != 0)
+                try this.write(&[_]u8{0});
+        }
+
+        pub fn String(this: @This(), value: bun.String) !void {
+            if (value.isEmpty()) {
+                try this.write(&[_]u8{0});
+                return;
+            }
+
+            var sliced = value.toUTF8(bun.default_allocator);
+            defer sliced.deinit();
+            const slice = sliced.slice();
+
+            try this.write(slice);
+            if (slice.len == 0 or slice[slice.len - 1] != 0)
+                try this.write(&[_]u8{0});
+        }
+    };
+}
+
+pub fn NewWriter(comptime Context: type) type {
+    if (@hasDecl(Context, "is_wrapped")) {
+        return Context;
+    }
+
+    return NewWriterWrap(Context, Context.offset, Context.write, Context.pwrite);
+}
+
+pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
+    return struct {
+        pub fn write(this: *Container, context: anytype) anyerror!void {
+            const Context = @TypeOf(context);
+            if (@hasDecl(Context, "is_wrapped")) {
+                try writeFn(this, Context, context);
+            } else {
+                try writeFn(this, Context, .{ .wrapped = context });
+            }
+        }
+    };
+}
+
+const std = @import("std");
+const bun = @import("bun");
+const types = @import("../MySQLTypes.zig");
+const MySQLInt32 = types.MySQLInt32;
+const MySQLInt64 = types.MySQLInt64;
+const PacketHeader = @import("./PacketHeader.zig");

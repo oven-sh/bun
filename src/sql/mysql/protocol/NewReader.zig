@@ -1,0 +1,95 @@
+pub fn NewReaderWrap(
+    comptime Context: type,
+    comptime markMessageStartFn_: (fn (ctx: Context) void),
+    comptime peekFn_: (fn (ctx: Context) []const u8),
+    comptime skipFn_: (fn (ctx: Context, count: isize) void),
+    comptime ensureCapacityFn_: (fn (ctx: Context, count: usize) bool),
+    comptime readFunction_: (fn (ctx: Context, count: usize) anyerror!Data),
+    comptime readZ_: (fn (ctx: Context) anyerror!Data),
+) type {
+    return struct {
+        wrapped: Context,
+        const readFn = readFunction_;
+        const readZFn = readZ_;
+        const ensureCapacityFn = ensureCapacityFn_;
+        const skipFn = skipFn_;
+        const peekFn = peekFn_;
+        const markMessageStartFn = markMessageStartFn_;
+
+        pub const Ctx = Context;
+
+        pub const is_wrapped = true;
+
+        pub fn markMessageStart(this: @This()) void {
+            markMessageStartFn(this.wrapped);
+        }
+
+        pub fn read(this: @This(), count: usize) anyerror!Data {
+            return readFn(this.wrapped, count);
+        }
+
+        pub fn skip(this: @This(), count: anytype) void {
+            skipFn(this.wrapped, @as(isize, @intCast(count)));
+        }
+
+        pub fn peek(this: @This()) []const u8 {
+            return peekFn(this.wrapped);
+        }
+
+        pub fn readZ(this: @This()) anyerror!Data {
+            return readZFn(this.wrapped);
+        }
+
+        pub fn byte(this: @This()) !u8 {
+            const data = try this.read(1);
+            return data.slice()[0];
+        }
+
+        pub fn ensureCapacity(this: @This(), count: usize) anyerror!void {
+            if (!ensureCapacityFn(this.wrapped, count)) {
+                return error.ShortRead;
+            }
+        }
+
+        pub fn int(this: @This(), comptime Int: type) !Int {
+            var data = try this.read(@sizeOf(Int));
+            defer data.deinit();
+            if (comptime Int == u8) {
+                return @as(Int, data.slice()[0]);
+            }
+            return @as(Int, @bitCast(data.slice()[0..@sizeOf(Int)].*));
+        }
+    };
+}
+
+pub fn NewReader(comptime Context: type) type {
+    if (@hasDecl(Context, "is_wrapped")) {
+        return Context;
+    }
+
+    return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureCapacity, Context.read, Context.readZ);
+}
+
+pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
+    return struct {
+        pub fn decode(this: *Container, context: anytype) anyerror!void {
+            const Context = @TypeOf(context);
+            if (@hasDecl(Context, "is_wrapped")) {
+                try decodeFn(this, Context, context);
+            } else {
+                try decodeFn(this, Context, .{ .wrapped = context });
+            }
+        }
+
+        pub fn decodeAllocator(this: *Container, allocator: std.mem.Allocator, context: anytype) anyerror!void {
+            const Context = @TypeOf(context);
+            if (@hasDecl(Context, "is_wrapped")) {
+                try decodeFn(this, allocator, Context, context);
+            } else {
+                try decodeFn(this, allocator, Context, .{ .wrapped = context });
+            }
+        }
+    };
+}
+const std = @import("std");
+const Data = @import("./Data.zig");

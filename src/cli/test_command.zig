@@ -1495,8 +1495,8 @@ pub const TestCommand = struct {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, ctx.debug.watch_globs),
+                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, ctx.debug.watch_globs),
                 else => {},
             }
 

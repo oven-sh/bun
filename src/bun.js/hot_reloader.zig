@@ -184,7 +184,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         };
 
-        pub fn enableHotModuleReloading(this: *Ctx) void {
+        pub fn enableHotModuleReloading(this: *Ctx, watch_globs: std.ArrayList([]const u8)) void {
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 if (this.bun_watcher != .none)
                     return;
@@ -241,7 +241,57 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
             clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
-            reloader.getContext().start() catch @panic("Failed to start File Watcher");
+            const watcher = reloader.getContext();
+
+            if (watch_globs.items.len > 0) {
+                var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                defer arena.deinit();
+                const allocator = arena.allocator();
+
+                for (watch_globs.items) |pattern| {
+                    var glob_walker = bun.glob.BunGlobWalker{};
+                    if (glob_walker.init(
+                        &arena,
+                        pattern,
+                        false,
+                        true,
+                        false,
+                        true,
+                        true,
+                    )) |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Invalid glob pattern \"{s}\": {s}", .{ pattern, @errorName(err) });
+                        continue;
+                    }
+                    defer glob_walker.deinit(true);
+
+                    switch (glob_walker.walk()) {
+                        .result => {},
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to walk glob pattern \"{s}\": {s}", .{ pattern, @errorName(err) });
+                            continue;
+                        },
+                    }
+
+                    var iter = glob_walker.matchedPaths.iterator();
+                    while (iter.next()) |entry| {
+                        const file_path = entry.key_ptr.*;
+                        const fd = bun.sys.open(file_path, bun.O.RDONLY, 0) catch continue;
+                        const loader = Fs.PathName.init(file_path).loader(&this.transpiler.options.loaders) orelse .file;
+
+                        _ = watcher.addFile(
+                            fd,
+                            file_path,
+                            Watcher.getHash(file_path),
+                            loader,
+                            bun.invalid_fd,
+                            null,
+                            true,
+                        );
+                    }
+                }
+            }
+
+            watcher.start() catch @panic("Failed to start File Watcher");
         }
 
         fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
@@ -465,7 +515,6 @@ const string = []const u8;
 pub const Buffer = MarkedArrayBuffer;
 
 const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Fs = bun.fs;

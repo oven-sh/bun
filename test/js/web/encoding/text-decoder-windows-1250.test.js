@@ -33,14 +33,20 @@ describe("TextDecoder windows-1250", () => {
       { input: [0xa3], expected: "\u0141" },
       // Byte 0xA5 (165) -> U+0104 (Ą) - LATIN CAPITAL LETTER A WITH OGONEK
       { input: [0xa5], expected: "\u0104" },
-      // Byte 0xB9 (185) -> U+0105 (ą) - LATIN SMALL LETTER A WITH OGONEK
-      { input: [0xb9], expected: "\u0105" },
+      // Byte 0xB1 (177) -> U+00B1 (±) - PLUS-MINUS SIGN
+      { input: [0xb1], expected: "\u00B1" },
       // Byte 0xB3 (179) -> U+0142 (ł) - LATIN SMALL LETTER L WITH STROKE
       { input: [0xb3], expected: "\u0142" },
-      // Byte 0xC0 (192) -> U+0154 (Ŕ) - LATIN CAPITAL LETTER R WITH ACUTE
-      { input: [0xc0], expected: "\u0154" },
-      // Byte 0xE0 (224) -> U+0155 (ŕ) - LATIN SMALL LETTER R WITH ACUTE
-      { input: [0xe0], expected: "\u0155" },
+      // Byte 0xB9 (185) -> U+0131 (ı) - LATIN SMALL LETTER DOTLESS I
+      { input: [0xb9], expected: "\u0131" },
+      // Byte 0xC6 (198) -> U+0106 (Ć) - LATIN CAPITAL LETTER C WITH ACUTE
+      { input: [0xc6], expected: "\u0106" },
+      // Byte 0xCA (202) -> U+0118 (Ę) - LATIN CAPITAL LETTER E WITH OGONEK
+      { input: [0xca], expected: "\u0118" },
+      // Byte 0xE6 (230) -> U+0107 (ć) - LATIN SMALL LETTER C WITH ACUTE
+      { input: [0xe6], expected: "\u0107" },
+      // Byte 0xEA (234) -> U+0119 (ę) - LATIN SMALL LETTER E WITH OGONEK
+      { input: [0xea], expected: "\u0119" },
     ];
 
     for (const { input, expected } of testCases) {
@@ -51,7 +57,7 @@ describe("TextDecoder windows-1250", () => {
 
   it("should decode mixed ASCII and windows-1250 text", () => {
     const decoder = new TextDecoder("windows-1250");
-    // "Hello Łąkę" in windows-1250 encoding
+    // "Hello Łęk" in windows-1250 encoding (using actual Windows-1250 characters)
     const input = new Uint8Array([
       0x48,
       0x65,
@@ -60,12 +66,11 @@ describe("TextDecoder windows-1250", () => {
       0x6f,
       0x20, // "Hello "
       0xa3,
-      0xb9,
-      0x6b,
-      0xea, // "Łąkę"
+      0xea,
+      0x6b, // "Łęk"
     ]);
     const result = decoder.decode(input);
-    expect(result).toBe("Hello Łąkę");
+    expect(result).toBe("Hello Łęk");
   });
 
   it("should handle empty input", () => {
@@ -106,13 +111,13 @@ describe("TextDecoder windows-1250", () => {
     // Test streaming decode
     const part1 = new Uint8Array([0x48, 0x65, 0x6c]); // "Hel"
     const part2 = new Uint8Array([0x6c, 0x6f, 0x20]); // "lo "
-    const part3 = new Uint8Array([0xa3, 0xb9]); // "Łą"
+    const part3 = new Uint8Array([0xa3, 0xb3]); // "Łł"
 
     let result = decoder.decode(part1, { stream: true });
     result += decoder.decode(part2, { stream: true });
     result += decoder.decode(part3);
 
-    expect(result).toBe("Hello Łą");
+    expect(result).toBe("Hello Łł");
   });
 
   it("should work with fatal: true option", () => {

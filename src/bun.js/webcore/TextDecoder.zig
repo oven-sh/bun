@@ -428,6 +428,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return TextDecoder.new(decoder);
 }
 
+const jis_table = @import("./jis_table.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -440,4 +441,3 @@ const JSUint8Array = jsc.JSUint8Array;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const EncodingLabel = jsc.WebCore.EncodingLabel;
-const jis_table = @import("jis_table.zig");

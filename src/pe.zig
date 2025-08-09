@@ -67,7 +67,7 @@ pub const PEFile = struct {
         size_of_image: u32, // Size of image
         size_of_headers: u32, // Size of headers
         checksum: u32, // Checksum
-        subsystem: u16, // Subsystem
+        subsystem: Subsystem, // Subsystem
         dll_characteristics: u16, // DLL characteristics
         size_of_stack_reserve: u64, // Size of stack reserve
         size_of_stack_commit: u64, // Size of stack commit
@@ -76,6 +76,11 @@ pub const PEFile = struct {
         loader_flags: u32, // Loader flags
         number_of_rva_and_sizes: u32, // Number of RVA and sizes
         data_directories: [16]DataDirectory, // Data directories
+    };
+
+    pub const Subsystem = enum(u16) {
+        GUI = 2,
+        CUI = 3,
     };
 
     const DataDirectory = extern struct {
@@ -328,6 +333,11 @@ pub const PEFile = struct {
             }
         }
         return error.BunSectionNotFound;
+    }
+
+    pub fn setSubsystem(self: *PEFile, subsystem: Subsystem) !void {
+        const optional_header = self.getOptionalHeader();
+        optional_header.subsystem = subsystem;
     }
 
     /// Write the modified PE file

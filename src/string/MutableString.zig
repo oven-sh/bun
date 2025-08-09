@@ -22,6 +22,10 @@ pub fn isEmpty(this: *const MutableString) bool {
     return this.list.items.len == 0;
 }
 
+pub fn memoryCost(this: *const MutableString) usize {
+    return this.list.capacity;
+}
+
 pub fn deinit(str: *MutableString) void {
     if (str.list.capacity > 0) {
         str.list.expandToCapacity();

@@ -399,6 +399,7 @@ pub const S3Credentials = struct {
         content_md5: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
+        content_length: ?i64 = null,
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
     };
@@ -785,9 +786,13 @@ pub const S3Credentials = struct {
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: std.BoundedArray([]const u8, 10) = .{};
+                    var query_parts: std.BoundedArray([]const u8, 11) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
+                    // Add parameters in alphabetical order: Content-Length, Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
+
+                    if (signOptions.content_length) |content_length| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "Content-Length={}", .{@as(u64, @intCast(content_length))}));
+                    }
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -836,9 +841,13 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: std.BoundedArray([]const u8, 10) = .{};
+                var url_query_parts: std.BoundedArray([]const u8, 11) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
+                // Add parameters in alphabetical order: Content-Length, Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
+
+                if (signOptions.content_length) |content_length| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-Length={}", .{@as(u64, @intCast(content_length))}));
+                }
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));

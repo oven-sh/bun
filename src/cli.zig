@@ -338,6 +338,7 @@ pub const Command = struct {
             path_or_port: []const u8 = "",
             wait_for_connection: bool = false,
             set_breakpoint_on_first_line: bool = false,
+            open_in_browser: bool = false,
         },
     };
 

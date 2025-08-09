@@ -6,6 +6,7 @@ poll_ref: bun.Async.KeepAlive = .{},
 wait_for_connection: Wait = .off,
 // wait_for_connection: bool = false,
 set_breakpoint_on_first_line: bool = false,
+open_in_browser: bool = false,
 mode: enum {
     /// Bun acts as the server. https://debug.bun.sh/ uses this
     listen,
@@ -25,7 +26,7 @@ pub const log = Output.scoped(.debugger, false);
 
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
-extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
+extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool, bool) void;
 var futex_atomic: std.atomic.Value(u32) = undefined;
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
@@ -183,7 +184,7 @@ fn start(other_vm: *VirtualMachine) void {
 
         loop.enter();
         defer loop.exit();
-        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect);
+        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect, debugger.open_in_browser);
     }
 
     if (debugger.path_or_port) |path_or_port| {
@@ -191,7 +192,7 @@ fn start(other_vm: *VirtualMachine) void {
 
         loop.enter();
         defer loop.exit();
-        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
+        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect, debugger.open_in_browser);
     }
 
     this.global.handleRejectedPromises();

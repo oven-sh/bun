@@ -1206,6 +1206,7 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
                 .from_environment_variable = unix,
                 .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
                 .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
+                .open_in_browser = cli_flag.enable.open_in_browser,
             };
         },
     }

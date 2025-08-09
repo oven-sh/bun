@@ -84,6 +84,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--inspect-browser <STR>?          Activate Bun's debugger, wait for a connection and open browser") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -717,6 +718,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                     .wait_for_connection = true,
                     .set_breakpoint_on_first_line = true,
+                } };
+
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
+        } else if (args.option("--inspect-browser")) |inspect_flag| {
+            ctx.runtime_options.debugger = if (inspect_flag.len == 0)
+                Command.Debugger{ .enable = .{
+                    .wait_for_connection = true,
+                    .open_in_browser = true,
+                } }
+            else
+                Command.Debugger{ .enable = .{
+                    .path_or_port = inspect_flag,
+                    .wait_for_connection = true,
+                    .open_in_browser = true,
                 } };
 
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;

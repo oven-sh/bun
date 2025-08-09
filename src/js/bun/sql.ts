@@ -1276,7 +1276,7 @@ class SQLHelper {
   value: any;
   columns: string[];
   constructor(value, keys) {
-    if (keys?.length === 0) {
+    if (keys?.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
       keys = Object.keys(value[0]);
     }
 

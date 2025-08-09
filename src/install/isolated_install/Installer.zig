@@ -849,7 +849,7 @@ pub const Installer = struct {
                         if (installer.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) {
                             break :brk .{ true, true };
                         }
-                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf))) {
+                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), !installer.manager.options.disable_default_trusted_dependencies)) {
                             break :brk .{ true, false };
                         }
                         break :brk .{ false, false };
@@ -872,6 +872,7 @@ pub const Installer = struct {
                             &pkg_cwd,
                             dep.name.slice(string_buf),
                             &pkg_res,
+                            !installer.manager.options.disable_default_trusted_dependencies,
                         ) catch |err| {
                             return .failure(.{ .run_scripts = err });
                         };

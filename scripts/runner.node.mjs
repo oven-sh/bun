@@ -421,9 +421,10 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      if (isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
+        break;
       }
     }
 

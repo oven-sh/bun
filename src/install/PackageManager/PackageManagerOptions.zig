@@ -71,6 +71,9 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+// Security provider module path
+security_provider: ?[]const u8 = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -277,6 +280,10 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.security_provider) |security_provider| {
+            this.security_provider = security_provider;
         }
 
         if (config.cafile) |cafile| {

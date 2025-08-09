@@ -713,10 +713,10 @@ pub fn ParsePrefix(
                 .t_class => t_class(p),
                 .t_new => t_new(p, flags),
                 .t_super => t_super(p, level),
-                else => brk: {
+                else => {
                     @branchHint(.cold);
                     try p.lexer.unexpected();
-                    break :brk error.SyntaxError;
+                    return error.SyntaxError;
                 },
             };
         }

@@ -87,6 +87,7 @@ src/bun.js/api/bun/h2_frame_parser.zig
 src/bun.js/api/bun/lshpack.zig
 src/bun.js/api/bun/process.zig
 src/bun.js/api/bun/quic_socket.zig
+src/bun.js/api/bun/quic_stream.zig
 src/bun.js/api/bun/socket.zig
 src/bun.js/api/bun/socket/Handlers.zig
 src/bun.js/api/bun/socket/Listener.zig

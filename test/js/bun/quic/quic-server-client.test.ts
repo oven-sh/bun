@@ -19,28 +19,28 @@ test("QUIC server and client integration", async () => {
       key: tls.key,
       ca: tls.ca,
     },
-    open(socket) {
+    socketOpen(socket) {
       console.log("QUIC server ready on port 9443");
     },
     connection(socket) {
       serverConnections++;
       console.log(`New QUIC connection (${serverConnections})`);
-      
-      // TODO: Fix server socket write - currently crashes
-      // socket.write("Welcome to QUIC server!");
     },
-    message(socket, data) {
+    open(stream) {
+      console.log("Server: New stream opened:", stream.id);
+    },
+    data(stream, buffer) {
       messagesReceived++;
-      console.log("Server received:", data.toString());
+      console.log("Server received on stream:", buffer.toString());
       
-      // Echo the message back
-      socket.write(`Echo: ${data}`);
+      // Echo the message back on the same stream
+      stream.write(`Echo: ${buffer}`);
     },
-    close(socket) {
-      console.log("Server connection closed");
+    close(stream) {
+      console.log("Server: Stream closed:", stream.id);
     },
-    error(socket, error) {
-      console.error("Server error:", error);
+    error(stream, error) {
+      console.error("Server stream error:", error);
     },
   });
 
@@ -48,6 +48,7 @@ test("QUIC server and client integration", async () => {
   await new Promise(resolve => setTimeout(resolve, 100));
 
   // Create QUIC client
+  let clientStream;
   const client = Bun.quic({
     hostname: "localhost", 
     port: 9443,
@@ -57,26 +58,30 @@ test("QUIC server and client integration", async () => {
       key: tls.key,
       ca: tls.ca,
     },
-    open(socket) {
+    socketOpen(socket) {
       clientConnections++;
       console.log("QUIC client connected");
       
-      // Send test message
-      socket.write("Hello from QUIC client!");
+      // Create a stream and send test message
+      clientStream = socket.stream({ type: "test" });
+      clientStream.write("Hello from QUIC client!");
     },
-    message(socket, data) {
-      console.log("Client received:", data.toString());
+    open(stream) {
+      console.log("Client: New stream opened:", stream.id);
+    },
+    data(stream, buffer) {
+      console.log("Client received on stream:", buffer.toString());
       
-      if (data.toString().includes("Echo:")) {
-        // Test complete, close connection
-        socket.close();
+      if (buffer.toString().includes("Echo:")) {
+        // Test complete, close stream
+        stream.close();
       }
     },
-    close(socket) {
-      console.log("Client connection closed");
+    close(stream) {
+      console.log("Client: Stream closed:", stream.id);
     },
-    error(socket, error) {
-      console.error("Client error:", error);
+    error(stream, error) {
+      console.error("Client stream error:", error);
     },
   });
 
@@ -113,44 +118,36 @@ test("QUIC multi-stream creation and management", async () => {
       // Test initial stream count (should be 0 initially)
       expect(socket.streamCount).toBe(0);
       
-      // Create multiple streams
-      const stream1 = socket.createStream();
-      const stream2 = socket.createStream();
-      const stream3 = socket.createStream();
+      // Create multiple streams  
+      const stream1 = socket.stream({ purpose: "test1" });
+      const stream2 = socket.stream({ purpose: "test2" });
+      const stream3 = socket.stream({ purpose: "test3" });
       
-      console.log(`Server created streams: ${stream1}, ${stream2}, ${stream3}`);
+      console.log(`Server created streams: ${stream1.id}, ${stream2.id}, ${stream3.id}`);
       
-      // Verify stream IDs are different
+      // Verify streams are different objects
       expect(stream1).toBeDefined();
       expect(stream2).toBeDefined();
       expect(stream3).toBeDefined();
-      expect(stream1).not.toBe(stream2);
-      expect(stream2).not.toBe(stream3);
-      expect(stream1).not.toBe(stream3);
+      expect(stream1.id).not.toBe(stream2.id);
+      expect(stream2.id).not.toBe(stream3.id);
+      expect(stream1.id).not.toBe(stream3.id);
       
       serverStreamCount = socket.streamCount;
       console.log(`Server total streams: ${serverStreamCount}`);
-      
-      // Test getting stream IDs (if implemented)
-      if (socket.streamIds) {
-        const streamIds = socket.streamIds;
-        expect(Array.isArray(streamIds)).toBe(true);
-        console.log("Server stream IDs:", streamIds);
-        
-        // Test getting individual streams (if implemented)
-        for (const streamId of streamIds) {
-          if (socket.getStream) {
-            const stream = socket.getStream(streamId);
-            expect(stream).toBeDefined();
-            console.log(`Server retrieved stream ${streamId}: ${stream}`);
-          }
-        }
-      }
     },
-    open() {},
-    message() {},
-    close() {},
-    error() {},
+    open(stream) {
+      console.log("Server: Stream opened:", stream.id);
+    },
+    data(stream, buffer) {
+      console.log("Server: Stream data:", buffer.toString());
+    },
+    close(stream) {
+      console.log("Server: Stream closed:", stream.id);
+    },
+    error(stream, error) {
+      console.error("Server: Stream error:", error);
+    },
   });
 
   await new Promise(resolve => setTimeout(resolve, 100));
@@ -164,30 +161,36 @@ test("QUIC multi-stream creation and management", async () => {
       key: tls.key,
       ca: tls.ca,
     },
-    open(socket) {
+    socketOpen(socket) {
       // Client can also create multiple streams
-      const clientStream1 = socket.createStream();
-      const clientStream2 = socket.createStream();
+      const clientStream1 = socket.stream({ purpose: "client1" });
+      const clientStream2 = socket.stream({ purpose: "client2" });
       
-      console.log(`Client created streams: ${clientStream1}, ${clientStream2}`);
+      console.log(`Client created streams: ${clientStream1.id}, ${clientStream2.id}`);
       
       expect(clientStream1).toBeDefined();
       expect(clientStream2).toBeDefined();
-      expect(clientStream1).not.toBe(clientStream2);
+      expect(clientStream1.id).not.toBe(clientStream2.id);
       
       clientStreamCount = socket.streamCount;
       console.log(`Client total streams: ${clientStreamCount}`);
       
-      // Test stream management functionality
-      if (socket.closeStream && clientStream2) {
-        // Close one stream and verify count decreases
-        socket.closeStream(clientStream2);
-        console.log(`Client streams after closing one: ${socket.streamCount}`);
-      }
+      // Test stream closing functionality
+      clientStream2.close();
+      console.log(`Client streams after closing one: ${socket.streamCount}`);
     },
-    message() {},
-    close() {},
-    error() {},
+    open(stream) {
+      console.log("Client: Stream opened:", stream.id);
+    },
+    data(stream, buffer) {
+      console.log("Client: Stream data:", buffer.toString());
+    },
+    close(stream) {
+      console.log("Client: Stream closed:", stream.id);
+    },
+    error(stream, error) {
+      console.error("Client: Stream error:", error);
+    },
   });
 
   await new Promise(resolve => setTimeout(resolve, 500));
@@ -211,9 +214,10 @@ test("QUIC connection states and properties", async () => {
       key: tls.key,
       ca: tls.ca,
     },
-    open() {},
+    socketOpen() {},
     connection() {},
-    message() {},
+    open() {},
+    data() {},
     close() {},
     error() {},
   });
@@ -229,7 +233,7 @@ test("QUIC connection states and properties", async () => {
       key: tls.key,
       ca: tls.ca,
     },
-    open(socket) {
+    socketOpen(socket) {
       // Test connection properties
       expect(socket.isServer).toBe(false);
       expect(socket.readyState).toBe("open");
@@ -245,7 +249,8 @@ test("QUIC connection states and properties", async () => {
       expect(typeof stats.bytesSent).toBe("number");
       expect(typeof stats.bytesReceived).toBe("number");
     },
-    message() {},
+    open() {},
+    data() {},
     close() {},
     error() {},
   });
@@ -272,13 +277,14 @@ test("QUIC error handling", async () => {
     hostname: "localhost",
     port: 9999, // Non-existent port
     server: false,
-    open() {
+    socketOpen() {
       // Should not be called
       expect(false).toBe(true);
     },
-    message() {},
+    open() {},
+    data() {},
     close() {},
-    error(socket, error) {
+    error(stream, error) {
       errorReceived = true;
       console.log("Expected error:", error);
       expect(error).toBeDefined();

@@ -266,9 +266,9 @@ export default [
         fn: "read",
         length: 1,
       },
-      createStream: {
-        fn: "createStream",
-        length: 0,
+      stream: {
+        fn: "jsStream",
+        length: 1,
       },
       close: {
         fn: "close",
@@ -322,6 +322,68 @@ export default [
     },
     finalize: true,
     construct: true,
+    klass: {},
+    values: [
+      "onStreamOpen",
+      "onStreamData",
+      "onStreamClose",
+      "onStreamError",
+      "onStreamDrain",
+      "onSocketOpen",
+      "onConnection",
+      "onSocketClose",
+      "onSocketError",
+    ],
+  }),
+  // QUIC Stream
+  define({
+    name: "QuicStream",
+    JSType: "0b11101110",
+    hasPendingActivity: true,
+    noConstructor: true,
+    configurable: false,
+    memoryCost: true,
+    proto: {
+      write: {
+        fn: "write",
+        length: 1,
+      },
+      end: {
+        fn: "end",
+        length: 0,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+      "@@dispose": {
+        fn: "close",
+        length: 0,
+      },
+      ref: {
+        fn: "jsRef",
+        length: 0,
+      },
+      unref: {
+        fn: "jsUnref",
+        length: 0,
+      },
+      id: {
+        getter: "getId",
+      },
+      socket: {
+        getter: "getSocket",
+      },
+      data: {
+        getter: "getData",
+        cache: true,
+      },
+      readyState: {
+        getter: "getReadyState",
+      },
+    },
+    finalize: true,
+    construct: false,
     klass: {},
   }),
   define({

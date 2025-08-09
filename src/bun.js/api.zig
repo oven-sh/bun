@@ -23,6 +23,7 @@ pub const TCPSocket = @import("./api/bun/socket.zig").TCPSocket;
 pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 pub const QuicSocket = @import("./api/bun/quic_socket.zig").QuicSocket;
+pub const QuicStream = @import("./api/bun/quic_stream.zig").QuicStream;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
 pub const HashObject = @import("./api/HashObject.zig");

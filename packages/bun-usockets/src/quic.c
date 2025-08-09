@@ -654,9 +654,10 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
             printf("WARNING: on_open callback is NULL for client connection\n");
         }
         
-        /* For clients, create the first stream immediately after connection */
-        // printf("Client creating initial stream on connection %p\n", c);
-        lsquic_conn_make_stream(c);
+        /* CRITICAL FIX: Do NOT auto-create streams on connection establishment.
+         * Let the user explicitly create streams via socket.createStream() calls.
+         * This prevents multiple streams from being created when only one is expected. */
+        // printf("Client connection established, waiting for explicit stream creation\n");
         
         /* CRITICAL FIX: Return the CONTEXT (not the connection) as the lsquic connection context
          * This is what the on_read callback expects to find */
@@ -716,9 +717,10 @@ lsquic_conn_ctx_t *on_new_conn(void *stream_if_ctx, lsquic_conn_t *c) {
             printf("WARNING: on_connection callback is NULL for server connection\n");
         }
         
-        /* Create initial stream for server connection */
-        // printf("Server creating initial stream on connection %p\n", c);
-        lsquic_conn_make_stream(c);
+        /* CRITICAL FIX: Do NOT auto-create streams on connection establishment.
+         * Let the user explicitly create streams via socket.createStream() calls.
+         * This prevents multiple streams from being created when only one is expected. */
+        // printf("Server connection established, waiting for explicit stream creation\n");
         
         /* Return the connection context */
         return lsquic_conn_get_ctx(c);
@@ -730,8 +732,6 @@ void us_quic_socket_create_stream(us_quic_socket_t *s, int ext_size) {
         printf("ERROR: Invalid socket in create_stream\n");
         return;
     }
-    
-    // printf("us_quic_socket_create_stream called for socket %p\n", s);
     
     // Check if this socket has a connection
     if (s->lsquic_conn) {
@@ -856,6 +856,9 @@ lsquic_stream_ctx_t *on_new_stream(void *stream_if_ctx, lsquic_stream_t *s) {
     
     // printf("on_new_stream: stream_id=%llu, is_client=%d, on_stream_open=%p\n", 
     //        (unsigned long long)stream_id, is_client, on_stream_open_callback);
+    
+    // printf("Stream %p opened, stream_id=%llu, is_client=%d\n", s, 
+    //        (unsigned long long)stream_id, is_client);
     
     // Only call the callback if it's valid
     if (on_stream_open_callback) {

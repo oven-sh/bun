@@ -193,9 +193,11 @@ pub fn deinit(this: *SSLConfig) void {
 
     if (this.cert) |cert| {
         for (0..this.cert_count) |i| {
-            const slice = std.mem.span(cert[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
+            if (cert[i]) |cert_ptr| {
+                const slice = std.mem.span(cert_ptr);
+                if (slice.len > 0) {
+                    bun.freeSensitive(bun.default_allocator, slice);
+                }
             }
         }
 
@@ -205,9 +207,11 @@ pub fn deinit(this: *SSLConfig) void {
 
     if (this.key) |key| {
         for (0..this.key_count) |i| {
-            const slice = std.mem.span(key[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
+            if (key[i]) |key_ptr| {
+                const slice = std.mem.span(key_ptr);
+                if (slice.len > 0) {
+                    bun.freeSensitive(bun.default_allocator, slice);
+                }
             }
         }
 
@@ -217,9 +221,11 @@ pub fn deinit(this: *SSLConfig) void {
 
     if (this.ca) |ca| {
         for (0..this.ca_count) |i| {
-            const slice = std.mem.span(ca[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
+            if (ca[i]) |ca_ptr| {
+                const slice = std.mem.span(ca_ptr);
+                if (slice.len > 0) {
+                    bun.freeSensitive(bun.default_allocator, slice);
+                }
             }
         }
 

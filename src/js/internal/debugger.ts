@@ -356,7 +356,7 @@ class Debugger {
       return new Response(null, {
         status: 426, // Upgrade Required
         headers: {
-          "Upgrade": "websocket",
+          Upgrade: "websocket",
         },
       });
     }
@@ -510,7 +510,7 @@ async function connectToUnixServer(
 function versionInfo(): unknown {
   return {
     "Protocol-Version": "1.3",
-    "Browser": "Bun",
+    Browser: "Bun",
     "User-Agent": navigator.userAgent,
     "WebKit-Version": process.versions.webkit,
     "Bun-Version": Bun.version,

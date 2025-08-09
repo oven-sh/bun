@@ -15,7 +15,7 @@ function testMigration(lockfile: string) {
     JSON.stringify({
       name: "test3",
       dependencies: {
-        "svelte": "*",
+        svelte: "*",
       },
     }),
   );
@@ -125,7 +125,7 @@ test("npm lockfile with relative workspaces", async () => {
   expect(err).not.toContain("InvalidNPMLockfile");
   for (let i = 0; i < 4; i++) {
     expect(await Bun.file(join(testDir, "node_modules", "pkg" + i, "package.json")).json()).toEqual({
-      "name": "pkg" + i,
+      name: "pkg" + i,
     });
   }
 

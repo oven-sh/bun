@@ -26,10 +26,10 @@ describe("bun patch <pkg>", async () => {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
-              "name": "my-workspace",
+              name: "my-workspace",
               private: "true",
               version: "0.0.1",
-              "devDependencies": {
+              devDependencies: {
                 "@repo/ui": "*",
                 "@repo/eslint-config": "*",
                 "@repo/typescript-config": "*",
@@ -40,7 +40,7 @@ describe("bun patch <pkg>", async () => {
               "eslint-config": {
                 "package.json": JSON.stringify({
                   name: "@repo/eslint-config",
-                  "version": "0.0.0",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
@@ -49,15 +49,15 @@ describe("bun patch <pkg>", async () => {
               },
               "typescript-config": {
                 "package.json": JSON.stringify({
-                  "name": "@repo/typescript-config",
-                  "version": "0.0.0",
+                  name: "@repo/typescript-config",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
                   private: "true",
                 }),
               },
-              "ui": {
+              ui: {
                 "package.json": JSON.stringify({
                   name: "@repo/ui",
                   version: "0.0.0",
@@ -101,10 +101,10 @@ describe("bun patch <pkg>", async () => {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
-              "name": "my-workspace",
+              name: "my-workspace",
               private: "true",
               version: "0.0.1",
-              "devDependencies": {
+              devDependencies: {
                 "@repo/ui": "*",
                 "@repo/eslint-config": "*",
                 "@repo/typescript-config": "*",
@@ -116,7 +116,7 @@ describe("bun patch <pkg>", async () => {
               "eslint-config": {
                 "package.json": JSON.stringify({
                   name: "@repo/eslint-config",
-                  "version": "0.0.0",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
@@ -125,15 +125,15 @@ describe("bun patch <pkg>", async () => {
               },
               "typescript-config": {
                 "package.json": JSON.stringify({
-                  "name": "@repo/typescript-config",
-                  "version": "0.0.0",
+                  name: "@repo/typescript-config",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
                   private: "true",
                 }),
               },
-              "ui": {
+              ui: {
                 "package.json": JSON.stringify({
                   name: "@repo/ui",
                   version: "0.0.0",
@@ -179,10 +179,10 @@ describe("bun patch <pkg>", async () => {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
-              "name": "my-workspace",
+              name: "my-workspace",
               private: "true",
               version: "0.0.1",
-              "devDependencies": {
+              devDependencies: {
                 "@repo/ui": "*",
                 "@repo/eslint-config": "*",
                 "@repo/typescript-config": "*",
@@ -194,7 +194,7 @@ describe("bun patch <pkg>", async () => {
               "eslint-config": {
                 "package.json": JSON.stringify({
                   name: "@repo/eslint-config",
-                  "version": "0.0.0",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
@@ -203,12 +203,12 @@ describe("bun patch <pkg>", async () => {
               },
               "typescript-config": {
                 "package.json": JSON.stringify({
-                  "name": "@repo/typescript-config",
-                  "version": "0.0.0",
+                  name: "@repo/typescript-config",
+                  version: "0.0.0",
                   private: "true",
                 }),
               },
-              "ui": {
+              ui: {
                 "package.json": JSON.stringify({
                   name: "@repo/ui",
                   version: "0.0.0",
@@ -265,10 +265,10 @@ describe("bun patch <pkg>", async () => {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
-              "name": "my-workspace",
+              name: "my-workspace",
               private: "true",
               version: "0.0.1",
-              "devDependencies": {
+              devDependencies: {
                 "@repo/ui": "*",
                 "@repo/eslint-config": "*",
                 "@repo/typescript-config": "*",
@@ -280,7 +280,7 @@ describe("bun patch <pkg>", async () => {
               "eslint-config": {
                 "package.json": JSON.stringify({
                   name: "@repo/eslint-config",
-                  "version": "0.0.0",
+                  version: "0.0.0",
                   dependencies: {
                     "@types/ws": "8.5.4",
                   },
@@ -289,12 +289,12 @@ describe("bun patch <pkg>", async () => {
               },
               "typescript-config": {
                 "package.json": JSON.stringify({
-                  "name": "@repo/typescript-config",
-                  "version": "0.0.0",
+                  name: "@repo/typescript-config",
+                  version: "0.0.0",
                   private: "true",
                 }),
               },
-              "ui": {
+              ui: {
                 "package.json": JSON.stringify({
                   name: "@repo/ui",
                   version: "0.0.0",
@@ -344,10 +344,10 @@ describe("bun patch <pkg>", async () => {
         async () => {
           const tempdir = tempDirWithFiles("popular", {
             "package.json": JSON.stringify({
-              "name": "bun-patch-test",
-              "module": "index.ts",
-              "type": "module",
-              "dependencies": {
+              name: "bun-patch-test",
+              module: "index.ts",
+              type: "module",
+              dependencies: {
                 [pkgName]: version,
               },
             }),
@@ -414,10 +414,10 @@ describe("bun patch <pkg>", async () => {
   test("should patch a package when it is already patched", async () => {
     const tempdir = tempDirWithFiles("lol", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        dependencies: {
           "is-even": "1.0.0",
           "is-odd": "3.0.1",
         },
@@ -502,10 +502,10 @@ module.exports = function isOdd(i) {
   test("bad patch arg", async () => {
     const tempdir = tempDirWithFiles("lol", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -521,10 +521,10 @@ module.exports = function isOdd(i) {
   test("bad patch commit arg", async () => {
     const tempdir = tempDirWithFiles("lol", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -565,10 +565,10 @@ module.exports = function isOdd(i) {
 
       const filedir = tempDirWithFiles("patch1", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": dependencies,
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: dependencies,
         }),
         "index.ts": mainScript,
       });
@@ -609,10 +609,10 @@ Once you're done with your changes, run:
     async () => {
       const filedir = tempDirWithFiles("patch1", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": { lodash: "4.17.21" },
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: { lodash: "4.17.21" },
         }),
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
       });
@@ -713,10 +713,10 @@ Once you're done with your changes, run:
 
       const filedir = tempDirWithFiles("patch1", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
             "is-even": "1.0.0",
           },
         }),
@@ -739,10 +739,10 @@ module.exports = function isEven() {
 
       const tempdir = tempDirWithFiles("unpatched", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
             "is-even": "1.0.0",
           },
         }),
@@ -768,10 +768,10 @@ module.exports = function isEven() {
 
       const filedir = tempDirWithFiles("patch1", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
             "is-even": "1.0.0",
             "is-odd": "3.0.1",
           },
@@ -796,10 +796,10 @@ module.exports = function isOdd() {
 
       const tempdir = tempDirWithFiles("unpatched", {
         "package.json": JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "dependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
             "is-even": "1.0.0",
           },
         }),

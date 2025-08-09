@@ -38,15 +38,15 @@ describe("Headers", () => {
     });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
-        "accept": "*/*",
-        "Accept": "text/html",
+        accept: "*/*",
+        Accept: "text/html",
       });
       expect(headers.get("accept")).toBe("*/*, text/html");
     });
     test("can create headers from object with non-strings", () => {
       // @ts-expect-error
       const headers = new Headers({
-        "age": 60,
+        age: 60,
       });
       expect(headers.get("age")).toBe("60");
     });
@@ -340,7 +340,7 @@ describe("Headers", () => {
       const headers = new Headers({
         "user-agent": "bun",
         "User-Agent": "bun",
-        "Age": "60",
+        Age: "60",
       });
       const keys = Array.from(headers.keys());
       expect(keys).toEqual(["age", "user-agent"]);

@@ -224,7 +224,7 @@ describe("node:http", () => {
       res.setHeader("test", "test");
       expect(res.getHeaders()).toEqual({
         "set-cookie": ["swag=true", "yolo=true"],
-        "test": "test",
+        test: "test",
       });
     });
   });
@@ -1079,7 +1079,7 @@ describe("node:http", () => {
       expect(req.url).toStrictEqual("/bun?a=1");
       res.writeHead(200, {
         "Content-Type": "text/plain",
-        "Connection": "close",
+        Connection: "close",
       });
       res.write("Bun\n");
       res.end();
@@ -1832,7 +1832,7 @@ it("should emit continue event #7480", done => {
   let receivedContinue = false;
   const req = https.request(
     "https://example.com",
-    { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+    { headers: { "accept-encoding": "identity", expect: "100-continue" } },
     res => {
       let data = "";
       res.setEncoding("utf8");
@@ -2259,7 +2259,7 @@ it("should not emit/throw error when writing after socket.end", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
 
   const server = http.createServer((req, res) => {
-    res.writeHead(200, { "Connection": "close" });
+    res.writeHead(200, { Connection: "close" });
 
     res.socket.end();
     res.on("error", reject);

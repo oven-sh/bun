@@ -208,7 +208,7 @@ let cssFeatureMappings = {
   "css-matches-pseudo": "IsSelector",
   "css-sel2": "Selectors2",
   "css-sel3": "Selectors3",
-  "calc": "CalcFunction",
+  calc: "CalcFunction",
 };
 
 let cssFeatureOverrides = {

@@ -190,39 +190,39 @@ describe("url", () => {
     (
       [
         {
-          "url": undefined,
-          "base": undefined,
-          "expected": false,
+          url: undefined,
+          base: undefined,
+          expected: false,
         },
         {
-          "url": "a:b",
-          "base": undefined,
-          "expected": true,
+          url: "a:b",
+          base: undefined,
+          expected: true,
         },
         {
-          "url": undefined,
-          "base": "a:b",
-          "expected": false,
+          url: undefined,
+          base: "a:b",
+          expected: false,
         },
         {
-          "url": "a:/b",
-          "base": undefined,
-          "expected": true,
+          url: "a:/b",
+          base: undefined,
+          expected: true,
         },
         {
-          "url": undefined,
-          "base": "a:/b",
-          "expected": true,
+          url: undefined,
+          base: "a:/b",
+          expected: true,
         },
         {
-          "url": "https://test:test",
-          "base": undefined,
-          "expected": false,
+          url: "https://test:test",
+          base: undefined,
+          expected: false,
         },
         {
-          "url": "a",
-          "base": "https://b/",
-          "expected": true,
+          url: "a",
+          base: "https://b/",
+          expected: true,
         },
       ] as const
     ).forEach(({ url, base, expected }) => {

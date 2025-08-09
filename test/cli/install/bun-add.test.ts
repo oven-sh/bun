@@ -867,7 +867,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
     stderr: "pipe",
     env: {
       ...env,
-      "BUN_CONFIG_TOKEN": "npm_******",
+      BUN_CONFIG_TOKEN: "npm_******",
     },
   });
   const err = await stderr.text();

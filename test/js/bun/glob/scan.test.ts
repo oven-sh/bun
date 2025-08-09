@@ -538,22 +538,22 @@ describe("literal fast path", async () => {
   let tempdir = "";
   beforeAll(() => {
     tempdir = tempDirWithFiles("glob-scan-literal-fast-path", {
-      "packages": {
-        "a": {
+      packages: {
+        a: {
           "package.json": "hi",
-          "foo": "bar",
+          foo: "bar",
         },
-        "b": {
+        b: {
           "package.json": "hi",
-          "foo": "bar",
+          foo: "bar",
         },
-        "c": {
+        c: {
           "package.json": "hi",
-          "foo": "bar",
+          foo: "bar",
         },
-        "foo": "bar",
+        foo: "bar",
       },
-      "foo": "bar",
+      foo: "bar",
     });
   });
 

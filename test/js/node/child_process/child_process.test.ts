@@ -400,15 +400,15 @@ it("it accepts stdio passthrough", async () => {
   await fs.promises.writeFile(
     path.join(package_dir, "package.json"),
     JSON.stringify({
-      "name": "npm-run-all-test",
-      "version": "1.0.0",
-      "type": "module",
-      "scripts": {
-        "all": "run-p echo-hello echo-world",
+      name: "npm-run-all-test",
+      version: "1.0.0",
+      type: "module",
+      scripts: {
+        all: "run-p echo-hello echo-world",
         "echo-hello": "echo hello",
         "echo-world": "echo world",
       },
-      "devDependencies": {
+      devDependencies: {
         "npm-run-all": "4.1.5",
       },
     }),

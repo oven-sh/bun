@@ -120,7 +120,7 @@ export const warnOnIdentifiersNotPresentAtRuntime = [
 const debug = process.argv[2] === "--debug=ON";
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
-  "IS_BUN_DEVELOPMENT": String(debug),
+  IS_BUN_DEVELOPMENT: String(debug),
 
   $streamClosed: "1",
   $streamClosing: "2",

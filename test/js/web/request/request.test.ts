@@ -3,10 +3,10 @@ import { expect, test } from "bun:test";
 test("undefined args don't throw", () => {
   const request = new Request("https://example.com/", {
     body: undefined,
-    "credentials": undefined,
-    "redirect": undefined,
-    "method": undefined,
-    "mode": undefined,
+    credentials: undefined,
+    redirect: undefined,
+    method: undefined,
+    mode: undefined,
   });
 
   expect(request.method).toBe("GET");

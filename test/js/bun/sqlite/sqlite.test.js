@@ -178,7 +178,7 @@ describe("safeIntegers", () => {
                 const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
 
                 query[method]({
-                  "name": "Joey",
+                  name: "Joey",
                 });
               }).toThrow('Missing parameter "age"');
             });
@@ -760,8 +760,8 @@ it("strict: true", () => {
   db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
 
   const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
-    "name": "Joey",
-    "age": 2,
+    name: "Joey",
+    age: 2,
   });
 });
 

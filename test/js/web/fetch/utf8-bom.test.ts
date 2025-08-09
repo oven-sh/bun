@@ -24,7 +24,7 @@ describe("UTF-8 BOM should be ignored", () => {
 
       it("in json()", async () => {
         const blob = new Blob(['\uFEFF{"hello":"World 🌎"}'], { type: "application/json" });
-        expect(await blob.json()).toStrictEqual({ "hello": "World 🌎" } as any);
+        expect(await blob.json()).toStrictEqual({ hello: "World 🌎" } as any);
       });
 
       it("in formData()", async () => {
@@ -41,7 +41,7 @@ describe("UTF-8 BOM should be ignored", () => {
 
     it("in json()", async () => {
       const blob = new Blob(['\uFEFF{"hello":"World"}'], { type: "application/json" });
-      expect(await blob.json()).toEqual({ "hello": "World" } as any);
+      expect(await blob.json()).toEqual({ hello: "World" } as any);
     });
 
     it("in formData()", async () => {
@@ -61,7 +61,7 @@ describe("UTF-8 BOM should be ignored", () => {
       const response = new Response(Buffer.from('\uFEFF{"hello":"World"}'), {
         headers: { "content-type": "application/json" },
       });
-      expect(await response.json()).toEqual({ "hello": "World" } as any);
+      expect(await response.json()).toEqual({ hello: "World" } as any);
     });
 
     it("in formData()", async () => {
@@ -87,7 +87,7 @@ describe("UTF-8 BOM should be ignored", () => {
         body: Buffer.from('\uFEFF{"hello":"World"}'),
         headers: { "content-type": "application/json" },
       });
-      expect(await request.json()).toEqual({ "hello": "World" } as any);
+      expect(await request.json()).toEqual({ hello: "World" } as any);
     });
 
     it("in formData()", async () => {
@@ -118,7 +118,7 @@ describe("UTF-8 BOM should be ignored", () => {
           controller.close();
         },
       });
-      expect(await Bun.readableStreamToJSON(stream)).toEqual({ "hello": "World" } as any);
+      expect(await Bun.readableStreamToJSON(stream)).toEqual({ hello: "World" } as any);
     });
 
     it("in ReadableStream.prototype.text()", async () => {
@@ -138,7 +138,7 @@ describe("UTF-8 BOM should be ignored", () => {
           controller.close();
         },
       });
-      expect(await stream.json()).toEqual({ "hello": "World" } as any);
+      expect(await stream.json()).toEqual({ hello: "World" } as any);
     });
 
     it("in Bun.readableStreamToFormData()", async () => {

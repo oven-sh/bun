@@ -26,7 +26,7 @@ pub export fn TextEncoder__encode8(
         @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
         return uint8array;
     } else {
-        const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
+        const bytes = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, slice) catch {
             return globalThis.throwOutOfMemoryValue();
         };
         bun.assert(bytes.len >= slice.len);

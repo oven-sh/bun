@@ -767,7 +767,7 @@ pub const Value = union(Tag) {
             },
             .InternalBlob => {
                 const new_blob = Blob.init(
-                    this.InternalBlob.toOwnedSlice(),
+                    this.InternalBlob.toGlobalSlice(),
                     // we will never resize it from here
                     // we have to use the default allocator
                     // even if it was actually allocated on a different thread

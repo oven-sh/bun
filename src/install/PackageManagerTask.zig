@@ -136,10 +136,7 @@ pub fn callback(task: *ThreadPool.Task) void {
         },
         .extract => {
             const bytes = this.request.extract.network.response_buffer.move();
-
-            defer {
-                bun.default_allocator.free(bytes);
-            }
+            defer this.request.extract.network.response_buffer.allocator.free(bytes);
 
             const result = this.request.extract.tarball.run(
                 &this.log,

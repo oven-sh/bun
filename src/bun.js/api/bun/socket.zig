@@ -1453,7 +1453,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const ext_size = @sizeOf(WrappedSocket);
 
-            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
@@ -1502,7 +1502,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 tls.deref();
 
                 handlers_ptr.unprotect();
-                bun.default_allocator.destroy(handlers_ptr);
+                handlers_ptr.vm.allocator.destroy(handlers_ptr);
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
@@ -1528,7 +1528,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = blk: {
                 const this_handlers = this.getHandlers();
                 break :blk .{
@@ -1945,7 +1945,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         return globalObject.throw("Expected \"socket\" option", .{});
     };
 
-    var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {

@@ -859,7 +859,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
         }
 
         pub fn finalize(this: *@This()) void {
-            VirtualMachine.get().allocator.destroy(this);
+            bun.default_allocator.destroy(this);
         }
     };
 }

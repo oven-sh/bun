@@ -136,7 +136,11 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         }
 
         pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-            mimalloc.mi_free(data);
+            if (comptime bun.use_mimalloc) {
+                mimalloc.mi_free(data);
+            } else {
+                std.c.free(data);
+            }
         }
 
         pub fn deinit(this: *ZlibReader) void {
@@ -310,7 +314,11 @@ const ZlibAllocator = struct {
             return;
         }
 
-        mimalloc.mi_free(data);
+        if (comptime bun.use_mimalloc) {
+            mimalloc.mi_free(data);
+        } else {
+            std.c.free(data);
+        }
     }
 };
 
@@ -757,7 +765,11 @@ pub const ZlibCompressorArrayList = struct {
     }
 
     pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        mimalloc.mi_free(data);
+        if (comptime bun.use_mimalloc) {
+            mimalloc.mi_free(data);
+        } else {
+            std.c.free(data);
+        }
     }
 
     pub fn deinit(this: *ZlibCompressor) void {

@@ -12,12 +12,6 @@ pub fn load() void {
     boring.SSL_load_error_strings();
     boring.ERR_load_BIO_strings();
     boring.OpenSSL_add_all_algorithms();
-
-    if (!builtin.is_test) {
-        std.mem.doNotOptimizeAway(&OPENSSL_memory_alloc);
-        std.mem.doNotOptimizeAway(&OPENSSL_memory_get_size);
-        std.mem.doNotOptimizeAway(&OPENSSL_memory_free);
-    }
 }
 
 var ctx_store: ?*boring.SSL_CTX = null;
@@ -58,19 +52,29 @@ pub fn initClient() *boring.SSL {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
-export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
-    return bun.mimalloc.mi_malloc(size);
-}
+comptime {
+    if (bun.use_mimalloc) {
+        @export(&struct {
+            pub fn alloc(size: usize) callconv(.C) ?*anyopaque {
+                return bun.mimalloc.mi_malloc(size);
+            }
+        }.alloc, .{ .name = "OPENSSL_memory_alloc" });
 
-// BoringSSL always expects memory to be zero'd
-export fn OPENSSL_memory_free(ptr: *anyopaque) void {
-    const len = bun.mimalloc.mi_usable_size(ptr);
-    @memset(@as([*]u8, @ptrCast(ptr))[0..len], 0);
-    bun.mimalloc.mi_free(ptr);
-}
+        // BoringSSL always expects memory to be zero'd
+        @export(&struct {
+            pub fn free(ptr: *anyopaque) callconv(.C) void {
+                const len = bun.mimalloc.mi_usable_size(ptr);
+                @memset(@as([*]u8, @ptrCast(ptr))[0..len], 0);
+                bun.mimalloc.mi_free(ptr);
+            }
+        }.free, .{ .name = "OPENSSL_memory_free" });
 
-export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
-    return bun.mimalloc.mi_usable_size(ptr);
+        @export(&struct {
+            pub fn get_size(ptr: ?*const anyopaque) callconv(.C) usize {
+                return bun.mimalloc.mi_usable_size(ptr);
+            }
+        }.get_size, .{ .name = "OPENSSL_memory_get_size" });
+    }
 }
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
@@ -221,7 +225,6 @@ pub fn ERR_toJS(globalThis: *jsc.JSGlobalObject, err_code: u32) jsc.JSValue {
 
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const boring = @import("./deps/boringssl.translated.zig");
-const builtin = @import("builtin");
 const c_ares = @import("./deps/c_ares.zig");
 const std = @import("std");
 

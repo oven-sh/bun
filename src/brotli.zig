@@ -19,7 +19,11 @@ pub const BrotliAllocator = struct {
             return;
         }
 
-        mimalloc.mi_free(data);
+        if (comptime bun.use_mimalloc) {
+            mimalloc.mi_free(data);
+        } else {
+            std.c.free(data);
+        }
     }
 };
 

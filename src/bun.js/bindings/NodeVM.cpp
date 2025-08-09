@@ -1061,7 +1061,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     JSValue globalObjectDynamicImportCallback;
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &globalObjectDynamicImportCallback)) {
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration"_s, &globalObjectDynamicImportCallback)) {
         return *encodedException;
     }
 
@@ -1085,7 +1085,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, scriptDynamicImportCallback, jsUndefined()));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, scriptDynamicImportCallback, nullptr));
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(
@@ -1135,7 +1135,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, nullptr));
 
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
@@ -1212,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Add the function body
     constructFunctionArgs.append(jsString(vm, sourceString));
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, nullptr));
 
     // Create the source origin
     SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };
@@ -1290,7 +1290,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue importer;
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration", &importer)) {
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration"_s, &importer)) {
         return *encodedException;
     }
 

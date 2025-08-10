@@ -57,12 +57,49 @@ pub const Debug = if (Environment.isDebug) struct {
     pub inline fn exit(_: Debug) void {}
 };
 
+/// "enter" a microtask context in the event loop.
+///
+/// The `enter` and `exit` pair are useful constructs which track for when
+/// procedures announce they are performing work on the event loop and promise
+/// to drain microtasks. Essentially, these two functions control a reference
+/// count which drains microtasks when the outermost `exit` is called.
+///
+/// The power of the `enter` and `exit` pair over something like
+/// `drainMicrotasks` is that `enter/exit` handle nested calls very well.
+///
+/// Consider the following example:
+///
+/// ```zig
+/// while (callbacks.next()) |callback| {
+///     event_loop.runCallback(callback, globalObject, .js_undefined, args);
+/// }
+/// ```
+///
+/// Without wrapping this loop in `enter` and `exit`, `runCallback` would cause
+/// microtasks to be drained after each callback, which is usually pretty poor
+/// performance.
+///
+/// However, if you decorate your loop with `enter` and `exit`:
+///
+/// ```zig
+/// event_loop.enter();
+/// defer event_loop.exit();
+/// while (callbacks.next()) |callback| {
+///     event_loop.runCallback(callback, globalObject, .js_undefined, args);
+/// }
+/// ```
+///
+/// Then microtasks only get drained once, after the `defer event_loop.exit()`
+/// call is invoked.
 pub fn enter(this: *EventLoop) void {
     log("enter() = {d}", .{this.entered_event_loop_count});
     this.entered_event_loop_count += 1;
     this.debug.enter();
 }
 
+/// "exit" a microtask context in the event loop.
+///
+/// See the documentation for `enter` for more information.
 pub fn exit(this: *EventLoop) void {
     const count = this.entered_event_loop_count;
     log("exit() = {d}", .{count - 1});

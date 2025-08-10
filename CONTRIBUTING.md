@@ -211,6 +211,21 @@ $ bun run build:release:asan
 
 In CI, we run our test suite with at least one target that is built with Address Sanitizer.
 
+## Valgrind
+
+**Valgrind is only supported on Linux. It is disabled by default.**
+
+[Valgrind](https://valgrind.org/) is an instrumentation framework for building
+dynamic analysis tools. There are Valgrind tools that can automatically detect
+many memory management and threading bugs, and profile your programs in detail.
+You can also use Valgrind to build new tools.
+
+Valgrind support for `bun` is here-and-there. Most Zig code should work well
+with Valgrind, but code that crosses between C++ and Zig is likely to have
+serious noise that you will have to filter through.
+
+You can enable or disable Valgrind through the `-DENABLE_VALGRIND`
+
 ## Building WebKit locally + Debug mode of JSC
 
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:

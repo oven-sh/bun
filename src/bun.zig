@@ -226,7 +226,6 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
 }
 
 pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
-
     // TODO: remove this constCast by adding uv_buf_t_const
     return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
 }

@@ -234,10 +234,10 @@ const base_styles = struct {
 
 const styles = switch (mode) {
     .bg_always => struct {
-        const inserted_line = base_styles.red_bg_inserted;
-        const removed_line = base_styles.green_bg_removed;
-        const inserted_diff = base_styles.red_bg_inserted;
-        const removed_diff = base_styles.green_bg_removed;
+        const inserted_line = base_styles.red_fg_inserted;
+        const removed_line = base_styles.green_fg_removed;
+        const inserted_diff = base_styles.red_fg_inserted;
+        const removed_diff = base_styles.green_fg_removed;
         const equal = base_styles.dim_equal;
         const inserted_equal = base_styles.red_fg_inserted;
         const removed_equal = base_styles.green_fg_removed;
@@ -245,8 +245,8 @@ const styles = switch (mode) {
     .bg_diff_only => struct {
         const inserted_line = base_styles.red_fg_inserted;
         const removed_line = base_styles.green_fg_removed;
-        const inserted_diff = base_styles.red_bg_inserted;
-        const removed_diff = base_styles.green_bg_removed;
+        const inserted_diff = base_styles.red_fg_inserted;
+        const removed_diff = base_styles.green_fg_removed;
         const equal = base_styles.dim_equal;
         const inserted_equal = base_styles.red_fg_inserted;
         const removed_equal = base_styles.green_fg_removed;
@@ -384,6 +384,31 @@ fn printModifiedSegmentWithoutDiffdiff(
     if (!modified_style.single_line) try writer.writeAll("\n");
 }
 
+fn shouldHighlightChar(char: u8) bool {
+    // Highlight whitespace and control characters:
+    // - Control characters (< 0x20)
+    // - Space (0x20)
+    // - Tab is included in control chars (0x09)
+    // - Delete character (0x7F)
+    if (char <= 0x20) return true; // includes space and all control chars
+    if (char == 0x7F) return true; // DEL character
+    return false;
+}
+
+fn areOnlyHighlightableDifferences(char_diff: []const DMP.Diff) bool {
+    // Check if all differences (inserts/deletes) are characters that should be highlighted
+    for (char_diff) |*item| {
+        if (item.operation != .equal) {
+            for (item.text) |char| {
+                if (!shouldHighlightChar(char)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 const ModifiedStyle = struct {
     single_line: bool,
 };
@@ -437,10 +462,21 @@ fn printModifiedSegment(
         return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
+    // Check if differences are only whitespace/control characters that should be highlighted
+    const only_highlightable = areOnlyHighlightableDifferences(char_diff.items);
+
     try printLinePrefix(writer, config, removed_prefix);
-    for (char_diff.items) |item| {
+
+    for (char_diff.items) |*item| {
         switch (item.operation) {
-            .delete => try printSegment(item.text, writer, config, styles.removed_diff),
+            .delete => {
+                if (only_highlightable) {
+                    // Use background color for whitespace/control character differences
+                    try printSegment(item.text, writer, config, base_styles.green_bg_removed);
+                } else {
+                    try printSegment(item.text, writer, config, styles.removed_diff);
+                }
+            },
             .insert => {},
             .equal => try printSegment(item.text, writer, config, styles.removed_equal),
         }
@@ -448,10 +484,17 @@ fn printModifiedSegment(
     try writer.writeAll("\n");
 
     try printLinePrefix(writer, config, inserted_prefix);
-    for (char_diff.items) |item| {
+    for (char_diff.items) |*item| {
         switch (item.operation) {
             .delete => {},
-            .insert => try printSegment(item.text, writer, config, styles.inserted_diff),
+            .insert => {
+                if (only_highlightable) {
+                    // Use background color for whitespace/control character differences
+                    try printSegment(item.text, writer, config, base_styles.red_bg_inserted);
+                } else {
+                    try printSegment(item.text, writer, config, styles.inserted_diff);
+                }
+            },
             .equal => try printSegment(item.text, writer, config, styles.inserted_equal),
         }
     }

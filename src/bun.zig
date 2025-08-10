@@ -2610,13 +2610,12 @@ pub fn handleOom(error_union: anytype) blk: {
         if (!std.mem.eql(u8, err.name, "OutOfMemory")) break false;
     } else true;
 
-    break :blk @TypeOf(error_union catch |err|
-        if (comptime oom_is_only_error)
-            unreachable
-        else switch (err) {
-            error.OutOfMemory => unreachable,
-            else => |other_error| other_error,
-        });
+    break :blk @TypeOf(error_union catch |err| if (comptime oom_is_only_error)
+        unreachable
+    else switch (err) {
+        error.OutOfMemory => unreachable,
+        else => |other_error| other_error,
+    });
 } {
     const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
     const Payload = error_union_info.payload;

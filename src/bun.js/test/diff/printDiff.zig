@@ -448,6 +448,9 @@ fn printModifiedSegment(
         return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
+    // Check if differences are only whitespace/control characters that should be highlighted
+    const only_highlightable = areOnlyHighlightableDifferences(char_diff.items);
+
     try printLinePrefix(writer, config, removed_prefix);
 
     for (char_diff.items) |*item| {

@@ -2595,6 +2595,42 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// If `error_union` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
+///
+/// * If that was the only possible error, returns the non-error payload.
+/// * If other errors are possible, returns the same error union, but without `error.OutOfMemory`
+///   in the error set.
+///
+/// Prefer this method over `catch bun.outOfMemory()`, since that could mistakenly catch
+/// non-OOM-related errors.
+pub fn handleOom(error_union: anytype) blk: {
+    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
+    const ErrorSet = error_union_info.error_set;
+    const oom_is_only_error = for (@typeInfo(ErrorSet).error_set orelse &.{}) |err| {
+        if (!std.mem.eql(u8, err.name, "OutOfMemory")) break false;
+    } else true;
+
+    break :blk @TypeOf(error_union catch |err|
+        if (comptime oom_is_only_error)
+            unreachable
+        else switch (err) {
+            error.OutOfMemory => unreachable,
+            else => |other_error| other_error,
+        }
+    );
+} {
+    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
+    const Payload = error_union_info.payload;
+    const ReturnType = @TypeOf(handleOom(error_union));
+    return error_union catch |err|
+        if (comptime ReturnType == Payload)
+            bun.outOfMemory()
+        else switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            else => |other_error| other_error,
+        };
+}
+
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,

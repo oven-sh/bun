@@ -216,10 +216,12 @@ test("accepts valid Transfer-Encoding: gzip, chunked", async () => {
 });
 
 test("accepts Transfer-Encoding with whitespace variations", async () => {
+  let didSucceed = false;
   // Should handle tabs and spaces properly
   await using server = Bun.serve({
     port: 0,
     fetch(req) {
+      didSucceed = true;
       return new Response("Success");
     },
   });
@@ -246,13 +248,17 @@ test("accepts Transfer-Encoding with whitespace variations", async () => {
     });
     client.write(validRequest);
   });
+
+  expect(didSucceed).toBe(true);
 });
 
 test("rejects malformed Transfer-Encoding with chunked-false", async () => {
+  let smuggled = false;
   // This was from the original PoC - invalid encoding value
   await using server = Bun.serve({
     port: 0,
     fetch(req) {
+      smuggled = true;
       return new Response("OK");
     },
   });
@@ -282,12 +288,15 @@ test("rejects malformed Transfer-Encoding with chunked-false", async () => {
     });
     client.write(maliciousRequest);
   });
+
+  expect(smuggled).toBe(false);
 });
 
 test("prevents request smuggling attack", async () => {
   // The actual smuggling attack from the PoC
   let requestCount = 0;
   let capturedUrls: string[] = [];
+  let smuggled = false;
 
   await using server = Bun.serve({
     port: 0,
@@ -298,6 +307,7 @@ test("prevents request smuggling attack", async () => {
 
       if (url.pathname === "/bad") {
         // Should never reach here in a secure implementation
+        smuggled = true;
         throw new Error("Smuggled request reached handler!");
       }
 
@@ -340,6 +350,8 @@ test("prevents request smuggling attack", async () => {
     });
     client.write(smuggleAttempt);
   });
+
+  expect(smuggled).toBe(false);
 });
 
 test("handles multiple valid Transfer-Encoding headers", async () => {

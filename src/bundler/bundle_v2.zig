@@ -1446,7 +1446,7 @@ pub const BundleV2 = struct {
             bake_options,
             allocator,
             event_loop,
-            null,
+            false,
             null,
             try ThreadLocalArena.init(),
         );

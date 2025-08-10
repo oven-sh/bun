@@ -41,19 +41,20 @@ bun install <pkg>             # install a package
 bunx cowsay 'Hello, world!'   # execute a package
 ```
 
-### Watch mode
-
-You can run files in watch mode with --watch. When files change, Bun restarts the process.
+The `bun` command also supports a watch mode to restart the process when files change.
 
 ```bash
-# Watch entrypoint and its imports
-bun --watch run index.tsx
+# Watch for changes and restart
+$ bun --watch run index.tsx
 
-# Watch multiple globs (comma-separated)
-bun --watch="src/**/*.ts,lib/**/*.ts" run index.tsx
+# Watch for changes in specific paths using glob patterns
+$ bun --watch=src/**/*.ts run index.tsx
+
+# Watch multiple paths
+$ bun --watch="src/**/*.ts,lib/**/*.ts" run index.tsx
 
 # Or repeat the flag
-yarn bun --watch=src/**/*.ts --watch=lib/**/*.ts run index.tsx
+$ bun --watch=src/**/*.ts --watch=lib/**/*.ts run index.tsx
 ```
 
 ## Install

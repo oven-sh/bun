@@ -724,8 +724,8 @@ test("color", async () => {
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m"a\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m\x1B[7md\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m\x1B[7mb\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31mb\x1B[0m
       \x1B[0m\x1B[2mc\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32md\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m\x1B[7m \x1B[0m\x1B[31md\x1B[0m
@@ -737,8 +737,8 @@ test("color", async () => {
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m{\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  "age": \x1B[0m\x1B[32m\x1B[7m30\x1B[0m\x1B[32m,\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  "age": \x1B[0m\x1B[31m\x1B[7m25\x1B[0m\x1B[31m,\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "age": \x1B[0m\x1B[32m30\x1B[0m\x1B[32m,\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "age": \x1B[0m\x1B[31m25\x1B[0m\x1B[31m,\x1B[0m
       \x1B[0m\x1B[2m  "logs": [\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m    "Logged into system",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m    "Accessed dashboard",\x1B[0m
@@ -752,8 +752,8 @@ test("color", async () => {
     \x1B[31m+ \x1B[0m\x1B[31m    "Attended morning meeting",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m    "Started working on project",\x1B[0m
       \x1B[0m\x1B[2m  ],\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  "name": "\x1B[0m\x1B[32m\x1B[7mBob\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  "name": "\x1B[0m\x1B[31m\x1B[7mAlice\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "name": "\x1B[0m\x1B[32mBob\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "name": "\x1B[0m\x1B[31mAlice\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m
 
     \x1B[32m- Expected  - 8\x1B[0m
@@ -800,8 +800,8 @@ test("color", async () => {
 
       \x1B[0m\x1B[2m{\x1B[0m
       \x1B[0m\x1B[2m  "arabic": "اختبار",\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  "chinese": "测试\x1B[0m\x1B[32m\x1B[7m文本\x1B[0m\x1B[32m",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  "chinese": "测试\x1B[0m\x1B[31m\x1B[7m字符串\x1B[0m\x1B[31m",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "chinese": "测试\x1B[0m\x1B[32m文本\x1B[0m\x1B[32m",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "chinese": "测试\x1B[0m\x1B[31m字符串\x1B[0m\x1B[31m",\x1B[0m
       \x1B[0m\x1B[2m  "emoji": "🔥💧🌊",\x1B[0m
     \x1B[32m- \x1B[0m\x1B[32m  "mixed": "Hello 世界 🌎",\x1B[0m
     \x1B[31m+ \x1B[0m\x1B[31m  "mixed": "Hello 世界 🌍",\x1B[0m
@@ -812,15 +812,15 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    Expected: \x1B[0m\x1B[32m"café r\x1B[0m\x1B[32m\x1B[7me\x1B[0m\x1B[32msumé na\x1B[0m\x1B[32m\x1B[7mi\x1B[0m\x1B[32mve"\x1B[0m
-    Received: \x1B[0m\x1B[31m"café r\x1B[0m\x1B[31m\x1B[7mé\x1B[0m\x1B[31msumé na\x1B[0m\x1B[31m\x1B[7mï\x1B[0m\x1B[31mve"\x1B[0m
+    Expected: \x1B[0m\x1B[32m"café r\x1B[0m\x1B[32me\x1B[0m\x1B[32msumé na\x1B[0m\x1B[32mi\x1B[0m\x1B[32mve"\x1B[0m
+    Received: \x1B[0m\x1B[31m"café r\x1B[0m\x1B[31mé\x1B[0m\x1B[31msumé na\x1B[0m\x1B[31mï\x1B[0m\x1B[31mve"\x1B[0m
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m"Línea 1: ñoño\x1B[0m
       \x1B[0m\x1B[2mLínea 2: àèìòù\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32mLínea 3: \x1B[0m\x1B[32m\x1B[7maeiou\x1B[0m\x1B[32m"\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31mLínea 3: \x1B[0m\x1B[31m\x1B[7mäëïöü\x1B[0m\x1B[31m"\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32mLínea 3: \x1B[0m\x1B[32maeiou\x1B[0m\x1B[32m"\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31mLínea 3: \x1B[0m\x1B[31mäëïöü\x1B[0m\x1B[31m"\x1B[0m
 
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
@@ -828,8 +828,8 @@ test("color", async () => {
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m{\x1B[0m
-    \x1B[32m- \x1B[0m\x1B[32m  "french": "crème br\x1B[0m\x1B[32m\x1B[7mu\x1B[0m\x1B[32mlée",\x1B[0m
-    \x1B[31m+ \x1B[0m\x1B[31m  "french": "crème br\x1B[0m\x1B[31m\x1B[7mû\x1B[0m\x1B[31mlée",\x1B[0m
+    \x1B[32m- \x1B[0m\x1B[32m  "french": "crème br\x1B[0m\x1B[32mu\x1B[0m\x1B[32mlée",\x1B[0m
+    \x1B[31m+ \x1B[0m\x1B[31m  "french": "crème br\x1B[0m\x1B[31mû\x1B[0m\x1B[31mlée",\x1B[0m
       \x1B[0m\x1B[2m  "spanish": "niño español",\x1B[0m
       \x1B[0m\x1B[2m  "special": "½ ¼ ¾ ± × ÷",\x1B[0m
       \x1B[0m\x1B[2m}\x1B[0m

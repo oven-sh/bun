@@ -813,6 +813,12 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Kill all child processes if autokill is enabled
+    // This must happen before cleanup hooks to ensure children are still tracked
+    if (bun.Global.autokill_enabled) {
+        bun.sys.autokill.killAllChildProcesses();
+    }
+    
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 

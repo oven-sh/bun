@@ -162,6 +162,11 @@ pub const Run = struct {
         js_ast.Stmt.Data.Store.create();
         const arena = try Arena.init();
 
+        // Set the global autokill flag if enabled
+        if (ctx.runtime_options.autokill) {
+            Global.autokill_enabled = true;
+        }
+
         run = .{
             .vm = try VirtualMachine.init(
                 .{

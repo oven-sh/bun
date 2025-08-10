@@ -300,6 +300,7 @@ pub const Tag = enum(u8) {
 };
 
 pub const Error = @import("./sys/Error.zig");
+pub const autokill = @import("./sys/autokill.zig");
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);

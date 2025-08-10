@@ -2616,8 +2616,7 @@ pub fn handleOom(error_union: anytype) blk: {
         else switch (err) {
             error.OutOfMemory => unreachable,
             else => |other_error| other_error,
-        }
-    );
+        });
 } {
     const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
     const Payload = error_union_info.payload;

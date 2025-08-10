@@ -395,20 +395,6 @@ fn shouldHighlightChar(char: u8) bool {
     return false;
 }
 
-fn areOnlyHighlightableDifferences(char_diff: []const DMP.Diff) bool {
-    // Check if all differences (inserts/deletes) are characters that should be highlighted
-    for (char_diff) |*item| {
-        if (item.operation != .equal) {
-            for (item.text) |char| {
-                if (!shouldHighlightChar(char)) {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
 const ModifiedStyle = struct {
     single_line: bool,
 };
@@ -462,14 +448,20 @@ fn printModifiedSegment(
         return printModifiedSegmentWithoutDiffdiff(writer, config, segment, modified_style);
     }
 
-    // Check if differences are only whitespace/control characters that should be highlighted
-    const only_highlightable = areOnlyHighlightableDifferences(char_diff.items);
-
     try printLinePrefix(writer, config, removed_prefix);
 
     for (char_diff.items) |*item| {
         switch (item.operation) {
             .delete => {
+                const only_highlightable = brk: {
+                    for (item.text) |char| {
+                        if (!shouldHighlightChar(char)) {
+                            break :brk false;
+                        }
+                    }
+                    break :brk true;
+                };
+
                 if (only_highlightable) {
                     // Use background color for whitespace/control character differences
                     try printSegment(item.text, writer, config, base_styles.green_bg_removed);
@@ -488,6 +480,15 @@ fn printModifiedSegment(
         switch (item.operation) {
             .delete => {},
             .insert => {
+                const only_highlightable = brk: {
+                    for (item.text) |char| {
+                        if (!shouldHighlightChar(char)) {
+                            break :brk false;
+                        }
+                    }
+                    break :brk true;
+                };
+
                 if (only_highlightable) {
                     // Use background color for whitespace/control character differences
                     try printSegment(item.text, writer, config, base_styles.red_bg_inserted);

@@ -221,23 +221,13 @@ else
     std.posix.iovec_const;
 
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
-    if (Environment.allow_assert) {
-        if (input.len > @as(usize, std.math.maxInt(u32))) {
-            Output.debugWarn("call to bun.PlatformIOVec.init with length larger than u32, this will overflow on windows", .{});
-        }
-    }
     // TODO: remove this constCast by making the input mutable
-    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+    return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
-    if (Environment.allow_assert) {
-        if (input.len > @as(usize, std.math.maxInt(u32))) {
-            Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
-        }
-    }
     // TODO: remove this constCast by adding uv_buf_t_const
-    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+    return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {

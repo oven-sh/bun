@@ -609,6 +609,29 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
+    fn handleSubscriberResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
+        debug("Processing data as a subscriber.", .{});
+
+        switch (value.*) {
+            .Error => |err| {
+                this.fail(err, protocol.RedisError.InvalidArgument);
+                return;
+            },
+            .Push => |push| {
+                std.debug.assert(push.data.len == 2);
+                const channel = try push.data[0].toJS(this.globalObject());
+                const payload = try push.data[1].toJS(this.globalObject());
+                const callback = try this.parent().subs_ctx.getCallback(this.globalObject(), channel);
+                if (callback) |cb| {
+                    try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
+                }
+            },
+            else => {
+                this.fail("Unexpected message type received", protocol.RedisError.InvalidArgument);
+            }
+        }
+    }
+
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
         debug("Processing HELLO response", .{});
 
@@ -672,6 +695,11 @@ pub const ValkeyClient = struct {
             this.handleHelloResponse(value);
 
             // We've handled the HELLO response without consuming anything from the command queue
+            return;
+        }
+
+        if (this.is_subscriber) {
+            try this.handleSubscriberResponse(value);
             return;
         }
 

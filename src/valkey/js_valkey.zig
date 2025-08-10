@@ -5,7 +5,7 @@ pub const SubsContext = struct {
 
     pub fn init(globalObject: *jsc.JSGlobalObject) Self {
         return .{
-            ._event_map = jsc.JSMap.fromJS(globalObject),
+            ._event_map = jsc.JSMap.create(globalObject),
         };
     }
 
@@ -15,6 +15,10 @@ pub const SubsContext = struct {
 
     pub fn registerCallback(this: *Self, globalObject: *jsc.JSGlobalObject, eventString: JSValue, callback: JSValue) bun.JSError!void {
         this.evMap().set(globalObject, eventString, callback);
+    }
+
+    pub fn getCallback(this: *Self, globalObject: *jsc.JSGlobalObject, channelName: JSValue) bun.JSError!?JSValue {
+        this.evMap().get(globalObject, channelName);
     }
 
     pub fn deinit(self: *Self) void {

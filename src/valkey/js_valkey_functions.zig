@@ -693,8 +693,8 @@ pub fn publish(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfra
 pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const args_view = callframe.arguments();
 
-    if (args_view.len < 2) {
-        return globalObject.throw("subscribe requires at least one channel and a callback", .{});
+    if (args_view.len < 1) {
+        return globalObject.throw("subscribe requires at least one channel", .{});
     }
 
     // All arguments except the last are channel names
@@ -727,6 +727,11 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SUBSCRIBE command", err);
     };
 
+    // TODO(marko): This is kind of wrong, we should really wait for the
+    // promise to land before setting is_subscriber, but works in the happy
+    // path.
+    this.client.is_subscriber = true;
+
     return promise.toJS();
 }
 
@@ -757,13 +762,7 @@ pub fn on(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *
 
     // TODO(marko): Awful hacked together
     // Store callback based on event type
-    if (std.mem.eql(u8, event_str.slice(), "message") or std.mem.eql(u8, event_str.slice(), "messageBuffer")) {
-        // Store event callback in the map
-        this.subs_ctx.registerCallback(globalObject, event_name_js, callback);
-    } else {
-        // Unknown event type
-        return globalObject.throw("Unknown event type. Supported events: 'message', 'messageBuffer'", .{});
-    }
+    try this.subs_ctx.registerCallback(globalObject, event_name_js, callback);
 
     // Return 'this' for method chaining
     return callframe.this();

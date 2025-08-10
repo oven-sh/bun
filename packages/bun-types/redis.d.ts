@@ -590,11 +590,8 @@ declare module "bun" {
     publish(channel: string, message: string): Promise<void>;
 
     subscribe(...args: [...channels: string[]]): Promise<void>;
-    on(event: "message",
+    on(event: string,
        listener: (channel: string, message: string) => void): this;
-    on(event: "messageBuffer",
-       listener: (channel: string,
-                  message: Uint8Array<ArrayBuffer>) => void): this;
   }
 
   /**

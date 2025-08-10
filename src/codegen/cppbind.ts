@@ -51,12 +51,74 @@ To run manually:
   ```
   Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
 
+## Lints and Checks
+
+This tool has support for simple static analysis. The following rules are available:
+
+- bun-bindgen-force-zero_is_throw-for-jsvalue:
+    Enforces that functions returning JSValue use `ZIG_EXPORT(zero_is_throw)`
+    rather than any other export.
+
 */
+
+/**
+ * Run the given callback inside a linting scope.
+ *
+ * The linting scope manages whether the linting rule is enabled or disabled,
+ * based on whether the location is annotated with one of the following:
+ *
+ * - NOLINTNEXTLINE(...) -- in the line above
+ * - NOLINT(...) -- in the same line
+ *
+ * If the given line is matched by the `lintScope` function, the callback will
+ * be invoked.
+ */
+async function lintScope(ruleName: string, location: Srcloc, callback: () => void) {
+  const lineNumber = location.start.line;
+  const fileContent = await Bun.file(location.file).text();
+  const lines = fileContent.split("\n");
+  const line = lines[lineNumber - 1];
+
+  function parseNolints(nolintKeyword: string, line: string): string[] {
+    // First check if line ends with NOLINT pattern(s)
+    const escKw = nolintKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const endsWithPattern = new RegExp(`${escKw}(\\([^)]*\\))?\\s*$`);
+
+    if (!endsWithPattern.test(line)) {
+      return [];
+    }
+
+    const matchRegex = new RegExp(`${escKw}(?:\\(([^)]*)\\))?`, "g");
+    const matches = [...line.matchAll(matchRegex)];
+
+    return matches
+      .map(match => match[1])
+      .filter(match => match !== undefined)
+      .flatMap(val => val.split(",").map(v => v.trim()))
+      .filter(val => val.length > 0);
+  }
+
+  // First, test if the current line has a NOLINT(...)
+  const nolintCurrent = parseNolints("NOLINT", line);
+  if (nolintCurrent.includes(ruleName)) {
+    // This isn't a line we lint. Bail.
+    return;
+  }
+
+  const nolintPrev = parseNolints("NOLINTNEXTLINE", lines[lineNumber - 2] ?? "");
+  if (nolintPrev.includes(ruleName)) {
+    // This isn't a line we lint. Bail.
+    return;
+  }
+
+  // We're in a linting scope. Run the callback.
+  callback();
+}
 
 const start = Date.now();
 let isInstalled = false;
 try {
-  const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
+  await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
   isInstalled = true;
 } catch (e) {}
 if (!isInstalled) {
@@ -632,13 +694,13 @@ async function renderError(position: Srcloc, message: string, label: string, col
 type Cfg = {
   dstDir: string;
 };
-function generateZigFn(
+async function generateZigFn(
   fn: CppFn,
   resultRaw: string[],
   resultBindings: string[],
   resultSourceLinks: string[],
   cfg: Cfg,
-): void {
+): Promise<void> {
   const returnType = generateZigType(fn.returnType, null);
   if (resultBindings.length) resultBindings.push("");
   resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
@@ -661,11 +723,14 @@ function generateZigFn(
   if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
   if (fn.tag === "check_slow") {
     if (returnType === "jsc.JSValue") {
-      appendError(
-        fn.position,
-        "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
-      );
+      await lintScope("bun-bindgen-force-zero_is_throw-for-jsvalue", fn.position, () => {
+        appendError(
+          fn.position,
+          "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
+        );
+      });
     }
+
     resultBindings.push(
       `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
       `        if (comptime Environment.ci_assert) {`,
@@ -768,7 +833,7 @@ async function main() {
   const resultSourceLinks: string[] = [];
   for (const fn of allFunctions) {
     try {
-      generateZigFn(fn, resultRaw, resultBindings, resultSourceLinks, { dstDir });
+      await generateZigFn(fn, resultRaw, resultBindings, resultSourceLinks, { dstDir });
     } catch (e) {
       appendErrorFromCatch(e, fn.position);
     }

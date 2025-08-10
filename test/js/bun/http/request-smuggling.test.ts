@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 import net from "net";
 
 // CVE-2020-8287 style request smuggling tests

@@ -745,10 +745,6 @@ pub fn on(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *
 
     // Get event name (first argument)
     const event_name_js = args[0];
-    const event_name = event_name_js.toBunString(globalObject) catch {
-        return globalObject.throwInvalidArgumentType("on", "event", "string");
-    };
-    defer event_name.deref();
 
     // Get callback (second argument)
     const callback = args[1];
@@ -756,12 +752,6 @@ pub fn on(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *
         return globalObject.throwInvalidArgumentType("on", "callback", "function");
     }
 
-    // Convert event name to string
-    const event_str = event_name.toUTF8WithoutRef(bun.default_allocator);
-    defer event_str.deinit();
-
-    // TODO(marko): Awful hacked together
-    // Store callback based on event type
     try this.subs_ctx.registerCallback(globalObject, event_name_js, callback);
 
     // Return 'this' for method chaining

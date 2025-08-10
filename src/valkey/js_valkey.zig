@@ -4,9 +4,13 @@ pub const SubsContext = struct {
     _event_map: jsc.JSValue,
 
     pub fn init(globalObject: *jsc.JSGlobalObject) Self {
-        return .{
+        const self = Self{
             ._event_map = jsc.JSMap.create(globalObject),
         };
+
+        self._event_map.protect();
+
+        return self;
     }
 
     fn evMap(this: *Self) *jsc.JSMap {
@@ -18,11 +22,18 @@ pub const SubsContext = struct {
     }
 
     pub fn getCallback(this: *Self, globalObject: *jsc.JSGlobalObject, channelName: JSValue) bun.JSError!?JSValue {
-        this.evMap().get(globalObject, channelName);
+        const result = this.evMap().get(globalObject, channelName);
+        if (result) |r| {
+            if (r.isUndefinedOrNull()) {
+                return null;
+            }
+        }
+
+        return result;
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self;
+        self._event_map.unprotect();
     }
 };
 
@@ -542,6 +553,7 @@ pub const JSValkeyClient = struct {
         }
         this.client.flags.finalized = true;
         this.client.close();
+        this.subs_ctx.deinit();
         this.deref();
     }
 

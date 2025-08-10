@@ -621,9 +621,11 @@ pub const ValkeyClient = struct {
                 std.debug.assert(push.data.len == 2);
                 const channel = try push.data[0].toJS(this.globalObject());
                 const payload = try push.data[1].toJS(this.globalObject());
+                debug("Received push message on channel: {s}", .{channel.toString(this.globalObject()).getZigString(this.globalObject())});
                 const callback = try this.parent().subs_ctx.getCallback(this.globalObject(), channel);
                 if (callback) |cb| {
-                    try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
+                    std.debug.assert(cb.isCallable());
+                    _ = try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
                 }
             },
             else => {

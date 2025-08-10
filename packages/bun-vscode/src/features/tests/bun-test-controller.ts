@@ -163,8 +163,11 @@ export class BunTestController implements vscode.Disposable {
     const ignoreGlobs = await this.buildIgnoreGlobs(cancellationToken);
     const tests = await vscode.workspace.findFiles(
       this.customFilePattern(),
-      "node_modules",
-      undefined,
+      "**/node_modules/**",
+      // 5k tests is more than enough for most projects.
+      // If they need more, they can manually open the files themself and it should be added to the test explorer.
+      // This is needed because otherwise with too many tests, vscode OOMs.
+      5_000,
       cancellationToken,
     );
 

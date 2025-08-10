@@ -222,6 +222,7 @@ export default [
       zrank: { fn: "zrank" },
       zrevrank: { fn: "zrevrank" },
       subscribe: { fn: "subscribe" },
+      duplicate: { fn: "duplicate" },
       psubscribe: { fn: "psubscribe" },
       unsubscribe: { fn: "unsubscribe" },
       punsubscribe: { fn: "punsubscribe" },

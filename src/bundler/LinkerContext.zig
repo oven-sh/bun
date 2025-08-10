@@ -63,6 +63,8 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        preserve_entry_signatures: options.PreserveEntrySignatures = .allow_extension,
+        advanced_chunks: ?options.AdvancedChunksOptions = null,
 
         mode: Mode = .bundle,
 
@@ -1473,6 +1475,11 @@ pub const LinkerContext = struct {
         // Don't mark this file more than once
         if (bits.isSet(entry_points_count) and !traverse_again)
             return;
+
+        // Increment share_count when setting a new bit (Rolldown optimization)
+        if (!bits.isSet(entry_points_count)) {
+            c.graph.files.items(.share_count)[source_index] += 1;
+        }
 
         bits.set(entry_points_count);
 

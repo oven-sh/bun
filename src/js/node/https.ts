@@ -21,6 +21,27 @@ function request(...args) {
   }
 
   options._defaultAgent = https.globalAgent;
+  if (options.agent === undefined) {
+    if (options.key !== undefined) {
+      options._defaultAgent.options.key = options.key;
+    }
+    if (options.cert !== undefined) {
+      options._defaultAgent.options.cert = options.cert;
+    }
+    if (options.ca !== undefined) {
+      options._defaultAgent.options.ca = options.ca;
+    }
+  } else {
+    if (options.key !== undefined) {
+      options.agent.options.key = options.key;
+    }
+    if (options.cert !== undefined) {
+      options.agent.options.cert = options.cert;
+    }
+    if (options.ca !== undefined) {
+      options.agent.options.ca = options.ca;
+    }
+  }
   ArrayPrototypeUnshift.$call(args, options);
 
   return new http.ClientRequest(...args);

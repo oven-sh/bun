@@ -911,6 +911,66 @@ describe("node:http", () => {
     });
   });
 
+  describe("https.request with custom tls options in https.Agent", () => {
+    const createServer = () =>
+      new Promise(resolve => {
+        const server = createHttpsServer(
+          {
+            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "server.key")),
+            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "server.crt")),
+            ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "ca.crt")),
+            requestCert: true,
+            passphrase: "123123123",
+          },
+          (req, res) => {
+            res.writeHead(200);
+            res.end("hello world");
+          },
+        );
+
+        listen(server, "https").then(url => {
+          resolve({
+            server,
+            close: () => server.close(),
+            url,
+          });
+        });
+      });
+
+    it("support custom agent with key, cert args", async done => {
+      const { url, close } = await createServer();
+      try {
+        const options: https.RequestOptions = {
+          method: "GET",
+          url,
+          port: url.port,
+          agent: new https.Agent({
+            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "client.key")),
+            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "client.crt")),
+            ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "ca.crt")),
+          }),
+        };
+        const req = https.request(options, res => {
+          res.on("data", () => null);
+          res.on("end", () => {
+            close();
+            done();
+          });
+        });
+
+        req.on("error", error => {
+          close();
+          done(error);
+        });
+
+        req.end();
+      } catch (e) {
+        close();
+        throw e;
+      }
+    });
+  });
+
   describe("signal", () => {
     it("should abort and close the server", done => {
       const server = createServer((req, res) => {

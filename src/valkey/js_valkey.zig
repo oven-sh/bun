@@ -1,9 +1,36 @@
+pub const SubsContext = struct {
+    const Self = @This();
+
+    _event_map: jsc.JSValue,
+
+    pub fn init(globalObject: *jsc.JSGlobalObject) Self {
+        return .{
+            ._event_map = jsc.JSMap.fromJS(globalObject),
+        };
+    }
+
+    fn evMap(this: *Self) *jsc.JSMap {
+        return jsc.JSMap.fromJS(this._event_map).?;
+    }
+
+    pub fn registerCallback(this: *Self, globalObject: *jsc.JSGlobalObject, eventString: JSValue, callback: JSValue) bun.JSError!void {
+        this.evMap().set(globalObject, eventString, callback);
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+};
+
 /// Valkey client wrapper for JavaScript
 pub const JSValkeyClient = struct {
     client: valkey.ValkeyClient,
     globalObject: *jsc.JSGlobalObject,
     this_value: jsc.JSRef = jsc.JSRef.empty(),
     poll_ref: bun.Async.KeepAlive = .{},
+
+    subs_ctx: SubsContext,
+
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
         .next = .{
@@ -109,6 +136,7 @@ pub const JSValkeyClient = struct {
 
         return JSValkeyClient.new(.{
             .ref_count = .init(),
+            .subs_ctx = SubsContext.init(globalObject),
             .client = .{
                 .vm = vm,
                 .address = switch (uri) {
@@ -705,6 +733,7 @@ pub const JSValkeyClient = struct {
     pub const zrank = fns.zrank;
     pub const zrevrank = fns.zrevrank;
     pub const zscore = fns.zscore;
+    pub const on = fns.on;
 
     const fns = @import("./js_valkey_functions.zig");
 };

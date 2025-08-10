@@ -166,6 +166,8 @@ pub const ValkeyClient = struct {
     flags: ConnectionFlags = .{},
     allocator: std.mem.Allocator,
 
+    is_subscriber: bool = false,
+
     // Auto-pipelining
     auto_flusher: AutoFlusher = .{},
 

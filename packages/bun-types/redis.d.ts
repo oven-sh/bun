@@ -586,6 +586,15 @@ declare module "bun" {
      *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
      */
     ping(message: RedisClient.KeyLike): Promise<string>;
+
+    publish(channel: string, message: string): Promise<void>;
+
+    subscribe(...args: [...channels: string[]]): Promise<void>;
+    on(event: "message",
+       listener: (channel: string, message: string) => void): this;
+    on(event: "messageBuffer",
+       listener: (channel: string,
+                  message: Uint8Array<ArrayBuffer>) => void): this;
   }
 
   /**

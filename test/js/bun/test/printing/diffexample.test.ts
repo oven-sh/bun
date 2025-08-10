@@ -29,11 +29,13 @@ test("no color", async () => {
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
     test/js/bun/test/printing/diffexample.fixture.ts:
-    1 | import { test, expect } from "bun:test";
-    2 | 
-    3 | test("example 1", () => {
-    4 |   expect("a\\nb\\nc\\n d\\ne").toEqual("a\\nd\\nc\\nd\\ne");
-                                   ^
+    10 |     .replaceAll("\\\\", "/")
+    11 |     .replaceAll(process.cwd(), "<cwd>");
+    12 | }
+    13 | 
+    14 | test("example 1", () => {
+    15 |   expect("a\\nb\\nc\\n d\\ne").toEqual("a\\nd\\nc\\nd\\ne");
+                                    ^
     error: expect(received).toEqual(expected)
 
       "a
@@ -49,12 +51,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 1
-     6 | test("example 2", () => {
-     7 |   expect({
-     8 |     object1: "a",
-     9 |     object2: "b",
-    10 |     object3: "c\\nd\\ne",
-    11 |   }).toEqual({
+    17 | test("example 2", () => {
+    18 |   expect({
+    19 |     object1: "a",
+    20 |     object2: "b",
+    21 |     object3: "c\\nd\\ne",
+    22 |   }).toEqual({
               ^
     error: expect(received).toEqual(expected)
 
@@ -75,12 +77,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 2
-    26 |   expectedLines[750] = "line 751 - MODIFIED"; // Change line 751
-    27 |   expectedLines[900] = "line 901 - DIFFERENT"; // Change line 901
-    28 |   expectedLines.splice(100, 0, "line 101 - INSERTED");
-    29 |   const expectedString = expectedLines.join("\\n");
-    30 | 
-    31 |   expect(originalString).toEqual(expectedString);
+    37 |   expectedLines[750] = "line 751 - MODIFIED"; // Change line 751
+    38 |   expectedLines[900] = "line 901 - DIFFERENT"; // Change line 901
+    39 |   expectedLines.splice(100, 0, "line 101 - INSERTED");
+    40 |   const expectedString = expectedLines.join("\\n");
+    41 | 
+    42 |   expect(originalString).toEqual(expectedString);
                                   ^
     error: expect(received).toEqual(expected)
 
@@ -142,12 +144,12 @@ test("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) example 3 - very long string with few changes
     (todo) example 4 - ansi colors don't get printed to console
-    111 | line 35
-    112 | line 36
-    113 | line 37
-    114 | line 38
-    115 | line 39\`;
-    116 |   expect(received).toEqual(expected);
+    122 | line 35
+    123 | line 36
+    124 | line 37
+    125 | line 38
+    126 | line 39\`;
+    127 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -199,12 +201,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 12 - large multiline diff
-    194 | line six
-    195 | line seven
-    196 | 
-    197 | === has newline at end vs doesn't ===
-    198 | \`;
-    199 |   expect(received).toEqual(expected);
+    205 | line six
+    206 | line seven
+    207 | 
+    208 | === has newline at end vs doesn't ===
+    209 | \`;
+    210 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -265,12 +267,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 13 - simple multiline diff with sections
-    200 | });
-    201 | 
-    202 | test("example 14 - single line diff", () => {
-    203 |   const received = \`"¡hello, world"\`;
-    204 |   const expected = \`"hello, world!"\`;
-    205 |   expect(received).toEqual(expected);
+    211 | });
+    212 | 
+    213 | test("example 14 - single line diff", () => {
+    214 |   const received = \`"¡hello, world"\`;
+    215 |   const expected = \`"hello, world!"\`;
+    216 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -279,12 +281,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 14 - single line diff
-    206 | });
-    207 | 
-    208 | test("example 15 - unicode char diff", () => {
-    209 |   const received = \`Hello 👋 世界 🌎!\`;
-    210 |   const expected = \`Hello 👋 世界 🌍!\`;
-    211 |   expect(received).toEqual(expected);
+    217 | });
+    218 | 
+    219 | test("example 15 - unicode char diff", () => {
+    220 |   const received = \`Hello 👋 世界 🌎!\`;
+    221 |   const expected = \`Hello 👋 世界 🌍!\`;
+    222 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -293,12 +295,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 15 - unicode char diff
-    220 | }\`;
-    221 |   const expected = \`function main() {
-    222 |     print("Hello, world!");
-    223 |     print("Goodbye, world!");
-    224 | }\`;
-    225 |   expect(received).toEqual(expected);
+    231 | }\`;
+    232 |   const expected = \`function main() {
+    233 |     print("Hello, world!");
+    234 |     print("Goodbye, world!");
+    235 | }\`;
+    236 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -316,12 +318,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 16 - indentation change diff
-    256 |   }
-    257 | 
-    258 |   // The Zig code adds a trailing newline to each string.
-    259 |   const receivedString = receivedLines.join("\\n") + "\\n";
-    260 |   const expectedString = expectedLines.join("\\n") + "\\n";
-    261 |   expect(receivedString).toEqual(expectedString);
+    267 |   }
+    268 | 
+    269 |   // The Zig code adds a trailing newline to each string.
+    270 |   const receivedString = receivedLines.join("\\n") + "\\n";
+    271 |   const expectedString = expectedLines.join("\\n") + "\\n";
+    272 |   expect(receivedString).toEqual(expectedString);
                                    ^
     error: expect(received).toEqual(expected)
 
@@ -382,12 +384,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 17 - very long string
-    262 | });
-    263 | 
-    264 | test("example 18 - very long single line string", () => {
-    265 |   const expected = "a".repeat(1000000);
-    266 |   const received = "a".repeat(1000001);
-    267 |   expect(received).toEqual(expected);
+    273 | });
+    274 | 
+    275 | test("example 18 - very long single line string", () => {
+    276 |   const expected = "a".repeat(1000000);
+    277 |   const received = "a".repeat(1000001);
+    278 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -396,12 +398,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) example 18 - very long single line string
-    266 |   const received = "a".repeat(1000001);
-    267 |   expect(received).toEqual(expected);
-    268 | });
-    269 | 
-    270 | test("not", () => {
-    271 |   expect("Hello, World!").not.toEqual("Hello, World!");
+    277 |   const received = "a".repeat(1000001);
+    278 |   expect(received).toEqual(expected);
+    279 | });
+    280 | 
+    281 | test("not", () => {
+    282 |   expect("Hello, World!").not.toEqual("Hello, World!");
                                         ^
     error: expect(received).not.toEqual(expected)
 
@@ -409,12 +411,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) not
-    270 | test("not", () => {
-    271 |   expect("Hello, World!").not.toEqual("Hello, World!");
-    272 | });
-    273 | 
-    274 | test("has end newline vs doesn't", () => {
-    275 |   expect("Hello, World!\\n").toEqual("Hello, World!");
+    281 | test("not", () => {
+    282 |   expect("Hello, World!").not.toEqual("Hello, World!");
+    283 | });
+    284 | 
+    285 | test("has end newline vs doesn't", () => {
+    286 |   expect("Hello, World!\\n").toEqual("Hello, World!");
                                       ^
     error: expect(received).toEqual(expected)
 
@@ -427,12 +429,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) has end newline vs doesn't
-    281 |   const received = new Float64Array(length);
-    282 |   for (let i = 0; i < length; i++) {
-    283 |     expected[i] = i;
-    284 |     received[i] = i + 1;
-    285 |   }
-    286 |   expect(received).toEqual(expected);
+    292 |   const received = new Float64Array(length);
+    293 |   for (let i = 0; i < length; i++) {
+    294 |     expected[i] = i;
+    295 |     received[i] = i + 1;
+    296 |   }
+    297 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -458,12 +460,12 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) extremely float64array
-    292 |   const received = new Int32Array(length);
-    293 |   for (let i = 0; i < length; i++) {
-    294 |     expected[i] = i;
-    295 |     received[i] = length - i - 1;
-    296 |   }
-    297 |   expect(received).toEqual(expected);
+    303 |   const received = new Int32Array(length);
+    304 |   for (let i = 0; i < length; i++) {
+    305 |     expected[i] = i;
+    306 |     received[i] = length - i - 1;
+    307 |   }
+    308 |   expect(received).toEqual(expected);
                              ^
     error: expect(received).toEqual(expected)
 
@@ -674,12 +676,51 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) completely different long value does not truncate
+    307 |   }
+    308 |   expect(received).toEqual(expected);
+    309 | });
+    310 | 
+    311 | test("whitespace-only difference", () => {
+    312 |   expect("hello\\nworld ").toEqual("hello\\nworld");
+                                    ^
+    error: expect(received).toEqual(expected)
+
+      "hello
+    - world"
+    + world "
+
+    - Expected  - 1
+    + Received  + 1
+
+          at <anonymous> (FILE:LINE)
+    (fail) whitespace-only difference
+    (skip) whitespace-only difference (ANSI)
+    331 |     \`);
+    332 |   }
+    333 | });
+    334 | 
+    335 | test("mix of whitespace-only and non-whitespace-only differences", () => {
+    336 |   expect("hello\\nworld ").toEqual("Hello\\nworld ");
+                                    ^
+    error: expect(received).toEqual(expected)
+
+    - "Hello
+    + "hello
+      world "
+
+    - Expected  - 1
+    + Received  + 1
+
+          at <anonymous> (FILE:LINE)
+    (fail) mix of whitespace-only and non-whitespace-only differences
+    (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
 
      0 pass
+     2 skip
      1 todo
-     14 fail
-     14 expect() calls
-    Ran 15 tests across 1 file.
+     16 fail
+     16 expect() calls
+    Ran 19 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

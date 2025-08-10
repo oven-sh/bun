@@ -626,6 +626,8 @@ pub const ValkeyClient = struct {
                 if (callback) |cb| {
                     std.debug.assert(cb.isCallable());
                     _ = try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
+                } else {
+                    debug("I don't have a callback to handle this push message", .{});
                 }
             },
             else => {

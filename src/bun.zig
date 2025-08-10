@@ -227,7 +227,7 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
         }
     }
     // TODO: remove this constCast by making the input mutable
-    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+    return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
@@ -237,7 +237,7 @@ pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
         }
     }
     // TODO: remove this constCast by adding uv_buf_t_const
-    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
+    return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {

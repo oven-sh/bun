@@ -229,13 +229,19 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        return global.throwError(err, "failed to tokenize braces");
+    var lexer_output = lexer_output: {
+        if (bun.strings.isAllASCII(brace_slice.slice())) {
+            break :lexer_output Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
+                return global.throwError(err, "failed to tokenize braces");
+            };
+        }
+
+        break :lexer_output Braces.NewLexer(.wtf8).tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
+            return global.throwError(err, "failed to tokenize braces");
+        };
     };
 
-    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        return global.throwError(err, "failed to calculate brace expansion amount");
-    };
+    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
     if (opts.tokenize) {
         const str = try std.json.stringifyAlloc(global.bunVM().allocator, lexer_output.tokens.items[0..], .{});
@@ -272,7 +278,6 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     ) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.UnexpectedToken => return global.throwPretty("Unexpected token while expanding braces", .{}),
-        error.StackFull => return global.throwPretty("Too much nesting while expanding braces", .{}),
     };
 
     var out_strings = try arena.allocator().alloc(bun.String, expansion_count);

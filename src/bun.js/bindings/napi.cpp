@@ -87,27 +87,8 @@ using namespace Zig;
 #define NAPI_PREAMBLE(_env)                                             \
     NAPI_LOG_CURRENT_FUNCTION;                                          \
     NAPI_CHECK_ARG(_env, _env);                                         \
-    /* Check for pending NAPI exceptions before proceeding */           \
+    /* Check for pending NAPI exceptions - matches Node.js behavior */  \
     if ((_env)->hasNapiException()) [[unlikely]] {                      \
-        fprintf(stderr, "[DEBUG] NAPI_PREAMBLE: pending exception, returning\n"); \
-        return napi_set_last_error(_env, napi_pending_exception);       \
-    }                                                                   \
-    /* You should not use this throw scope directly -- if you need */   \
-    /* to throw or clear exceptions, make your own scope */             \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
-
-// Every NAPI function should use this at the start. It does the following:
-// - if NAPI_VERBOSE is 1, log that the function was called
-// - if env is nullptr, return napi_invalid_arg
-// - if there is a pending exception, return napi_pending_exception
-// No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    /* Check for pending NAPI exceptions before proceeding */           \
-    if ((_env)->hasNapiException()) [[unlikely]] {                      \
-        fprintf(stderr, "[DEBUG] NAPI_PREAMBLE: pending exception, returning\n"); \
         return napi_set_last_error(_env, napi_pending_exception);       \
     }                                                                   \
     /* You should not use this throw scope directly -- if you need */   \
@@ -146,16 +127,11 @@ using namespace Zig;
     } while (0)
 
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
-#define NAPI_RETURN_IF_EXCEPTION(_env) \
-    do { \
-        /* Check JSC exceptions - NAPI exceptions are already thrown to JSC */ \
-        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(_env, napi_pending_exception)); \
-    } while (0)
+#define NAPI_RETURN_IF_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(_env, napi_pending_exception))
 
 // Return indicating that no error occurred in a NAPI function, and an exception is not expected
 #define NAPI_RETURN_SUCCESS(_env)                        \
     do {                                                 \
-        /* NAPI exceptions are already thrown to JSC */ \
         napi_preamble_throw_scope__.assertNoException(); \
         return napi_set_last_error(_env, napi_ok);       \
     } while (0)
@@ -1018,6 +994,7 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!msg_utf8) {
         return napi_set_last_error(env, napi_invalid_arg);
@@ -1026,19 +1003,12 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     WTF::String code = code_utf8 ? WTF::String::fromUTF8(code_utf8) : WTF::String();
     WTF::String message = WTF::String::fromUTF8(msg_utf8);
 
-    // Check if there's already a pending NAPI exception
-    if (env->hasNapiException()) {
-        // Ignore subsequent throws - matches Node.js behavior
-        return napi_set_last_error(env, napi_ok);
-    }
-
     auto* error = createErrorWithCode(vm, globalObject, code, message, type);
+    scope.throwException(globalObject, error);
     
-    // Set the NAPI exception flag and also throw to JSC
+    // Mark that we have a pending NAPI exception - matches Node.js behavior
     env->setNapiException();
     
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.throwException(globalObject, error);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1279,7 +1249,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
 
-    // Check both NAPI-level flag and JSC-level exceptions
+    // Check both NAPI-level flag and JSC-level exceptions - matches Node.js behavior  
     auto globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     *result = env->hasNapiException() || (scope.exception() != nullptr);
@@ -1299,7 +1269,6 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 
     auto globalObject = toJS(env);
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
         scope.clearException();
@@ -1307,7 +1276,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
         env->clearNapiException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
-        // Still clear the flag in case it was set
+        // Still clear the flag in case it was set without a JSC exception
         env->clearNapiException();
     }
 
@@ -1333,25 +1302,18 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, error);
-
-    // Check if there's already a pending NAPI exception
-    if (env->hasNapiException()) {
-        // Ignore subsequent throws - matches Node.js behavior
-        fprintf(stderr, "[DEBUG] napi_throw: ignoring throw, already have pending exception\n");
-        return napi_set_last_error(env, napi_ok);
-    }
-
-    // Set the NAPI exception flag and also throw to JSC
-    // This way the exception is available immediately but we track the state
-    env->setNapiException();
     
     auto globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     JSValue value = toJS(error);
+    JSC::throwException(globalObject, throwScope, value);
     
-    fprintf(stderr, "[DEBUG] napi_throw: throwing exception to JSC\n");
-    scope.throwException(globalObject, value);
-    
+    // Mark that we have a pending NAPI exception - matches Node.js behavior
+    // This will prevent subsequent NAPI operations until cleared
+    env->setNapiException();
+
     return napi_set_last_error(env, napi_ok);
 }
 

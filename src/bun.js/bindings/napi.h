@@ -228,21 +228,17 @@ public:
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
-    // NAPI exception management methods (simple flag-based approach)
+    // NAPI exception tracking - matches Node.js last_exception behavior  
     inline bool hasNapiException() const { 
-        return m_hasPendingNapiException; 
+        return m_hasPendingNapiException;
     }
-
+    
     inline void setNapiException() {
-        // Only set the flag if there isn't already a pending exception
-        // This matches Node.js behavior where subsequent throws are ignored
-        if (!m_hasPendingNapiException) {
-            m_hasPendingNapiException = true;
-        }
+        m_hasPendingNapiException = true;
     }
-
+    
     inline void clearNapiException() {
-        m_hasPendingNapiException = false;
+        m_hasPendingNapiException = false; 
     }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
@@ -259,9 +255,8 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
-
-    // Track NAPI-level pending exceptions with a simple flag
-    // This avoids GC issues with storing JSC values in non-JSC objects
+    
+    // Track pending NAPI exceptions (simple flag to avoid GC issues)
     bool m_hasPendingNapiException = false;
 
     struct BoundFinalizer {

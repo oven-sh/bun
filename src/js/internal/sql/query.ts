@@ -1,3 +1,35 @@
+function getQueryHandle(query) {
+  let handle = query[_handle];
+  if (!handle) {
+    try {
+      query[_handle] = handle = doCreateQuery(
+        query[_strings],
+        query[_values],
+        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
+        query[_poolSize],
+        query[_flags] & SQLQueryFlags.bigint,
+        query[_flags] & SQLQueryFlags.simple,
+      );
+    } catch (err) {
+      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
+      query.reject(err);
+    }
+  }
+  return handle;
+}
+
+const _resolve = Symbol("resolve");
+const _reject = Symbol("reject");
+const _handle = Symbol("handle");
+const _run = Symbol("run");
+const _queryStatus = Symbol("status");
+const _handler = Symbol("handler");
+const _strings = Symbol("strings");
+const _values = Symbol("values");
+const _poolSize = Symbol("poolSize");
+const _flags = Symbol("flags");
+const _results = Symbol("results");
+
 class Query extends globalThis.Promise {
   [_resolve];
   [_reject];

@@ -148,16 +148,14 @@ function parseOptions(
     bigint: any,
     path: string | string[];
 
-  const env = Bun.env;
-
   let prepare = true;
   let sslMode: SSLModeType = SSLMode.disable;
 
   if (stringOrUrl === undefined || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
-    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    let urlString = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL;
 
     if (!urlString) {
-      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+      urlString = Bun.env.TLS_POSTGRES_DATABASE_URL || Bun.env.TLS_DATABASE_URL;
 
       if (urlString) {
         sslMode = SSLMode.require;
@@ -211,9 +209,9 @@ function parseOptions(
     }
     query = query.trim();
   }
-  hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
+  hostname ||= options.hostname || options.host || Bun.env.PGHOST || "localhost";
 
-  port ||= Number(options.port || env.PGPORT || 5432);
+  port ||= Number(options.port || Bun.env.PGPORT || 5432);
 
   path ||= (options as { path?: string }).path || "";
   // add /.s.PGSQL.${port} if it doesn't exist
@@ -222,10 +220,16 @@ function parseOptions(
   }
 
   username ||=
-    options.username || options.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
+    options.username ||
+    options.user ||
+    Bun.env.PGUSERNAME ||
+    Bun.env.PGUSER ||
+    Bun.env.USER ||
+    Bun.env.USERNAME ||
+    "postgres";
   database ||=
-    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
-  password ||= options.password || options.pass || env.PGPASSWORD || "";
+    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || Bun.env.PGDATABASE || username;
+  password ||= options.password || options.pass || Bun.env.PGPASSWORD || "";
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {

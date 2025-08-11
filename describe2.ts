@@ -8,13 +8,13 @@ console.log("HIT 3");
 describe2("abc", () => {
   console.log("HIT 4");
   describe2("abc", () => {
-    console.log("HIT 5");
-  });
-  console.log("HIT 6");
-  describe2("abc", () => {
     console.log("HIT 7");
   });
-  console.log("HIT 8");
+  console.log("HIT 5");
+  describe2("abc", () => {
+    console.log("HIT 8");
+  });
+  console.log("HIT 6");
 });
 console.log("HIT 9");
 await Bun.sleep(0);

@@ -157,82 +157,16 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
         .git_clone => {
-            const name = this.request.git_clone.name.slice();
-            const url = this.request.git_clone.url.slice();
-            var attempt: u8 = 1;
-            const dir = brk: {
-                if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                    manager.allocator,
-                    this.request.git_clone.env,
-                    &this.log,
-                    manager.getCacheDirectory(),
-                    this.id,
-                    name,
-                    https,
-                    attempt,
-                ) catch |err| {
-                    // Exit early if git checked and could
-                    // not find the repository, skip ssh
-                    if (err == error.RepositoryNotFound) {
-                        this.err = err;
-                        this.status = Status.fail;
-                        this.data = .{ .git_clone = bun.invalid_fd };
-
-                        return;
-                    }
-
-                    this.err = err;
-                    this.status = Status.fail;
-                    this.data = .{ .git_clone = bun.invalid_fd };
-                    attempt += 1;
-                    break :brk null;
-                };
-                break :brk null;
-            } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
-                manager.allocator,
-                this.request.git_clone.env,
-                &this.log,
-                manager.getCacheDirectory(),
-                this.id,
-                name,
-                ssh,
-                attempt,
-            ) catch |err| {
-                this.err = err;
-                this.status = Status.fail;
-                this.data = .{ .git_clone = bun.invalid_fd };
-                return;
-            } else {
-                return;
-            };
-
-            this.err = null;
-            this.data = .{ .git_clone = .fromStdDir(dir) };
-            this.status = Status.success;
+            // Git operations are now handled by GitCommandRunner
+            // This task should already have its data populated by GitCommandRunner
+            // If we get here, it means something went wrong
+            unreachable;
         },
         .git_checkout => {
-            const git_checkout = &this.request.git_checkout;
-            const data = Repository.checkout(
-                manager.allocator,
-                this.request.git_checkout.env,
-                &this.log,
-                manager.getCacheDirectory(),
-                git_checkout.repo_dir.stdDir(),
-                git_checkout.name.slice(),
-                git_checkout.url.slice(),
-                git_checkout.resolved.slice(),
-            ) catch |err| {
-                this.err = err;
-                this.status = Status.fail;
-                this.data = .{ .git_checkout = .{} };
-
-                return;
-            };
-
-            this.data = .{
-                .git_checkout = data,
-            };
-            this.status = Status.success;
+            // Git operations are now handled by GitCommandRunner
+            // This task should already have its data populated by GitCommandRunner
+            // If we get here, it means something went wrong
+            unreachable;
         },
         .local_tarball => {
             const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);

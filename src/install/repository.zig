@@ -406,6 +406,16 @@ pub const Repository = extern struct {
             return null;
         }
 
+        // Handle shorthand formats like bitbucket:user/repo or gitlab:user/repo
+        if (strings.indexOfChar(url, ':')) |colon_index| {
+            const prefix = url[0..colon_index];
+            if (Hosts.get(prefix)) |domain_suffix| {
+                const path = url[colon_index + 1 ..];
+                const result = std.fmt.bufPrint(&ssh_path_buf, "git@{s}{s}:{s}", .{ prefix, domain_suffix, path }) catch return null;
+                return result;
+            }
+        }
+
         if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
             return url;
         }
@@ -440,6 +450,16 @@ pub const Repository = extern struct {
     pub fn tryHTTPS(url: string) ?string {
         if (strings.hasPrefixComptime(url, "http")) {
             return url;
+        }
+
+        // Handle shorthand formats like bitbucket:user/repo or gitlab:user/repo
+        if (strings.indexOfChar(url, ':')) |colon_index| {
+            const prefix = url[0..colon_index];
+            if (Hosts.get(prefix)) |domain_suffix| {
+                const path = url[colon_index + 1 ..];
+                const result = std.fmt.bufPrint(&final_path_buf, "https://{s}{s}/{s}", .{ prefix, domain_suffix, path }) catch return null;
+                return result;
+            }
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
@@ -486,6 +506,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
+        // Repository.download called
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
@@ -699,6 +720,7 @@ const Path = bun.path;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
+const Output = bun.Output;
 
 const Semver = bun.Semver;
 const GitSHA = String;

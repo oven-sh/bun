@@ -135,6 +135,7 @@ updating_packages: bun.StringArrayHashMapUnmanaged(PackageUpdateInfo) = .{},
 patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, void, ArrayIdentityContext.U64, false) = .{},
 
 active_lifecycle_scripts: LifecycleScriptSubprocess.List,
+active_git_commands: GitCommandRunner.List,
 last_reported_slow_lifecycle_script_at: u64 = 0,
 cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
@@ -850,6 +851,9 @@ pub fn init(
         .active_lifecycle_scripts = .{
             .context = manager,
         },
+        .active_git_commands = .{
+            .context = manager,
+        },
         .network_task_fifo = NetworkQueue.init(),
         .patch_task_fifo = PatchTaskFifo.init(),
         .allocator = ctx.allocator,
@@ -1020,6 +1024,9 @@ pub fn initWithRuntimeOnce(
             .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         },
         .active_lifecycle_scripts = .{
+            .context = manager,
+        },
+        .active_git_commands = .{
             .context = manager,
         },
         .network_task_fifo = NetworkQueue.init(),
@@ -1293,6 +1300,7 @@ const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
 const IdentityContext = bun.install.IdentityContext;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const GitCommandRunner = bun.install.GitCommandRunner;
 const NetworkTask = bun.install.NetworkTask;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;

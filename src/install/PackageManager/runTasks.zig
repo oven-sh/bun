@@ -758,7 +758,7 @@ pub fn runTasks(
 
                     if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
 
-                    manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
+                    manager.enqueueGitCheckout(
                         checkout_id,
                         repo_fd,
                         dep_id,
@@ -766,7 +766,7 @@ pub fn runTasks(
                         clone.res,
                         resolved,
                         null,
-                    )));
+                    );
                 } else {
                     // Resolving!
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;

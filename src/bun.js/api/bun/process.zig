@@ -82,6 +82,7 @@ pub const ProcessExitHandler = struct {
         .{
             Subprocess,
             LifecycleScriptSubprocess,
+            GitCommandRunner,
             ShellSubprocess,
             ProcessHandle,
 
@@ -114,6 +115,10 @@ pub const ProcessExitHandler = struct {
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(GitCommandRunner)) => {
+                const runner = this.ptr.as(GitCommandRunner);
+                runner.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
@@ -2247,6 +2252,7 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const GitCommandRunner = bun.install.GitCommandRunner;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;

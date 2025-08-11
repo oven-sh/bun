@@ -180,7 +180,7 @@ pub fn enqueueGitForCheckout(
     if (checkout_queue.found_existing) return;
 
     if (this.git_repositories.get(clone_id)) |repo_fd| {
-        this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(checkout_id, repo_fd, dependency_id, alias, resolution.*, resolved, patch_name_and_version_hash)));
+        this.enqueueGitCheckout(checkout_id, repo_fd, dependency_id, alias, resolution.*, resolved, patch_name_and_version_hash);
     } else {
         var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id) catch unreachable;
         if (!clone_queue.found_existing) {
@@ -194,7 +194,7 @@ pub fn enqueueGitForCheckout(
 
         if (clone_queue.found_existing) return;
 
-        this.task_batch.push(ThreadPool.Batch.from(enqueueGitClone(
+        enqueueGitClone(
             this,
             clone_id,
             alias,
@@ -203,7 +203,7 @@ pub fn enqueueGitForCheckout(
             &this.lockfile.buffers.dependencies.items[dependency_id],
             resolution,
             null,
-        )));
+        );
     }
 }
 
@@ -812,7 +812,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                 if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
 
-                this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
+                this.enqueueGitCheckout(
                     checkout_id,
                     repo_fd,
                     id,
@@ -820,7 +820,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     res,
                     resolved,
                     null,
-                )));
+                );
             } else {
                 var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
@@ -835,7 +835,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                 if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
-                this.task_batch.push(ThreadPool.Batch.from(enqueueGitClone(this, clone_id, alias, dep, id, dependency, &res, null)));
+                enqueueGitClone(this, clone_id, alias, dep, id, dependency, &res, null);
             }
         },
         .github => {
@@ -1140,45 +1140,135 @@ fn enqueueGitClone(
     res: *const Resolution,
     /// if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: ?u64,
-) *ThreadPool.Task {
-    var task = this.preallocated_resolve_tasks.get();
-    task.* = Task{
-        .package_manager = this,
-        .log = logger.Log.init(this.allocator),
-        .tag = Task.Tag.git_clone,
-        .request = .{
-            .git_clone = .{
+) void {
+    _ = patch_name_and_version_hash; // TODO: handle patches
+    _ = dependency; // Currently unused
+    
+    const url = this.lockfile.str(&repository.repo);
+    // Enqueue git clone for url
+    const folder_name = std.fmt.bufPrintZ(&git_folder_name_buf, "{any}.git", .{
+        bun.fmt.hexIntLower(task_id.get()),
+    }) catch unreachable;
+    
+    // Build git command arguments
+    var argc: usize = 0;
+    
+    // Try HTTPS first
+    const argv = if (Repository.tryHTTPS(url)) |https| blk: {
+        const args: [10]?[*:0]const u8 = .{
+            "git",
+            "clone",
+            "-c",
+            "core.longpaths=true",
+            "--quiet",
+            "--bare",
+            bun.default_allocator.dupeZ(u8, https) catch unreachable,
+            folder_name,
+            null,
+            null,
+        };
+        argc = 8;
+        break :blk args;
+    } else if (Repository.trySSH(url)) |ssh| blk: {
+        const args: [10]?[*:0]const u8 = .{
+            "git",
+            "clone",
+            "-c",
+            "core.longpaths=true",
+            "--quiet",
+            "--bare",
+            bun.default_allocator.dupeZ(u8, ssh) catch unreachable,
+            folder_name,
+            null,
+            null,
+        };
+        argc = 8;
+        break :blk args;
+    } else {
+        // Can't parse URL - create a failed task
+        const task = this.preallocated_resolve_tasks.get();
+        task.* = Task{
+            .package_manager = this,
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.git_clone,
+            .request = .{
+                .git_clone = .{
+                    .name = strings.StringOrTinyString.init(name),
+                    .url = strings.StringOrTinyString.init(url),
+                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                    .dep_id = dep_id,
+                    .res = res.*,
+                },
+            },
+            .id = task_id,
+            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+            .data = .{ .git_clone = bun.invalid_fd },
+            .status = .fail,
+            .err = error.InvalidGitURL,
+        };
+        // Increment pending tasks for this immediate failure task
+        this.incrementPendingTasks(1);
+        this.resolve_tasks.push(task);
+        this.wake();
+        return;
+    };
+    
+    // Spawn GitCommandRunner
+    // Increment pending tasks so the event loop knows to wait for this
+    this.incrementPendingTasks(1);
+    _ = GitCommandRunner.spawn(
+        this,
+        task_id,
+        argv[0..argc],
+        .{
+            .clone = .{
                 .name = strings.StringOrTinyString.initAppendIfNeeded(
                     name,
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
                 ) catch unreachable,
                 .url = strings.StringOrTinyString.initAppendIfNeeded(
-                    this.lockfile.str(&repository.repo),
+                    url,
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
                 ) catch unreachable,
-                .env = Repository.shared_env.get(this.allocator, this.env),
                 .dep_id = dep_id,
                 .res = res.*,
+                .attempt = 1,
             },
         },
-        .id = task_id,
-        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
-            const dep = dependency;
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
-            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
-            pt.callback.apply.task_id = task_id;
-            break :brk pt;
-        } else null,
-        .data = undefined,
+    ) catch |err| {
+        // If spawning fails, create a failed task
+        const task = this.preallocated_resolve_tasks.get();
+        task.* = Task{
+            .package_manager = this,
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.git_clone,
+            .request = .{
+                .git_clone = .{
+                    .name = strings.StringOrTinyString.init(name),
+                    .url = strings.StringOrTinyString.init(url),
+                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                    .dep_id = dep_id,
+                    .res = res.*,
+                },
+            },
+            .id = task_id,
+            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+            .data = .{ .git_clone = bun.invalid_fd },
+            .status = .fail,
+            .err = err,
+        };
+        this.resolve_tasks.push(task);
+        this.wake();
     };
-    return &task.threadpool_task;
 }
+
+fn dummyCallback(_: *ThreadPool.Task) void {
+    unreachable;
+}
+
+var git_folder_name_buf: [1024]u8 = undefined;
 
 pub fn enqueueGitCheckout(
     this: *PackageManager,
@@ -1190,16 +1280,67 @@ pub fn enqueueGitCheckout(
     resolved: string,
     /// if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: ?u64,
-) *ThreadPool.Task {
-    var task = this.preallocated_resolve_tasks.get();
-    task.* = Task{
-        .package_manager = this,
-        .log = logger.Log.init(this.allocator),
-        .tag = Task.Tag.git_checkout,
-        .request = .{
-            .git_checkout = .{
+) void {
+    _ = patch_name_and_version_hash; // TODO: handle patches
+    
+    const folder_name = PackageManager.cachedGitFolderNamePrint(&git_folder_name_buf, resolved, null);
+    const target = Path.joinAbsString(this.cache_directory_path, &.{folder_name}, .auto);
+    const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {
+        // If we can't get the path, create a failed task
+        const task = this.preallocated_resolve_tasks.get();
+        task.* = Task{
+            .package_manager = this,
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.git_checkout,
+            .request = .{
+                .git_checkout = .{
+                    .repo_dir = dir,
+                    .resolution = resolution,
+                    .dependency_id = dependency_id,
+                    .name = strings.StringOrTinyString.init(name),
+                    .url = strings.StringOrTinyString.init(this.lockfile.str(&resolution.value.git.repo)),
+                    .resolved = strings.StringOrTinyString.init(resolved),
+                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                },
+            },
+            .id = task_id,
+            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+            .data = .{ .git_checkout = .{} },
+            .status = .fail,
+            .err = err,
+        };
+        // Increment pending tasks for this immediate failure task
+        this.incrementPendingTasks(1);
+        this.resolve_tasks.push(task);
+        this.wake();
+        return;
+    };
+    
+    // Build git command arguments for clone --no-checkout
+    const argv: [10]?[*:0]const u8 = .{
+        "git",
+        "clone",
+        "-c",
+        "core.longpaths=true",
+        "--quiet",
+        "--no-checkout",
+        bun.default_allocator.dupeZ(u8, repo_path) catch unreachable,
+        bun.default_allocator.dupeZ(u8, target) catch unreachable,
+        null,
+        null,
+    };
+    const argc: usize = 8;
+    
+    // Spawn GitCommandRunner
+    // Increment pending tasks so the event loop knows to wait for this
+    this.incrementPendingTasks(1);
+    _ = GitCommandRunner.spawn(
+        this,
+        task_id,
+        argv[0..argc],
+        .{
+            .checkout = .{
                 .repo_dir = dir,
-                .resolution = resolution,
                 .dependency_id = dependency_id,
                 .name = strings.StringOrTinyString.initAppendIfNeeded(
                     name,
@@ -1216,25 +1357,40 @@ pub fn enqueueGitCheckout(
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
                 ) catch unreachable,
-                .env = Repository.shared_env.get(this.allocator, this.env),
+                .resolution = resolution,
+                .target_dir = bun.default_allocator.dupe(u8, target) catch unreachable,
             },
         },
-        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
-            const dep = this.lockfile.buffers.dependencies.items[dependency_id];
-            const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                .id => |p| p,
-                .ids => |ps| ps.items[0], // TODO is this correct
-            };
-            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
-            pt.callback.apply.task_id = task_id;
-            break :brk pt;
-        } else null,
-        .id = task_id,
-        .data = undefined,
+    ) catch |err| {
+        // If spawning fails, create a failed task
+        const task = this.preallocated_resolve_tasks.get();
+        task.* = Task{
+            .package_manager = this,
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.git_checkout,
+            .request = .{
+                .git_checkout = .{
+                    .repo_dir = dir,
+                    .resolution = resolution,
+                    .dependency_id = dependency_id,
+                    .name = strings.StringOrTinyString.init(name),
+                    .url = strings.StringOrTinyString.init(this.lockfile.str(&resolution.value.git.repo)),
+                    .resolved = strings.StringOrTinyString.init(resolved),
+                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                },
+            },
+            .id = task_id,
+            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+            .data = .{ .git_checkout = .{} },
+            .status = .fail,
+            .err = err,
+        };
+        this.resolve_tasks.push(task);
+        this.wake();
     };
-    return &task.threadpool_task;
 }
+
+var git_path_buf: bun.PathBuffer = undefined;
 
 fn enqueueLocalTarball(
     this: *PackageManager,
@@ -1792,6 +1948,8 @@ const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
+const GitCommandRunner = bun.install.GitCommandRunner;
+const DotEnv = bun.DotEnv;
 const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

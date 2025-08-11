@@ -191,11 +191,19 @@ function parseOptions(
   let prepare = true;
   let sslMode: SSLMode = SSLMode.disable;
 
-  if (
+  // Check environment variables if no URL was provided
+  const shouldCheckEnv =
     stringOrUrl === undefined ||
     stringOrUrl === null ||
-    (typeof stringOrUrl === "string" && stringOrUrl.length === 0)
-  ) {
+    (typeof stringOrUrl === "string" && stringOrUrl.length === 0) ||
+    (stringOrUrl &&
+      typeof stringOrUrl === "object" &&
+      !(stringOrUrl instanceof URL) &&
+      !options?.url &&
+      !options?.hostname &&
+      !options?.host);
+
+  if (shouldCheckEnv) {
     let urlString = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL;
 
     if (!urlString) {
@@ -212,39 +220,22 @@ function parseOptions(
   } else if (stringOrUrl && typeof stringOrUrl === "object") {
     if (stringOrUrl instanceof URL) {
       url = stringOrUrl;
-    } else {
-      // stringOrUrl is an options object
-      // Check if options has a url property
-      if (options?.url) {
-        const _url = options.url;
-        if (typeof _url === "string") {
-          url = new URL(_url);
-        } else if (_url && typeof _url === "object" && _url instanceof URL) {
-          url = _url;
-        }
-      } else if (!options?.hostname && !options?.host) {
-        // If no hostname/host in options, check environment variables
-        let urlString = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL;
-
-        if (!urlString) {
-          urlString = Bun.env.TLS_POSTGRES_DATABASE_URL || Bun.env.TLS_DATABASE_URL;
-
-          if (urlString) {
-            sslMode = SSLMode.require;
-          }
-        }
-
-        if (urlString) {
-          url = new URL(urlString);
-        }
+    } else if (options?.url) {
+      // stringOrUrl is an options object with a url property
+      const _url = options.url;
+      if (typeof _url === "string") {
+        url = new URL(_url);
+      } else if (_url && typeof _url === "object" && _url instanceof URL) {
+        url = _url;
       }
-    }
-    if (options?.tls) {
-      sslMode = SSLMode.require;
-      tls = options.tls;
     }
   } else if (typeof stringOrUrl === "string") {
     url = new URL(stringOrUrl);
+  }
+
+  if (options?.tls) {
+    sslMode = SSLMode.require;
+    tls = options.tls;
   }
   query = "";
 

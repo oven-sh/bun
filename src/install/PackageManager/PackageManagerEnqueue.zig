@@ -107,9 +107,6 @@ pub fn enqueueTarballForDownload(
 
     if (task_queue.found_existing) return;
 
-    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-    if (!this.options.do.prefetch_resolved_tarballs) return;
-
     if (try this.generateNetworkTaskForTarball(
         task_id,
         url,
@@ -889,9 +886,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 }
             }
 
-            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-            if (!this.options.do.prefetch_resolved_tarballs) return;
-
             if (try this.generateNetworkTaskForTarball(
                 task_id,
                 url,
@@ -1094,9 +1088,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     )));
                 },
                 .remote => {
-                    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-                    if (!this.options.do.prefetch_resolved_tarballs) return;
-
                     if (try this.generateNetworkTaskForTarball(
                         task_id,
                         url,

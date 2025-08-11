@@ -20,18 +20,21 @@ function rel(filename: string) {
   return path.join(dir, filename);
 }
 async function findRandomPort() {
-  return new Promise((resolve, reject) => {
+  return new Promise<number>((resolve, reject) => {
     // Create a server to listen on a random port
     const server = net.createServer();
     server.listen(0, () => {
-      const port = server.address().port;
+      const port = (server.address() as import("node:net").AddressInfo).port;
       server.close(() => resolve(port));
     });
     server.on("error", reject);
   });
 }
-async function waitForPostgres(port) {
-  for (let i = 0; i < 5; i++) {
+
+async function waitForPostgres(port: number, count = 10) {
+  console.log(`Attempting to connect to postgres://postgres@localhost:${port}/postgres`);
+
+  for (let i = 0; i < count; i++) {
     try {
       const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
         idle_timeout: 20,
@@ -43,7 +46,10 @@ async function waitForPostgres(port) {
       console.log("PostgreSQL is ready!");
       return true;
     } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/5)`, error);
+      console.log(`Waiting for PostgreSQL... (${i + 1}/${count})`, error);
+      if (error && typeof error === "object" && "stack" in error) {
+        console.log("Error stack:", error.stack);
+      }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }

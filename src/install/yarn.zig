@@ -956,9 +956,8 @@ pub fn migrateYarnLockfile(
                         });
                     }
 
-                    const version = entry.version;
-                    const sliced_version = Semver.SlicedString.init(version, version);
-                    const result = Semver.Version.parse(sliced_version);
+                    const version = try string_buf.append(entry.version);
+                    const result = Semver.Version.parse(version.sliced(this.buffers.string_bytes.items));
                     if (!result.valid) {
                         break :blk Resolution{};
                     }

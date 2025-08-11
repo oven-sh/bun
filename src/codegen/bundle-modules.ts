@@ -217,7 +217,7 @@ const out = Bun.spawnSync({
   cmd: config_cli,
   cwd: process.cwd(),
   env: process.env,
-  stdio: ["ignore", "pipe", "pipe"],
+  stdio: ["pipe", "pipe", "pipe"],
 });
 if (out.exitCode !== 0) {
   console.error(out.stderr.toString());

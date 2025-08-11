@@ -216,12 +216,19 @@ pub const Data = struct {
     }
 
     pub fn cloneLineText(this: Data, should: bool, allocator: std.mem.Allocator) OOM!Data {
-        if (!should or this.location == null or this.location.?.line_text == null)
+        if (!should or this.location == null)
             return this;
 
-        const new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
         var new_location = this.location.?;
-        new_location.line_text = new_line_text;
+        
+        // Clone line_text if it exists
+        if (this.location.?.line_text != null) {
+            new_location.line_text = try allocator.dupe(u8, this.location.?.line_text.?);
+        }
+        
+        // Also clone the file path to prevent use-after-free issues
+        new_location.file = try allocator.dupe(u8, this.location.?.file);
+        
         return Data{
             .text = this.text,
             .location = new_location,

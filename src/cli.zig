@@ -12,6 +12,7 @@ pub const Cli = struct {
         is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
+        log_.clone_line_text = true;
 
         var log = &log_;
 

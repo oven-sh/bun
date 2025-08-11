@@ -721,6 +721,7 @@ pub fn init(
                             else => break,
                         };
                         var log = logger.Log.init(ctx.allocator);
+                        log.clone_line_text = true;
                         defer log.deinit();
                         _ = workspace_names.processNamesArray(
                             ctx.allocator,

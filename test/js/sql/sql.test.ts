@@ -147,24 +147,24 @@ if (isDockerEnabled()) {
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
-  const login = {
+  const login: Bun.SQL.PostgresOptions = {
     username: "bun_sql_test",
     port: container.port,
   };
 
-  const login_md5 = {
+  const login_md5: Bun.SQL.PostgresOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
     port: container.port,
   };
 
-  const login_scram = {
+  const login_scram: Bun.SQL.PostgresOptions = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
     port: container.port,
   };
 
-  const options = {
+  const options: Bun.SQL.PostgresOptions = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
@@ -178,6 +178,7 @@ if (isDockerEnabled()) {
     expect(sql.options.password).toBe("bunbun@bun");
     expect(sql.options.database).toBe("bun@bun");
   });
+
   test("Connects with no options", async () => {
     // we need at least the usename and port
     await using sql = postgres({ max: 1, port: container.port, username: login.username });

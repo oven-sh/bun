@@ -475,12 +475,12 @@ pub const Loader = struct {
             var process_env_iter = to_string.iterator();
             while (process_env_iter.next()) |entry| {
                 const process_key = entry.key_ptr.*;
-                
+
                 // Check if this is a process.env key
                 if (process_key.len > "process.env.".len and strings.eqlComptime(process_key[0.."process.env.".len], "process.env.")) {
                     const var_name = process_key["process.env.".len..];
                     const meta_key = try std.fmt.allocPrint(allocator, "import.meta.env.{s}", .{var_name});
-                    
+
                     // Copy the define value
                     _ = try to_string.getOrPutValue(meta_key, entry.value_ptr.*);
                 }

@@ -308,7 +308,7 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
 #endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
@@ -320,7 +320,7 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
 #if BUN_DEBUG
-    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
 #endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);

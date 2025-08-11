@@ -2,6 +2,10 @@
 
 # Script to download zip files from a GitHub release, extract them, and create tar.gz and tar.xz archives
 # Usage: ./create-tar-archives.sh <tag> [temp_dir]
+# 
+# Environment variables:
+#   GITHUB_TOKEN - If set, archives will be uploaded to the GitHub release
+#   DRY_RUN      - If set to "1", skips uploading (useful for testing)
 
 set -euo pipefail
 
@@ -107,8 +111,8 @@ for archive in "${CREATED_ARCHIVES[@]}"; do
     echo "  - $(basename "$archive") ($(du -h "$archive" | cut -f1))"
 done
 
-# If GITHUB_TOKEN is set, upload the archives to the release
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+# If GITHUB_TOKEN is set and DRY_RUN is not enabled, upload the archives to the release
+if [[ -n "${GITHUB_TOKEN:-}" && "${DRY_RUN:-0}" != "1" ]]; then
     echo
     echo "GITHUB_TOKEN found, uploading archives to release..."
     
@@ -144,6 +148,14 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         
         echo "    Uploaded $ARCHIVE_NAME"
     done
+elif [[ "${DRY_RUN:-0}" == "1" ]]; then
+    echo
+    echo "DRY_RUN=1: Skipping upload. Archives saved to:"
+    for archive in "${CREATED_ARCHIVES[@]}"; do
+        echo "  $archive"
+    done
+    echo
+    echo "To upload these, set GITHUB_TOKEN and run without DRY_RUN=1"
 else
     echo
     echo "GITHUB_TOKEN not set, archives saved to:"
@@ -154,8 +166,8 @@ else
     echo "To upload these manually, set GITHUB_TOKEN and re-run this script."
 fi
 
-# Don't cleanup if GITHUB_TOKEN is not set, so user can access the files
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+# Don't cleanup if GITHUB_TOKEN is not set or DRY_RUN=1, so user can access the files
+if [[ -z "${GITHUB_TOKEN:-}" || "${DRY_RUN:-0}" == "1" ]]; then
     trap '' EXIT  # Disable cleanup
     echo "Temporary directory preserved: $TEMP_DIR"
 fi

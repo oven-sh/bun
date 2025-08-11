@@ -52,7 +52,24 @@ ZIP_ASSETS=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith("
 
 if [[ -z "$ZIP_ASSETS" ]]; then
     echo "No zip files found in release $TAG"
-    exit 0
+    
+    # If this is a manual or scheduled run, wait a bit and retry once
+    # in case zip files are still being uploaded
+    if [[ "${GITHUB_EVENT_NAME:-}" == "workflow_dispatch" || "${GITHUB_EVENT_NAME:-}" == "schedule" ]]; then
+        echo "Waiting 30 seconds and retrying once..."
+        sleep 30
+        RELEASE_DATA=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/tags/$TAG")
+        ZIP_ASSETS=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".zip")) | "\(.name)|\(.browser_download_url)"')
+        
+        if [[ -z "$ZIP_ASSETS" ]]; then
+            echo "Still no zip files found after retry"
+            exit 0
+        else
+            echo "Found zip files after retry"
+        fi
+    else
+        exit 0
+    fi
 fi
 
 echo "Found zip files to process:"

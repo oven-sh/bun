@@ -1,24 +1,22 @@
 import type * as BunTypes from "bun";
 
-const enum QueryStatus {
-  active = 1 << 1,
-  cancelled = 1 << 2,
-  error = 1 << 3,
-  executed = 1 << 4,
-  invalidHandle = 1 << 5,
-}
+import type * as QueryTypes from "../internal/sql/query.ts";
+
+type Query<T, Helper extends QueryTypes.BaseQueryHandle> = QueryTypes.Query<T, Helper>;
+
+const {
+  Query,
+  SQLQueryFlags,
+  symbols: { _handle, _flags, _results },
+} = require("../internal/sql/query.ts");
+const { SSLMode, normalizeQuery } = require("../internal/sql/postgres.ts");
+const { SQLHelper, parseOptions } = require("../internal/sql/shared.ts");
+
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const PublicArray = globalThis.Array;
-const enum SSLMode {
-  disable = 0,
-  prefer = 1,
-  require = 2,
-  verify_ca = 3,
-  verify_full = 4,
-}
 
-const { hideFromStack } = require("internal/shared");
+const { hideFromStack } = require("../internal/shared.ts");
 const defineProperties = Object.defineProperties;
 
 function connectionClosedError() {
@@ -30,13 +28,10 @@ function notTaggedCallError() {
 hideFromStack(connectionClosedError);
 hideFromStack(notTaggedCallError);
 
-enum SQLQueryResultMode {
-  objects = 0,
-  values = 1,
-  raw = 2,
-}
-
 class SQLResultArray extends PublicArray {
+  public count!: number | null;
+  public command!: string | null;
+
   static [Symbol.toStringTag] = "SQLResults";
 
   constructor() {
@@ -52,235 +47,12 @@ class SQLResultArray extends PublicArray {
   }
 }
 
-const _resolve = Symbol("resolve");
-const _reject = Symbol("reject");
-const _handle = Symbol("handle");
-const _run = Symbol("run");
-const _queryStatus = Symbol("status");
-const _handler = Symbol("handler");
-const _strings = Symbol("strings");
-const _values = Symbol("values");
-const _poolSize = Symbol("poolSize");
-const _flags = Symbol("flags");
-const _results = Symbol("results");
-const PublicPromise = Promise;
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
+type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
-enum SQLQueryFlags {
-  none = 0,
-  allowUnsafeTransaction = 1 << 0,
-  unsafe = 1 << 1,
-  bigint = 1 << 2,
-  simple = 1 << 3,
-  notTagged = 1 << 4,
-}
-
-function getQueryHandle(query) {
-  let handle = query[_handle];
-  if (!handle) {
-    try {
-      query[_handle] = handle = doCreateQuery(
-        query[_strings],
-        query[_values],
-        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
-        query[_poolSize],
-        query[_flags] & SQLQueryFlags.bigint,
-        query[_flags] & SQLQueryFlags.simple,
-      );
-    } catch (err) {
-      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
-      query.reject(err);
-    }
-  }
-  return handle;
-}
-
-class Query extends PublicPromise {
-  [_resolve];
-  [_reject];
-  [_handle];
-  [_handler];
-  [_queryStatus] = 0;
-  [_strings];
-  [_values];
-
-  [Symbol.for("nodejs.util.inspect.custom")]() {
-    const status = this[_queryStatus];
-    const active = (status & QueryStatus.active) != 0;
-    const cancelled = (status & QueryStatus.cancelled) != 0;
-    const executed = (status & QueryStatus.executed) != 0;
-    const error = (status & QueryStatus.error) != 0;
-    return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
-  }
-
-  constructor(strings, values, flags, poolSize, handler) {
-    var resolve_, reject_;
-    super((resolve, reject) => {
-      resolve_ = resolve;
-      reject_ = reject;
-    });
-    if (typeof strings === "string") {
-      if (!(flags & SQLQueryFlags.unsafe)) {
-        // identifier (cannot be executed in safe mode)
-        flags |= SQLQueryFlags.notTagged;
-        strings = escapeIdentifier(strings);
-      }
-    }
-    this[_resolve] = resolve_;
-    this[_reject] = reject_;
-    this[_handle] = null;
-    this[_handler] = handler;
-    this[_queryStatus] = 0;
-    this[_poolSize] = poolSize;
-    this[_strings] = strings;
-    this[_values] = values;
-    this[_flags] = flags;
-
-    this[_results] = null;
-  }
-
-  async [_run](async: boolean) {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
-
-    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
-      return;
-    }
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(notTaggedCallError());
-      return;
-    }
-    this[_queryStatus] |= QueryStatus.executed;
-
-    const handle = getQueryHandle(this);
-    if (!handle) return this;
-
-    if (async) {
-      // Ensure it's actually async
-      // eslint-disable-next-line
-      await 1;
-    }
-
-    try {
-      return handler(this, handle);
-    } catch (err) {
-      this[_queryStatus] |= QueryStatus.error;
-      this.reject(err);
-    }
-  }
-  get active() {
-    return (this[_queryStatus] & QueryStatus.active) != 0;
-  }
-
-  set active(value) {
-    const status = this[_queryStatus];
-    if (status & (QueryStatus.cancelled | QueryStatus.error)) {
-      return;
-    }
-
-    if (value) {
-      this[_queryStatus] |= QueryStatus.active;
-    } else {
-      this[_queryStatus] &= ~QueryStatus.active;
-    }
-  }
-
-  get cancelled() {
-    return (this[_queryStatus] & QueryStatus.cancelled) !== 0;
-  }
-
-  resolve(x) {
-    this[_queryStatus] &= ~QueryStatus.active;
-    const handle = getQueryHandle(this);
-    if (!handle) return this;
-    handle.done();
-    return this[_resolve](x);
-  }
-
-  reject(x) {
-    this[_queryStatus] &= ~QueryStatus.active;
-    this[_queryStatus] |= QueryStatus.error;
-    if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
-      const handle = getQueryHandle(this);
-      if (!handle) return this[_reject](x);
-      handle.done();
-    }
-
-    return this[_reject](x);
-  }
-
-  cancel() {
-    var status = this[_queryStatus];
-    if (status & QueryStatus.cancelled) {
-      return this;
-    }
-    this[_queryStatus] |= QueryStatus.cancelled;
-
-    if (status & QueryStatus.executed) {
-      const handle = getQueryHandle(this);
-      handle.cancel();
-    }
-
-    return this;
-  }
-
-  execute() {
-    this[_run](false);
-    return this;
-  }
-
-  raw() {
-    const handle = getQueryHandle(this);
-    if (!handle) return this;
-    handle.setMode(SQLQueryResultMode.raw);
-    return this;
-  }
-
-  simple() {
-    this[_flags] |= SQLQueryFlags.simple;
-    return this;
-  }
-
-  values() {
-    const handle = getQueryHandle(this);
-    if (!handle) return this;
-    handle.setMode(SQLQueryResultMode.values);
-    return this;
-  }
-
-  then() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
-    }
-    this[_run](true);
-    const result = super.$then.$apply(this, arguments);
-    $markPromiseAsHandled(result);
-    return result;
-  }
-
-  catch() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
-    }
-    this[_run](true);
-    const result = super.catch.$apply(this, arguments);
-    $markPromiseAsHandled(result);
-    return result;
-  }
-
-  finally() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
-    }
-    this[_run](true);
-    return super.finally.$apply(this, arguments);
-  }
-}
-Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
-Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+  function onResolvePostgresQuery(query: Query<any, any>, result: SQLResultArray, commandTag, count, queries, is_last) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
       // simple can have multiple results or a single result
@@ -359,7 +131,7 @@ init(
   },
 );
 
-function onQueryFinish(onClose) {
+function onQueryFinish(onClose: (err: Error) => void) {
   this.queries.delete(onClose);
   this.pool.release(this);
 }
@@ -459,9 +231,9 @@ class PooledConnection {
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
   }
-  bindQuery(query: Query, onClose: (err: Error) => void) {
+
+  bindQuery(query: Query<any, any>, onClose: (err: Error) => void) {
     this.queries.add(onClose);
-    // @ts-ignore
     query.finally(onQueryFinish.bind(this, onClose));
   }
 
@@ -942,272 +714,6 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
-class SQLHelper {
-  value: any;
-  columns: string[];
-  constructor(value, keys) {
-    if (keys?.length === 0) {
-      keys = Object.keys(value[0]);
-    }
-
-    for (let key of keys) {
-      if (typeof key === "string") {
-        const asNumber = Number(key);
-        if (Number.isNaN(asNumber)) {
-          continue;
-        }
-        key = asNumber;
-      }
-
-      if (typeof key !== "string") {
-        if (Number.isSafeInteger(key)) {
-          if (key >= 0 && key <= 64 * 1024) {
-            continue;
-          }
-        }
-
-        throw new Error(`Keys must be strings or numbers: ${key}`);
-      }
-    }
-
-    this.value = value;
-    this.columns = keys;
-  }
-}
-
-function decodeIfValid(value) {
-  if (value) {
-    return decodeURIComponent(value);
-  }
-  return null;
-}
-function loadOptions(o: Bun.SQL.Options) {
-  var hostname,
-    port,
-    username,
-    password,
-    database,
-    tls,
-    url,
-    query,
-    adapter,
-    idleTimeout,
-    connectionTimeout,
-    maxLifetime,
-    onconnect,
-    onclose,
-    max,
-    bigint,
-    path;
-  let prepare = true;
-  const env = Bun.env || {};
-  var sslMode: SSLMode = SSLMode.disable;
-
-  if (o === undefined || (typeof o === "string" && o.length === 0)) {
-    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
-    if (!urlString) {
-      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
-      if (urlString) {
-        sslMode = SSLMode.require;
-      }
-    }
-
-    if (urlString) {
-      url = new URL(urlString);
-      o = {};
-    }
-  } else if (o && typeof o === "object") {
-    if (o instanceof URL) {
-      url = o;
-    } else if (o?.url) {
-      const _url = o.url;
-      if (typeof _url === "string") {
-        url = new URL(_url);
-      } else if (_url && typeof _url === "object" && _url instanceof URL) {
-        url = _url;
-      }
-    }
-    if (o?.tls) {
-      sslMode = SSLMode.require;
-      tls = o.tls;
-    }
-  } else if (typeof o === "string") {
-    url = new URL(o);
-  }
-  o ||= {};
-  query = "";
-
-  if (url) {
-    ({ hostname, port, username, password, adapter } = o);
-    // object overrides url
-    hostname ||= url.hostname;
-    port ||= url.port;
-    username ||= decodeIfValid(url.username);
-    password ||= decodeIfValid(url.password);
-    adapter ||= url.protocol;
-
-    if (adapter[adapter.length - 1] === ":") {
-      adapter = adapter.slice(0, -1);
-    }
-
-    const queryObject = url.searchParams.toJSON();
-    for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
-        sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
-        path = queryObject[key];
-      } else {
-        // this is valid for postgres for other databases it might not be valid
-        // check adapter then implement for other databases
-        // encode string with \0 as finalizer
-        // must be key\0value\0
-        query += `${key}\0${queryObject[key]}\0`;
-      }
-    }
-    query = query.trim();
-  }
-  hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
-
-  port ||= Number(o.port || env.PGPORT || 5432);
-
-  path ||= o.path || "";
-  // add /.s.PGSQL.${port} if it doesn't exist
-  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
-    path = `${path}/.s.PGSQL.${port}`;
-  }
-
-  username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
-  password ||= o.password || o.pass || env.PGPASSWORD || "";
-  const connection = o.connection;
-  if (connection && $isObject(connection)) {
-    for (const key in connection) {
-      if (connection[key] !== undefined) {
-        query += `${key}\0${connection[key]}\0`;
-      }
-    }
-  }
-  tls ||= o.tls || o.ssl;
-  adapter ||= o.adapter || "postgres";
-  max = o.max;
-
-  idleTimeout ??= o.idleTimeout;
-  idleTimeout ??= o.idle_timeout;
-  connectionTimeout ??= o.connectionTimeout;
-  connectionTimeout ??= o.connection_timeout;
-  connectionTimeout ??= o.connectTimeout;
-  connectionTimeout ??= o.connect_timeout;
-  maxLifetime ??= o.maxLifetime;
-  maxLifetime ??= o.max_lifetime;
-  bigint ??= o.bigint;
-  // we need to explicitly set prepare to false if it is false
-  if (o.prepare === false) {
-    prepare = false;
-  }
-
-  onconnect ??= o.onconnect;
-  onclose ??= o.onclose;
-  if (onconnect !== undefined) {
-    if (!$isCallable(onconnect)) {
-      throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
-    }
-  }
-
-  if (onclose !== undefined) {
-    if (!$isCallable(onclose)) {
-      throw $ERR_INVALID_ARG_TYPE("onclose", "function", onclose);
-    }
-  }
-
-  if (idleTimeout != null) {
-    idleTimeout = Number(idleTimeout);
-    if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.idle_timeout",
-        idleTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    idleTimeout *= 1000;
-  }
-
-  if (connectionTimeout != null) {
-    connectionTimeout = Number(connectionTimeout);
-    if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.connection_timeout",
-        connectionTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    connectionTimeout *= 1000;
-  }
-
-  if (maxLifetime != null) {
-    maxLifetime = Number(maxLifetime);
-    if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.max_lifetime",
-        maxLifetime,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    maxLifetime *= 1000;
-  }
-
-  if (max != null) {
-    max = Number(max);
-    if (max > 2 ** 31 || max < 1 || max !== max) {
-      throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
-    }
-  }
-
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
-  }
-  port = Number(port);
-
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw $ERR_INVALID_ARG_VALUE("port", port, "must be a non-negative integer between 1 and 65535");
-  }
-
-  switch (adapter) {
-    case "postgres":
-    case "postgresql":
-      adapter = "postgres";
-      break;
-    default:
-      throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
-  }
-  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter, prepare, bigint };
-  if (idleTimeout != null) {
-    ret.idleTimeout = idleTimeout;
-  }
-  if (connectionTimeout != null) {
-    ret.connectionTimeout = connectionTimeout;
-  }
-  if (maxLifetime != null) {
-    ret.maxLifetime = maxLifetime;
-  }
-  if (onconnect !== undefined) {
-    ret.onconnect = onconnect;
-  }
-  if (onclose !== undefined) {
-    ret.onclose = onclose;
-  }
-  ret.max = max || 10;
-
-  return ret;
-}
-
 enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
@@ -1219,14 +725,22 @@ function assertValidTransactionName(name: string) {
   }
 }
 
+interface TransactionState {
+  connectionState: ReservedConnectionState;
+  reject: (err: Error) => void;
+  storedError?: Error | null | undefined;
+  queries: Set<Query<any, any>>;
+}
+
 function SQL(o, e = {}) {
   if (typeof o === "string" || o instanceof URL) {
     o = { ...e, url: o };
   }
-  var connectionInfo = loadOptions(o);
-  var pool = new ConnectionPool(connectionInfo);
 
-  function onQueryDisconnected(err) {
+  const connectionInfo = parseOptions(o);
+  const pool = new ConnectionPool(connectionInfo);
+
+  function onQueryDisconnected(this: Query<any, any>, err: Error) {
     // connection closed mid query this will not be called if the query finishes first
     const query = this;
     if (err) {
@@ -1238,7 +752,7 @@ function SQL(o, e = {}) {
     }
   }
 
-  function onQueryConnected(handle, err, pooledConnection) {
+  function onQueryConnected(this: Query<any, any>, handle, err, pooledConnection) {
     const query = this;
     if (err) {
       // fail to aquire a connection from the pool
@@ -1266,7 +780,10 @@ function SQL(o, e = {}) {
 
     pool.connect(onQueryConnected.bind(query, handle));
   }
-  function queryFromPool(strings, values) {
+  function queryFromPool(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    values: any[],
+  ) {
     try {
       return new Query(
         strings,
@@ -1274,25 +791,29 @@ function SQL(o, e = {}) {
         connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
         connectionInfo.max,
         queryFromPoolHandler,
+        doCreateQuery,
       );
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  function unsafeQuery(strings, values) {
+  function unsafeQuery(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    values: any[],
+  ) {
     try {
       let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler);
+      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler, doCreateQuery);
     } catch (err) {
       return Promise.reject(err);
     }
   }
 
-  function onTransactionQueryDisconnected(query) {
+  function onTransactionQueryDisconnected(query: Query<any, any>) {
     const transactionQueries = this;
     transactionQueries.delete(query);
   }
@@ -1311,7 +832,13 @@ function SQL(o, e = {}) {
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
     handle.run(pooledConnection.connection, query);
   }
-  function queryFromTransaction(strings, values, pooledConnection, transactionQueries) {
+
+  function queryFromTransaction(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    values: any[],
+    pooledConnection: PooledConnection,
+    transactionQueries: Set<Query<any, any>>,
+  ) {
     try {
       const query = new Query(
         strings,
@@ -1321,14 +848,22 @@ function SQL(o, e = {}) {
           : SQLQueryFlags.allowUnsafeTransaction,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        doCreateQuery,
       );
+
       transactionQueries.add(query);
       return query;
     } catch (err) {
       return Promise.reject(err);
     }
   }
-  function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
+
+  function unsafeQueryFromTransaction(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    values: any[],
+    pooledConnection: PooledConnection,
+    transactionQueries: Set<Query<any, any>>,
+  ) {
     try {
       let flags = connectionInfo.bigint
         ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
@@ -1343,6 +878,7 @@ function SQL(o, e = {}) {
         flags,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        doCreateQuery,
       );
       transactionQueries.add(query);
       return query;
@@ -1351,36 +887,42 @@ function SQL(o, e = {}) {
     }
   }
 
-  function onTransactionDisconnected(err) {
+  function onTransactionDisconnected(this: TransactionState, err: Error) {
     const reject = this.reject;
     this.connectionState |= ReservedConnectionState.closed;
 
     for (const query of this.queries) {
-      (query as Query).reject(err);
+      query.reject(err);
     }
+
     if (err) {
       return reject(err);
     }
   }
 
-  function onReserveConnected(err, pooledConnection) {
+  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection: PooledConnection) {
     const { resolve, reject } = this;
+
     if (err) {
       return reject(err);
     }
 
     let reservedTransaction = new Set();
 
-    const state = {
+    const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
       storedError: null,
       queries: new Set(),
     };
+
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function reserved_sql(strings, ...values) {
+    function reserved_sql(
+      strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+      ...values: any[]
+    ) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -1531,7 +1073,7 @@ function SQL(o, e = {}) {
           const timer = setTimeout(() => {
             state.connectionState |= ReservedConnectionState.closed;
             for (const query of reserveQueries) {
-              (query as Query).cancel();
+              (query as Query<any, any>).cancel();
             }
             state.connectionState |= ReservedConnectionState.closed;
             pooledConnection.close();
@@ -1548,7 +1090,7 @@ function SQL(o, e = {}) {
       }
       state.connectionState |= ReservedConnectionState.closed;
       for (const query of reserveQueries) {
-        (query as Query).cancel();
+        (query as Query<any, any>).cancel();
       }
 
       pooledConnection.close();
@@ -1614,7 +1156,8 @@ function SQL(o, e = {}) {
     if (err) {
       return reject(err);
     }
-    const state = {
+
+    const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
       reject,
       queries: new Set(),
@@ -1709,7 +1252,10 @@ function SQL(o, e = {}) {
       }
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
-    function transaction_sql(strings, ...values) {
+    function transaction_sql(
+      strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+      ...values: any[]
+    ) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -1825,7 +1371,7 @@ function SQL(o, e = {}) {
           const pending_savepoints = Array.from(transactionSavepoints);
           const timer = setTimeout(async () => {
             for (const query of transactionQueries) {
-              (query as Query).cancel();
+              (query as Query<any, any>).cancel();
             }
             if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
               await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
@@ -1843,7 +1389,7 @@ function SQL(o, e = {}) {
         }
       }
       for (const query of transactionQueries) {
-        (query as Query).cancel();
+        (query as Query<any, any>).cancel();
       }
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
@@ -1945,7 +1491,10 @@ function SQL(o, e = {}) {
       }
     }
   }
-  function sql(strings, ...values) {
+  function sql(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    ...values: any[]
+  ) {
     if ($isArray(strings)) {
       // detect if is tagged template
       if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -2109,15 +1658,17 @@ function ensureDefaultSQL() {
   }
 }
 
-var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, ...values) {
+var defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
+
   if (!lazyDefaultSQL) {
     resetDefaultSQL(SQL(undefined));
   }
+
   return lazyDefaultSQL(strings, ...values);
-} as typeof BunTypes.SQL;
+} as Bun.SQL;
 
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
@@ -2154,7 +1705,7 @@ defaultSQLObject.file = (filename: string, ...args) => {
 defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
   ensureDefaultSQL();
   return lazyDefaultSQL.begin(...args);
-} as (typeof BunTypes.SQL)["begin"];
+} as Bun.SQL["begin"];
 
 defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
   ensureDefaultSQL();
@@ -2186,4 +1737,7 @@ export default {
   SQL,
   Query,
   postgres: SQL,
+
+  connectionClosedError,
+  notTaggedCallError,
 };

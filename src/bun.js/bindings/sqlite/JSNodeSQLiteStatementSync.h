@@ -15,7 +15,7 @@ class JSNodeSQLiteDatabaseSync;
 class JSNodeSQLiteStatementSync final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSNodeSQLiteStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSNodeSQLiteDatabaseSync* database, const String& sql);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);

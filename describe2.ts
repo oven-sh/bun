@@ -17,7 +17,7 @@ describe2("abc", () => {
   console.log("HIT 6");
 });
 console.log("HIT 9");
-await new Promise(resolve => resolve());
+await Promise.resolve(undefined);
 console.log("HIT 10");
 describe2("abc", async () => {
   console.log("HIT 11");

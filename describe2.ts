@@ -1,4 +1,4 @@
-import { describe2, executeTestsNow2 } from "bun:test";
+import { describe2 } from "bun:test";
 
 console.log("HIT 1");
 describe2("abc", () => {
@@ -46,6 +46,9 @@ console.log("HIT 13");
 
 await promise;
 console.log("ready to run tests now");
+
+await describe2.forDebuggingExecuteTestsNow();
+describe2.forDebuggingDeinitNow();
 
 /*
 this one needs async context to handle properly:

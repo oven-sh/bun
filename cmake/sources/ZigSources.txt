@@ -707,6 +707,9 @@ src/Progress.zig
 src/ptr.zig
 src/ptr/Cow.zig
 src/ptr/CowSlice.zig
+src/ptr/owned.zig
+src/ptr/owned/maybe.zig
+src/ptr/owned/meta.zig
 src/ptr/ref_count.zig
 src/ptr/tagged_pointer.zig
 src/ptr/weak_ptr.zig

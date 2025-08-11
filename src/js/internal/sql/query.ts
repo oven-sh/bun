@@ -1,5 +1,5 @@
 import type { SQLHelper } from "./shared.ts";
-const { escapeIdentifier, notTaggedCallError, connectionClosedError } = require("./postgres.ts");
+const { escapeIdentifier, notTaggedCallError } = require("internal/sql/utils");
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");

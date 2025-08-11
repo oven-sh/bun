@@ -1,16 +1,12 @@
+import type { Query } from "./query";
 import type { SQLHelper } from "./shared";
 
 const { SQLHelper } = require("./shared.ts");
-const { hideFromStack } = require("../shared.ts");
-
-function connectionClosedError() {
-  return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
-}
-function notTaggedCallError() {
-  return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
-}
-hideFromStack(connectionClosedError);
-hideFromStack(notTaggedCallError);
+const {
+  Query,
+  symbols: { _strings, _values },
+} = require("./query.ts");
+const { escapeIdentifier } = require("./utils.ts");
 
 enum SQLCommand {
   insert = 0,
@@ -35,10 +31,6 @@ function commandToString(command: SQLCommand): string {
     default:
       return "";
   }
-}
-
-function escapeIdentifier(str: string) {
-  return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
 }
 
 function normalizeQuery(
@@ -323,7 +315,6 @@ function detectCommand(query: string): SQLCommand {
 
 export default {
   normalizeQuery,
-  escapeIdentifier,
   SQLCommand,
   commandToString,
   detectCommand,

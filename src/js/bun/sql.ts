@@ -8,25 +8,16 @@ const {
   Query,
   SQLQueryFlags,
   symbols: { _handle, _flags, _results },
-} = require("../internal/sql/query.ts");
-const { normalizeQuery } = require("internal/sql/postgres.ts");
-const { SQLHelper, parseOptions, SSLMode } = require("internal/sql/shared.ts");
+} = require("internal/sql/query");
+const { normalizeQuery } = require("internal/sql/postgres");
+const { SQLHelper, parseOptions, SSLMode } = require("internal/sql/shared");
+const { connectionClosedError } = require("internal/sql/utils");
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const PublicArray = globalThis.Array;
 
-const { hideFromStack } = require("../internal/shared.ts");
 const defineProperties = Object.defineProperties;
-
-function connectionClosedError() {
-  return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
-}
-function notTaggedCallError() {
-  return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
-}
-hideFromStack(connectionClosedError);
-hideFromStack(notTaggedCallError);
 
 class SQLResultArray extends PublicArray {
   public count!: number | null;
@@ -1788,7 +1779,4 @@ export default {
   SQL,
   Query,
   postgres: SQL,
-
-  connectionClosedError,
-  notTaggedCallError,
 };

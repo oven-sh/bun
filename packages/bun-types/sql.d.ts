@@ -431,7 +431,7 @@ declare module "bun" {
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      * ```
      */
-    constructor(connectionString: string | URL, options: Omit<SQL.Options, "url">);
+    constructor(connectionString: string | URL, options: Bun.DistributedOmit<SQL.Options, "url">);
 
     /**
      * Creates a new SQL client instance with options

@@ -420,6 +420,9 @@ pub const Jest = struct {
             describe,
         );
 
+        const describe2 = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe2"), 2, Describe2.js_fns.describe, false);
+        module.put(globalObject, ZigString.static("describe2"), describe2);
+
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
             const function = if (outside_of_test)
                 jsc.host_fn.NewFunction(globalObject, null, 1, globalHook(name), false)

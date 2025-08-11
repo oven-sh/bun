@@ -1,0 +1,9 @@
+{
+  "name": "test-throw-exception-segfault",
+  "version": "1.0.0",
+  "main": "test.js",
+  "gypfile": true,
+  "dependencies": {
+    "node-addon-api": "^8.5.0"
+  }
+}

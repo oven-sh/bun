@@ -21,6 +21,7 @@
 #include "JSNodeSQLiteStatementSyncPrototype.h"
 #include "JSNodeSQLiteStatementSync.h"
 #include "JSNodeSQLiteDatabaseSync.h"
+#include "JSBuffer.h"
 #include "ZigGlobalObject.h"
 #include "BunBuiltinNames.h"
 #include "ErrorCode.h"

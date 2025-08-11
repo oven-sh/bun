@@ -1,4 +1,4 @@
-import { describe2 } from "bun:test";
+import { describe2, executeTestsNow2 } from "bun:test";
 
 console.log("HIT 1");
 describe2("abc", () => {
@@ -18,6 +18,9 @@ describe2("abc", () => {
 });
 console.log("HIT 9");
 await Promise.resolve(undefined);
+
+const { promise, resolve } = Promise.withResolvers();
+
 console.log("HIT 10");
 describe2("abc", async () => {
   console.log("HIT 11");
@@ -36,9 +39,13 @@ describe2("def", async () => {
   });
   describe2("def", async () => {
     console.log("HIT 18");
+    resolve();
   });
 });
 console.log("HIT 13");
+
+await promise;
+console.log("ready to run tests now");
 
 /*
 this one needs async context to handle properly:

@@ -46,7 +46,17 @@ pub const NapiEnv = opaque {
         return napi_internal_get_version(self);
     }
 
+    pub fn getAndClearPendingException(self: *NapiEnv) ?JSValue {
+        var exception: JSValue = undefined;
+        if (NapiEnv__getAndClearPendingException(self, &exception)) {
+            return exception;
+        }
+
+        return null;
+    }
+
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
+    extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
     extern fn napi_internal_get_version(*NapiEnv) u32;
 };
 
@@ -1097,7 +1107,9 @@ pub const napi_async_work = struct {
             this.data,
         );
 
-        if (global.hasException()) {
+        if (env.getAndClearPendingException()) |exception| {
+            _ = vm.uncaughtException(global, exception, false);
+        } else if (global.hasException()) {
             global.reportActiveExceptionAsUnhandled(error.JSError);
         }
     }
@@ -1348,11 +1360,16 @@ pub const Finalizer = struct {
         const env = this.env.?;
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
+
         if (this.fun) |fun| {
             fun(env, this.data, this.hint);
         }
+
         napi_internal_remove_finalizer(env, this.fun, this.hint, this.data);
-        if (env.toJS().tryTakeException()) |exception| {
+
+        if (env.getAndClearPendingException()) |exception| {
+            _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
+        } else if (env.toJS().tryTakeException()) |exception| {
             _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
         }
     }

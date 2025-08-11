@@ -784,12 +784,11 @@ interface TransactionState {
   queries: Set<Query<any, any>>;
 }
 
-function SQL(o, e = {}) {
-  if (typeof o === "string" || o instanceof URL) {
-    o = { ...e, url: o };
-  }
-
-  const connectionInfo = parseOptions(o);
+const SQL: typeof Bun.SQL = function SQL(
+  stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
+  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
+): Bun.SQL {
+  const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const pool = new ConnectionPool(connectionInfo);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
@@ -1693,7 +1692,7 @@ function SQL(o, e = {}) {
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
   return sql;
-}
+};
 
 var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
 

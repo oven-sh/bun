@@ -281,7 +281,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleConnectError(this: *This, errno: c_int) void {
             const handlers = this.getHandlers();
-            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
+            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.get() });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -401,7 +401,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.get() });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();

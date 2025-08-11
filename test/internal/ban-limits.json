@@ -7,7 +7,7 @@
   ".stdDir()": 40,
   ".stdFile()": 18,
   "// autofix": 168,
-  ": [^=]+= undefined,$": 261,
+  ": [^=]+= undefined,$": 260,
   "== alloc.ptr": 0,
   "== allocator.ptr": 0,
   "@import(\"bun\").": 0,

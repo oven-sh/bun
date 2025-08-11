@@ -88,8 +88,21 @@ pub fn CreateBinaryExpressionVisitor(
                     .bin_comma => {
                         // "(1, 2)" => "2"
                         // "(sideEffects(), 2)" => "(sideEffects(), 2)"
+                        // "(0, this.fn)" => "this.fn"
+                        // "(0, this.fn)()" => "(0, this.fn)()"
                         if (p.options.features.minify_syntax) {
-                            e_.left = SideEffects.simplifyUnusedExpr(p, e_.left) orelse return e_.right;
+                            if (SideEffects.simplifyUnusedExpr(p, e_.left)) |simplified_left| {
+                                e_.left = simplified_left;
+                            } else {
+                                // The left operand has no side effects, but we need to preserve
+                                // the comma operator semantics when used as a call target
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    // Keep the comma expression to strip "this" binding
+                                    e_.left = Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc };
+                                } else {
+                                    return e_.right;
+                                }
+                            }
                         }
                     },
                     .bin_loose_eq => {

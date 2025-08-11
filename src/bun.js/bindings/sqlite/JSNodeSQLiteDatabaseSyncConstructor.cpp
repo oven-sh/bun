@@ -3,9 +3,22 @@
 #include "JSNodeSQLiteDatabaseSyncConstructor.h"
 #include "JSNodeSQLiteDatabaseSync.h"
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <wtf/text/WTFString.h>
+
+#include "sqlite3_local.h"
+
+#if LAZY_LOAD_SQLITE
+#include "lazy_sqlite3.h"
+#else
+static inline int lazyLoadSQLite()
+{
+    return 0;
+}
+#endif
 
 namespace Bun {
 
@@ -49,11 +62,42 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (lazyLoadSQLite() != 0) {
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to load SQLite"_s));
+        return {};
+    }
+
+    // Get the database path from the first argument
+    JSValue pathValue = callFrame->argument(0);
+    if (pathValue.isUndefined()) {
+        throwVMError(globalObject, scope, createError(globalObject, "Database path is required"_s));
+        return {};
+    }
+
+    String databasePath = pathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto* structure = zigGlobalObject->m_JSNodeSQLiteDatabaseSyncClassStructure.get(zigGlobalObject);
     
     JSNodeSQLiteDatabaseSync* thisObject = JSNodeSQLiteDatabaseSync::create(vm, structure);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Open the SQLite database
+    sqlite3* db = nullptr;
+    CString pathUTF8 = databasePath.utf8();
+    int result = sqlite3_open(pathUTF8.data(), &db);
+    
+    if (result != SQLITE_OK) {
+        const char* errorMsg = sqlite3_errmsg(db);
+        if (db) {
+            sqlite3_close(db);
+        }
+        throwVMError(globalObject, scope, createError(globalObject, String::fromUTF8(errorMsg)));
+        return {};
+    }
+
+    thisObject->setDatabase(db);
 
     return JSValue::encode(thisObject);
 }

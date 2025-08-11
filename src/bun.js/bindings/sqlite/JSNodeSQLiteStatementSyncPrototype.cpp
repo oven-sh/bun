@@ -114,6 +114,35 @@ static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* stmt, JSV
     
     if (parameters.isUndefined())
         return true;
+    
+    // Handle single parameter (not in array or object)
+    if (!parameters.isObject()) {
+        if (parameters.isString()) {
+            String str = parameters.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            CString utf8 = str.utf8();
+            int bindResult = sqlite3_bind_text(stmt, 1, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+            return bindResult == SQLITE_OK;
+        } else if (parameters.isNumber()) {
+            double num = parameters.asNumber();
+            if (num == trunc(num) && num >= static_cast<double>(INT64_MIN) && num <= static_cast<double>(INT64_MAX)) {
+                sqlite3_bind_int64(stmt, 1, static_cast<int64_t>(num));
+            } else {
+                sqlite3_bind_double(stmt, 1, num);
+            }
+            return true;
+        } else if (parameters.isNull()) {
+            sqlite3_bind_null(stmt, 1);
+            return true;
+        } else {
+            // Try to convert to string
+            String str = parameters.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            CString utf8 = str.utf8();
+            int bindResult = sqlite3_bind_text(stmt, 1, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+            return bindResult == SQLITE_OK;
+        }
+    }
         
     if (parameters.isObject()) {
         JSObject* paramsObject = asObject(parameters);
@@ -131,7 +160,10 @@ static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* stmt, JSV
                     String str = param.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, false);
                     CString utf8 = str.utf8();
-                    sqlite3_bind_text(stmt, paramIndex, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+                    int bindResult = sqlite3_bind_text(stmt, paramIndex, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+                    if (bindResult != SQLITE_OK) {
+                        return false;
+                    }
                 } else if (param.isNumber()) {
                     double num = param.asNumber();
                     if (num == trunc(num) && num >= static_cast<double>(INT64_MIN) && num <= static_cast<double>(INT64_MAX)) {
@@ -230,6 +262,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncRun, (JSGlobalObject*
     JSValue parameters = callFrame->argument(0);
     if (!bindParameters(globalObject, stmt, parameters)) {
         RETURN_IF_EXCEPTION(scope, {});
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
+        return {};
     }
 
     int result = sqlite3_step(stmt);
@@ -277,6 +311,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncGet, (JSGlobalObject*
     JSValue parameters = callFrame->argument(0);
     if (!bindParameters(globalObject, stmt, parameters)) {
         RETURN_IF_EXCEPTION(scope, {});
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
+        return {};
     }
 
     int result = sqlite3_step(stmt);
@@ -320,6 +356,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncAll, (JSGlobalObject*
     JSValue parameters = callFrame->argument(0);
     if (!bindParameters(globalObject, stmt, parameters)) {
         RETURN_IF_EXCEPTION(scope, {});
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
+        return {};
     }
 
     JSArray* results = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), 0);

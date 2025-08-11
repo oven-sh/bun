@@ -25,6 +25,7 @@ public:
     static void destroy(JSC::JSCell* cell);
 
     sqlite3* database() const { return m_db; }
+    void setDatabase(sqlite3* db) { m_db = db; }
     void closeDatabase();
 
 private:

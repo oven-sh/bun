@@ -191,6 +191,9 @@ pub const PatchTask = struct {
                     const task_id = Task.Id.forNPMPackage(manager.lockfile.str(&pkg.name), pkg.resolution.value.npm.version);
                     bun.debugAssert(!manager.network_dedupe_map.contains(task_id));
 
+                    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+                    if (!manager.options.do.prefetch_resolved_tarballs) return;
+
                     const network_task = try manager.generateNetworkTaskForTarball(
                         // TODO: not just npm package
                         task_id,

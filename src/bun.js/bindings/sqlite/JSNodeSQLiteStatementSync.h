@@ -5,6 +5,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/text/WTFString.h>
 #include "sqlite3_local.h"
 
 namespace Bun {
@@ -16,7 +17,7 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
 
-    static JSNodeSQLiteStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSNodeSQLiteDatabaseSync* database);
+    static JSNodeSQLiteStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSNodeSQLiteDatabaseSync* database, const String& sql);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     DECLARE_EXPORT_INFO;

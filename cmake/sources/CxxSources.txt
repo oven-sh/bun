@@ -195,6 +195,8 @@ src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSync.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSyncConstructor.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteDatabaseSyncPrototype.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSync.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSyncConstructor.cpp
+src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSyncPrototype.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 src/bun.js/bindings/Strong.cpp
 src/bun.js/bindings/Uint8Array.cpp

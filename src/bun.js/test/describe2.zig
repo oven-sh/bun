@@ -8,7 +8,7 @@ pub const js_fns = struct {
     ) bun.JSError!jsc.JSValue {
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO vm.is_in_preload or runner == null");
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
         }
         const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2;
 
@@ -81,9 +81,12 @@ const Scheduling = struct {
 
     root_scope: *DescribeScope,
     active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope/_previous_scope
-    _previous_scope: ?*DescribeScope,
+    _previous_scope: ?*DescribeScope, // TODO: this only exists for 'result.then()'. we should change it so we pass {BunTest.ref(), active_scope} to the user data parameter of .then().
 
     pub fn init(gpa: std.mem.Allocator) Scheduling {
+        group.begin(@src());
+        defer group.end();
+
         const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null));
 
         return .{
@@ -99,16 +102,26 @@ const Scheduling = struct {
     }
 
     fn drainedPromise(_: *Scheduling, globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
         return jsc.JSPromise.resolvedPromiseValue(globalThis, .js_undefined); // TODO: return a promise that resolves when the describe queue is drained
     }
 
     fn bunTest(this: *Scheduling) *BunTest {
+        group.begin(@src());
+        defer group.end();
+
         return @fieldParentPtr("scheduling", this);
     }
 
     pub fn executeOrEnqueueDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) !jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
         bun.assert(!this.locked);
         if (this.should_enqueue_describes) {
+            group.log("executeOrEnqueueDescribeCallback -> enqueue", .{});
             try this.describe_callback_queue.append(.{
                 .active_scope = this.active_scope,
                 .name = .create(name, globalThis),
@@ -116,11 +129,15 @@ const Scheduling = struct {
             });
             return this.drainedPromise(globalThis);
         } else {
+            group.log("executeOrEnqueueDescribeCallback -> call", .{});
             return this.callDescribeCallback(globalThis, name, callback, this.active_scope);
         }
     }
 
     pub fn callDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
         const buntest = this.bunTest();
 
         const previous_scope = active_scope;
@@ -129,36 +146,53 @@ const Scheduling = struct {
         try previous_scope.entries.append(.{ .describe = new_scope });
 
         this.active_scope = new_scope;
+        group.log("callDescribeCallback -> call", .{});
         const result = try callback.call(globalThis, .js_undefined, &.{});
 
         if (result.asPromise()) |_| {
+            group.log("callDescribeCallback -> got promise", .{});
             this.should_enqueue_describes = true;
             bun.assert(this._previous_scope == null);
             this._previous_scope = previous_scope;
-            result.then(globalThis, buntest.ref(), describeCallbackThen, describeCallbackThen);
+            result.then(globalThis, buntest.ref(), describeCallbackThen, describeCallbackThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
             return this.drainedPromise(globalThis);
         } else {
+            group.log("callDescribeCallback -> got value", .{});
             try this.describeCallbackCompleted(globalThis, previous_scope);
             return .js_undefined;
         }
     }
-    pub fn describeCallbackThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var buntest: *BunTest = callframe.this().asPromisePtr(BunTest);
+    export const Bun__TestScope__Describe2__describeCallbackThen = jsc.toJSHostFn(describeCallbackThen);
+    fn describeCallbackThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
+        var buntest: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
         defer buntest.unref();
 
         const this = &buntest.scheduling;
 
-        try this.describeCallbackCompleted(globalThis, this._previous_scope.?);
+        bun.assert(this._previous_scope != null);
+        const prev_scope = this._previous_scope.?;
+        this._previous_scope = null;
+        try this.describeCallbackCompleted(globalThis, prev_scope);
         return .js_undefined;
     }
     pub fn describeCallbackCompleted(this: *Scheduling, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
+        group.begin(@src());
+        defer group.end();
+
         this.active_scope = previous_scope;
 
         if (this.describe_callback_queue.items.len > 0) {
+            group.log("describeCallbackCompleted -> ", .{});
             bun.assert(this.should_enqueue_describes);
             var first = this.describe_callback_queue.orderedRemove(0);
             defer first.deinit();
             _ = try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get(), previous_scope);
+        } else {
+            group.log("describeCallbackCompleted", .{});
+            this.should_enqueue_describes = false;
         }
     }
 };
@@ -229,6 +263,51 @@ const TestExecution = struct {
 // - sometimes 'test()' will be called during execution stage rather than scheduling stage. in this case, we should execute it before the next test is called.
 //
 // jest doesn't support async in describe. we will support this, so we can pick whatever order we want.
+
+pub const group = struct {
+    fn printIndent() void {
+        std.io.getStdOut().writer().print("\x1b[90m", .{}) catch {};
+        for (0..indent) |_| {
+            std.io.getStdOut().writer().print("│ ", .{}) catch {};
+        }
+        std.io.getStdOut().writer().print("\x1b[m", .{}) catch {};
+    }
+    var indent: usize = 0;
+    var last_was_start = false;
+    var wants_quiet: ?bool = null;
+    fn getWantsQuiet() bool {
+        if (wants_quiet) |v| return v;
+        if (bun.getenvZ("WANTS_QUIET")) |val| {
+            if (!std.mem.eql(u8, val, "0")) {
+                wants_quiet = true;
+                return wants_quiet.?;
+            }
+        }
+        wants_quiet = false;
+        return wants_quiet.?;
+    }
+    pub fn begin(pos: std.builtin.SourceLocation) void {
+        if (getWantsQuiet()) return;
+        printIndent();
+        std.io.getStdOut().writer().print("\x1b[32m++ \x1b[36m{s}\x1b[37m:\x1b[93m{d}\x1b[37m:\x1b[33m{d}\x1b[37m: \x1b[35m{s}\x1b[m\n", .{ pos.file, pos.line, pos.column, pos.fn_name }) catch {};
+        indent += 1;
+        last_was_start = true;
+    }
+    pub fn end() void {
+        if (getWantsQuiet()) return;
+        indent -= 1;
+        defer last_was_start = false;
+        if (last_was_start) return; //std.io.getStdOut().writer().print("\x1b[A", .{}) catch {};
+        printIndent();
+        std.io.getStdOut().writer().print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
+    }
+    pub fn log(comptime fmtt: []const u8, args: anytype) void {
+        if (getWantsQuiet()) return;
+        printIndent();
+        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
+        last_was_start = false;
+    }
+};
 
 const bun = @import("bun");
 const jsc = bun.jsc;

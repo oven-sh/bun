@@ -372,6 +372,7 @@ public:
         jsFunctionOnLoadObjectResultReject,
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
+        Bun__TestScope__Describe2__describeCallbackThen,
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,

@@ -594,9 +594,11 @@ const branch = "--upload-pack=echo pwned";
 await $`git ls-remote origin ${branch}`;
 ```
 
-**Recommendation**: As is best practice in every language, always sanitize
+{% callout %}
+**Recommendation** — As is best practice in every language, always sanitize
 user-provided input before passing it as an argument to an external command.
 The responsibility for validating arguments rests with your application code.
+{% /callout %}
 
 ## Credits
 

@@ -1,6 +1,6 @@
 import type * as BunTypes from "bun";
-
-import type * as QueryTypes from "../internal/sql/query.ts";
+import type * as QueryTypes from "internal/sql/query.ts";
+import type { SSLMode } from "internal/sql/shared.ts";
 
 type Query<T, Helper extends QueryTypes.BaseQueryHandle> = QueryTypes.Query<T, Helper>;
 
@@ -9,8 +9,8 @@ const {
   SQLQueryFlags,
   symbols: { _handle, _flags, _results },
 } = require("../internal/sql/query.ts");
-const { normalizeQuery } = require("../internal/sql/postgres.ts");
-const { SQLHelper, parseOptions, SSLMode } = require("../internal/sql/shared.ts");
+const { normalizeQuery } = require("internal/sql/postgres.ts");
+const { SQLHelper, parseOptions, SSLMode } = require("internal/sql/shared.ts");
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -49,9 +49,50 @@ class SQLResultArray extends PublicArray {
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
-const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
+const {
+  createConnection: createPostgresConnection,
+  createQuery: createPostgresQuery,
+  init: initPostgres,
+} = $zig("postgres.zig", "createBinding") as {
+  init: (
+    onResolveQuery: (
+      query: Query<any, any>,
+      result: SQLResultArray,
+      commandTag: string,
+      count: number,
+      queries: any,
+      is_last: boolean,
+    ) => void,
+    onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+  ) => void;
+  createConnection: (
+    hostname: string | undefined,
+    port: number,
+    username: string,
+    password: string,
+    databae: string,
+    sslmode: SSLMode,
+    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    query: string,
+    path: string,
+    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    idleTimeout: number,
+    connectionTimeout: number,
+    maxLifetime: number,
+    useUnnamedPreparedStatements: boolean,
+  ) => $ZigGeneratedClasses.PostgresSQLConnection;
+  createQuery: (
+    sql: string,
+    values: unknown[],
+    pendingValue: SQLResultArray,
+    columns: string[] | undefined,
+    bigint: boolean,
+    simple: boolean,
+  ) => $ZigGeneratedClasses.PostgresSQLQuery;
+};
 
-init(
+initPostgres(
   function onResolvePostgresQuery(query: Query<any, any>, result: SQLResultArray, commandTag, count, queries, is_last) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
@@ -222,11 +263,11 @@ class PooledConnection {
     this.#startConnection();
   }
   async #startConnection() {
-    this.connection = (await createConnection(
+    this.connection = await createConnection(
       this.connectionInfo,
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
-    )) as $ZigGeneratedClasses.PostgresSQLConnection;
+    );
   }
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
@@ -668,6 +709,7 @@ async function createConnection(options, onConnected, onClose) {
   } = options;
 
   let password = options.password;
+
   try {
     if (typeof password === "function") {
       password = password();
@@ -675,7 +717,8 @@ async function createConnection(options, onConnected, onClose) {
         password = await password;
       }
     }
-    return _createConnection(
+
+    return createPostgresConnection(
       hostname,
       Number(port),
       username || "",
@@ -695,9 +738,10 @@ async function createConnection(options, onConnected, onClose) {
       connectionTimeout,
       maxLifetime,
       !prepare,
-    ) as $ZigGeneratedClasses.PostgresSQLConnection;
+    );
   } catch (e) {
     onClose(e);
+    return null;
   }
 }
 
@@ -718,7 +762,8 @@ function doCreateQuery(
       }
     }
   }
-  return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
+
+  return createPostgresQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
 enum ReservedConnectionState {

@@ -1382,6 +1382,11 @@ fn getOrPutResolvedPackageWithFindResult(
         .done => .{ .package = package, .is_first_time = true },
         // Do we need to download the tarball?
         .extract => extract: {
+            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+            if (!this.options.do.prefetch_resolved_tarballs) {
+                break :extract .{ .package = package, .is_first_time = true };
+            }
+
             const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
             bun.debugAssert(!this.network_dedupe_map.contains(task_id));
 

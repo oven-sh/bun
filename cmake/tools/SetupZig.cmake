@@ -41,9 +41,10 @@ endif()
 
 # Since Bun 1.1, Windows has been built using ReleaseSafe.
 # This is because it caught more crashes, but we can reconsider this in the future
-if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
-endif()
+# Switched back to ReleaseFast for Windows builds for performance
+# if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
+#   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+# endif()
 
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|ReleaseSmall|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})
 

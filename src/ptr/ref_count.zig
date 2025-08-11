@@ -71,7 +71,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
         debug: if (enable_debug) DebugData(false) else void = if (enable_debug) .empty,
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
-        pub const scope = bun.Output.Scoped(debug_name, true);
+        pub const scope = bun.Output.Scoped(debug_name, .hidden);
         const debug_stack_trace = false;
 
         const Destructor = if (options.destructor_ctx) |ctx| fn (*T, ctx) void else fn (*T) void;
@@ -208,7 +208,7 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         debug: if (enable_debug) DebugData(true) else void = if (enable_debug) .empty,
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
-        pub const scope = bun.Output.Scoped(debug_name, true);
+        pub const scope = bun.Output.Scoped(debug_name, .hidden);
 
         pub fn init() @This() {
             return .initExactRefs(1);

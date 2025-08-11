@@ -61,7 +61,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
-    const log = Output.scoped(.FetchTasklet, false);
+    const log = Output.scoped(.FetchTasklet, .visible);
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},

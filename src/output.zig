@@ -741,7 +741,19 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
-pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
+pub const Visibility = enum {
+    /// Hide logs for this scope by default.
+    hidden,
+    /// Show logs for this scope by default.
+    visible,
+
+    // Show logs for this scope by default if and only if `condition` is true.
+    pub fn visibleIf(condition: bool) Visibility {
+        return if (condition) .visible else .hidden;
+    }
+};
+
+pub fn Scoped(comptime tag: anytype, comptime visibility: Visibility) type {
     const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
@@ -754,10 +766,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         break :brk ascii_slice;
     };
 
-    return ScopedLogger(&tagname, disabled);
+    return ScopedLogger(&tagname, visibility);
 }
 
-fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) type {
     if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
@@ -773,7 +785,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = std.atomic.Value(bool).init(disabled);
+        var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
         var lock = bun.Mutex{};
 
@@ -865,11 +877,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
     };
 }
 
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(
-        tag,
-        disabled,
-    ).log;
+pub fn scoped(comptime tag: anytype, comptime visibility: Visibility) LogFunction {
+    return Scoped(tag, visibility).log;
 }
 
 pub fn up(n: usize) void {

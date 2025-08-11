@@ -507,7 +507,7 @@ comptime {
     @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 pub const js = jsc.Codegen.JSPostgresSQLQuery;
 pub const fromJS = js.fromJS;

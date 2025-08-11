@@ -30,7 +30,7 @@ pub const PatchTask = struct {
     pre: bool = false,
     next: ?*PatchTask = null,
 
-    const debug = bun.Output.scoped(.InstallPatch, false);
+    const debug = bun.Output.scoped(.InstallPatch, .visible);
 
     const Maybe = bun.sys.Maybe;
 

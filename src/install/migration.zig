@@ -1,4 +1,4 @@
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,

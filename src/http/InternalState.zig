@@ -217,7 +217,7 @@ pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_c
     return this.body_out_str.?.list.items.len > 0;
 }
 
-const log = Output.scoped(.HTTPInternalState, true);
+const log = Output.scoped(.HTTPInternalState, .hidden);
 
 const HTTPStage = enum {
     pending,

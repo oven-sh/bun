@@ -962,7 +962,7 @@ export fn Bun__resolveSyncWithPaths(
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) jsc.JSValue {
-    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    Output.scoped(.importMetaResolve, .visible)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
     return jsc.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 

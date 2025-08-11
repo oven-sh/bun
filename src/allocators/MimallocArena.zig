@@ -2,7 +2,7 @@ const Self = @This();
 
 heap: *mimalloc.Heap,
 
-const log = bun.Output.scoped(.mimalloc, true);
+const log = bun.Output.scoped(.mimalloc, .hidden);
 
 /// Internally, mimalloc calls mi_heap_get_default()
 /// to get the default heap.

@@ -1677,7 +1677,7 @@ const NativeCallbacks = union(enum) {
     }
 };
 
-const log = Output.scoped(.Socket, false);
+const log = Output.scoped(.Socket, .visible);
 
 const WriteResult = union(enum) {
     fail: void,

@@ -37,7 +37,7 @@ async_deinit: AsyncDeinitWriter = .{},
 started: bool = false,
 flags: Flags = .{},
 
-const debug = bun.Output.scoped(.IOWriter, true);
+const debug = bun.Output.scoped(.IOWriter, .hidden);
 
 pub const ChildPtr = IOWriterChildPtr;
 
@@ -835,7 +835,7 @@ pub const AsyncDeinitWriter = struct {
     }
 };
 
-const log = bun.Output.scoped(.IOWriter, true);
+const log = bun.Output.scoped(.IOWriter, .hidden);
 
 const std = @import("std");
 

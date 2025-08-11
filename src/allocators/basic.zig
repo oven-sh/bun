@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.mimalloc, true);
+const log = bun.Output.scoped(.mimalloc, .hidden);
 
 fn mimalloc_free(
     _: *anyopaque,

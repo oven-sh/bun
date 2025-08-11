@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { isWindows } from "harness";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 test("fileURLToPath should handle paths starting with / correctly on all platforms", () => {
   const testPaths = ["/test", "/@test", "/node_modules/test", "/@solid-refresh"];

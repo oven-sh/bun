@@ -1,4 +1,4 @@
-const js_fns = struct {
+pub const js_fns = struct {
     pub fn describe(bunTest: *BunTest, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const name, const callback = callframe.argumentsAsArray(2);
 

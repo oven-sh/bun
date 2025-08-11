@@ -560,7 +560,7 @@ the `ls` command to try to read the contents of a single directory named
 While command injection is prevented by default, developers are still
 responsible for security in certain scenarios.
 
-Similar to Bun's `Bun.spawn` or Node.js's `exec()` APIs, you can intentionally
+Similar to the `Bun.spawn` or `node:child_process.exec()` APIs, you can intentionally
 execute a command which spawns a new shell (e.g. `bash -c`) with arguments.
 
 When you do this, you hand off control, and Bun's built-in protections no

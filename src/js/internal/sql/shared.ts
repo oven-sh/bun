@@ -1,4 +1,50 @@
 const { SSLMode, normalizeSSLMode } = require("./postgres.ts");
+import type { SSLMode as SSLModeType } from "./postgres.ts";
+
+declare global {
+  interface NumberConstructor {
+    isSafeInteger(number: unknown): number is number;
+    isNaN(number: number): boolean;
+  }
+}
+
+class SQLHelper<T> {
+  private static readonly empty: [] = [];
+
+  public readonly value: T;
+  public readonly columns: (keyof T)[];
+
+  constructor(value: T, keys?: (keyof T)[]) {
+    if (keys !== undefined && keys.length === 0) {
+      keys = Object.keys(value[0]) as (keyof T)[];
+    }
+
+    if (keys !== undefined) {
+      for (let key of keys) {
+        if (typeof key === "string") {
+          const asNumber = Number(key);
+          if (Number.isNaN(asNumber)) {
+            continue;
+          }
+          key = asNumber as keyof T;
+        }
+
+        if (typeof key !== "string") {
+          if (Number.isSafeInteger(key)) {
+            if (key >= 0 && key <= 64 * 1024) {
+              continue;
+            }
+          }
+
+          throw new Error(`Keys must be strings or numbers: ${String(key)}`);
+        }
+      }
+    }
+
+    this.value = value;
+    this.columns = keys ?? [];
+  }
+}
 
 class UnsupportedAdapterError extends Error {
   public options: Bun.SQL.Options;
@@ -102,9 +148,10 @@ function parseOptions(
     bigint: any,
     path: string | string[];
 
+  const env = Bun.env;
+
   let prepare = true;
-  const env = Bun.env || {};
-  var sslMode: SSLMode = SSLMode.disable;
+  let sslMode: SSLModeType = SSLMode.disable;
 
   if (stringOrUrl === undefined || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
     let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
@@ -323,4 +370,7 @@ export default {
   assertIsOptionsOfAdapter,
   parseOptions,
   UnsupportedAdapterError,
+  SQLHelper,
 };
+
+export type { SQLHelper };

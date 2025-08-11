@@ -1,3 +1,7 @@
+import type { SQLHelper } from "./shared";
+
+const { SQLHelper } = require("./shared.ts");
+
 enum SSLMode {
   disable = 0,
   prefer = 1,
@@ -5,6 +9,7 @@ enum SSLMode {
   verify_ca = 3,
   verify_full = 4,
 }
+export type { SSLMode };
 
 enum SQLCommand {
   insert = 0,
@@ -14,6 +19,7 @@ enum SQLCommand {
   whereIn = 4,
   none = -1,
 }
+export type { SQLCommand };
 
 function commandToString(command: SQLCommand): string {
   switch (command) {

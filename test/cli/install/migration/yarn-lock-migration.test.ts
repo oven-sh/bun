@@ -145,12 +145,12 @@ to-fast-properties@^2.0.0:
     expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
 
     const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
-    
+
     // Verify that long build tags are preserved correctly
     expect(bunLockContent).toContain("4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81");
     expect(bunLockContent).toContain("7.21.0-placeholder-for-preset-env.2");
     expect(bunLockContent).toContain("0.1.6-no-external-plugins");
-    
+
     // Ensure no corrupted version strings
     expect(bunLockContent).not.toContain("monoreporeact");
     expect(bunLockContent).not.toContain("@types/react");
@@ -177,7 +177,8 @@ to-fast-properties@^2.0.0:
           name: "extreme-build-tags-test",
           version: "1.0.0",
           dependencies: {
-            "test-package": "1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lambda.mu.nu.xi.omicron.pi.rho.sigma.tau.upsilon.phi.chi.psi.omega.0123456789abcdef",
+            "test-package":
+              "1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lambda.mu.nu.xi.omicron.pi.rho.sigma.tau.upsilon.phi.chi.psi.omega.0123456789abcdef",
           },
         },
         null,
@@ -206,16 +207,17 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
 
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
-    
+
     const bunLockPath = join(tempDir, "bun.lock");
     expect(fs.existsSync(bunLockPath)).toBe(true);
 
     const bunLockContent = fs.readFileSync(bunLockPath, "utf8");
-    
+
     // The entire long version string should be preserved
-    const expectedVersion = "1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lambda.mu.nu.xi.omicron.pi.rho.sigma.tau.upsilon.phi.chi.psi.omega.0123456789abcdef";
+    const expectedVersion =
+      "1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lambda.mu.nu.xi.omicron.pi.rho.sigma.tau.upsilon.phi.chi.psi.omega.0123456789abcdef";
     expect(bunLockContent).toContain(expectedVersion);
-    
+
     // Should not contain any corruption artifacts
     expect(bunLockContent).not.toContain("�");
     expect(bunLockContent).not.toContain("\0");

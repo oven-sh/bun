@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted } from "harness";
+import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -30,7 +30,7 @@ it("should not download tarballs with --lockfile-only", async () => {
     latest: "0.0.1",
   };
   setHandler(dummyRegistry(urls, registry));
-  
+
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -69,4 +69,3 @@ it("should not download tarballs with --lockfile-only", async () => {
   // Verify lockfile was created but no packages were actually installed
   await access(join(package_dir, "bun.lockb"));
 });
-

@@ -117,7 +117,6 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
       return;
     }
     this[_queryStatus] |= QueryStatus.executed;
-
     const handle = this.getQueryHandle();
     if (!handle) return this;
 
@@ -163,7 +162,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     return this[_resolve](x);
   }
 
-  reject(x) {
+  reject(x: Error) {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
     if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {

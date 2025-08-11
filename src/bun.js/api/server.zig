@@ -1642,7 +1642,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = bun.default_allocator,
                 .dev_server = dev_server,
             });
 
@@ -3396,7 +3396,6 @@ const js_printer = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 const uws = bun.uws;
-const Arena = bun.allocators.MimallocArena;
 const BoringSSL = bun.BoringSSL.c;
 const SocketAddress = bun.api.socket.SocketAddress;
 

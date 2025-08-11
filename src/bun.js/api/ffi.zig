@@ -851,18 +851,14 @@ pub const FFI = struct {
             dylib.close();
             this.dylib = null;
         }
-
         if (this.shared_state) |state| {
             this.shared_state = null;
             state.deinit();
         }
-
-        const allocator = VirtualMachine.get().allocator;
-
         for (this.functions.values()) |*val| {
             val.deinit(globalThis);
         }
-        this.functions.deinit(allocator);
+        this.functions.deinit(bun.default_allocator);
 
         // NOTE: `relocated_bytes_to_free` points to a memory region that was
         // relocated by tinycc. Attempts to free it will cause a bus error,

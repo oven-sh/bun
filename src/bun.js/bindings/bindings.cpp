@@ -17,6 +17,7 @@
 #include "JavaScriptCore/BooleanObject.h"
 #include "JSFFIFunction.h"
 #include "headers.h"
+#include "mimalloc.h"
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
@@ -3115,8 +3116,10 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
         return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
     }
 
+#if !ENABLE_MIMALLOC
+    ASSERT(!mi_is_in_heap_region(arg0));
+#endif
     auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
-
     return JSC::JSValue::encode(JSC::jsString(global->vm(), WTFMove(ref)));
 }
 // This must be a globally allocated string
@@ -3128,9 +3131,12 @@ JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlo
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
 
+#if !ENABLE_MIMALLOC
+    ASSERT(!mi_is_in_heap_region(str.ptr));
+    ASSERT(!mi_is_in_heap_region(Zig::untag(str.ptr)));
+#endif
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
     } else {
         auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
@@ -5377,7 +5383,10 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
     arg0->heap.deprecatedReportExtraMemory(arg1);
 }
 
-void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject) {}
+void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
+{
+}
+
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
 {
     arg0->drainMicrotasks();

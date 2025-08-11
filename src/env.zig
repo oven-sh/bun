@@ -55,6 +55,7 @@ pub const enable_logs = build_options.enable_logs;
 pub const enable_asan = build_options.enable_asan;
 pub const codegen_path = build_options.codegen_path;
 pub const codegen_embed = build_options.codegen_embed;
+pub const enable_mimalloc = build_options.enable_mimalloc;
 
 pub const version: std.SemanticVersion = build_options.version;
 pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });

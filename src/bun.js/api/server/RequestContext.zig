@@ -1282,7 +1282,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         fn endRequestStreaming(this: *RequestContext) bool {
             assert(this.server != null);
 
-            this.request_body_buf.clearAndFree(bun.default_allocator);
+            this.request_body_buf.clearAndFree(this.allocator);
 
             // if we cannot, we have to reject pending promises
             // first, we reject the request body promise
@@ -1297,7 +1297,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
         fn detachResponse(this: *RequestContext) void {
-            this.request_body_buf.clearAndFree(bun.default_allocator);
+            this.request_body_buf.clearAndFree(this.allocator);
 
             if (this.resp) |resp| {
                 this.resp = null;
@@ -1761,7 +1761,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     var byte_list = byte_stream.drain();
-                                    this.blob = .fromArrayList(byte_list.listManaged(bun.default_allocator));
+                                    this.blob = .fromArrayList(byte_list.listManaged(this.allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -2242,7 +2242,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .{
                             .temporary = bun.ByteList.initConst(chunk),
                         },
-                        bun.default_allocator,
+                        this.allocator,
                     );
                 } else {
                     var strong = this.request_body_readable_stream_ref;
@@ -2258,7 +2258,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .{
                             .temporary_and_done = bun.ByteList.initConst(chunk),
                         },
-                        bun.default_allocator,
+                        this.allocator,
                     );
                 }
 

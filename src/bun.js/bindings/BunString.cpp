@@ -13,6 +13,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
+#include "mimalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -38,8 +39,6 @@
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringToIntegerConversion.h"
-
-extern "C" void mi_free(void* ptr);
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -168,7 +167,11 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
     }
 
-    return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    if (bunString.tag == BunStringTag::ZigString) {
+        return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    }
+
+    UNREACHABLE();
 }
 
 BunString toString(const char* bytes, size_t length)
@@ -714,7 +717,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        bun_free(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -725,7 +728,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        bun_free(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

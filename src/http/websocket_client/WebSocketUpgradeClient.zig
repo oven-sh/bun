@@ -43,6 +43,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
+        vm: *jsc.VirtualMachine,
 
         const State = enum { initializing, reading, failed };
 
@@ -109,6 +110,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .input_body_buf = body,
                 .websocket_protocol = client_protocol_hash,
                 .state = .initializing,
+                .vm = vm,
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -156,7 +158,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn clearInput(this: *HTTPClient) void {
-            if (this.input_body_buf.len > 0) bun.default_allocator.free(this.input_body_buf);
+            if (this.input_body_buf.len > 0) this.vm.allocator.free(this.input_body_buf);
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {

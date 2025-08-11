@@ -391,7 +391,7 @@ pub fn toJS(
                     .path = jsc.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                 },
                 this.loader.toMimeType(&.{owned_pathname orelse ""}),
-                globalObject.allocator(),
+                bun.default_allocator,
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
             };

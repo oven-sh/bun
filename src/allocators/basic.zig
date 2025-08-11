@@ -142,6 +142,11 @@ const z_allocator_vtable = Allocator.VTable{
     .free = &ZAllocator.free_with_z_allocator,
 };
 
+/// mimalloc can free allocations without being given their size.
+pub fn freeWithoutSize(ptr: ?*anyopaque) void {
+    mimalloc.mi_free(ptr);
+}
+
 const Environment = @import("../env.zig");
 const std = @import("std");
 

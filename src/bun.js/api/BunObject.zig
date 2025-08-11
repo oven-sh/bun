@@ -1473,8 +1473,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -1758,8 +1757,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {

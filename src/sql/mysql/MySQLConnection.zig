@@ -44,6 +44,8 @@ password: []const u8 = "",
 options: []const u8 = "",
 options_buf: []const u8 = "",
 
+pub const js = jsc.Codegen.JSMySQLConnection;
+
 pub const AuthState = union(enum) {
     pending: void,
     native_password: void,
@@ -1199,8 +1201,8 @@ const types = @import("./MySQLTypes.zig");
 const Capabilities = @import("./Capabilities.zig");
 const StatusFlags = @import("./StatusFlags.zig");
 const AuthMethod = @import("./AuthMethod.zig").AuthMethod;
-const TLSStatus = @import("./TLSStatus.zig");
-const SSLMode = @import("./SSLMode.zig");
+const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
+const SSLMode = @import("./SSLMode.zig").SSLMode;
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const debug = bun.Output.scoped(.MySQLConnection, false);
 const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;

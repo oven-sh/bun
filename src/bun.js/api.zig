@@ -43,6 +43,7 @@ pub const MatchedRoute = @import("./api/filesystem_router.zig").MatchedRoute;
 pub const NativeBrotli = @import("./node/zlib/NativeBrotli.zig");
 pub const NativeZlib = @import("./node/zlib/NativeZlib.zig");
 pub const Postgres = @import("../sql/postgres.zig");
+pub const MySQL = @import("../sql/mysql.zig");
 pub const ResolveMessage = @import("./ResolveMessage.zig").ResolveMessage;
 pub const Shell = @import("../shell/shell.zig");
 pub const UDPSocket = @import("./api/bun/udp_socket.zig").UDPSocket;

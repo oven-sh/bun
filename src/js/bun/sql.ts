@@ -69,6 +69,11 @@ const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
+const {
+  createConnection: _createConnectionMysql,
+  createQuery: createQueryMysql,
+  init: initMysql,
+} = $zig("mysql.zig", "createBinding");
 
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {

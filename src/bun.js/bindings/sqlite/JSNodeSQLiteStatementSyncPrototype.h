@@ -15,11 +15,12 @@ public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSNodeSQLiteStatementSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSNodeSQLiteStatementSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        JSNodeSQLiteStatementSyncPrototype* prototype = new (NotNull, allocateCell<JSNodeSQLiteStatementSyncPrototype>(vm)) JSNodeSQLiteStatementSyncPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        JSNodeSQLiteStatementSyncPrototype* protObj = new (NotNull, allocateCell<JSNodeSQLiteStatementSyncPrototype>(vm)) JSNodeSQLiteStatementSyncPrototype(vm, structure);
+        protObj->finishCreation(vm);
+        return protObj;
     }
 
     template<typename, JSC::SubspaceAccess>
@@ -29,13 +30,6 @@ public:
     }
 
     DECLARE_INFO;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
 
 private:
     JSNodeSQLiteStatementSyncPrototype(JSC::VM& vm, JSC::Structure* structure)

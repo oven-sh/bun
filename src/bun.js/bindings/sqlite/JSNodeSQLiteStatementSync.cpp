@@ -127,13 +127,13 @@ Structure* JSNodeSQLiteStatementSync::createStructure(VM& vm, JSGlobalObject* gl
 
 void setupJSNodeSQLiteStatementSyncClassStructure(LazyClassStructure::Initializer& init)
 {
-    auto* prototypeStructure = JSNodeSQLiteStatementSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
-    auto* prototype = JSNodeSQLiteStatementSyncPrototype::create(init.vm, init.global, prototypeStructure);
+    auto* prototype = JSNodeSQLiteStatementSyncPrototype::create(init.vm, init.global, init.global->objectPrototype());
 
     auto* constructorStructure = JSNodeSQLiteStatementSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
     auto* constructor = JSNodeSQLiteStatementSyncConstructor::create(init.vm, init.global, constructorStructure, prototype);
 
     auto* structure = JSNodeSQLiteStatementSync::createStructure(init.vm, init.global, prototype);
+    structure->setMayBePrototype(true);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

@@ -1,6 +1,3 @@
-const { SSLMode, normalizeSSLMode } = require("./postgres.ts");
-import type { SSLMode as SSLModeType } from "./postgres.ts";
-
 declare global {
   interface NumberConstructor {
     isSafeInteger(number: unknown): number is number;
@@ -13,6 +10,43 @@ function decodeIfValid(value: string | null): string | null {
     return decodeURIComponent(value);
   }
   return null;
+}
+
+enum SSLMode {
+  disable = 0,
+  prefer = 1,
+  require = 2,
+  verify_ca = 3,
+  verify_full = 4,
+}
+export type { SSLMode };
+
+function normalizeSSLMode(value: string): SSLMode {
+  if (!value) {
+    return SSLMode.disable;
+  }
+
+  value = (value + "").toLowerCase();
+  switch (value) {
+    case "disable":
+      return SSLMode.disable;
+    case "prefer":
+      return SSLMode.prefer;
+    case "require":
+    case "required":
+      return SSLMode.require;
+    case "verify-ca":
+    case "verify_ca":
+      return SSLMode.verify_ca;
+    case "verify-full":
+    case "verify_full":
+      return SSLMode.verify_full;
+    default: {
+      break;
+    }
+  }
+
+  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
 export type { SQLHelper };
@@ -155,7 +189,7 @@ function parseOptions(
     path: string | string[];
 
   let prepare = true;
-  let sslMode: SSLModeType = SSLMode.disable;
+  let sslMode: SSLMode = SSLMode.disable;
 
   if (stringOrUrl === undefined || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
     let urlString = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL;
@@ -381,4 +415,6 @@ export default {
   parseOptions,
   UnsupportedAdapterError,
   SQLHelper,
+  SSLMode,
+  normalizeSSLMode,
 };

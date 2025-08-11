@@ -1,15 +1,16 @@
 import type { SQLHelper } from "./shared";
 
 const { SQLHelper } = require("./shared.ts");
+const { hideFromStack } = require("../shared.ts");
 
-enum SSLMode {
-  disable = 0,
-  prefer = 1,
-  require = 2,
-  verify_ca = 3,
-  verify_full = 4,
+function connectionClosedError() {
+  return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
 }
-export type { SSLMode };
+function notTaggedCallError() {
+  return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
+}
+hideFromStack(connectionClosedError);
+hideFromStack(notTaggedCallError);
 
 enum SQLCommand {
   insert = 0,
@@ -38,34 +39,6 @@ function commandToString(command: SQLCommand): string {
 
 function escapeIdentifier(str: string) {
   return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
-}
-
-function normalizeSSLMode(value: string): SSLMode {
-  if (!value) {
-    return SSLMode.disable;
-  }
-
-  value = (value + "").toLowerCase();
-  switch (value) {
-    case "disable":
-      return SSLMode.disable;
-    case "prefer":
-      return SSLMode.prefer;
-    case "require":
-    case "required":
-      return SSLMode.require;
-    case "verify-ca":
-    case "verify_ca":
-      return SSLMode.verify_ca;
-    case "verify-full":
-    case "verify_full":
-      return SSLMode.verify_full;
-    default: {
-      break;
-    }
-  }
-
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
 function normalizeQuery(
@@ -349,8 +322,6 @@ function detectCommand(query: string): SQLCommand {
 }
 
 export default {
-  SSLMode,
-  normalizeSSLMode,
   normalizeQuery,
   escapeIdentifier,
   SQLCommand,

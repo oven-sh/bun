@@ -9,8 +9,8 @@ const {
   SQLQueryFlags,
   symbols: { _handle, _flags, _results },
 } = require("../internal/sql/query.ts");
-const { SSLMode, normalizeQuery } = require("../internal/sql/postgres.ts");
-const { SQLHelper, parseOptions } = require("../internal/sql/shared.ts");
+const { normalizeQuery } = require("../internal/sql/postgres.ts");
+const { SQLHelper, parseOptions, SSLMode } = require("../internal/sql/shared.ts");
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 

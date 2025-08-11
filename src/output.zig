@@ -747,7 +747,7 @@ pub const Visibility = enum {
     /// Show logs for this scope by default.
     visible,
 
-    // Show logs for this scope by default if and only if `condition` is true.
+    /// Show logs for this scope by default if and only if `condition` is true.
     pub fn visibleIf(condition: bool) Visibility {
         return if (condition) .visible else .hidden;
     }

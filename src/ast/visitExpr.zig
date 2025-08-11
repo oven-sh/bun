@@ -514,7 +514,13 @@ pub fn VisitExpr(
                 const is_call_target = p.call_target == .e_index and expr.data.e_index == p.call_target.e_index;
                 const is_delete_target = p.delete_target == .e_index and expr.data.e_index == p.delete_target.e_index;
 
-                // "a['b']" => "a.b"
+                // Visit the target first
+                const target_visited = p.visitExprInOut(e_.target, ExprIn{
+                    .has_chain_parent = e_.optional_chain == .continuation,
+                });
+                e_.target = target_visited;
+
+                // "a['b']" => "a.b" (but use the already-visited target to avoid double-visit)
                 if (p.options.features.minify_syntax and
                     e_.index.data == .e_string and
                     e_.index.data.e_string.isUTF8() and
@@ -524,7 +530,7 @@ pub fn VisitExpr(
                         E.Dot{
                             .name = e_.index.data.e_string.slice(p.allocator),
                             .name_loc = e_.index.loc,
-                            .target = e_.target,
+                            .target = target_visited, // Use already-visited target
                             .optional_chain = e_.optional_chain,
                         },
                         expr.loc,
@@ -538,13 +544,9 @@ pub fn VisitExpr(
                         p.delete_target = dot.data;
                     }
 
-                    return p.visitExprInOut(dot, in);
+                    // Don't visit the dot expression again, just return it since target is already visited
+                    return dot;
                 }
-
-                const target_visited = p.visitExprInOut(e_.target, ExprIn{
-                    .has_chain_parent = e_.optional_chain == .continuation,
-                });
-                e_.target = target_visited;
 
                 switch (e_.index.data) {
                     .e_private_identifier => |_private| {

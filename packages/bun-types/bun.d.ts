@@ -14,6 +14,19 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  /**
+   * Like Omit, but correctly distributes over unions. Most useful for removing
+   * properties from options objects, like {@link Bun.SQL.Options}
+   *
+   * @example
+   * ```ts
+   * type X = Bun.DistributedOmit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">
+   * // `{type?: 'a'} | {type?: 'b', flag?: boolean}` (Omit applied to each union item instead of entire type)
+   *
+   * type X = Omit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">;
+   * // `{type?: "a" | "b" | undefined}` (Missing `flag` property and no longer a union)
+   * ```
+   */
   type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =

@@ -15,6 +15,7 @@ function decodeIfValid(value: string | null): string | null {
   return null;
 }
 
+export type { SQLHelper };
 class SQLHelper<T> {
   public readonly value: T;
   public readonly columns: (keyof T)[];
@@ -381,5 +382,3 @@ export default {
   UnsupportedAdapterError,
   SQLHelper,
 };
-
-export type { SQLHelper };

@@ -225,7 +225,8 @@ pub const FD = packed struct(backing_int) {
     /// In debug, fd assertion failure can print where the FD was actually
     /// closed.
     pub fn close(fd: FD) void {
-        bun.debugAssert(fd.closeAllowingBadFileDescriptor(@returnAddress()) == null); // use after close!
+        const err = fd.closeAllowingBadFileDescriptor(@returnAddress());
+        bun.debugAssert(err == null); // use after close!
     }
 
     /// fd function will NOT CLOSE stdin/stdout/stderr.
@@ -651,6 +652,60 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_in
     if (out == -1) return error.SystemFdQuotaExceeded;
     return out;
 }
+
+/// - On Windows we use libuv
+/// - `uv_pipe` takes ownership over the file descriptor when initialized
+/// - This can easily cause use-after-frees if the pipe is closed and then we
+///   use the file descriptor or we close it again
+///
+/// **IMPORTANT**: On Posix builds, this type is always `__owned` and therefore just a simple wrapper.
+pub const MovableFD = union(enum) {
+    __owned: FD,
+    __moved,
+
+    pub fn dupOnWindows(self: MovableFD) bun.sys.Maybe(FD) {
+        if (comptime bun.Environment.isPosix) {
+            @compileError("don't call this function on posix");
+        }
+        return bun.sys.dup(self.__owned);
+    }
+
+    pub fn get(self: MovableFD) ?FD {
+        return switch (self) {
+            .__owned => |fd| fd,
+            .__moved => {
+                if (comptime bun.Environment.isPosix) {
+                    unreachable;
+                }
+                return null;
+            },
+        };
+    }
+
+    pub fn init(fd: FD) MovableFD {
+        return MovableFD{ .__owned = fd };
+    }
+
+    pub fn move(self: *MovableFD) FD {
+        if (comptime bun.Environment.isPosix) @compileError("Don't call `.move()` on Posix.");
+
+        bun.assert(self.* == .__owned);
+        const fd = self.__owned;
+        self.* = MovableFD{ .__moved = {} };
+        return fd;
+    }
+
+    pub fn format(self: *const MovableFD, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (comptime bun.Environment.isPosix) {
+            try writer.print("{}", .{self.get().?});
+            return;
+        }
+        switch (self.*) {
+            .owned => |fd| try writer.print("{}", .{fd}),
+            .moved => try writer.print("[moved]", .{}),
+        }
+    }
+};
 
 pub var windows_cached_fd_set: if (Environment.isDebug) bool else void = if (Environment.isDebug) false;
 pub var windows_cached_stdin: FD = undefined;

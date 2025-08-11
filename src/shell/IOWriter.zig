@@ -19,8 +19,10 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 ref_count: RefCount,
-writer: WriterImpl = if (bun.Environment.isWindows) .{} else .{ .close_fd = false },
-fd: bun.FileDescriptor,
+writer: WriterImpl = if (bun.Environment.isWindows) .{
+    .owns_fd = false,
+} else .{ .close_fd = false },
+fd: bun.MovableFD,
 writers: Writers = .{ .inlined = .{} },
 buf: std.ArrayListUnmanaged(u8) = .{},
 /// quick hack to get windows working
@@ -81,7 +83,7 @@ pub const Flags = packed struct(u8) {
 pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) *IOWriter {
     const this = bun.new(IOWriter, .{
         .ref_count = .init(),
-        .fd = fd,
+        .fd = MovableFD.init(fd),
         .evtloop = evtloop,
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .concurrent_task2 = jsc.EventLoopTask.fromEventLoop(evtloop),
@@ -97,7 +99,7 @@ pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) 
 
 pub fn __start(this: *IOWriter) Maybe(void) {
     debug("IOWriter(0x{x}, fd={}) __start()", .{ @intFromPtr(this), this.fd });
-    if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e_| {
+    if (this.writer.start(&this.fd, this.flags.pollable).asErr()) |e_| {
         const e: bun.sys.Error = e_;
         if (bun.Environment.isPosix) {
             // We get this if we pass in a file descriptor that is not
@@ -140,7 +142,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
                 this.flags.pollable = false;
                 this.flags.nonblocking = false;
                 this.flags.is_socket = false;
-                return this.writer.startWithFile(this.fd);
+                return this.writer.startWithFile(fd);
             }
         }
         return .{ .err = e };
@@ -637,6 +639,7 @@ pub fn enqueueFmt(
 
 fn asyncDeinit(this: *@This()) void {
     debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
+    bun.assert(!this.is_writing);
     this.async_deinit.enqueue();
 }
 
@@ -840,6 +843,7 @@ const log = bun.Output.scoped(.IOWriter, true);
 const std = @import("std");
 
 const bun = @import("bun");
+const MovableFD = bun.MovableFD;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;

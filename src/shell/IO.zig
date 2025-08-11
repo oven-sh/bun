@@ -138,7 +138,14 @@ pub const OutKind = union(enum) {
         return switch (this) {
             .fd => |val| brk: {
                 shellio.* = val.writer.refSelf();
-                break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                break :brk if (val.captured) |cap| .{
+                    .capture = .{
+                        .buf = cap,
+                        .fd = val.writer.fd,
+                    },
+                } else .{
+                    .fd = val.writer.fd,
+                };
             },
             .pipe => .pipe,
             .ignore => .ignore,

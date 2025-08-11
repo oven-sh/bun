@@ -8,9 +8,14 @@ declare global {
   }
 }
 
-class SQLHelper<T> {
-  private static readonly empty: [] = [];
+function decodeIfValid(value: string | null): string | null {
+  if (value) {
+    return decodeURIComponent(value);
+  }
+  return null;
+}
 
+class SQLHelper<T> {
   public readonly value: T;
   public readonly columns: (keyof T)[];
 

@@ -1,22 +1,5 @@
-function getQueryHandle(query) {
-  let handle = query[_handle];
-  if (!handle) {
-    try {
-      query[_handle] = handle = doCreateQuery(
-        query[_strings],
-        query[_values],
-        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
-        query[_poolSize],
-        query[_flags] & SQLQueryFlags.bigint,
-        query[_flags] & SQLQueryFlags.simple,
-      );
-    } catch (err) {
-      query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
-      query.reject(err);
-    }
-  }
-  return handle;
-}
+import type { SQLHelper } from "./shared.ts";
+const { escapeIdentifier, notTaggedCallError, connectionClosedError } = require("./postgres.ts");
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
@@ -30,16 +13,25 @@ const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 
-class Query extends globalThis.Promise {
-  [_resolve];
-  [_reject];
-  [_handle];
-  [_handler];
-  [_queryStatus] = 0;
-  [_strings];
-  [_values];
+const PublicPromise = Promise;
 
-  [Symbol.for("nodejs.util.inspect.custom")]() {
+export interface BaseQueryHandle {
+  done(): void;
+  cancel(): void;
+  setMode(mode: SQLQueryResultMode): void;
+}
+
+export type { Query };
+class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
+  public [_resolve]: (value: T) => void;
+  public [_reject]: (reason?: any) => void;
+  public [_handle]: Handle | null;
+  public [_handler]: (query: Query<T, Handle>, handle: Handle) => T;
+  public [_queryStatus] = 0;
+  public [_strings]: string | TemplateStringsArray | SQLHelper<any> | Query<any, Handle>;
+  public [_values]: any[];
+
+  [Symbol.for("nodejs.util.inspect.custom")](): `Query { ${string} }` {
     const status = this[_queryStatus];
 
     let query = "";
@@ -51,19 +43,47 @@ class Query extends globalThis.Promise {
     return `Query { ${query} }`;
   }
 
+  // TODO(@alii): Make Query more generic for SQLite
+  private readonly doCreateQuery: Function;
+
+  private getQueryHandle() {
+    let handle = this[_handle];
+
+    if (!handle) {
+      try {
+        this[_handle] = handle = this.doCreateQuery(
+          this[_strings],
+          this[_values],
+          this[_flags] & SQLQueryFlags.allowUnsafeTransaction,
+          this[_poolSize],
+          this[_flags] & SQLQueryFlags.bigint,
+          this[_flags] & SQLQueryFlags.simple,
+        );
+      } catch (err) {
+        this[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
+        this.reject(err);
+      }
+    }
+
+    return handle;
+  }
+
   constructor(
-    strings: string | TemplateStringsArray | SQLHelper | Query<any>,
+    strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, Handle>,
     values: any[],
     flags: number,
     poolSize: number,
     handler,
+    doCreateQuery: Function,
   ) {
-    var resolve_: (value: any) => void, reject_: (reason?: any) => void;
+    let resolve_: (value: T) => void, reject_: (reason?: any) => void;
 
     super((resolve, reject) => {
       resolve_ = resolve;
       reject_ = reject;
     });
+
+    this.doCreateQuery = doCreateQuery;
 
     if (typeof strings === "string") {
       if (!(flags & SQLQueryFlags.unsafe)) {
@@ -73,8 +93,8 @@ class Query extends globalThis.Promise {
       }
     }
 
-    this[_resolve] = resolve_;
-    this[_reject] = reject_;
+    this[_resolve] = resolve_!;
+    this[_reject] = reject_!;
     this[_handle] = null;
     this[_handler] = handler;
     this[_queryStatus] = 0;
@@ -98,7 +118,7 @@ class Query extends globalThis.Promise {
     }
     this[_queryStatus] |= QueryStatus.executed;
 
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
 
     if (async) {
@@ -137,7 +157,7 @@ class Query extends globalThis.Promise {
 
   resolve(x) {
     this[_queryStatus] &= ~QueryStatus.active;
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.done();
     return this[_resolve](x);
@@ -147,7 +167,7 @@ class Query extends globalThis.Promise {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
     if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
-      const handle = getQueryHandle(this);
+      const handle = this.getQueryHandle();
       if (!handle) return this[_reject](x);
       handle.done();
     }
@@ -156,15 +176,18 @@ class Query extends globalThis.Promise {
   }
 
   cancel() {
-    var status = this[_queryStatus];
+    const status = this[_queryStatus];
     if (status & QueryStatus.cancelled) {
       return this;
     }
     this[_queryStatus] |= QueryStatus.cancelled;
 
     if (status & QueryStatus.executed) {
-      const handle = getQueryHandle(this);
-      handle.cancel();
+      const handle = this.getQueryHandle();
+
+      if (handle) {
+        handle.cancel();
+      }
     }
 
     return this;
@@ -176,7 +199,7 @@ class Query extends globalThis.Promise {
   }
 
   raw() {
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.setMode(SQLQueryResultMode.raw);
     return this;
@@ -188,7 +211,7 @@ class Query extends globalThis.Promise {
   }
 
   values() {
-    const handle = getQueryHandle(this);
+    const handle = this.getQueryHandle();
     if (!handle) return this;
     handle.setMode(SQLQueryResultMode.values);
     return this;
@@ -214,7 +237,7 @@ class Query extends globalThis.Promise {
     return result;
   }
 
-  finally() {
+  finally(_onfinally?: (() => void) | undefined | null) {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw notTaggedCallError();
     }
@@ -222,6 +245,9 @@ class Query extends globalThis.Promise {
     return super.finally.$apply(this, arguments);
   }
 }
+
+Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
+Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
 enum SQLQueryResultMode {
   objects = 0,
@@ -251,4 +277,18 @@ export default {
   SQLQueryFlags,
   SQLQueryResultMode,
   QueryStatus,
+
+  symbols: {
+    _resolve,
+    _reject,
+    _handle,
+    _run,
+    _queryStatus,
+    _handler,
+    _strings,
+    _values,
+    _poolSize,
+    _flags,
+    _results,
+  },
 };

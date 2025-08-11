@@ -731,6 +731,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__describeCallbackThen);
 
 #endif
 

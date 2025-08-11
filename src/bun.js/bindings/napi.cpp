@@ -2109,9 +2109,9 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSString* jsString = jsValue.toString(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
     const auto view = jsString->view(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     if (buf == nullptr) {
         // they just want to know the length

@@ -79,6 +79,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  tar-archives:
+    name: Create tar.gz and tar.xz archives
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq unzip tar xz-utils
+      - name: Create and upload tar archives
+        run: |
+          ./scripts/create-tar-archives.sh "${{ env.BUN_VERSION }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

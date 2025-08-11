@@ -40,8 +40,8 @@ test("install git+https URL dependency", async () => {
     "package.json": JSON.stringify({
       name: "test-git-url",
       dependencies: {
-        // Using git+ prefix which triggers git clone
-        "bun-types": "git+https://github.com/oven-sh/bun.git#main",
+        // Using git+ prefix which triggers git clone - use a smaller repo
+        "awesome-bun": "git+https://github.com/oven-sh/awesome-bun.git#main",
       },
     }),
   });
@@ -58,7 +58,7 @@ test("install git+https URL dependency", async () => {
   expect(result.stderr.toString()).not.toContain("error");
   
   // Check that the package was installed
-  const packagePath = join(dir, "node_modules", "bun-types");
+  const packagePath = join(dir, "node_modules", "awesome-bun");
   expect(existsSync(packagePath)).toBe(true);
 });
 

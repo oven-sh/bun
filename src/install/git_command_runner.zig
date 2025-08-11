@@ -44,6 +44,22 @@ pub const GitCommandRunner = struct {
     
     pub const OutputReader = bun.io.BufferedReader;
     
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+        output.flags.nonblocking = true;
+        output.flags.socket = true;
+        output.flags.memfd = false;
+        output.flags.received_eof = false;
+        output.flags.closed_without_reporting = false;
+
+        if (comptime Environment.allow_assert) {
+            const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
+            
+            const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
+        }
+    }
+    
     pub fn loop(this: *const GitCommandRunner) *bun.uws.Loop {
         return this.manager.event_loop.loop();
     }
@@ -144,6 +160,7 @@ pub const GitCommandRunner = struct {
                     _ = bun.sys.setNonblocking(stdout);
                     runner.remaining_fds += 1;
                     
+                    resetOutputFlags(&runner.stdout, stdout);
                     try runner.stdout.start(stdout, true).unwrap();
                     if (runner.stdout.handle.getPoll()) |poll| {
                         poll.flags.insert(.socket);
@@ -159,6 +176,7 @@ pub const GitCommandRunner = struct {
                     _ = bun.sys.setNonblocking(stderr);
                     runner.remaining_fds += 1;
                     
+                    resetOutputFlags(&runner.stderr, stderr);
                     try runner.stderr.start(stderr, true).unwrap();
                     if (runner.stderr.handle.getPoll()) |poll| {
                         poll.flags.insert(.socket);
@@ -338,6 +356,7 @@ pub const GitCommandRunner = struct {
                                     _ = bun.sys.setNonblocking(stdout);
                                     this.remaining_fds += 1;
                                     
+                                    resetOutputFlags(&this.stdout, stdout);
                                     this.stdout.start(stdout, true).unwrap() catch |err| {
                                         log("Failed to start stdout reader: {}", .{err});
                                         this.handleCheckoutError(err);
@@ -354,6 +373,7 @@ pub const GitCommandRunner = struct {
                                     _ = bun.sys.setNonblocking(stderr);
                                     this.remaining_fds += 1;
                                     
+                                    resetOutputFlags(&this.stderr, stderr);
                                     this.stderr.start(stderr, true).unwrap() catch |err| {
                                         log("Failed to start stderr reader: {}", .{err});
                                         this.handleCheckoutError(err);

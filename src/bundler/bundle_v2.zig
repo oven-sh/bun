@@ -187,7 +187,12 @@ pub const BundleV2 = struct {
 
         client_transpiler.options.target = .browser;
         client_transpiler.options.main_fields = options.Target.DefaultMainFields.get(options.Target.browser);
-        client_transpiler.options.conditions = try options.ESMConditions.init(allocator, options.Target.browser.defaultConditions());
+        client_transpiler.options.conditions = try options.ESMConditions.init(
+            allocator,
+            options.Target.browser.defaultConditions(),
+            false,
+            &.{},
+        );
 
         // We need to make sure it has [hash] in the names so we don't get conflicts.
         if (this_transpiler.options.compile) {

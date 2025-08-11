@@ -205,8 +205,6 @@ deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_p
 /// UWS can handle closing the websocket connections themselves
 active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
-relative_path_buf: DebugGuardedValue(bun.PathBuffer),
-
 // Debugging
 
 dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
@@ -335,7 +333,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .watcher_atomics = undefined,
         .log = undefined,
         .deferred_request_pool = undefined,
-        .relative_path_buf = .init(undefined, bun.DebugThreadLock.unlocked),
     });
     errdefer bun.destroy(dev);
     const allocator = dev.allocation_scope.allocator();
@@ -566,7 +563,6 @@ pub fn deinit(dev: *DevServer) void {
         .server = {},
         .server_transpiler = {},
         .ssr_transpiler = {},
-        .relative_path_buf = {},
         .vm = {},
 
         // WebSockets should be deinitialized before other parts
@@ -1253,8 +1249,8 @@ fn onFrameworkRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const relative_path_buf = dev.relative_path_buf.lock();
-                defer dev.relative_path_buf.unlock();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
                 const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(relative_path_buf, name));
                 router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
@@ -1272,16 +1268,16 @@ fn onFrameworkRequestWithBundle(
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 {
-                    const relative_path_buf = dev.relative_path_buf.lock();
-                    defer dev.relative_path_buf.unlock();
+                    const relative_path_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(relative_path_buf);
                     var route_name = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                     try arr.putIndex(global, 0, route_name.transferToJS(global));
                 }
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
-                        const relative_path_buf = dev.relative_path_buf.lock();
-                        defer dev.relative_path_buf.unlock();
+                        const relative_path_buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(relative_path_buf);
                         var layout_name = bun.String.cloneUTF8(dev.relativePath(
                             relative_path_buf,
                             keys[fromOpaqueFileId(.server, layout).get()],
@@ -1929,8 +1925,8 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *jsc.JSGlobalObjec
     const arr = try jsc.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
-        const relative_path_buf = dev.relative_path_buf.lock();
-        defer dev.relative_path_buf.unlock();
+        const relative_path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(relative_path_buf);
         const str = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, names[item.get()]));
         defer str.deref();
         try arr.putIndex(global, @intCast(i), str.toJS(global));
@@ -2603,8 +2599,8 @@ pub fn finalizeBundle(
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
         {
-            const relative_path_buf = dev.relative_path_buf.lock();
-            defer dev.relative_path_buf.unlock();
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
 
             // Compute a file name to display
             const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
@@ -3335,8 +3331,8 @@ pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !voi
             g.bundled_files.values(),
             0..,
         ) |k, v, i| {
-            const relative_path_buf = dev.relative_path_buf.lock();
-            defer dev.relative_path_buf.unlock();
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
             const normalized_key = dev.relativePath(relative_path_buf, k);
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
@@ -3768,8 +3764,8 @@ pub fn onRouterCollisionError(dev: *DevServer, rel_path: []const u8, other_id: O
         },
     });
     Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
-    const relative_path_buf = dev.relative_path_buf.lock();
-    defer dev.relative_path_buf.unlock();
+    const relative_path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(relative_path_buf);
     Output.prettyErrorln("  - <blue>{s}<r>", .{
         dev.relativePath(relative_path_buf, dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, other_id).get()]),
     });
@@ -3797,16 +3793,9 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
 }
 
 /// Returns posix style path, suitible for URLs and reproducible hashes.
-/// To avoid overwriting memory, this has a lock for the buffer.
-///
-///
-/// You must pass the pathbuffer contained within `dev.relative_path_buffer`!
+/// Calculate the relative path from the dev server root.
+/// The caller must provide a PathBuffer from the pool.
 pub fn relativePath(dev: *DevServer, relative_path_buf: *bun.PathBuffer, path: []const u8) []const u8 {
-    // You must pass the pathbuffer contained within `dev.relative_path_buffer`!
-    bun.assert_eql(
-        @intFromPtr(relative_path_buf),
-        @intFromPtr(&dev.relative_path_buf.unsynchronized_value),
-    );
     bun.assert(dev.root[dev.root.len - 1] != '/');
 
     if (!std.fs.path.isAbsolute(path)) {
@@ -4076,7 +4065,6 @@ const SourceMap = bun.sourcemap;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;
-const DebugGuardedValue = bun.threading.DebugGuardedValue;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;

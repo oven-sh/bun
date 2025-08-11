@@ -357,10 +357,8 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
 }
 
 comptime {
-    if (!jsc.is_bindgen) {
-        const jscall = jsc.toJSHostFunction(call);
-        @export(jscall, .{ .name = "MySQLQuery__createInstance" });
-    }
+    const jscall = jsc.toJSHostFunction(call);
+    @export(jscall, .{ .name = "MySQLQuery__createInstance" });
 }
 
 const std = @import("std");

@@ -69,6 +69,7 @@ pub const Classes = struct {
     pub const BlobInternalReadableStreamSource = webcore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = webcore.ByteStream.Source;
     pub const PostgresSQLConnection = api.Postgres.PostgresSQLConnection;
+    pub const MySQLConnection = api.MySQL.MySQLConnection;
     pub const PostgresSQLQuery = api.Postgres.PostgresSQLQuery;
     pub const TextEncoderStreamEncoder = webcore.TextEncoderStreamEncoder;
     pub const NativeZlib = api.NativeZlib;

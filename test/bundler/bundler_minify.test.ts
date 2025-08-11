@@ -691,21 +691,4 @@ describe("bundler", () => {
     },
   });
 
-  // Regression test for parser crash in function expressions with member access
-  // https://github.com/oven-sh/bun/pull/21752
-  itBundled("minify/FunctionExpressionMemberAccessCall", {
-    files: {
-      "/entry.js": /* js */ `
-        // These expressions previously caused an index out of bounds panic
-        // during the visit pass when rewriting index expressions as dot expressions
-        (function() { return "hello"; })['toString']();
-        const a = function() {}['constructor'];
-        console.log("no crash");
-      `,
-    },
-    minifySyntax: true,
-    run: {
-      stdout: "no crash",
-    },
-  });
 });

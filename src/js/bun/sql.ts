@@ -701,7 +701,14 @@ async function createConnection(options, onConnected, onClose) {
   }
 }
 
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple) {
+function doCreateQuery(
+  strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+  values: any[],
+  allowUnsafeTransaction: boolean,
+  poolSize: number,
+  bigint: boolean,
+  simple: boolean,
+) {
   const [sqlString, final_values] = normalizeQuery(strings, values);
   if (!allowUnsafeTransaction) {
     if (poolSize !== 1) {

@@ -66,7 +66,7 @@ const Scheduling = struct {
     describe_callback_queue: std.ArrayList(NameAndCallback),
 
     root_scope: *DescribeScope,
-    active_scope: *DescribeScope,
+    active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope/_previous_scope
     _previous_scope: ?*DescribeScope,
 
     pub fn init(gpa: std.mem.Allocator) Scheduling {
@@ -179,7 +179,7 @@ const TestScheduleEntry2 = union(enum) {
             afterEach,
             testFn,
         },
-        callback: jsc.Strong,
+        callback: jsc.Strong.Optional, // TODO: once called, this is swapped with &.empty so gc can collect it
     },
     fn deinit(
         this: *TestScheduleEntry2,

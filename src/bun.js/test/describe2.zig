@@ -12,9 +12,9 @@ pub const js_fns = struct {
         const name, const callback = callframe.argumentsAsArray(2);
 
         switch (bunTest.phase) {
-            .scheduling => {
-                try bunTest.scheduling.enqueueDescribeCallback(globalObject, name, callback);
-                if (!bunTest.scheduling.executing) try bunTest.scheduling.run(globalObject, bunTest.scheduling.active_scope);
+            .collection => {
+                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback);
+                if (!bunTest.collection.executing) try bunTest.collection.run(globalObject, bunTest.collection.active_scope);
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -30,10 +30,10 @@ pub const BunTest = struct {
     gpa: std.mem.Allocator,
 
     phase: enum {
-        scheduling,
+        collection,
         execution,
     },
-    scheduling: Scheduling,
+    collection: Collection,
     execution: TestExecution,
 
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
@@ -42,8 +42,8 @@ pub const BunTest = struct {
         return .{
             .allocation_scope = allocation_scope,
             .gpa = gpa,
-            .phase = .scheduling,
-            .scheduling = .init(gpa),
+            .phase = .collection,
+            .collection = .init(gpa),
             .execution = .init(gpa),
         };
     }
@@ -72,8 +72,8 @@ const QueuedDescribe = struct {
         this.callback.deinit();
     }
 };
-const Scheduling = struct {
-    locked: bool = false, // set to true after scheduling phase ends
+const Collection = struct {
+    locked: bool = false, // set to true after collection phase ends
     executing: bool = false,
     describe_callback_queue: std.ArrayList(QueuedDescribe),
 
@@ -81,7 +81,7 @@ const Scheduling = struct {
     active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope/_previous_scope
     _previous_scope: ?*DescribeScope, // TODO: this only exists for 'result.then()'. we should change it so we pass {BunTest.ref(), active_scope} to the user data parameter of .then().
 
-    pub fn init(gpa: std.mem.Allocator) Scheduling {
+    pub fn init(gpa: std.mem.Allocator) Collection {
         group.begin(@src());
         defer group.end();
 
@@ -94,26 +94,26 @@ const Scheduling = struct {
             ._previous_scope = null,
         };
     }
-    pub fn deinit(this: *Scheduling) void {
+    pub fn deinit(this: *Collection) void {
         this.root_scope.deinitTree();
         this.schedule.deinit();
     }
 
-    fn drainedPromise(_: *Scheduling, globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
+    fn drainedPromise(_: *Collection, globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         group.begin(@src());
         defer group.end();
 
         return jsc.JSPromise.resolvedPromiseValue(globalThis, .js_undefined); // TODO: return a promise that resolves when the describe queue is drained
     }
 
-    fn bunTest(this: *Scheduling) *BunTest {
+    fn bunTest(this: *Collection) *BunTest {
         group.begin(@src());
         defer group.end();
 
-        return @fieldParentPtr("scheduling", this);
+        return @fieldParentPtr("collection", this);
     }
 
-    pub fn enqueueDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) bun.JSError!void {
+    pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -126,7 +126,7 @@ const Scheduling = struct {
         });
     }
 
-    pub fn run(this: *Scheduling, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
+    pub fn run(this: *Collection, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -139,7 +139,7 @@ const Scheduling = struct {
         group.log("describeCallbackCompleted -> done", .{});
     }
 
-    pub fn callDescribeCallback(this: *Scheduling, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!jsc.JSValue {
+    pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
 
@@ -176,7 +176,7 @@ const Scheduling = struct {
         var buntest: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
         defer buntest.unref();
 
-        const this = &buntest.scheduling;
+        const this = &buntest.collection;
         this.executing = false;
 
         bun.assert(this._previous_scope != null);
@@ -186,7 +186,7 @@ const Scheduling = struct {
         try this.run(globalThis, prev_scope);
         return .js_undefined;
     }
-    pub fn describeCallbackCompleted(this: *Scheduling, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
+    pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -257,7 +257,7 @@ const TestExecution = struct {
 //   - did it return a promise? if it did, mark 'enqueue_describes' as true
 //
 // when executing:
-// - sometimes 'test()' will be called during execution stage rather than scheduling stage. in this case, we should execute it before the next test is called.
+// - sometimes 'test()' will be called during execution stage rather than collection stage. in this case, we should execute it before the next test is called.
 //
 // jest doesn't support async in describe. we will support this, so we can pick whatever order we want.
 

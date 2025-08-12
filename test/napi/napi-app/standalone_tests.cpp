@@ -554,6 +554,82 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  Napi::Error::New(env, "Creating empty object failed while exception pending")
+      .ThrowAsJavaScriptException();
+
+  napi_value result;
+  napi_status status = napi_create_object(env, &result);
+
+  if (status != napi_ok) {
+    printf("napi_create_object failed: %d\n", status);
+    return nullptr;
+  }
+
+  puts("napi_create_object succeeded");
+
+  napi_valuetype type;
+  status = napi_typeof(env, result, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_object) {
+    printf("napi_typeof produced %d\n", type);
+    return nullptr;
+  }
+
+  status = napi_create_string_utf8(env, "hej", 3, &result);
+
+  if (status != napi_ok) {
+    printf("napi_create_string_utf8 failed: %d\n", status);
+    return nullptr;
+  }
+
+  status = napi_typeof(env, result, &type);
+
+  if (status != napi_ok) {
+    printf("napi_typeof failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (type != napi_string) {
+    printf("napi_typeof produced %d\n", type);
+    return nullptr;
+  }
+
+  char buffer[4];
+  size_t written;
+  status =
+      napi_get_value_string_utf8(env, result, buffer, sizeof(buffer), &written);
+
+  if (status != napi_ok) {
+    printf("napi_get_value_string_utf8 failed: %d\n", status);
+    return nullptr;
+  }
+
+  if (sizeof(buffer) <= written) {
+    printf("retrieved too many characters: %zu", written);
+    return nullptr;
+  }
+
+  buffer[written] = '\0';
+
+  if (strcmp(buffer, "hej") != 0) {
+    printf("invalid string: \"%s\"\n", buffer);
+    return nullptr;
+  }
+
+  puts("string retrieval succeeded");
+
+  info.Env().GetAndClearPendingException();
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -575,6 +651,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
+  REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
 }
 
 } // namespace napitests

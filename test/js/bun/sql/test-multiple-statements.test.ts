@@ -34,17 +34,14 @@ test("SQLite hasMultipleStatements detection", () => {
 test("SQL template multi-statement execution", async () => {
   const sql = new SQL(`:memory:`);
 
-  // Execute multiple statements - they all run but we get changes count only
   const result = await sql`
     CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO users (name) VALUES ('Alice'), ('Bob');
   `;
 
-  // Result should show the changes from the INSERT (2 rows)
   expect(result.count).toBe(2);
   expect(result.command).toBe("MULTI");
 
-  // Verify the data was actually inserted
   const users = await sql`SELECT * FROM users`;
   expect(users).toHaveLength(2);
   expect(users[0]).toEqual({ id: 1, name: "Alice" });

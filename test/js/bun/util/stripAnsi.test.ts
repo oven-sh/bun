@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import stripAnsi from "strip-ansi";
+const stripAnsi = (input: string) => {
+  return Bun.spawnSync({
+    cmd: ["node", "-e", `process.stdout.write(require("strip-ansi").default(${JSON.stringify(input)}))`],
+  }).stdout.toString();
+};
 
 describe("Bun.stripAnsi", () => {
   test("returns same string object when no ANSI sequences present", () => {

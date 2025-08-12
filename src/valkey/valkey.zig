@@ -631,7 +631,7 @@ pub const ValkeyClient = struct {
                 }
             },
             else => {
-                return error.DidNotHandleResponse;
+                return null;
             }
         }
 
@@ -745,7 +745,7 @@ pub const ValkeyClient = struct {
             // saying it did not handle the response.
             const res = this.handleSubscribeResponse(value, &pair);
             if (res != null) {
-                return res;
+                return;
             }
 
             // Something else (like a .publish) may be in flight and we should

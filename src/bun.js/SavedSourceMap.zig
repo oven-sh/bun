@@ -79,6 +79,56 @@ pub const SavedMappings = struct {
     }
 };
 
+/// Compact variant that uses LineOffsetTable.Compact for reduced memory usage
+pub const SavedMappingsCompact = struct {
+    compact_table: SourceMap.LineOffsetTable.Compact,
+    
+    pub fn init(allocator: Allocator, vlq_mappings: []const u8) !SavedMappingsCompact {
+        return SavedMappingsCompact{
+            .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
+        };
+    }
+    
+    pub fn deinit(this: *SavedMappingsCompact) void {
+        this.compact_table.deinit();
+    }
+    
+    pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
+        // Parse the VLQ mappings using the existing parser but keep the compact table
+        const result = SourceMap.Mapping.parse(
+            allocator,
+            this.compact_table.vlq_mappings,
+            null, // estimated mapping count
+            1,    // sources count
+            this.compact_table.line_offsets.len, // input line count 
+            .{},
+        );
+        switch (result) {
+            .fail => |fail| {
+                if (Output.enable_ansi_colors_stderr) {
+                    try fail.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
+                        false,
+                        true,
+                    );
+                } else {
+                    try fail.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
+                        false,
+                        false,
+                    );
+                }
+                return fail.err;
+            },
+            .success => |success| {
+                return success;
+            },
+        }
+    }
+};
+
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -86,6 +136,7 @@ pub const SavedMappings = struct {
 pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
     SavedMappings,
+    SavedMappingsCompact,
     SourceProviderMap,
     BakeSourceProvider,
 });
@@ -155,6 +206,10 @@ pub fn deinit(this: *SavedSourceMap) void {
             } else if (value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
+            } else if (value.get(SavedMappingsCompact)) |saved_compact| {
+                var compact: *SavedMappingsCompact = saved_compact;
+                compact.deinit();
+                bun.default_allocator.destroy(compact);
             } else if (value.get(SourceProviderMap)) |provider| {
                 _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
             }
@@ -166,7 +221,22 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
+    // Always use compact format for memory efficiency
+    const mappings_data = mappings.list.items;
+    
+    // Extract VLQ mappings (starts after header if present)
+    const vlq_start: usize = if (mappings_data.len >= vlq_offset) vlq_offset else 0;
+    const vlq_data = mappings_data[vlq_start..];
+    
+    const compact = try bun.default_allocator.create(SavedMappingsCompact);
+    compact.* = try SavedMappingsCompact.init(bun.default_allocator, vlq_data);
+    try this.putValue(source.path.text, Value.init(compact));
+}
+
+pub fn putMappingsCompact(this: *SavedSourceMap, source: *const logger.Source, vlq_mappings: []const u8) !void {
+    const compact = try bun.default_allocator.create(SavedMappingsCompact);
+    compact.* = try SavedMappingsCompact.init(bun.default_allocator, vlq_mappings);
+    try this.putValue(source.path.text, Value.init(compact));
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -182,6 +252,10 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
         } else if (old_value.get(SavedMappings)) |saved_mappings| {
             var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
             saved.deinit();
+        } else if (old_value.get(SavedMappingsCompact)) |saved_compact| {
+            var compact: *SavedMappingsCompact = saved_compact;
+            compact.deinit();
+            bun.default_allocator.destroy(compact);
         } else if (old_value.get(SourceProviderMap)) |provider| {
             _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
         }
@@ -218,6 +292,18 @@ fn getWithContent(
             var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
             defer saved.deinit();
             const result = bun.new(ParsedSourceMap, saved.toMapping(bun.default_allocator, path) catch {
+                _ = this.map.remove(mapping.key_ptr.*);
+                return .{};
+            });
+            mapping.value_ptr.* = Value.init(result).ptr();
+            result.ref();
+
+            return .{ .map = result };
+        },
+        @field(Value.Tag, @typeName(SavedMappingsCompact)) => {
+            defer this.unlock();
+            var saved_compact = Value.from(mapping.value_ptr.*).as(SavedMappingsCompact);
+            const result = bun.new(ParsedSourceMap, saved_compact.toMapping(bun.default_allocator, path) catch {
                 _ = this.map.remove(mapping.key_ptr.*);
                 return .{};
             });

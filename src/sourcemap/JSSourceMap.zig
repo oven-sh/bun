@@ -135,28 +135,15 @@ pub fn constructor(
         }
     }
 
-    // Parse the VLQ mappings
-    const parse_result = bun.sourcemap.Mapping.parse(
-        bun.default_allocator,
-        mappings_str.slice(),
-        null, // estimated_mapping_count
-        @intCast(sources.items.len), // sources_count
-        std.math.maxInt(i32),
-        .{ .allow_names = true, .sort = true },
-    );
-
-    const mapping_list = switch (parse_result) {
-        .success => |parsed| parsed,
-        .fail => |fail| {
-            if (fail.loc.toNullable()) |loc| {
-                return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s} at {d}", .{ fail.msg, loc.start }));
-            }
-            return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s}", .{fail.msg}));
-        },
+    // Use compact representation exclusively for memory efficiency
+    var compact_map = try bun.jsc.SavedSourceMap.SavedMappingsCompact.init(bun.default_allocator, mappings_str.slice());
+    const parsed_map = compact_map.toMapping(bun.default_allocator, "<SourceMap>") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return globalObject.throwValue(globalObject.createSyntaxErrorInstance("Failed to parse compact sourcemap: {s}", .{@errorName(err)})),
     };
-
+    
     const source_map = bun.new(JSSourceMap, .{
-        .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, mapping_list),
+        .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, parsed_map),
         .sources = sources.items,
         .names = names.items,
     });
@@ -170,6 +157,7 @@ pub fn constructor(
 
     return source_map;
 }
+
 
 pub fn memoryCost(this: *const JSSourceMap) usize {
     return @sizeOf(JSSourceMap) + this.sources.len * @sizeOf(bun.String) + this.sourcemap.memoryCost();

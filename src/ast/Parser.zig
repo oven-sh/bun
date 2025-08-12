@@ -1182,17 +1182,6 @@ pub const Parser = struct {
         if (p.options.features.inject_jest_globals) outer: {
             var jest: *Jest = &p.jest;
 
-            for (p.import_records.items) |*item| {
-                // Only skip if they imported from @jest/globals or vitest
-                // For bun:test, we still want to inject globals to avoid breaking existing usage
-                if (strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
-                    if (p.options.features.runtime_transpiler_cache) |cache| {
-                        cache.input_hash = null;
-                    }
-                    break :outer;
-                }
-            }
-
             // if they didn't use any of the jest globals, don't inject it, I guess.
             const items_count = brk: {
                 var count: usize = 0;

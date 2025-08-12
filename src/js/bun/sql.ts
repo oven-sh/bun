@@ -181,9 +181,16 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
-    // bind close event to the query (will unbind and auto release the connection when the query is finished)
-    pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
-    handle.run(pooledConnection.connection, query);
+    // For PostgreSQL, bind close event to the query
+    // For SQLite, the connection is just the Database object
+    if (pooledConnection.bindQuery) {
+      // PostgreSQL pooled connection
+      pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
+      handle.run(pooledConnection.connection, query);
+    } else {
+      // SQLite - direct database connection
+      handle.run(pooledConnection, query);
+    }
   }
   function queryFromPoolHandler(query, handle, err) {
     if (err) {

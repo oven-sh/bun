@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -41,7 +41,7 @@ describe("SNI TLS array handling (issue #21792)", () => {
         { cert: crtA, key: keyA, serverName: "serverA.com" },
         { cert: crtB, key: keyB, serverName: "serverB.com" },
       ],
-      fetch: (request) => {
+      fetch: request => {
         const host = request.headers.get("host") || "unknown";
         return new Response(`Hello from ${host}`);
       },

@@ -45,7 +45,7 @@ declare module "bun" {
     };
 
     type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
-    type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+    type ContextCallback<T, SQL> = (sql: SQL) => Bun.MaybePromise<T>;
 
     interface SQLiteOptions extends BunSQLite.DatabaseOptions {
       adapter?: "sqlite";

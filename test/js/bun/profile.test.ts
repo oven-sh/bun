@@ -57,27 +57,34 @@ console.log("Script completed");
   // Verify profile file was created
   expect(existsSync(profileFile)).toBe(true);
 
-  // Verify profile file contains valid JSON
+  // Verify profile file contains valid .cpuprofile JSON format
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
-  expect(profileData).toHaveProperty("traceEvents");
-  expect(Array.isArray(profileData.traceEvents)).toBe(true);
-  expect(profileData.traceEvents.length).toBeGreaterThan(0);
-
-  // Verify some trace events have required Chrome trace format fields
-  const events = profileData.traceEvents;
-  const sampleEvent = events.find(e => e.ph === "P"); // Find a sampling event
-  const metadataEvent = events.find(e => e.ph === "M"); // Find a metadata event
-
-  expect(sampleEvent).toBeDefined();
-  expect(sampleEvent).toHaveProperty("name");
-  expect(sampleEvent).toHaveProperty("ph", "P");
-  expect(sampleEvent).toHaveProperty("ts");
-  expect(sampleEvent).toHaveProperty("pid");
-  expect(sampleEvent).toHaveProperty("tid");
-
-  expect(metadataEvent).toBeDefined();
-  expect(metadataEvent).toHaveProperty("name");
-  expect(metadataEvent).toHaveProperty("ph", "M");
+  
+  // Check required .cpuprofile fields
+  expect(profileData).toHaveProperty("nodes");
+  expect(profileData).toHaveProperty("startTime");
+  expect(profileData).toHaveProperty("endTime");
+  expect(profileData).toHaveProperty("samples");
+  expect(profileData).toHaveProperty("timeDeltas");
+  
+  expect(Array.isArray(profileData.nodes)).toBe(true);
+  expect(Array.isArray(profileData.samples)).toBe(true);
+  expect(Array.isArray(profileData.timeDeltas)).toBe(true);
+  expect(profileData.nodes.length).toBeGreaterThan(0);
+  expect(profileData.samples.length).toBeGreaterThan(0);
+  
+  // Verify node structure
+  const rootNode = profileData.nodes[0];
+  expect(rootNode).toHaveProperty("id");
+  expect(rootNode).toHaveProperty("callFrame");
+  expect(rootNode.callFrame).toHaveProperty("functionName");
+  expect(rootNode.callFrame.functionName).toBe("(root)");
+  
+  // Check for fibonacci function in nodes
+  const fibonacciNode = profileData.nodes.find(n => 
+    n.callFrame && n.callFrame.functionName === "fibonacci"
+  );
+  expect(fibonacciNode).toBeDefined();
 });
 
 test("--profile flag with default filename", async () => {
@@ -126,10 +133,11 @@ console.log("Done");
   // Verify default profile file was created
   expect(existsSync(defaultProfileFile)).toBe(true);
 
-  // Verify it's valid JSON
+  // Verify it's valid .cpuprofile JSON
   const profileData = JSON.parse(readFileSync(defaultProfileFile, "utf8"));
-  expect(profileData).toHaveProperty("traceEvents");
-  expect(Array.isArray(profileData.traceEvents)).toBe(true);
+  expect(profileData).toHaveProperty("nodes");
+  expect(profileData).toHaveProperty("samples");
+  expect(Array.isArray(profileData.nodes)).toBe(true);
 });
 
 test("--profile works with script that throws error", async () => {
@@ -178,10 +186,10 @@ throw new Error("Test error");
   // Profile file should still be created even on error
   expect(existsSync(profileFile)).toBe(true);
 
-  // Verify it's valid JSON
+  // Verify it's valid .cpuprofile JSON
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
-  expect(profileData).toHaveProperty("traceEvents");
-  expect(Array.isArray(profileData.traceEvents)).toBe(true);
+  expect(profileData).toHaveProperty("nodes");
+  expect(Array.isArray(profileData.nodes)).toBe(true);
 });
 
 test("--profile works with async script", async () => {
@@ -232,11 +240,11 @@ console.log(result);
   // Verify profile file was created
   expect(existsSync(profileFile)).toBe(true);
 
-  // Verify it's valid JSON
+  // Verify it's valid .cpuprofile JSON
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
-  expect(profileData).toHaveProperty("traceEvents");
-  expect(Array.isArray(profileData.traceEvents)).toBe(true);
+  expect(profileData).toHaveProperty("nodes");
+  expect(Array.isArray(profileData.nodes)).toBe(true);
 
   // Should have some profiling data from the async work
-  expect(profileData.traceEvents.length).toBeGreaterThan(1);
+  expect(profileData.nodes.length).toBeGreaterThan(1);
 });

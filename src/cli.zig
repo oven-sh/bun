@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const NodeCommand = @import("./cli/node_command.zig").NodeCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -566,6 +567,8 @@ pub const Command = struct {
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
 
+            RootCommandMatcher.case("node") => .NodeCommand,
+
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
@@ -612,6 +615,8 @@ pub const Command = struct {
         "x",
         "repl",
         "info",
+        "why",
+        "node",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -783,6 +788,13 @@ pub const Command = struct {
                 try TestCommand.exec(ctx);
                 return;
             },
+            .NodeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .NodeCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .NodeCommand);
+
+                try NodeCommand.exec(ctx);
+                return;
+            },
             .GetCompletionsCommand => {
                 try @"bun getcompletes"(allocator, log);
                 return;
@@ -893,6 +905,7 @@ pub const Command = struct {
         InstallCommand,
         InstallCompletionsCommand,
         LinkCommand,
+        NodeCommand,
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
@@ -930,6 +943,7 @@ pub const Command = struct {
                 .InstallCommand => 'i',
                 .InstallCompletionsCommand => 'C',
                 .LinkCommand => 'l',
+                .NodeCommand => 'N',
                 .PackageManagerCommand => 'P',
                 .RemoveCommand => 'R',
                 .RunCommand => 'r',
@@ -958,6 +972,7 @@ pub const Command = struct {
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
+                .NodeCommand => Arguments.auto_only_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }
@@ -1313,6 +1328,7 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
+            .NodeCommand = true,
             .OutdatedCommand = true,
             .UpdateInteractiveCommand = true,
             .PublishCommand = true,
@@ -1353,6 +1369,7 @@ pub const Command = struct {
             .RemoveCommand = false,
             .UnlinkCommand = false,
             .UpdateCommand = false,
+            .NodeCommand = false,
         });
     };
 

@@ -282,10 +282,12 @@ src/bun.js/ResolveMessage.zig
 src/bun.js/RuntimeTranspilerCache.zig
 src/bun.js/SavedSourceMap.zig
 src/bun.js/Strong.zig
+src/bun.js/test/Collection.zig
 src/bun.js/test/describe2.zig
 src/bun.js/test/diff_format.zig
 src/bun.js/test/diff/diff_match_patch.zig
 src/bun.js/test/diff/printDiff.zig
+src/bun.js/test/execution.zig
 src/bun.js/test/expect.zig
 src/bun.js/test/expect/toBe.zig
 src/bun.js/test/expect/toBeArray.zig

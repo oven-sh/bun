@@ -89,7 +89,7 @@ pub const SavedMappingsCompact = struct {
             .sources_count = 1, // Default to 1 source
         };
     }
-    
+
     pub fn initWithSourcesCount(allocator: Allocator, vlq_mappings: []const u8, sources_count: usize) !SavedMappingsCompact {
         return SavedMappingsCompact{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
@@ -104,11 +104,11 @@ pub const SavedMappingsCompact = struct {
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
         // Parse the VLQ mappings using the existing parser but keep the compact table
         // Calculate proper input line count - use the last line index as the total
-        const input_line_count = if (this.compact_table.line_offsets.len > 1) 
-            this.compact_table.line_offsets.len - 1 
-        else 
+        const input_line_count = if (this.compact_table.line_offsets.len > 1)
+            this.compact_table.line_offsets.len - 1
+        else
             1;
-            
+
         const result = SourceMap.Mapping.parse(
             allocator,
             this.compact_table.vlq_mappings,

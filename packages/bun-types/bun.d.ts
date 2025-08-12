@@ -597,6 +597,23 @@ declare module "bun" {
   ): number;
 
   /**
+   * Remove ANSI escape codes from a string.
+   *
+   * @category Utilities
+   *
+   * @param input The string to remove ANSI escape codes from.
+   * @returns The string with ANSI escape codes removed.
+   *
+   * @example
+   * ```ts
+   * import { stripAnsi } from "bun";
+   *
+   * console.log(stripAnsi("\u001b[31mhello\u001b[39m")); // "hello"
+   * ```
+   */
+  function stripAnsi(input: string): string;
+
+  /**
    * TOML related APIs
    */
   namespace TOML {

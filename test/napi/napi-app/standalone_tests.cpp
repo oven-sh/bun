@@ -716,8 +716,9 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
           .method = nullptr,
           .getter =
               +[](napi_env env, napi_callback_info info) {
+                puts("foo getter");
                 napi_value result;
-                napi_create_int32(env, 1, &result);
+                napi_create_int32(env, 42, &result);
                 return result;
               },
           .setter = nullptr,
@@ -735,7 +736,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
                 size_t argc = 0;
                 assert(napi_ok == napi_get_cb_info(env, info, &argc, nullptr,
                                                    nullptr, nullptr));
-                printf("bar setter: %zu arguments\n", argc);
+                printf("bar setter: argc == %zu\n", argc);
                 assert(argc == 1);
                 return ok(env);
               },
@@ -761,6 +762,27 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   expect_initial_failure("napi_set_element",
                          [&] { return napi_set_element(env, object, 0, two); });
+
+  expect_initial_failure("napi_get_named_property", [&] {
+    return napi_get_named_property(env, object, "foo", &result);
+  });
+
+  do_throw();
+
+  int32_t n;
+
+  status = napi_get_value_int32(env, result, &n);
+
+  if (status != napi_ok) {
+    printf("napi_get_value_int32 failed: %d\n", status);
+    return nullptr;
+  }
+
+  assert(n == 42);
+
+  expect_initial_failure("napi_set_named_property", [&] {
+    return napi_set_named_property(env, object, "bar", result);
+  });
 
   puts("ok");
 

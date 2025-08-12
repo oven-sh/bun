@@ -606,12 +606,12 @@ declare module "bun" {
    *
    * @example
    * ```ts
-   * import { stripAnsi } from "bun";
+   * import { stripANSI } from "bun";
    *
-   * console.log(stripAnsi("\u001b[31mhello\u001b[39m")); // "hello"
+   * console.log(stripANSI("\u001b[31mhello\u001b[39m")); // "hello"
    * ```
    */
-  function stripAnsi(input: string): string;
+  function stripANSI(input: string): string;
 
   /**
    * TOML related APIs

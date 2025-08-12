@@ -5,10 +5,10 @@ const stripAnsi = (input: string) => {
   }).stdout.toString();
 };
 
-describe("Bun.stripAnsi", () => {
+describe("Bun.stripANSI", () => {
   test("returns same string object when no ANSI sequences present", () => {
     const input = "hello world";
-    const result = Bun.stripAnsi(input);
+    const result = Bun.stripANSI(input);
     expect(result).toBe(input);
     // Verify it's the same object, not a copy
     expect(result === input).toBe(true);
@@ -16,7 +16,7 @@ describe("Bun.stripAnsi", () => {
 
   test("returns new string when ANSI sequences are removed", () => {
     const input = "\x1b[31mhello\x1b[0m world";
-    const result = Bun.stripAnsi(input);
+    const result = Bun.stripANSI(input);
     expect(result).toBe("hello world");
     // Verify it's a different object
     expect(result === input).toBe(false);
@@ -24,7 +24,7 @@ describe("Bun.stripAnsi", () => {
 
   test("returns same string when escape chars present but no valid ANSI", () => {
     const input = "\x1b";
-    const result = Bun.stripAnsi(input);
+    const result = Bun.stripANSI(input);
     expect(result).toBe(input);
     // This should return the same object since nothing was stripped
     expect(result === input).toBe(true);
@@ -443,14 +443,14 @@ describe("Bun.stripAnsi", () => {
   for (const input of testCases) {
     test(JSON.stringify(input), () => {
       const expected = stripAnsi(input);
-      expect(Bun.stripAnsi(input)).toBe(expected);
+      expect(Bun.stripANSI(input)).toBe(expected);
     });
   }
 
   test("long strings", () => {
     const longText = "a".repeat(10000);
     const withAnsi = `\x1b[31m${longText}\x1b[39m`;
-    expect(Bun.stripAnsi(withAnsi)).toBe(stripAnsi(withAnsi));
+    expect(Bun.stripANSI(withAnsi)).toBe(stripAnsi(withAnsi));
   });
 
   test("multiple sequences in long string", () => {
@@ -459,14 +459,14 @@ describe("Bun.stripAnsi", () => {
       parts.push(`\x1b[${30 + (i % 8)}mword${i}\x1b[39m`);
     }
     const input = parts.join(" ");
-    expect(Bun.stripAnsi(input)).toBe(stripAnsi(input));
+    expect(Bun.stripANSI(input)).toBe(stripAnsi(input));
   });
 
   test("non-string input", () => {
-    expect(Bun.stripAnsi(123 as any)).toBe("123");
-    expect(Bun.stripAnsi(true as any)).toBe("true");
-    expect(Bun.stripAnsi(false as any)).toBe("false");
-    expect(Bun.stripAnsi(null as any)).toBe("null");
-    expect(Bun.stripAnsi(undefined as any)).toBe("undefined");
+    expect(Bun.stripANSI(123 as any)).toBe("123");
+    expect(Bun.stripANSI(true as any)).toBe("true");
+    expect(Bun.stripANSI(false as any)).toBe("false");
+    expect(Bun.stripANSI(null as any)).toBe("null");
+    expect(Bun.stripANSI(undefined as any)).toBe("undefined");
   });
 });

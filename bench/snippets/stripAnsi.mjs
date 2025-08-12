@@ -1,7 +1,7 @@
 import stripAnsi from "strip-ansi";
 import { bench, run } from "../runner.mjs";
 
-const bunStripAnsi = globalThis?.Bun?.stripAnsi;
+const bunStripAnsi = globalThis?.Bun?.stripANSI;
 
 const stripAnsiFunc = bunStripAnsi || stripAnsi;
 const formatter = new Intl.NumberFormat();

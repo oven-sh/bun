@@ -613,7 +613,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   }
 
   if (sizeof(buffer) <= written) {
-    printf("retrieved too many characters: %zu", written);
+    printf("retrieved too many characters: %zu\n", written);
     return nullptr;
   }
 

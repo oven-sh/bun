@@ -158,8 +158,10 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
             if (q < end && isCSIFinalByte(*q))
                 return q + 1;
 
-            // Backtrack one digit to serve as the final byte when needed
-            if (lastDigit)
+            // Backtrack: the last digit might be a CSI final byte
+            // This happens when we have patterns like \x1b]52;c where 'c' should be the final byte
+            // but was consumed as part of the parameter
+            if (lastDigit && isCSIFinalByte(*lastDigit))
                 return lastDigit + 1;
 
             // Fall through to "no-digits" variant if something odd happened

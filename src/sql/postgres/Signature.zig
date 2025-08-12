@@ -103,7 +103,7 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
 
 const bun = @import("bun");
 const std = @import("std");
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 
 const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;

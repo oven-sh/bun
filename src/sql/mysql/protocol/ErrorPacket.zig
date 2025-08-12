@@ -59,5 +59,5 @@ const bun = @import("bun");
 const Data = @import("./Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const JSC = bun.JSC;
+const JSC = bun.jsc;
 const JSValue = JSC.JSValue;

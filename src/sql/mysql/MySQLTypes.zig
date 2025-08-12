@@ -1,9 +1,4 @@
-const std = @import("std");
-const bun = @import("root").bun;
 const protocol = @This();
-const String = bun.String;
-const JSValue = bun.JSC.JSValue;
-const JSC = bun.JSC;
 
 pub const CharacterSet = enum(u8) {
     big5_chinese_ci = 1,
@@ -293,7 +288,7 @@ pub const FieldType = enum(u8) {
                 return .MYSQL_TYPE_DATETIME;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 return .MYSQL_TYPE_BLOB;
             }
 
@@ -301,8 +296,8 @@ pub const FieldType = enum(u8) {
                 return .MYSQL_TYPE_LONGLONG;
             }
 
-            if (tag.isArrayLike() and value.getLength(globalObject) > 0) {
-                return FieldType.fromJS(globalObject, value.getIndex(globalObject, 0));
+            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
+                return FieldType.fromJS(globalObject, try value.getIndex(globalObject, 0));
             }
             if (globalObject.hasException()) return error.JSError;
 
@@ -470,11 +465,12 @@ pub const Value = union(enum) {
 
         return switch (field_type) {
             .MYSQL_TYPE_TINY => Value{ .bool = value.toBoolean() },
-            .MYSQL_TYPE_SHORT => Value{ .short = globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) }) orelse return error.JSError },
-            .MYSQL_TYPE_LONG => Value{ .int = globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) }) orelse return error.JSError },
-            .MYSQL_TYPE_LONGLONG => Value{ .long = globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) }) orelse return error.JSError },
-            .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerceToDoubleCheckingErrors(globalObject)) },
-            .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerceToDoubleCheckingErrors(globalObject) },
+            .MYSQL_TYPE_SHORT => Value{ .short = try globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16), .field_name = "i16" }) },
+            .MYSQL_TYPE_LONG => Value{ .int = try globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32), .field_name = "i32" }) },
+            .MYSQL_TYPE_LONGLONG => Value{ .long = try globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64), .field_name = "i64" }) },
+
+            // .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerceToDoubleCheckingErrors(globalObject)) },
+            // .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerceToDoubleCheckingErrors(globalObject) },
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATE => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
@@ -492,7 +488,7 @@ pub const Value = union(enum) {
                 }
 
                 if (value.isString()) {
-                    const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+                    const str = try bun.String.fromJS(value, globalObject);
                     defer str.deref();
                     return Value{ .string = str.toUTF8(bun.default_allocator) };
                 }
@@ -502,15 +498,14 @@ pub const Value = union(enum) {
 
             .MYSQL_TYPE_JSON => {
                 var str: bun.String = bun.String.empty;
-                value.jsonStringify(globalObject, 0, &str);
-                if (globalObject.hasException()) return error.JSError;
+                try value.jsonStringify(globalObject, 0, &str);
                 defer str.deref();
                 return Value{ .string = str.toUTF8(bun.default_allocator) };
             },
 
             //   .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING, .MYSQL_TYPE_STRING => {
             else => {
-                const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+                const str = try bun.String.fromJS(value, globalObject);
                 defer str.deref();
                 return Value{ .string = str.toUTF8(bun.default_allocator) };
             },
@@ -889,22 +884,28 @@ pub const Value = union(enum) {
         }
     };
 
-    pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
-        return switch (this.*) {
-            .null => JSValue.jsNull(),
-            .bool => |b| JSValue.jsBoolean(b),
-            inline .string, .string_data => |*str| {
-                var out = bun.String.createUTF8(str.slice());
-                return out.transferToJS(globalObject);
-            },
-            inline .bytes, .bytes_data => |*data| JSC.ArrayBuffer.createBuffer(globalObject, data.slice()),
-            inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
-            inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
-        };
+    pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
+        // return switch (this.*) {
+        //     .null => JSValue.jsNull(),
+        //     .bool => |b| JSValue.jsBoolean(b),
+        //     inline .string, .string_data => |*str| {
+        //         var out = try bun.String.createUTF8(str.slice());
+        //         return out.transferToJS(globalObject);
+        //     },
+        //     inline .bytes, .bytes_data => |*data| JSC.ArrayBuffer.createBuffer(globalObject, data.slice()),
+        //     inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
+        //     inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
+        // };
+        _ = this;
+        _ = globalObject;
+        return .js_undefined;
     }
 
     export fn MySQL__ValueToJS(globalObject: *JSC.JSGlobalObject, value: *Value) JSValue {
-        return value.toJS(globalObject);
+        // return value.toJS(globalObject);s
+        _ = globalObject;
+        _ = value;
+        return .js_undefined;
     }
 };
 
@@ -972,3 +973,9 @@ pub const int3 = u24;
 pub const int4 = u32;
 pub const int8 = u64;
 const Data = @import("./protocol/Data.zig").Data;
+const bun = @import("bun");
+const std = @import("std");
+const String = bun.String;
+const JSC = bun.jsc;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

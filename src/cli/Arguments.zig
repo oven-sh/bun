@@ -735,7 +735,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
-        
+
         if (args.option("--profile")) |profile_file| {
             ctx.runtime_options.profile_file = if (profile_file.len == 0) "profile.json" else profile_file;
         }

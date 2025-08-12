@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
-import { rmSync, existsSync, readFileSync } from "fs";
+import { expect, test } from "bun:test";
+import { existsSync, readFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("--profile flag creates profile file", async () => {
@@ -26,7 +26,7 @@ console.log("Script completed");
   });
 
   const profileFile = join(dir, "test-profile.json");
-  
+
   // Ensure profile file doesn't exist before test
   if (existsSync(profileFile)) {
     rmSync(profileFile);
@@ -53,20 +53,20 @@ console.log("Script completed");
   const combinedOutput = stdout + stderr;
   expect(combinedOutput).toContain("Profile data written to:");
   expect(combinedOutput).toContain(profileFile);
-  
+
   // Verify profile file was created
   expect(existsSync(profileFile)).toBe(true);
-  
+
   // Verify profile file contains valid JSON
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
   expect(profileData).toHaveProperty("traceEvents");
   expect(Array.isArray(profileData.traceEvents)).toBe(true);
   expect(profileData.traceEvents.length).toBeGreaterThan(0);
-  
+
   // Verify some trace events have required Chrome trace format fields
   const events = profileData.traceEvents;
   const sampleEvent = events.find(e => e.ph === "i"); // Find an instant event
-  
+
   if (sampleEvent) {
     expect(sampleEvent).toHaveProperty("name");
     expect(sampleEvent).toHaveProperty("ph");
@@ -91,7 +91,7 @@ console.log("Done");
   });
 
   const defaultProfileFile = join(dir, "profile.json");
-  
+
   // Ensure profile file doesn't exist before test
   if (existsSync(defaultProfileFile)) {
     rmSync(defaultProfileFile);
@@ -118,10 +118,10 @@ console.log("Done");
   const combinedOutput = stdout + stderr;
   expect(combinedOutput).toContain("Profile data written to:");
   expect(combinedOutput).toContain("profile.json");
-  
+
   // Verify default profile file was created
   expect(existsSync(defaultProfileFile)).toBe(true);
-  
+
   // Verify it's valid JSON
   const profileData = JSON.parse(readFileSync(defaultProfileFile, "utf8"));
   expect(profileData).toHaveProperty("traceEvents");
@@ -148,7 +148,7 @@ throw new Error("Test error");
   });
 
   const profileFile = join(dir, "error-profile.json");
-  
+
   // Ensure profile file doesn't exist before test
   if (existsSync(profileFile)) {
     rmSync(profileFile);
@@ -170,10 +170,10 @@ throw new Error("Test error");
 
   expect(exitCode).toBe(1); // Should exit with error code
   expect(stdout).toContain("Starting error test");
-  
+
   // Profile file should still be created even on error
   expect(existsSync(profileFile)).toBe(true);
-  
+
   // Verify it's valid JSON
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
   expect(profileData).toHaveProperty("traceEvents");
@@ -199,7 +199,7 @@ console.log(result);
   });
 
   const profileFile = join(dir, "async-profile.json");
-  
+
   // Ensure profile file doesn't exist before test
   if (existsSync(profileFile)) {
     rmSync(profileFile);
@@ -224,15 +224,15 @@ console.log(result);
   // Profile success message can be in either stdout or stderr
   const combinedOutput = stdout + stderr;
   expect(combinedOutput).toContain("Profile data written to:");
-  
+
   // Verify profile file was created
   expect(existsSync(profileFile)).toBe(true);
-  
+
   // Verify it's valid JSON
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
   expect(profileData).toHaveProperty("traceEvents");
   expect(Array.isArray(profileData.traceEvents)).toBe(true);
-  
+
   // Should have some profiling data from the async work
   expect(profileData.traceEvents.length).toBeGreaterThan(1);
 });

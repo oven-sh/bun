@@ -2,8 +2,6 @@ pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 
-const SamplingProfilerTraceEvent = @import("./bun.js/bindings/SamplingProfilerTraceEvent.zig").SamplingProfilerTraceEvent;
-
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -352,7 +350,7 @@ pub const Run = struct {
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
-                    // Stop profiler on error if --profile flag is set  
+                    // Stop profiler on error if --profile flag is set
                     if (should_profile) {
                         const profile_file = this.ctx.runtime_options.profile_file.?;
                         _ = SamplingProfilerTraceEvent.stop(vm.global.vm(), profile_file);
@@ -559,6 +557,7 @@ const string = []const u8;
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
+const SamplingProfilerTraceEvent = @import("./bun.js/bindings/SamplingProfilerTraceEvent.zig").SamplingProfilerTraceEvent;
 const which = @import("./which.zig").which;
 
 const bun = @import("bun");

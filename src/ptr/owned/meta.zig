@@ -1,3 +1,5 @@
+//! Private utilities used in the implementation of `Owned` and `MaybeOwned`.
+
 pub const PointerInfo = struct {
     const Self = @This();
 

@@ -15,7 +15,18 @@ template<typename CharacterType>
 static inline bool isPrefixChar(const CharacterType c)
 {
     // [[\]()#;?]*
-    return c == '[' || c == ']' || c == '(' || c == ')' || c == '#' || c == ';' || c == '?';
+    switch (c) {
+    case '[':
+    case ']':
+    case '(':
+    case ')':
+    case '#':
+    case ';':
+    case '?':
+        return true;
+    default:
+        return false;
+    }
 }
 
 // Add back the OSC payload char class exactly as ansi-regex expects:
@@ -64,7 +75,7 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
     ++p;
 
     // Consume prefix: [[\]()#;?]*
-    while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))
+    while (p < end && isPrefixChar(*p))
         ++p;
 
     const CharacterType* afterPrefix = p;

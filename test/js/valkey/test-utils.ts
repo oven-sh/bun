@@ -274,9 +274,9 @@ async function startContainer(): Promise<ContainerConfiguration> {
     async function tryStartContainer(attempt = 1, maxAttempts = 3) {
       const currentPort = attempt === 1 ? port : randomPort();
       const currentTlsPort = attempt === 1 ? tlsPort : randomPort();
-      
+
       console.log(`Attempt ${attempt}: Using ports ${currentPort}:6379 and ${currentTlsPort}:6380...`);
-      
+
       const startProcess = Bun.spawn({
         cmd: [
           dockerCLI,
@@ -320,7 +320,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
           AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
           READONLY_REDIS_URL = `redis://readonly:readonly@${REDIS_HOST}:${REDIS_PORT}`;
           WRITEONLY_REDIS_URL = `redis://writeonly:writeonly@${REDIS_HOST}:${REDIS_PORT}`;
-          
+
           containerConfig = {
             port: currentPort,
             tlsPort: currentTlsPort,
@@ -330,7 +330,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
         }
         return { containerID, success: true };
       }
-      
+
       // If the error is related to port already in use, try again with different ports
       if (startError.includes("address already in use") && attempt < maxAttempts) {
         console.log(`Port conflict detected. Retrying with different ports...`);
@@ -340,11 +340,11 @@ async function startContainer(): Promise<ContainerConfiguration> {
         }
         return tryStartContainer(attempt + 1, maxAttempts);
       }
-      
+
       console.error(`Failed to start container. Exit code: ${startExitCode}, Error: ${startError}`);
       throw new Error(`Failed to start Redis container: ${startError || "unknown error"}`);
     }
-    
+
     const { containerID } = await tryStartContainer();
 
     console.log(`Container started with ID: ${containerID.trim()}`);
@@ -731,4 +731,8 @@ export async function retry<T>(
   }
 
   throw new Error(`Retry failed after ${attempts} attempts (${Date.now() - startTime}ms)`);
+}
+
+export function randomCoinFlip(): boolean {
+  return Math.floor(Math.random() * 2) == 0;
 }

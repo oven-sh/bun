@@ -589,7 +589,73 @@ declare module "bun" {
 
     publish(channel: string, message: string): Promise<void>;
 
-    subscribe(...args: [...channels: string[]]): Promise<void>;
+    /**
+     * Subscribe to a Redis channel.
+     *
+     * @param channel The channel to subscribe to.
+     * @param listener The listener to call when a message is received on the
+     *                 channel. The listener will receive the message as the
+     *                 first argument and the channel as the second argument.
+     *
+     * @example Basic usage
+     * await client.subscribe("my-channel", (channel, message) => {
+     *   console.log(`Received message on ${channel}: ${message}`);
+     * });
+     *
+     * @note Subscribing disables automatic pipeling, so all commands will be
+     *       received immediately.
+     * @note Subscribing moves the channel to a dedicated subscription state
+     *       which prevents most other commands from being executed until
+     *       unsubscribed. Only @see ping, @see psubscribe, @see punsubscribe,
+     *       @see ssubscribe, @see @subscribe, @see sunsunscribe and @see
+     *       unsubscribe are legal to invoke in a subscribed upon channel.
+     */
+    subscribe(channel: string,
+              listener: (string, string) => void): Promise<void>;
+
+    /**
+     * Subscribe to multiple Redis channels.
+     *
+     * @param channels An array of channels to subscribe to.
+     * @param listener The listener to call when a message is received on any
+     *                 of the subscribed channels. The listener will receive
+     *                 the message as the first argument and the channel as the
+     *                 second argument.
+     *
+     * @note Subscribing disables automatic pipeling, so all commands will be
+     *       received immediately.
+     * @note Subscribing moves the channels to a dedicated subscription state
+     *       in which only a limited set of commands can be executed.
+     */
+    subscribe(channels: string[],
+              listener: (string, string) => void): Promise<void>;
+
+    /**
+     * Unsubscribe from a singular Redis channel.
+     *
+     * @param channel The channel to unsubscribe from.
+     *
+     * @note If there are no more channels subscribed to, the client
+     *       automatically re-enables pipelining if it was previously enabled.
+     * @note Unsubscribing moves the channel back to a normal state out of the
+     *       subscription state if all channels have been unsubscribed from.
+     *       For further details on the subscription state, @see subscribe.
+     */
+    unsubscribe(channel: string): Promise<void>;
+
+    /**
+     * Unsubscribe from multiple Redis channels.
+     *
+     * @parm channels An array of channels to unsubscribe from.
+     *
+     * @note If there are no more channels subscribed to, the client
+     *       automatically re-enables pipelining if it was previously enabled.
+     * @note Unsubscribing moves the channel back to a normal state out of the
+     *       subscription state if all channels have been unsubscribed from.
+     *       For further details on the subscription state, @see subscribe.
+     */
+    unsubscribe(channels: string[]): Promise<void>;
+
     on(event: string,
        listener: (channel: string, message: string) => void): this;
   }

@@ -1,6 +1,6 @@
-import { randomUUIDv7, RedisClient } from "bun";
+import { randomUUIDv7, RedisClient, sleep } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled } from "./test-utils";
+import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled, randomCoinFlip } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(() => {
@@ -174,6 +174,113 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(async () => {
         await customRedis.get("test");
       }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
+    });
+  });
+
+  describe("PUB/SUB", () => {
+    const testChannel = "test-channel";
+    const testKey = "test-key";
+    const testValue = "test-value";
+    const testMessage = "test-message";
+    const flushTimeoutMs = 100;
+
+    test("publishing to a channel does not fail", async () => {
+      const redis = ctx.redis;
+
+      await redis.subscribe(testChannel, () => {});
+
+      expect(redis.publish(testChannel, testMessage)).resolves.toBeUndefined();
+    });
+
+    test("setting in subscriber mode gracefully fails", async () => {
+      const redis = ctx.redis;
+
+      await redis.subscribe(testChannel, () => {});
+
+      expect(redis.set(testKey, testValue)).rejects.toEqual('error');
+    });
+
+    test("setting after unsubscribing works", async () => {
+      const redis = ctx.redis;
+
+      await redis.subscribe(testChannel, () => {});
+      await redis.unsubscribe(testChannel);
+
+      expect(redis.set(testKey, testValue)).resolves.toEqual("OK");
+    });
+
+    test("subscribing to a channel receives messages", async () => {
+      const TEST_MESSAGE_COUNT = 128;
+      const redis = ctx.redis;
+
+      var receiveCount = 0;
+      await redis.subscribe(testChannel, (message, channel) => {
+        receiveCount++;
+        expect(channel).toBe(testChannel);
+        expect(message).toBe(testMessage);
+      });
+
+      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+        await redis.publish(testChannel, testMessage);
+      });
+
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
+
+      expect(receiveCount).toBe(TEST_MESSAGE_COUNT);
+    });
+
+    test("messages are received in order", async () => {
+      const TEST_MESSAGE_COUNT = 1024;
+      const redis = ctx.redis;
+
+      var receivedMessages: string[] = [];
+      await redis.subscribe(testChannel, (message) => {
+        receivedMessages.push(message);
+      });
+
+      var sentMessages: string[] = [];
+      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+        const message = randomUUIDv7();
+        await redis.publish(testChannel, message);
+        sentMessages.push(message);
+      });
+
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
+
+      expect(receivedMessages.length).toBe(sentMessages.length);
+      expect(receivedMessages).toEqual(sentMessages);
+    });
+
+    test("subscribing to multiple channels receives messages", async () => {
+      const TEST_MESSAGE_COUNT = 1024;
+      const redis = ctx.redis;
+
+      const channels = [testChannel, "another-test-channel"];
+
+      var receivedMessages: { [channel: string]: string[] } = {};
+      await redis.subscribe(channels, (message, channel) => {
+        receivedMessages[channel] = receivedMessages[channel] || [];
+        receivedMessages[channel].push(message);
+      });
+
+      var sentMessages: { [channel: string]: string[] } = {};
+      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+        const channel = channels[randomCoinFlip() ? 0 : 1];
+        const message = randomUUIDv7();
+
+        await redis.publish(channel, message);
+
+        sentMessages[channel] = sentMessages[channel] || [];
+        sentMessages[channel].push(message);
+      });
+
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
+
+      expect(receivedMessages.length).toBe(sentMessages.length);
+      expect(receivedMessages).toEqual(sentMessages);
     });
   });
 });

@@ -65,15 +65,19 @@ console.log("Script completed");
 
   // Verify some trace events have required Chrome trace format fields
   const events = profileData.traceEvents;
-  const sampleEvent = events.find(e => e.ph === "i"); // Find an instant event
+  const sampleEvent = events.find(e => e.ph === "P"); // Find a sampling event
+  const metadataEvent = events.find(e => e.ph === "M"); // Find a metadata event
 
-  if (sampleEvent) {
-    expect(sampleEvent).toHaveProperty("name");
-    expect(sampleEvent).toHaveProperty("ph");
-    expect(sampleEvent).toHaveProperty("ts");
-    expect(sampleEvent).toHaveProperty("pid");
-    expect(sampleEvent).toHaveProperty("tid");
-  }
+  expect(sampleEvent).toBeDefined();
+  expect(sampleEvent).toHaveProperty("name");
+  expect(sampleEvent).toHaveProperty("ph", "P");
+  expect(sampleEvent).toHaveProperty("ts");
+  expect(sampleEvent).toHaveProperty("pid");
+  expect(sampleEvent).toHaveProperty("tid");
+  
+  expect(metadataEvent).toBeDefined();
+  expect(metadataEvent).toHaveProperty("name");
+  expect(metadataEvent).toHaveProperty("ph", "M");
 });
 
 test("--profile flag with default filename", async () => {

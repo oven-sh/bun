@@ -1,5 +1,5 @@
 pub const js_fns = struct {
-    pub fn describe(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    pub fn describeFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
@@ -19,6 +19,29 @@ pub const js_fns = struct {
             },
             .execution => {
                 return globalObject.throw("Cannot call describe() inside a test", .{});
+            },
+        }
+    }
+
+    pub fn testFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        const name, const callback = callFrame.argumentsAsArray(2);
+
+        switch (bunTest.phase) {
+            .collection => {
+                try bunTest.collection.enqueueTestCallback(globalObject, name, callback);
+                return .js_undefined;
+            },
+            .execution => {
+                return globalObject.throw("TODO: queue this test callback to call after this test ends", .{});
             },
         }
     }
@@ -137,18 +160,25 @@ pub const DescribeScope = struct {
         this.name.deinit();
     }
 };
-const TestScheduleEntry2 = union(enum) {
-    describe: *DescribeScope,
-    callback: struct {
-        mode: enum {
-            beforeAll,
-            beforeEach,
-            afterAll,
-            afterEach,
-            testFn,
-        },
-        callback: jsc.Strong.Optional, // TODO: once called, this is swapped with &.empty so gc can collect it
+pub const TestScope = struct {
+    // TODO: to get this in faster, maybe we get it to use a jest.zig TestScope
+    mode: enum {
+        beforeAll,
+        beforeEach,
+        afterAll,
+        afterEach,
+        testFn,
     },
+    callback: jsc.Strong.Optional, // TODO: once called, this is swapped with &.empty so gc can collect it
+
+    pub fn deinit(this: *TestScope, buntest: *BunTest) void {
+        _ = buntest;
+        this.callback.deinit();
+    }
+};
+pub const TestScheduleEntry2 = union(enum) {
+    describe: *DescribeScope,
+    test_scope: *TestScope,
     fn deinit(
         this: *TestScheduleEntry2,
         buntest: *BunTest,
@@ -158,8 +188,9 @@ const TestScheduleEntry2 = union(enum) {
                 describe.deinit(buntest);
                 buntest.gpa.destroy(describe);
             },
-            .callback => |*callback| {
-                callback.callback.deinit();
+            .test_scope => |test_scope| {
+                test_scope.deinit(buntest);
+                buntest.gpa.destroy(test_scope);
             },
         }
     }

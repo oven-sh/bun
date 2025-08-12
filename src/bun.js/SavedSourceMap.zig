@@ -235,23 +235,10 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    // Use compact format only if enabled via environment variable for now
-    const use_compact = bun.getenvZ("BUN_USE_COMPACT_SOURCEMAPS") != null;
-    
-    if (use_compact) {
-        const mappings_data = mappings.list.items;
-        
-        // Extract VLQ mappings (starts after header if present)
-        const vlq_start: usize = if (mappings_data.len >= vlq_offset) vlq_offset else 0;
-        const vlq_data = mappings_data[vlq_start..];
-        
-        const compact = try bun.default_allocator.create(SavedMappingsCompact);
-        compact.* = try SavedMappingsCompact.init(bun.default_allocator, vlq_data);
-        try this.putValue(source.path.text, Value.init(compact));
-    } else {
-        // Use original format
-        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
-    }
+    // Temporarily use original format for all cases to ensure coverage compatibility
+    // TODO: Implement proper coverage detection to use compact format when coverage is disabled
+    const data = try bun.default_allocator.dupe(u8, mappings.list.items);
+    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, data.ptr)));
 }
 
 pub fn putMappingsCompact(this: *SavedSourceMap, source: *const logger.Source, vlq_mappings: []const u8) !void {

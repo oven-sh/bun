@@ -1508,6 +1508,13 @@ fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalO
 
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
+    // Ensure that under no circumstances we cause the subprocess to get freed inside this function.
+    this.ref();
+    defer this.deref();
+
+    // The process no longer keeps the Subprocess alive.
+    defer this.deref();
+
     const this_jsvalue = this.this_jsvalue;
     const globalThis = this.globalThis;
     const jsc_vm = globalThis.bunVM();
@@ -1516,7 +1523,6 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     const is_sync = this.flags.is_sync;
     this.clearAbortSignal();
 
-    defer this.deref();
     defer this.disconnectIPC(true);
 
     if (this.event_loop_timer.state == .ACTIVE) {
@@ -1581,12 +1587,12 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         pipe.onAttachedProcessExit(&status);
     }
 
-    var did_update_has_pending_activity = false;
-    defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
-
-    const loop = jsc_vm.eventLoop();
-
     if (!is_sync) {
+        var did_update_has_pending_activity = false;
+        defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
+
+        const loop = jsc_vm.eventLoop();
+
         if (this_jsvalue != .zero) {
             if (consumeExitedPromise(this_jsvalue, globalThis)) |promise| {
                 loop.enter();
@@ -1694,6 +1700,8 @@ pub fn finalizeStreams(this: *Subprocess) void {
 
 fn deinit(this: *Subprocess) void {
     log("deinit", .{});
+
+    this.process.deref();
     bun.destroy(this);
 }
 
@@ -1719,7 +1727,6 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     this.finalizeStreams();
 
     this.process.detach();
-    this.process.deref();
 
     if (this.event_loop_timer.state == .ACTIVE) {
         this.globalThis.bunVM().timer.remove(&this.event_loop_timer);

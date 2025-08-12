@@ -195,7 +195,6 @@ static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
     return JSC::jsString(global->vm(), toStringCopy(str));
 }
 
-static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
 static const unsigned char __dot_char = '.';
 static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
 static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };

@@ -202,7 +202,6 @@ pub const GitCommandRunner = struct {
             .stdin = .ignore,
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = runner.stdout.source.?.pipe },
             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = runner.stderr.source.?.pipe },
-            .cwd = manager.cache_directory_path,
             .argv0 = git_path.ptr,
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&manager.event_loop),
@@ -570,7 +569,6 @@ pub const GitCommandRunner = struct {
                             .stdin = .ignore,
                             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
                             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = this.stderr.source.?.pipe },
-                            .cwd = this.manager.cache_directory_path,
                             .argv0 = git_path.ptr,
                             .windows = if (Environment.isWindows) .{
                                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),

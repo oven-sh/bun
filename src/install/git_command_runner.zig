@@ -22,6 +22,7 @@ pub const GitCommandRunner = struct {
             dep_id: DependencyID,
             res: Resolution,
             attempt: u8,
+            is_fetch: bool = false,
         },
         checkout: struct {
             repo_dir: bun.FileDescriptor,

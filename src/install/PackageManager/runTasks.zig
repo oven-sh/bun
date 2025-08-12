@@ -758,6 +758,64 @@ pub fn runTasks(
 
                     if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
 
+                    // Calculate patch hash if needed
+                    const patch_name_and_version_hash: ?u64 = if (manager.lockfile.patched_dependencies.entries.len > 0) brk: {
+                        // We need to format the version string with the resolved commit
+                        // The repo URL needs to be transformed to match what's in patchedDependencies
+                        // e.g., "git@github.com:user/repo.git" -> "git+ssh://git@github.com:user/repo.git"
+                        var resolution_buf: [8192]u8 = undefined;
+                        var stream = std.io.fixedBufferStream(&resolution_buf);
+                        var writer = stream.writer();
+                        
+                        // Write the git resolution format
+                        if (strings.hasPrefixComptime(repo, "git@")) {
+                            // Transform SCP-like URL to SSH URL format
+                            writer.writeAll("git+ssh://") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        } else if (strings.hasPrefixComptime(repo, "ssh://")) {
+                            writer.writeAll("git+") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        } else {
+                            writer.writeAll("git+") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        }
+                        writer.writeByte('#') catch unreachable;
+                        writer.writeAll(resolved) catch unreachable;
+                        
+                        const package_version = stream.getWritten();
+                        
+                        // Calculate the hash for "name@version"
+                        var name_and_version_buf: [8192]u8 = undefined;
+                        const name_and_version = std.fmt.bufPrint(&name_and_version_buf, "{s}@{s}", .{
+                            dep_name,
+                            package_version,
+                        }) catch unreachable;
+                        
+                        const hash = String.Builder.stringHash(name_and_version);
+                        
+                        if (comptime Environment.isDebug) {
+                            Output.prettyErrorln("[git-patch] Looking for patch: {s} (hash={d})", .{ name_and_version, hash });
+                        }
+                        
+                        // Check if this dependency has a patch
+                        if (manager.lockfile.patched_dependencies.get(hash)) |_| {
+                            if (comptime Environment.isDebug) {
+                                Output.prettyErrorln("[git-patch] Found patch for git dependency!", .{});
+                            }
+                            break :brk hash;
+                        }
+                        
+                        // Also try checking all patched dependencies to see what we have
+                        if (comptime Environment.isDebug) {
+                            var iter = manager.lockfile.patched_dependencies.iterator();
+                            while (iter.next()) |entry| {
+                                Output.prettyErrorln("[git-patch] Available patch: hash={d}", .{entry.key_ptr.*});
+                            }
+                        }
+                        
+                        break :brk null;
+                    } else null;
+
                     manager.enqueueGitCheckout(
                         checkout_id,
                         repo_fd,
@@ -765,7 +823,7 @@ pub fn runTasks(
                         dep_name,
                         clone.res,
                         resolved,
-                        null,
+                        patch_name_and_version_hash,
                     );
                 } else {
                     // Resolving!
@@ -1108,6 +1166,7 @@ const Repository = bun.install.Repository;
 const Store = bun.install.Store;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
+const String = bun.Semver.String;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

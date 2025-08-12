@@ -1153,11 +1153,33 @@ fn enqueueGitClone(
     // Build full path for git clone target
     const target = Path.joinAbsStringZ(this.cache_directory_path, &.{folder_name}, .auto);
 
+    // Check if directory already exists - if so, do fetch instead of clone
+    const dir_exists = if (this.getCacheDirectory().openDirZ(folder_name, .{})) |dir_const| blk: {
+        var dir = dir_const;
+        dir.close();
+        break :blk true;
+    } else |_| false;
+
     // Build git command arguments
     var argc: usize = 0;
 
-    // Try HTTPS first
-    const argv = if (Repository.tryHTTPS(url)) |https| blk: {
+    // If directory exists, do fetch instead of clone
+    const argv = if (dir_exists) blk: {
+        const args: [10]?[*:0]const u8 = .{
+            "git",
+            "-C",
+            target,
+            "fetch",
+            "--quiet",
+            null,
+            null,
+            null,
+            null,
+            null,
+        };
+        argc = 5;
+        break :blk args;
+    } else if (Repository.tryHTTPS(url)) |https| blk: {
         const args: [10]?[*:0]const u8 = .{
             "git",
             "clone",
@@ -1238,6 +1260,7 @@ fn enqueueGitClone(
                 .dep_id = dep_id,
                 .res = res.*,
                 .attempt = 1,
+                .is_fetch = dir_exists,
             },
         },
     );
@@ -1262,6 +1285,50 @@ pub fn enqueueGitCheckout(
 ) void {
     const folder_name = PackageManager.cachedGitFolderNamePrint(&git_folder_name_buf, resolved, null);
     const target = Path.joinAbsString(this.cache_directory_path, &.{folder_name}, .auto);
+    
+    // Check if the checkout directory already exists - if so, just return success immediately
+    if (this.getCacheDirectory().openDir(folder_name, .{})) |package_dir_const| {
+        var package_dir = package_dir_const;
+        package_dir.close();
+        
+        // Directory already exists, create a success task immediately
+        const task = this.preallocated_resolve_tasks.get();
+        task.* = Task{
+            .package_manager = this,
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.git_checkout,
+            .request = .{
+                .git_checkout = .{
+                    .repo_dir = dir,
+                    .resolution = resolution,
+                    .dependency_id = dependency_id,
+                    .name = strings.StringOrTinyString.init(name),
+                    .url = strings.StringOrTinyString.init(this.lockfile.str(&resolution.value.git.repo)),
+                    .resolved = strings.StringOrTinyString.init(resolved),
+                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                },
+            },
+            .id = task_id,
+            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+            .data = .{ .git_checkout = .{
+                .url = this.lockfile.str(&resolution.value.git.repo),
+                .resolved = resolved,
+            } },
+            .status = .success,
+            .err = null,
+            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+                const ptask = PatchTask.newApplyPatchHash(this, dependency_id, patch_hash, h);
+                ptask.callback.apply.task_id = task_id;
+                break :brk ptask;
+            } else null,
+        };
+        this.incrementPendingTasks(1);
+        this.resolve_tasks.push(task);
+        this.wake();
+        return;
+    } else |_| {}
+    
     const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {
         // If we can't get the path, create a failed task
         const task = this.preallocated_resolve_tasks.get();

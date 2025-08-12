@@ -141,7 +141,7 @@ pub fn constructor(
         error.OutOfMemory => return error.OutOfMemory,
         else => return globalObject.throwValue(globalObject.createSyntaxErrorInstance("Failed to parse compact sourcemap: {s}", .{@errorName(err)})),
     };
-    
+
     const source_map = bun.new(JSSourceMap, .{
         .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, parsed_map),
         .sources = sources.items,
@@ -157,7 +157,6 @@ pub fn constructor(
 
     return source_map;
 }
-
 
 pub fn memoryCost(this: *const JSSourceMap) usize {
     return @sizeOf(JSSourceMap) + this.sources.len * @sizeOf(bun.String) + this.sourcemap.memoryCost();

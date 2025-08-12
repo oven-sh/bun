@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // Test the compact sourcemap implementation using the SourceMap class from Node.js
 test("SourceMap with compact mappings handles basic cases", () => {
@@ -9,7 +9,7 @@ test("SourceMap with compact mappings handles basic cases", () => {
     sources: ["input.js"],
     sourcesContent: ["console.log('hello');\nconsole.log('world');"],
     mappings: "AAAA;AACA", // Simple VLQ mappings
-    names: []
+    names: [],
   };
 
   const { SourceMap } = require("module");
@@ -22,7 +22,7 @@ test("SourceMap with compact mappings handles basic cases", () => {
   expect(origin.column).toBe(0);
   expect(origin.fileName || origin.source).toBe("input.js");
 
-  // Test findEntry method  
+  // Test findEntry method
   const entry = sourceMap.findEntry(0, 0);
   expect(entry).toBeObject();
   expect(entry.generatedLine).toBe(0);
@@ -36,16 +36,16 @@ test("SourceMap with complex VLQ mappings", () => {
     sources: ["input.js"],
     sourcesContent: ["function test() { console.log('test'); }"],
     mappings: "AAAA,SAAS,KAAK,GAAG,CAAC,OAAO,CAAC,GAAG,CAAC,MAAM,CAAC,CAAC,CAAC", // Complex VLQ
-    names: ["test", "console", "log"]
+    names: ["test", "console", "log"],
   };
 
   const { SourceMap } = require("module");
   const sourceMap = new SourceMap(payload);
 
   // Test various positions
-  const origin1 = sourceMap.findOrigin(0, 9);  // Should map to function name
+  const origin1 = sourceMap.findOrigin(0, 9); // Should map to function name
   expect(origin1).toBeObject();
-  
+
   const origin2 = sourceMap.findOrigin(0, 20); // Should map to console.log
   expect(origin2).toBeObject();
 });
@@ -55,8 +55,8 @@ test("SourceMap with non-ASCII characters in VLQ", () => {
     version: 3,
     sources: ["unicode.js"],
     sourcesContent: ["console.log('你好');"],
-    mappings: "AAAA,QAAQ,GAAG,CAAC,IAAI,CAAC", 
-    names: []
+    mappings: "AAAA,QAAQ,GAAG,CAAC,IAAI,CAAC",
+    names: [],
   };
 
   const { SourceMap } = require("module");
@@ -73,7 +73,7 @@ test("SourceMap handles empty and sparse mappings", () => {
     sources: ["sparse.js"],
     sourcesContent: ["line1\n\n\nline4"],
     mappings: "AAAA;;;AAEA", // Empty lines represented by ;;;
-    names: []
+    names: [],
   };
 
   const { SourceMap } = require("module");
@@ -83,24 +83,24 @@ test("SourceMap handles empty and sparse mappings", () => {
   expect(origin1).toBeObject();
 
   // Test mapping to line with empty content
-  const origin4 = sourceMap.findOrigin(3, 0); 
+  const origin4 = sourceMap.findOrigin(3, 0);
   expect(origin4).toBeObject();
 });
 
 test("SourceMap with large number of mappings for memory test", () => {
   // Generate a large number of VLQ mappings to test memory efficiency
   const sources = ["large.js"];
-  const sourcesContent = [Array.from({ length: 100 }, (_, i) => `console.log(${i});`).join('\n')];
-  
+  const sourcesContent = [Array.from({ length: 100 }, (_, i) => `console.log(${i});`).join("\n")];
+
   // Generate simple mappings for each line
-  const mappings = Array.from({ length: 100 }, () => "AAAA").join(';');
-  
+  const mappings = Array.from({ length: 100 }, () => "AAAA").join(";");
+
   const payload = {
     version: 3,
     sources,
     sourcesContent,
     mappings,
-    names: []
+    names: [],
   };
 
   const { SourceMap } = require("module");
@@ -145,7 +145,7 @@ throwError();
 
   const [stdout, stderr, exitCode2] = await Promise.all([
     proc2.stdout.text(),
-    proc2.stderr?.text() || Promise.resolve(""), 
+    proc2.stderr?.text() || Promise.resolve(""),
     proc2.exited,
   ]);
 
@@ -160,30 +160,30 @@ throwError();
 test("compact sourcemap performance vs regular sourcemap", () => {
   // Test to ensure compact variant doesn't significantly impact performance
   const startTime = Date.now();
-  
+
   // Create many SourceMap instances with complex mappings
-  const mappings = Array.from({ length: 50 }, () => "AAAA,CAAC,CAAC,CAAC,CAAC").join(';');
-  
+  const mappings = Array.from({ length: 50 }, () => "AAAA,CAAC,CAAC,CAAC,CAAC").join(";");
+
   for (let i = 0; i < 100; i++) {
     const payload = {
       version: 3,
       sources: [`file${i}.js`],
       sourcesContent: [`// File ${i}\nconsole.log(${i});`],
       mappings,
-      names: []
+      names: [],
     };
 
     const { SourceMap } = require("module");
     const sourceMap = new SourceMap(payload);
-    
+
     // Perform some lookups
     sourceMap.findOrigin(0, 0);
     sourceMap.findOrigin(1, 0);
   }
-  
+
   const endTime = Date.now();
   const duration = endTime - startTime;
-  
+
   // Should complete reasonably quickly (< 1 second)
   expect(duration).toBeLessThan(1000);
   console.log(`Performance test completed in ${duration}ms`);

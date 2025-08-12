@@ -82,25 +82,25 @@ pub const SavedMappings = struct {
 /// Compact variant that uses LineOffsetTable.Compact for reduced memory usage
 pub const SavedMappingsCompact = struct {
     compact_table: SourceMap.LineOffsetTable.Compact,
-    
+
     pub fn init(allocator: Allocator, vlq_mappings: []const u8) !SavedMappingsCompact {
         return SavedMappingsCompact{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
         };
     }
-    
+
     pub fn deinit(this: *SavedMappingsCompact) void {
         this.compact_table.deinit();
     }
-    
+
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
         // Parse the VLQ mappings using the existing parser but keep the compact table
         const result = SourceMap.Mapping.parse(
             allocator,
             this.compact_table.vlq_mappings,
             null, // estimated mapping count
-            1,    // sources count
-            this.compact_table.line_offsets.len, // input line count 
+            1, // sources count
+            this.compact_table.line_offsets.len, // input line count
             .{},
         );
         switch (result) {
@@ -223,11 +223,11 @@ pub fn deinit(this: *SavedSourceMap) void {
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
     // Always use compact format for memory efficiency
     const mappings_data = mappings.list.items;
-    
+
     // Extract VLQ mappings (starts after header if present)
     const vlq_start: usize = if (mappings_data.len >= vlq_offset) vlq_offset else 0;
     const vlq_data = mappings_data[vlq_start..];
-    
+
     const compact = try bun.default_allocator.create(SavedMappingsCompact);
     compact.* = try SavedMappingsCompact.init(bun.default_allocator, vlq_data);
     try this.putValue(source.path.text, Value.init(compact));

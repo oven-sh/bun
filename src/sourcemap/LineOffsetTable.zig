@@ -22,111 +22,111 @@ pub const List = bun.MultiArrayList(LineOffsetTable);
 pub const Compact = struct {
     /// VLQ-encoded sourcemap mappings string
     vlq_mappings: []const u8,
-    /// Index of positions where ';' (line separators) occur in vlq_mappings  
+    /// Index of positions where ';' (line separators) occur in vlq_mappings
     line_offsets: []const u32,
     allocator: std.mem.Allocator,
-    
+
     pub fn init(allocator: std.mem.Allocator, vlq_mappings: []const u8) !Compact {
         // Find all line separator positions
         var line_positions = std.ArrayList(u32).init(allocator);
         defer line_positions.deinit();
-        
+
         // Start with implicit position 0 for first line
         try line_positions.append(0);
-        
+
         for (vlq_mappings, 0..) |char, i| {
             if (char == ';') {
                 try line_positions.append(@intCast(i + 1));
             }
         }
-        
+
         const owned_mappings = try allocator.dupe(u8, vlq_mappings);
         const owned_offsets = try allocator.dupe(u32, line_positions.items);
-        
+
         return Compact{
             .vlq_mappings = owned_mappings,
             .line_offsets = owned_offsets,
             .allocator = allocator,
         };
     }
-    
+
     pub fn deinit(self: *Compact) void {
         self.allocator.free(self.vlq_mappings);
         self.allocator.free(self.line_offsets);
     }
-    
+
     /// Find mapping for a given line/column by decoding VLQ on demand
     pub fn findMapping(self: *const Compact, target_line: i32, target_column: i32) ?SourceMapping {
         if (target_line < 0 or target_line >= self.line_offsets.len - 1) {
             return null;
         }
-        
+
         const line_start = self.line_offsets[@intCast(target_line)];
-        const line_end = if (target_line + 1 < self.line_offsets.len) 
-            self.line_offsets[@intCast(target_line + 1)] - 1  // -1 to exclude the ';'
-        else 
+        const line_end = if (target_line + 1 < self.line_offsets.len)
+            self.line_offsets[@intCast(target_line + 1)] - 1 // -1 to exclude the ';'
+        else
             @as(u32, @intCast(self.vlq_mappings.len));
-            
+
         if (line_start >= line_end) return null;
-        
+
         const line_mappings = self.vlq_mappings[line_start..line_end];
-        
+
         // Decode VLQ mappings for this line
         var generated_column: i32 = 0;
-        var source_index: i32 = 0; 
+        var source_index: i32 = 0;
         var original_line: i32 = 0;
         var original_column: i32 = 0;
-        
+
         var pos: usize = 0;
         var best_mapping: ?SourceMapping = null;
-        
+
         while (pos < line_mappings.len) {
             // Skip commas
             if (line_mappings[pos] == ',') {
                 pos += 1;
                 continue;
             }
-            
+
             // Decode generated column delta
             const gen_col_result = VLQ.decode(line_mappings, pos);
             if (gen_col_result.start == pos) break; // Invalid VLQ
             generated_column += gen_col_result.value;
             pos = gen_col_result.start;
-            
+
             // If we've passed the target column, return the last good mapping
             if (generated_column > target_column and best_mapping != null) {
                 return best_mapping;
             }
-            
+
             if (pos >= line_mappings.len) break;
             if (line_mappings[pos] == ',') {
                 // Only generated column - no source info
                 pos += 1;
                 continue;
             }
-            
+
             // Decode source index delta
             const src_idx_result = VLQ.decode(line_mappings, pos);
             if (src_idx_result.start == pos) break;
             source_index += src_idx_result.value;
             pos = src_idx_result.start;
-            
+
             if (pos >= line_mappings.len) break;
-            
-            // Decode original line delta  
+
+            // Decode original line delta
             const orig_line_result = VLQ.decode(line_mappings, pos);
             if (orig_line_result.start == pos) break;
             original_line += orig_line_result.value;
             pos = orig_line_result.start;
-            
+
             if (pos >= line_mappings.len) break;
-            
+
             // Decode original column delta
             const orig_col_result = VLQ.decode(line_mappings, pos);
             if (orig_col_result.start == pos) break;
             original_column += orig_col_result.value;
             pos = orig_col_result.start;
-            
+
             // Skip name index if present
             if (pos < line_mappings.len and line_mappings[pos] != ',' and line_mappings[pos] != ';') {
                 const name_result = VLQ.decode(line_mappings, pos);
@@ -134,7 +134,7 @@ pub const Compact = struct {
                     pos = name_result.start;
                 }
             }
-            
+
             // Update best mapping if this column is <= target
             if (generated_column <= target_column) {
                 best_mapping = SourceMapping{
@@ -146,22 +146,22 @@ pub const Compact = struct {
                 };
             }
         }
-        
+
         return best_mapping;
     }
-    
+
     /// Compatible API with regular LineOffsetTable for findLine
     pub fn findLine(self: *const Compact, loc: Logger.Loc) i32 {
         // For compact version, we need to search through mappings to find the line
-        // This is a simplified version - in practice you'd want to maintain 
+        // This is a simplified version - in practice you'd want to maintain
         // generated line->original line mapping
-        
+
         // For now, return a basic implementation that assumes 1:1 line mapping
         // This can be optimized by maintaining a separate line mapping cache
         return @max(0, @min(@as(i32, @intCast(self.line_offsets.len)) - 2, loc.start));
     }
-    
-    /// Compatible API with regular LineOffsetTable for findIndex  
+
+    /// Compatible API with regular LineOffsetTable for findIndex
     pub fn findIndex(self: *const Compact, loc: Logger.Loc) ?usize {
         const line = self.findLine(loc);
         if (line >= 0 and line < self.line_offsets.len - 1) {
@@ -169,10 +169,10 @@ pub const Compact = struct {
         }
         return null;
     }
-    
+
     const SourceMapping = struct {
         generated_line: i32,
-        generated_column: i32, 
+        generated_column: i32,
         source_index: i32,
         original_line: i32,
         original_column: i32,
@@ -385,6 +385,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
     return list;
 }
 
+const VLQ = @import("./VLQ.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -392,4 +393,3 @@ const BabyList = bun.BabyList;
 const Logger = bun.logger;
 const assert = bun.assert;
 const strings = bun.strings;
-const VLQ = @import("./VLQ.zig");

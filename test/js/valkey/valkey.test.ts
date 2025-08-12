@@ -205,7 +205,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(redis.set(testKey, testValue)).rejects.toThrowError("Cannot use in subscriber mode");
+      expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
     });
 
     test("setting after unsubscribing works", async () => {

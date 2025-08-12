@@ -3,6 +3,7 @@
 // This file contains the core Valkey client implementation with protocol handling
 
 pub const ValkeyContext = @import("./ValkeyContext.zig");
+const ValkeyCommand = @import("./ValkeyCommand.zig");
 
 /// Connection flags to track Valkey client state
 pub const ConnectionFlags = packed struct(u8) {
@@ -607,20 +608,37 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
-        // TODO(marko): Implement dropping out of subscription mode on error.
-        var pair = this.in_flight.readItem() orelse {
-            debug("Received response but no promise in queue", .{});
-            return;
-        };
-
+    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue, pair: *ValkeyCommand.PromisePair) ?void {
         // Resolve the promise with the potentially transformed value
         var promise_ptr = &pair.promise;
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
+        switch (value.*) {
+            .Error => |err| {
+                this.fail(err, protocol.RedisError.InvalidResponse);
+            },
+            .Push => |push| {
+                if (std.mem.eql(u8, push.kind, "subscribe")) {
+                    debug("A subscription message has been received: {any}", .{push.data});
+                    this.onValkeySubscribe(value);
+                } else if (std.mem.eql(u8, push.kind, "message")) {
+                    debug("Received a message: {any}", .{push.data});
+                } else if (std.mem.eql(u8, push.kind, "unsubscribe")) {
+                    debug("Received an unsubscribe message: {any}", .{push.data});
+                } else {
+                    this.fail("Unexpected push message kind", protocol.RedisError.InvalidResponseType);
+                }
+            },
+            else => {
+                return error.DidNotHandleResponse;
+            }
+        }
+
         loop.enter();
         defer loop.exit();
+
+        debug("Processing data as a subscriber.", .{});
 
         if (value.* == .Error) {
             promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
@@ -632,46 +650,6 @@ pub const ValkeyClient = struct {
             promise_ptr.resolve(globalThis, value);
         }
 
-        debug("Processing data as a subscriber.", .{});
-
-        switch (value.*) {
-            .Error => |err| {
-                this.fail(err, protocol.RedisError.InvalidResponse);
-            },
-            .Push => |push| {
-                if (std.mem.eql(u8, push.kind, "subscribe")) {
-                    debug("A subscription message has been received: {any}", .{push.data});
-                    this.onValkeySubscribe(value);
-                }
-            },
-            else => {
-                debug("Received unexpected message type in subscriber mode: {any}", .{value.*});
-                this.fail("Unexpected message while attempting to subscribe", protocol.RedisError.InvalidResponseType);
-            }
-        }
-
-        //switch (value.*) {
-        //    .Error => |err| {
-        //        this.fail(err, protocol.RedisError.InvalidArgument);
-        //        return;
-        //    },
-        //    .Push => |push| {
-        //        std.debug.assert(push.data.len == 2);
-        //        const channel = try push.data[0].toJS(this.globalObject());
-        //        const payload = try push.data[1].toJS(this.globalObject());
-        //        debug("Received push message on channel: {s}", .{channel.toString(this.globalObject()).getZigString(this.globalObject())});
-        //        const callback = try subscription_ctx.getCallback(this.globalObject(), channel);
-        //        if (callback) |cb| {
-        //            std.debug.assert(cb.isCallable());
-        //            _ = try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
-        //        } else {
-        //            debug("I don't have a callback to handle this push message", .{});
-        //        }
-        //    },
-        //    else => {
-        //        this.fail("Unexpected message type received", protocol.RedisError.InvalidArgument);
-        //    }
-        //}
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -740,13 +718,6 @@ pub const ValkeyClient = struct {
             return;
         }
 
-        // We handle subscriptions specially because they are not regular
-        // commands and their failure will potentially cause the client to drop
-        // out of subscriber mode.
-        if (this.parent().isSubscriber()) {
-            return this.handleSubscribeResponse(value);
-        }
-
         // For regular commands, get the next command+promise pair from the queue
         var pair = this.in_flight.readItem() orelse {
             debug("Received response but no promise in queue", .{});
@@ -762,6 +733,23 @@ pub const ValkeyClient = struct {
                 const int_value = value.Integer;
                 value.* = .{ .Boolean = int_value > 0 };
             }
+        }
+
+        // We handle subscriptions specially because they are not regular
+        // commands and their failure will potentially cause the client to drop
+        // out of subscriber mode.
+        if (this.parent().isSubscriber()) {
+            // Note that even in subscriber mode we can receive
+            // non-subscription responses, like from a .publish command, as a
+            // consequence, handleSubscribeResponse will send us back a code
+            // saying it did not handle the response.
+            const res = this.handleSubscribeResponse(value, &pair);
+            if (res != null) {
+                return res;
+            }
+
+            // Something else (like a .publish) may be in flight and we should
+            // go and service that.
         }
 
         // Resolve the promise with the potentially transformed value

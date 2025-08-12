@@ -751,6 +751,8 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
         std.log.info("[DEBUG] Set handler for single channel", .{});
     }
 
+    // Before sending out our request,
+
     std.log.info("[DEBUG] Sending SUBSCRIBE command with {} channels", .{redis_channels.items.len});
     const command: valkey.Command = .{
         .command = "SUBSCRIBE",

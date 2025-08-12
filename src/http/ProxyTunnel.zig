@@ -334,7 +334,7 @@ fn deinit(this: *ProxyTunnel) void {
     bun.destroy(this);
 }
 
-const log = bun.Output.scoped(.http_proxy_tunnel, false);
+const log = bun.Output.scoped(.http_proxy_tunnel, .visible);
 
 const HTTPCertError = @import("./HTTPCertError.zig");
 const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

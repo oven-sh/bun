@@ -42,7 +42,7 @@
 //     make mimalloc-debug
 //
 
-pub const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
+pub const logPartDependencyTree = Output.scoped(.part_dep_tree, .visible);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 pub const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
@@ -149,7 +149,7 @@ pub const BundleV2 = struct {
         plugins: ?*jsc.API.JSBundler.Plugin,
     };
 
-    const debug = Output.scoped(.Bundle, false);
+    const debug = Output.scoped(.Bundle, .visible);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
         return &this.linker.loop;
@@ -415,7 +415,7 @@ pub const BundleV2 = struct {
             },
         }
 
-        const DebugLog = bun.Output.Scoped(.ReachableFiles, false);
+        const DebugLog = bun.Output.Scoped(.ReachableFiles, .visible);
         if (DebugLog.isVisible()) {
             DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
             const sources: []Logger.Source = this.graph.input_files.items(.source);
@@ -883,7 +883,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    const logScanCounter = bun.Output.scoped(.scan_counter, false);
+    const logScanCounter = bun.Output.scoped(.scan_counter, .visible);
 
     pub fn incrementScanCounter(this: *BundleV2) void {
         this.thread_lock.assertLocked();
@@ -2861,7 +2861,7 @@ pub const BundleV2 = struct {
                 if (err == error.ModuleNotFound) {
                     if (this.bun_watcher != null) {
                         if (!had_busted_dir_cache) {
-                            bun.Output.scoped(.watcher, false)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
+                            bun.Output.scoped(.watcher, .visible)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
                             // Only re-query if we previously had something cached.
                             if (transpiler.resolver.bustDirCacheFromSpecifier(
                                 source.path.text,
@@ -3972,7 +3972,7 @@ pub const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: Hash = .init(0),
 
-    const log = bun.Output.scoped(.ContentHasher, true);
+    const log = bun.Output.scoped(.ContentHasher, .hidden);
 
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
         log("HASH_UPDATE {d}:\n{s}\n----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
@@ -4194,8 +4194,8 @@ pub const StableSymbolCount = renamer.StableSymbolCount;
 pub const MinifyRenamer = renamer.MinifyRenamer;
 pub const Scope = js_ast.Scope;
 pub const jsc = bun.jsc;
-pub const debugTreeShake = Output.scoped(.TreeShake, true);
-pub const debugPartRanges = Output.scoped(.PartRanges, true);
+pub const debugTreeShake = Output.scoped(.TreeShake, .hidden);
+pub const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 pub const Async = bun.Async;
 pub const Loc = Logger.Loc;

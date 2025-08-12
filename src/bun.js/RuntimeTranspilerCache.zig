@@ -14,7 +14,7 @@
 /// Version 15: Updated global defines table list.
 const expected_version = 15;
 
-const debug = Output.scoped(.cache, false);
+const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
 
 // When making parser changes, it gets extremely confusing.

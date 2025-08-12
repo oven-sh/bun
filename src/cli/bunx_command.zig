@@ -1,4 +1,4 @@
-const debug = Output.scoped(.bunx, false);
+const debug = Output.scoped(.bunx, .visible);
 
 pub const BunxCommand = struct {
     var path_buf: bun.PathBuffer = undefined;

@@ -387,7 +387,7 @@ pub inline fn bltn(this: *Touch) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellTouch, true);
+const debug = bun.Output.scoped(.ShellTouch, .hidden);
 const log = debug;
 
 const std = @import("std");

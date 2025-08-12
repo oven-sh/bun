@@ -313,7 +313,7 @@ pub const ShellCpTask = struct {
     concurrent_task: jsc.EventLoopTask,
     err: ?bun.shell.ShellErr = null,
 
-    const debug = bun.Output.scoped(.ShellCpTask, false);
+    const debug = bun.Output.scoped(.ShellCpTask, .visible);
 
     fn deinit(this: *ShellCpTask) void {
         debug("deinit", .{});
@@ -729,7 +729,7 @@ const Opts = packed struct(u16) {
 };
 
 // --
-const log = bun.Output.scoped(.cp, true);
+const log = bun.Output.scoped(.cp, .hidden);
 
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;

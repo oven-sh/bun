@@ -557,11 +557,36 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
 static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
-  Napi::Error::New(env, "Creating empty object failed while exception pending")
-      .ThrowAsJavaScriptException();
+  auto do_throw = [&] {
+    if (!info.Env().IsExceptionPending()) {
+      Napi::Error::New(env,
+                       "Creating empty object failed while exception pending")
+          .ThrowAsJavaScriptException();
+    }
+  };
 
-  napi_value result;
-  napi_status status = napi_create_object(env, &result);
+  auto clear = [&] { info.Env().GetAndClearPendingException(); };
+
+  auto expect_initial_failure = [&](const char *name, const auto &fn) {
+    do_throw();
+    napi_status status = fn();
+    if (status == napi_ok) {
+      printf("expected failure for %s, but got success\n", name);
+      return false;
+    }
+    clear();
+    status = fn();
+    if (status != napi_ok) {
+      printf("expected success for %s, but got failure (%d)\n", name, status);
+      return false;
+    }
+    return true;
+  };
+
+  do_throw();
+
+  napi_value object;
+  napi_status status = napi_create_object(env, &object);
 
   if (status != napi_ok) {
     printf("napi_create_object failed: %d\n", status);
@@ -571,7 +596,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   puts("napi_create_object succeeded");
 
   napi_valuetype type;
-  status = napi_typeof(env, result, &type);
+  status = napi_typeof(env, object, &type);
 
   if (status != napi_ok) {
     printf("napi_typeof failed: %d\n", status);
@@ -583,14 +608,15 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
-  status = napi_create_string_utf8(env, "hej", 3, &result);
+  napi_value string;
+  status = napi_create_string_utf8(env, "hej", 3, &string);
 
   if (status != napi_ok) {
     printf("napi_create_string_utf8 failed: %d\n", status);
     return nullptr;
   }
 
-  status = napi_typeof(env, result, &type);
+  status = napi_typeof(env, string, &type);
 
   if (status != napi_ok) {
     printf("napi_typeof failed: %d\n", status);
@@ -605,7 +631,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   char buffer[4];
   size_t written;
   status =
-      napi_get_value_string_utf8(env, result, buffer, sizeof(buffer), &written);
+      napi_get_value_string_utf8(env, string, buffer, sizeof(buffer), &written);
 
   if (status != napi_ok) {
     printf("napi_get_value_string_utf8 failed: %d\n", status);
@@ -613,7 +639,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   }
 
   if (sizeof(buffer) <= written) {
-    printf("retrieved too many characters: %zu", written);
+    printf("retrieved too many characters: %zu\n", written);
     return nullptr;
   }
 
@@ -625,6 +651,118 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   }
 
   puts("string retrieval succeeded");
+
+  napi_value function;
+
+  expect_initial_failure("napi_create_function", [&] {
+    return napi_create_function(
+        env, "thing", 5,
+        +[](napi_env env, napi_callback_info info) {
+          puts("thing called");
+          return ok(env);
+        },
+        nullptr, &function);
+  });
+
+  napi_value result;
+
+  expect_initial_failure("napi_call_function", [&] {
+    return napi_call_function(env, function, function, 0, nullptr, &result);
+  });
+
+  expect_initial_failure("napi_set_named_property", [&] {
+    return napi_set_named_property(env, object, "hej", result);
+  });
+
+  expect_initial_failure("napi_get_named_property", [&] {
+    return napi_get_named_property(env, object, "hej", &result);
+  });
+
+  bool has_own_property;
+
+  expect_initial_failure("napi_has_own_property", [&] {
+    return napi_has_own_property(env, object, string, &has_own_property);
+  });
+
+  if (!has_own_property) {
+    printf("object does not have own property \"result\"\n");
+    return nullptr;
+  }
+
+  napi_value keys;
+
+  expect_initial_failure("napi_get_property_names", [&] {
+    return napi_get_property_names(env, object, &keys);
+  });
+
+  expect_initial_failure("napi_delete_property", [&] {
+    return napi_delete_property(env, object, string, nullptr);
+  });
+
+  expect_initial_failure("napi_has_own_property", [&] {
+    return napi_has_own_property(env, object, string, &has_own_property);
+  });
+
+  if (has_own_property) {
+    printf("object still has own property \"result\"\n");
+    return nullptr;
+  }
+
+  napi_property_descriptor desc[2]{
+      {
+          .utf8name = "foo",
+          .name = nullptr,
+          .value = nullptr,
+          .method = nullptr,
+          .getter =
+              +[](napi_env env, napi_callback_info info) {
+                napi_value result;
+                napi_create_int32(env, 1, &result);
+                return result;
+              },
+          .setter = nullptr,
+          .attributes = static_cast<napi_property_attributes>(napi_default),
+          .data = nullptr,
+      },
+      {
+          .utf8name = "bar",
+          .name = nullptr,
+          .value = nullptr,
+          .method = nullptr,
+          .getter = nullptr,
+          .setter =
+              +[](napi_env env, napi_callback_info info) {
+                size_t argc = 0;
+                assert(napi_ok == napi_get_cb_info(env, info, &argc, nullptr,
+                                                   nullptr, nullptr));
+                printf("bar setter: %zu arguments\n", argc);
+                assert(argc == 1);
+                return ok(env);
+              },
+          .attributes = static_cast<napi_property_attributes>(napi_default |
+                                                              napi_writable),
+          .data = nullptr,
+      },
+  };
+
+  expect_initial_failure("napi_define_properties", [&] {
+    return napi_define_properties(env, object, 2, desc);
+  });
+
+  do_throw();
+
+  napi_value two;
+  status = napi_create_int32(env, 2, &two);
+
+  if (status != napi_ok) {
+    printf("napi_create_int32 failed: %d\n", status);
+    return nullptr;
+  }
+
+  expect_initial_failure("napi_set_element",
+                         [&] { return napi_set_element(env, object, 0, two); });
+
+  puts("ok");
 
   info.Env().GetAndClearPendingException();
   return ok(env);

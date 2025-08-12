@@ -125,13 +125,15 @@ using namespace Zig;
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
 #define NAPI_RETURN_IF_VM_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception))
 
-#define NAPI_RETURN_IF_EXCEPTION(_env)                                                                         \
-    do {                                                                                                       \
-        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception)); \
-        if ((_env)->hasPendingException()) {                                                                   \
-            return napi_set_last_error((_env), napi_pending_exception);                                        \
-        }                                                                                                      \
+#define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)                                   \
+    do {                                                                                    \
+        RETURN_IF_EXCEPTION((_scope), napi_set_last_error((_env), napi_pending_exception)); \
+        if ((_env)->hasPendingException()) {                                                \
+            return napi_set_last_error((_env), napi_pending_exception);                     \
+        }                                                                                   \
     } while (0)
+
+#define NAPI_RETURN_IF_EXCEPTION(_env) NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE((_env), napi_preamble_throw_scope__)
 
 // Return indicating that no error occurred in a NAPI function, and an exception is not expected
 #define NAPI_RETURN_SUCCESS(_env)                        \
@@ -913,6 +915,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     void* data, napi_value* result)
 {
     NAPI_PREAMBLE(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, cb);
 
@@ -956,17 +959,16 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     const napi_property_descriptor* properties)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    NAPI_CHECK_ARG(env, object);
-    NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
-
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, throwScope);
+    NAPI_CHECK_ARG(env, object);
+    NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     JSValue objectValue = toJS(object);
     JSC::JSObject* objectObject = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, objectObject, napi_object_expected);
-
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     for (size_t i = 0; i < property_count; i++) {
         Napi::defineProperty(env, objectObject, properties[i], true, throwScope);

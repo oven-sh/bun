@@ -1,13 +1,13 @@
 pub const js_fns = struct {
-    pub fn describe(
-        globalObject: *jsc.JSGlobalObject,
-        callframe: *jsc.CallFrame,
-    ) bun.JSError!jsc.JSValue {
+    pub fn describe(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
         }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2;
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
 
         const name, const callback = callframe.argumentsAsArray(2);
 
@@ -21,6 +21,56 @@ pub const js_fns = struct {
                 return globalObject.throw("Cannot call describe() inside a test", .{});
             },
         }
+    }
+
+    pub fn forDebuggingExecuteTestsNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        // re-entry safety:
+        // bun.refBlockJSExecution();
+        // defer bun.derefBlockJSExecution();
+
+        // here:
+        // - assert the collection phase is complete, then lock the collection phase
+        // - apply filters (`-t`)
+        // - apply `.only`
+        // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
+        // - reorder (`--randomize`)
+        // now, allowing js execution again:
+        // - start the test execution loop
+
+        // test execution:
+        // - one at a time
+        // - timeout handling
+
+        _ = bunTest;
+        _ = callframe;
+
+        return .js_undefined; // TODO: return a promise that resolves when all tests have executed
+    }
+    pub fn forDebuggingDeinitNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        _ = callframe;
+
+        bunTest.deinit();
+        bun.jsc.Jest.Jest.runner.?.describe2 = null;
+
+        return .js_undefined; // TODO: deinitialize describe2
     }
 };
 
@@ -48,8 +98,10 @@ pub const BunTest = struct {
         };
     }
     pub fn deinit(this: *BunTest) void {
+        this.collection.deinit();
         const backing = this.allocation_scope.parent;
         this.allocation_scope.deinit();
+        // TODO: consider making a StrongScope to ensure jsc.Strong values are deinitialized, or requiring a gpa for a strong that is used in asan builds for safety?
         backing.destroy(this.allocation_scope);
     }
 
@@ -95,8 +147,12 @@ const Collection = struct {
         };
     }
     pub fn deinit(this: *Collection) void {
-        this.root_scope.deinitTree();
-        this.schedule.deinit();
+        this.root_scope.deinit(this.bunTest());
+        this.bunTest().gpa.destroy(this.root_scope);
+        for (this.describe_callback_queue.items) |*item| {
+            item.deinit();
+        }
+        this.describe_callback_queue.deinit();
     }
 
     fn drainedPromise(_: *Collection, globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
@@ -207,7 +263,7 @@ const DescribeScope = struct {
         };
     }
     fn deinit(this: *DescribeScope, buntest: *BunTest) void {
-        for (this.entries.items) |entry| {
+        for (this.entries.items) |*entry| {
             entry.deinit(buntest);
         }
         this.entries.deinit();
@@ -231,7 +287,7 @@ const TestScheduleEntry2 = union(enum) {
         buntest: *BunTest,
     ) void {
         switch (this.*) {
-            .describe => |*describe| {
+            .describe => |describe| {
                 describe.deinit(buntest);
                 buntest.gpa.destroy(describe);
             },

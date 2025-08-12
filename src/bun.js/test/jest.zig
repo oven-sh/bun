@@ -110,7 +110,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2: Describe2.BunTest,
+    describe2: ?Describe2.BunTest,
 
     pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 
@@ -421,6 +421,8 @@ pub const Jest = struct {
         );
 
         const describe2 = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe2"), 2, Describe2.js_fns.describe, false);
+        describe2.put(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), 2, Describe2.js_fns.forDebuggingExecuteTestsNow, false));
+        describe2.put(globalObject, ZigString.static("forDebuggingDeinitNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingDeinitNow"), 2, Describe2.js_fns.forDebuggingDeinitNow, false));
         module.put(globalObject, ZigString.static("describe2"), describe2);
 
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {

@@ -374,7 +374,6 @@ if (isDockerEnabled()) {
   });
 
   test("Basic handles mixed column names", async () => {
-    console.log(sql.options);
     const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
     expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
     // Sanity check: ensure iterating through the properties doesn't crash.

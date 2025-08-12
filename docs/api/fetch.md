@@ -320,7 +320,6 @@ Bun automatically sets the `Content-Type` header for request bodies when not exp
 
 - For `Blob` objects, uses the blob's `type`
 - For `FormData`, sets appropriate multipart boundary
-- When `Response.json(value)` is used, sets `application/json`
 
 ## Debugging
 

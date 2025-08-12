@@ -74,7 +74,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
-    clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
+    clap.parseParam("--watch <STR>?...                 Automatically restart the process on file change. Optionally, specify a list of paths to watch.") catch unreachable,
     clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
     clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
@@ -139,7 +139,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
-    clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
+    clap.parseParam("--watch <STR>?...                 Automatically restart the process on file change. Optionally, specify a list of paths to watch.") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
     clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
@@ -567,7 +567,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.flag("--no-clear-screen")) {
                 bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
             }
-        } else if (args.flag("--watch")) {
+        } else if (args.options("--watch").len > 0) {
             ctx.debug.hot_reload = .watch;
 
             // Windows applies this to the watcher child process.
@@ -577,6 +577,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
             if (args.flag("--no-clear-screen")) {
                 bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+            }
+
+            for (args.options("--watch")) |watch_str| {
+                if (watch_str.len == 0) continue;
+                var iter = std.mem.splitScalar(u8, watch_str, ',');
+                while (iter.next()) |glob| {
+                    if (glob.len > 0) {
+                        try ctx.debug.watch_globs.append(glob);
+                    }
+                }
             }
         }
 
@@ -867,12 +877,22 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
-        if (args.flag("--watch")) {
+        if (args.options("--watch").len > 0) {
             ctx.debug.hot_reload = .watch;
             bun.auto_reload_on_crash = true;
 
             if (args.flag("--no-clear-screen")) {
                 bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+            }
+
+            for (args.options("--watch")) |watch_str| {
+                if (watch_str.len == 0) continue;
+                var iter = std.mem.splitScalar(u8, watch_str, ',');
+                while (iter.next()) |glob| {
+                    if (glob.len > 0) {
+                        try ctx.debug.watch_globs.append(glob);
+                    }
+                }
             }
         }
 

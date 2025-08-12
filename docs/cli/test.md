@@ -133,6 +133,16 @@ $ bun test --bail=10
 
 Similar to `bun run`, you can pass the `--watch` flag to `bun test` to watch for changes and re-run tests.
 
+By default, `--watch` monitors all test files and their imported dependencies. You can also specify additional files or directories to watch using glob patterns. This is useful if you want to re-run tests when non-source files change, such as fixtures or configuration files.
+
+```bash
+# Also watch for changes in the fixtures directory
+$ bun test --watch=./fixtures/**/*.json
+
+# The --watch flag can be repeated
+$ bun test --watch=./fixtures/**/*.json --watch=./config/*.toml
+```
+
 ```bash
 $ bun test --watch
 ```

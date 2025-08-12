@@ -41,6 +41,22 @@ bun install <pkg>             # install a package
 bunx cowsay 'Hello, world!'   # execute a package
 ```
 
+The `bun` command also supports a watch mode to restart the process when files change.
+
+```bash
+# Watch for changes and restart
+$ bun --watch run index.tsx
+
+# Watch for changes in specific paths using glob patterns
+$ bun --watch=src/**/*.ts run index.tsx
+
+# Watch multiple paths
+$ bun --watch="src/**/*.ts,lib/**/*.ts" run index.tsx
+
+# Or repeat the flag
+$ bun --watch=src/**/*.ts --watch=lib/**/*.ts run index.tsx
+```
+
 ## Install
 
 Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).

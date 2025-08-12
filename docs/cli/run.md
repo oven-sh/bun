@@ -58,7 +58,20 @@ $ bun index.js
 
 ### `--watch`
 
-To run a file in watch mode, use the `--watch` flag.
+To run a file in watch mode, use the `--watch` flag. When a file is changed, the process will restart.
+
+By default, `--watch` monitors the entry point and all imported files. You can also specify additional files or directories to watch using glob patterns.
+
+```bash
+# Watch all .ts files in the src directory
+$ bun --watch=src/**/*.ts run index.tsx
+
+# Watch all .ts files in src and lib
+$ bun --watch="src/**/*.ts,lib/**/*.ts" run index.tsx
+
+# The --watch flag can also be repeated
+$ bun --watch=src/**/*.ts --watch=lib/**/*.ts run index.tsx
+```
 
 ```bash
 $ bun --watch run index.tsx

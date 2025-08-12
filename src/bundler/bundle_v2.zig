@@ -785,7 +785,7 @@ pub const BundleV2 = struct {
         bake_options: ?BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
-        cli_watch_flag: bool,
+        watch_globs: ?std.ArrayList([]const u8),
         thread_pool: ?*ThreadPoolLib,
         heap: ThreadLocalArena,
     ) !*BundleV2 {
@@ -871,8 +871,8 @@ pub const BundleV2 = struct {
         this.linker.dev_server = transpiler.options.dev_server;
 
         const pool = try this.graph.allocator.create(ThreadPool);
-        if (cli_watch_flag) {
-            Watcher.enableHotModuleReloading(this);
+        if (watch_globs) |globs| {
+            Watcher.enableHotModuleReloading(this, globs);
         }
         // errdefer pool.destroy();
         errdefer this.graph.heap.deinit();
@@ -1371,7 +1371,7 @@ pub const BundleV2 = struct {
         transpiler: *Transpiler,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
-        enable_reloading: bool,
+        watch_globs: ?std.ArrayList([]const u8),
         reachable_files_count: *usize,
         minify_duration: *u64,
         source_code_size: *u64,
@@ -1382,7 +1382,7 @@ pub const BundleV2 = struct {
             null,
             allocator,
             event_loop,
-            enable_reloading,
+            watch_globs,
             null,
             .init(),
         );

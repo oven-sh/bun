@@ -312,8 +312,8 @@ pub const Run = struct {
         }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, this.ctx.debug.watch_globs),
+            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.ctx.debug.watch_globs),
             else => {},
         }
 

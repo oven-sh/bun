@@ -113,8 +113,6 @@ declare module "bun:sqlite" {
    * ```ts
    * const db = new Database("mydb.sqlite", {readonly: true});
    * ```
-   *
-   * @category Database
    */
   export class Database implements Disposable {
     /**
@@ -126,35 +124,16 @@ declare module "bun:sqlite" {
     constructor(filename?: string, options?: number | DatabaseOptions);
 
     /**
+     * Open or create a SQLite3 databases
+     *
+     * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
+     * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
+     *
      * This is an alias of `new Database()`
      *
      * See {@link Database}
      */
-    static open(
-      filename: string,
-      options?:
-        | number
-        | {
-            /**
-             * Open the database as read-only (no write operations, no create).
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-             */
-            readonly?: boolean;
-            /**
-             * Allow creating a new database
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-             */
-            create?: boolean;
-            /**
-             * Open the database as read-write
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-             */
-            readwrite?: boolean;
-          },
-    ): Database;
+    static open(filename: string, options?: number | DatabaseOptions): Database;
 
     /**
      * Execute a SQL query **without returning any results**.
@@ -205,6 +184,7 @@ declare module "bun:sqlite" {
      * @returns `Database` instance
      */
     run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+
     /**
      * This is an alias of {@link Database.run}
      */
@@ -353,6 +333,16 @@ declare module "bun:sqlite" {
      */
     static setCustomSQLite(path: string): boolean;
 
+    /**
+     * Closes the database when using the async resource proposal
+     *
+     * @example
+     * ```
+     * using db = new Database("myapp.db");
+     * doSomethingWithDatabase(db);
+     * // Automatically closed when `db` goes out of scope
+     * ```
+     */
     [Symbol.dispose](): void;
 
     /**

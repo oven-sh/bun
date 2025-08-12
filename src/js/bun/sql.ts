@@ -186,11 +186,11 @@ const SQL: typeof Bun.SQL = function SQL(
     // query is cancelled
     if (!handle || query.cancelled) {
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
-      return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
     pool.connect(onQueryConnected.bind(query, handle));
   }
+
   function queryFromPool(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
@@ -227,6 +227,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const transactionQueries = this;
     transactionQueries.delete(query);
   }
+
   function queryFromTransactionHandler(transactionQueries, query, handle, err) {
     const pooledConnection = this;
     if (err) {

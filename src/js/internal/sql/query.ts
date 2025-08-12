@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, SQLHelper } from "./shared.ts";
+import type { DatabaseAdapter } from "./shared.ts";
 const { escapeIdentifier, notTaggedCallError } = require("internal/sql/utils");
 
 const _resolve = Symbol("resolve");
@@ -28,7 +28,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
   public [_handle]: Handle | null;
   public [_handler]: (query: Query<T, Handle>, handle: Handle) => T;
   public [_queryStatus]: SQLQueryStatus;
-  public [_strings]: string | TemplateStringsArray | SQLHelper<any> | Query<any, Handle>;
+  public [_strings]: string | TemplateStringsArray;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
 
@@ -63,7 +63,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
   }
 
   constructor(
-    strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, Handle>,
+    strings: string | TemplateStringsArray,
     values: any[],
     flags: number,
     handler,

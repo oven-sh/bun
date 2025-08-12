@@ -1149,6 +1149,9 @@ fn enqueueGitClone(
     const folder_name = std.fmt.bufPrintZ(&git_folder_name_buf, "{any}.git", .{
         bun.fmt.hexIntLower(task_id.get()),
     }) catch unreachable;
+    
+    // Build full path for git clone target
+    const target = Path.joinAbsStringZ(this.cache_directory_path, &.{folder_name}, .auto);
 
     // Build git command arguments
     var argc: usize = 0;
@@ -1163,7 +1166,7 @@ fn enqueueGitClone(
             "--quiet",
             "--bare",
             bun.default_allocator.dupeZ(u8, https) catch unreachable,
-            folder_name,
+            target,
             null,
             null,
         };
@@ -1178,7 +1181,7 @@ fn enqueueGitClone(
             "--quiet",
             "--bare",
             bun.default_allocator.dupeZ(u8, ssh) catch unreachable,
-            folder_name,
+            target,
             null,
             null,
         };

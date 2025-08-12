@@ -7,9 +7,10 @@
     "./packages/@types/bun"
   ],
   "devDependencies": {
-    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.3",
+    "@types/bun": "workspace:*",
+    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",

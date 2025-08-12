@@ -24,7 +24,7 @@ export interface BaseQueryHandle {
 export type { Query };
 class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
   public [_resolve]: (value: T) => void;
-  public [_reject]: (reason?: any) => void;
+  public [_reject]: (reason?: Error) => void;
   public [_handle]: Handle | null;
   public [_handler]: (query: Query<T, Handle>, handle: Handle) => T;
   public [_queryStatus] = 0;
@@ -112,27 +112,32 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(notTaggedCallError());
       return;
     }
+
     this[_queryStatus] |= QueryStatus.executed;
     const handle = this.getQueryHandle();
-    if (!handle) return this;
+
+    if (!handle) {
+      return this;
+    }
 
     if (async) {
-      // Ensure it's actually async
-      // eslint-disable-next-line
-      await 1;
+      // Ensure it's actually async. This sort of forces a tick which prevents an infinite loop.
+      await (1 as never as Promise<void>);
     }
 
     try {
       return handler(this, handle);
     } catch (err) {
       this[_queryStatus] |= QueryStatus.error;
-      this.reject(err);
+      this.reject(err as Error);
     }
   }
+
   get active() {
     return (this[_queryStatus] & QueryStatus.active) != 0;
   }
@@ -154,20 +159,30 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     return (this[_queryStatus] & QueryStatus.cancelled) !== 0;
   }
 
-  resolve(x) {
+  resolve(x: T) {
     this[_queryStatus] &= ~QueryStatus.active;
     const handle = this.getQueryHandle();
-    if (!handle) return this;
+
+    if (!handle) {
+      return this;
+    }
+
     handle.done();
+
     return this[_resolve](x);
   }
 
   reject(x: Error) {
     this[_queryStatus] &= ~QueryStatus.active;
     this[_queryStatus] |= QueryStatus.error;
+
     if (!(this[_queryStatus] & QueryStatus.invalidHandle)) {
       const handle = this.getQueryHandle();
-      if (!handle) return this[_reject](x);
+
+      if (!handle) {
+        return this[_reject](x);
+      }
+
       handle.done();
     }
 
@@ -179,6 +194,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     if (status & QueryStatus.cancelled) {
       return this;
     }
+
     this[_queryStatus] |= QueryStatus.cancelled;
 
     if (status & QueryStatus.executed) {
@@ -199,7 +215,11 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
 
   raw() {
     const handle = this.getQueryHandle();
-    if (!handle) return this;
+
+    if (!handle) {
+      return this;
+    }
+
     handle.setMode(SQLQueryResultMode.raw);
     return this;
   }
@@ -211,7 +231,11 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
 
   values() {
     const handle = this.getQueryHandle();
-    if (!handle) return this;
+
+    if (!handle) {
+      return this;
+    }
+
     handle.setMode(SQLQueryResultMode.values);
     return this;
   }
@@ -220,9 +244,12 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw notTaggedCallError();
     }
+
     this[_run](true);
+
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
+
     return result;
   }
 
@@ -230,9 +257,12 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw notTaggedCallError();
     }
+
     this[_run](true);
+
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
+
     return result;
   }
 
@@ -240,7 +270,9 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw notTaggedCallError();
     }
+
     this[_run](true);
+
     return super.finally.$apply(this, arguments);
   }
 }

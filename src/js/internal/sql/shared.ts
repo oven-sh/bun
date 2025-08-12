@@ -1,7 +1,28 @@
+const PublicArray = globalThis.Array;
+
 declare global {
   interface NumberConstructor {
     isSafeInteger(number: unknown): number is number;
     isNaN(number: number): boolean;
+  }
+}
+
+class SQLResultArray extends PublicArray {
+  public count!: number | null;
+  public command!: string | null;
+
+  static [Symbol.toStringTag] = "SQLResults";
+
+  constructor() {
+    super();
+    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
+    Object.defineProperties(this, {
+      count: { value: null, writable: true },
+      command: { value: null, writable: true },
+    });
+  }
+  static get [Symbol.species]() {
+    return Array;
   }
 }
 
@@ -188,6 +209,24 @@ function parseOptions(
     bigint: any,
     path: string | string[];
 
+  class SQLResultArray extends PublicArray {
+    public count!: number | null;
+    public command!: string | null;
+
+    static [Symbol.toStringTag] = "SQLResults";
+
+    constructor() {
+      super();
+      // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
+      Object.defineProperties(this, {
+        count: { value: null, writable: true },
+        command: { value: null, writable: true },
+      });
+    }
+    static get [Symbol.species]() {
+      return Array;
+    }
+  }
   let prepare = true;
   let sslMode: SSLMode = SSLMode.disable;
 
@@ -407,6 +446,10 @@ function parseOptions(
   return ret;
 }
 
+export interface SQLAdapter {
+  //
+}
+
 export default {
   parseDefinitelySqliteUrl,
   isOptionsOfAdapter,
@@ -416,4 +459,5 @@ export default {
   SQLHelper,
   SSLMode,
   normalizeSSLMode,
+  SQLResultArray,
 };

@@ -27,7 +27,7 @@ declare module "bun" {
      * Represents the result of the `parseOptions()` function in the postgres path
      */
     type DefinedPostgresOptions = Define<Bun.SQL.PostgresOptions, "max" | "prepare"> & {
-      sslMode: 0 | 1 | 2 | 3 | 4; // keep in sync with SSLMode enum in src/js/sql.ts
+      sslMode: import("internal/sql/shared").SSLMode;
       query: string;
     };
 

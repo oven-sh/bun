@@ -9,11 +9,10 @@ const {
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
 
-const {
-  createConnection: createPostgresConnection,
-  createQuery: createPostgresQuery,
-  init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+const { createConnection: createPostgresConnection, createQuery: createPostgresQuery } = $zig(
+  "postgres.zig",
+  "createBinding",
+) as PostgresDotZig;
 
 export interface PostgresDotZig {
   init: (
@@ -421,9 +420,9 @@ export class PostgresAdapter implements DatabaseAdapter<TODO, TODO> {
     this.readyConnections = new Set();
   }
 
-  createQueryHandle(sql: string, values: unknown[], flags: number, poolSize: number) {
+  createQueryHandle(sql: string, values: unknown[], flags: number) {
     if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
-      if (poolSize !== 1) {
+      if (this.connectionInfo.max !== 1) {
         const upperCaseSqlString = sql.toUpperCase().trim();
         if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
           throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");

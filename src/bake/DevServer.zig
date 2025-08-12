@@ -10,9 +10,9 @@
 
 const DevServer = @This();
 
-pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
+pub const debug = bun.Output.Scoped(.DevServer, .visible);
+pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
+pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()

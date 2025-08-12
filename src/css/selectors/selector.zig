@@ -11,7 +11,7 @@ pub const Component = parser.Component;
 pub const PseudoClass = parser.PseudoClass;
 pub const PseudoElement = parser.PseudoElement;
 
-const debug = bun.Output.scoped(.CSS_SELECTORS, false);
+const debug = bun.Output.scoped(.CSS_SELECTORS, .visible);
 
 /// Our implementation of the `SelectorImpl` interface
 ///

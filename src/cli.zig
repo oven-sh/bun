@@ -1,4 +1,4 @@
-const debug = Output.scoped(.CLI, true);
+const debug = Output.scoped(.CLI, .hidden);
 
 pub var start_time: i128 = undefined;
 

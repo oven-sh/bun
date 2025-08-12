@@ -22,7 +22,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
     const backing_allocator = bun.default_allocator;
 
-    const log = Output.scoped(.Store, true);
+    const log = Output.scoped(.Store, .hidden);
 
     return struct {
         const Store = @This();

@@ -2344,7 +2344,7 @@ pub const withoutTrailingSlash = paths_.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = paths_.withoutTrailingSlashWindowsPath;
 pub const basename = paths_.basename;
 
-pub const log = bun.Output.scoped(.STR, true);
+pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
 pub const CodePoint = i32;
 

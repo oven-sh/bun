@@ -3,7 +3,7 @@ var default_manager: ?*PathWatcherManager = null;
 
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    const log = Output.scoped(.PathWatcherManager, false);
+    const log = Output.scoped(.PathWatcherManager, .visible);
     main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},

@@ -159,7 +159,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
     return this.cached_structure;
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const Signature = @import("./Signature.zig");

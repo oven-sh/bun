@@ -1,6 +1,8 @@
 src/allocators.zig
 src/allocators/AllocationScope.zig
 src/allocators/basic.zig
+src/allocators/fallback.zig
+src/allocators/fallback/z.zig
 src/allocators/LinuxMemFdAllocator.zig
 src/allocators/MaxHeapAllocator.zig
 src/allocators/MemoryReportingAllocator.zig

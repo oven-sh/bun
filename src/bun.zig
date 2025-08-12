@@ -9,17 +9,9 @@ const bun = @This();
 pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = true;
-
-pub const default_allocator: std.mem.Allocator = if (use_mimalloc)
-    allocators.c_allocator
-else
-    std.heap.c_allocator;
-
+pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zeroing memory allocator
-pub const z_allocator: std.mem.Allocator = if (use_mimalloc)
-    allocators.z_allocator
-else
-    std.heap.c_allocator;
+pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
@@ -1932,7 +1924,7 @@ pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
-const TODO_LOG = Output.scoped(.TODO, false);
+const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
         TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
@@ -2658,8 +2650,7 @@ pub inline fn new(comptime T: type, init: T) *T {
     };
 
     if (comptime Environment.allow_assert) {
-        const enable_logs = @hasDecl(T, "logAllocations");
-        const logAlloc = Output.scoped(.alloc, !enable_logs);
+        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
         logAlloc("new({s}) = {*}", .{ meta.typeName(T), pointer });
     }
 
@@ -2676,8 +2667,7 @@ pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
-        const enable_logs = @hasDecl(T, "logAllocations");
-        const logAlloc = Output.scoped(.alloc, !enable_logs);
+        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
 
         // If this type implements a RefCount, make sure it is zero.

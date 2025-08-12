@@ -29,13 +29,19 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncExec);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncPrepare);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncClose);
+static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncOpen);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncLocation);
+static JSC_DECLARE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsOpen);
+static JSC_DECLARE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction);
 
 static const HashTableValue JSNodeSQLiteDatabaseSyncPrototypeTableValues[] = {
     { "exec"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncExec, 1 } },
     { "prepare"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncPrepare, 1 } },
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncClose, 0 } },
+    { "open"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncOpen, 0 } },
     { "location"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncLocation, 0 } },
+    { "isOpen"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeSQLiteDatabaseSyncProtoGetterIsOpen, 0 } },
+    { "isTransaction"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction, 0 } },
 };
 
 const ClassInfo JSNodeSQLiteDatabaseSyncPrototype::s_info = { "DatabaseSync"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSQLiteDatabaseSyncPrototype) };
@@ -156,6 +162,47 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncClose, (JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncOpen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodeSQLiteDatabaseSync* thisObject = jsDynamicCast<JSNodeSQLiteDatabaseSync*>(callFrame->thisValue());
+    if (!thisObject) {
+        throwVMTypeError(globalObject, scope, "Method DatabaseSync.prototype.open called on incompatible receiver"_s);
+        return {};
+    }
+
+    // Check if already open
+    if (thisObject->database()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is already open"_s);
+    }
+
+    // Get the stored path
+    const String& databasePath = thisObject->path();
+    if (databasePath.isEmpty()) {
+        throwVMError(globalObject, scope, createError(globalObject, "Database path is not set"_s));
+        return {};
+    }
+
+    // Open the SQLite database
+    sqlite3* db = nullptr;
+    CString pathUTF8 = databasePath.utf8();
+    int result = sqlite3_open(pathUTF8.data(), &db);
+    
+    if (result != SQLITE_OK) {
+        const char* errorMsg = sqlite3_errmsg(db);
+        if (db) {
+            sqlite3_close(db);
+        }
+        throwVMError(globalObject, scope, createError(globalObject, String::fromUTF8(errorMsg)));
+        return {};
+    }
+
+    thisObject->setDatabase(db);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncLocation, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -196,6 +243,43 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncLocation, (JSGlobalObj
     }
 
     return JSValue::encode(jsString(vm, String::fromUTF8(filename)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsOpen, (JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodeSQLiteDatabaseSync* thisObject = jsDynamicCast<JSNodeSQLiteDatabaseSync*>(JSValue::decode(thisValue));
+    if (!thisObject) {
+        throwVMTypeError(globalObject, scope, "Trying to get isOpen on a non-DatabaseSync object"_s);
+        return {};
+    }
+
+    sqlite3* db = thisObject->database();
+    return JSValue::encode(jsBoolean(db != nullptr));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction, (JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodeSQLiteDatabaseSync* thisObject = jsDynamicCast<JSNodeSQLiteDatabaseSync*>(JSValue::decode(thisValue));
+    if (!thisObject) {
+        throwVMTypeError(globalObject, scope, "Trying to get isTransaction on a non-DatabaseSync object"_s);
+        return {};
+    }
+
+    sqlite3* db = thisObject->database();
+    if (!db) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is not open"_s);
+    }
+
+    // Check if we're in a transaction using sqlite3_get_autocommit
+    // Returns 0 if in a transaction, non-zero if not in a transaction
+    bool inTransaction = sqlite3_get_autocommit(db) == 0;
+    return JSValue::encode(jsBoolean(inTransaction));
 }
 
 

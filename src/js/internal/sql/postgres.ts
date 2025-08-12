@@ -216,6 +216,8 @@ class PooledPostgresConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
+
+      // @ts-expect-error path is currently removed from the types
       path,
     } = options;
 
@@ -401,18 +403,18 @@ class PooledPostgresConnection {
 }
 
 export class PostgresAdapter implements DatabaseAdapter<TODO, TODO> {
-  connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
+  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
 
-  connections: PooledPostgresConnection[];
-  readyConnections: Set<PooledPostgresConnection>;
+  public readonly connections: PooledPostgresConnection[];
+  public readonly readyConnections: Set<PooledPostgresConnection>;
 
-  waitingQueue: Array<(err: Error | null, result: any) => void> = [];
-  reservedQueue: Array<(err: Error | null, result: any) => void> = [];
+  public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
+  public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
 
-  poolStarted: boolean = false;
-  closed: boolean = false;
-  totalQueries: number = 0;
-  onAllQueriesFinished: (() => void) | null = null;
+  public poolStarted: boolean = false;
+  public closed: boolean = false;
+  public totalQueries: number = 0;
+  public onAllQueriesFinished: (() => void) | null = null;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions) {
     this.connectionInfo = connectionInfo;

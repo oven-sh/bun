@@ -8,6 +8,7 @@ const {
   symbols: { _handle, _flags, _results },
 } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
+const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, parseOptions, SQLResultArray } = require("internal/sql/shared");
 const { connectionClosedError } = require("internal/sql/utils");
 
@@ -142,7 +143,7 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Databas
     case "postgres":
       return new PostgresAdapter(options);
     case "sqlite":
-      throw new Error("SQLite is unsupported right now");
+      return new SQLiteAdapter(options);
     default:
       throw new Error(`Unsupported adapter: ${(options as { adapter?: string }).adapter}.`);
   }
@@ -153,10 +154,6 @@ const SQL: typeof Bun.SQL = function SQL(
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-
-  if (connectionInfo.adapter !== "postgres") {
-    throw new Error("SQLite is unsupported right now");
-  }
 
   const pool = adapterFromOptions(connectionInfo);
 

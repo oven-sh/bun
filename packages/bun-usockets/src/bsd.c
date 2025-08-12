@@ -700,6 +700,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
             return LIBUS_SOCKET_ERROR;
         }
 
+#ifdef __APPLE__
+        /* A bug in XNU (the macOS kernel) can cause accept() to return a socket but addrlen=0.
+         * The socket is already dead and should be discarded.
+         * This happens when an IPv4 connection is made to an IPv6 dual-stack listener
+         * and the connection is immediately aborted (sends RST packet). */
+        if (addr->len == 0) {
+            bsd_close_socket(accepted_fd);
+            continue; /* Try to accept the next connection */
+        }
+#endif
+
         break;
     }
 

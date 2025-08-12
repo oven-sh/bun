@@ -4,10 +4,10 @@ import type * as SqliteTypes from "bun:sqlite";
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
 
-var defineProperties = Object.defineProperties;
-var toStringTag = Symbol.toStringTag;
-var isArray = Array.isArray;
-var isTypedArray = ArrayBuffer.isView;
+const defineProperties = Object.defineProperties;
+const toStringTag = Symbol.toStringTag;
+const isArray = Array.isArray;
+const isTypedArray = ArrayBuffer.isView;
 
 let internalFieldTuple;
 
@@ -94,12 +94,42 @@ const constants = {
   SQLITE_FCNTL_RESET_CACHE: 42,
 };
 
-var SQL;
+// This is interface is the JS equivalent of what JSSQLStatement.cpp defines
+interface CppSQLStatement {
+  run: (...args: TODO[]) => TODO;
+  get: (...args: TODO[]) => TODO;
+  all: (...args: TODO[]) => TODO;
+  iterate: (...args: TODO[]) => TODO;
+  as: (...args: TODO[]) => TODO;
+  values: (...args: TODO[]) => TODO;
+  finalize: (...args: TODO[]) => TODO;
+  toString: (...args: TODO[]) => TODO;
+  columns: string[];
+  columnsCount: number;
+  paramsCount: number;
+  columnTypes: string[];
+  declaredTypes: (string | null)[];
+  safeIntegers: boolean;
+  hasMultipleStatements: boolean;
+}
 
-var controllers;
+interface CppSQL {
+  new (...args: TODO[]): CppSQLStatement;
+  open(filename: string, flags: number, db: Database): TODO;
+  isInTransaction(handle: TODO): boolean;
+  loadExtension(handle: TODO, name: string, entryPoint: string): void;
+  serialize(handle: TODO, name: string): Buffer;
+  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
+  fcntl(handle: TODO, ...args: TODO[]): TODO;
+  close(handle: TODO, throwOnError: boolean): void;
+  setCustomSQLite(path: string): void;
+}
+
+let SQL: CppSQL;
+let controllers: WeakMap<Database, any> | undefined;
 
 class Statement {
-  constructor(raw) {
+  constructor(raw: CppSQLStatement) {
     this.#raw = raw;
 
     switch (raw.paramsCount) {
@@ -122,7 +152,7 @@ class Statement {
     }
   }
 
-  #raw;
+  #raw: CppSQLStatement;
 
   get: SqliteTypes.Statement["get"];
   all: SqliteTypes.Statement["all"];
@@ -299,10 +329,13 @@ class Statement {
   }
 }
 
-var cachedCount = Symbol.for("Bun.Database.cache.count");
+const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
-  constructor(filenameGiven: string | URL | undefined, options?: SqliteTypes.DatabaseOptions | number) {
+  constructor(
+    filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
+    options?: SqliteTypes.DatabaseOptions | number,
+  ) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
@@ -403,11 +436,11 @@ class Database implements SqliteTypes.Database {
     return SQL.loadExtension(this.#handle, name, entryPoint);
   }
 
-  serialize(optionalName) {
+  serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized, openFlags, deserializeFlags) {
+  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
     if (!SQL) {
       initializeSQL();
     }
@@ -416,7 +449,7 @@ class Database implements SqliteTypes.Database {
   }
 
   static deserialize(
-    serialized,
+    serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
     if (typeof options === "boolean") {
@@ -481,7 +514,7 @@ class Database implements SqliteTypes.Database {
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[], flags: number = 0) {
+  prepare(query: string, params: any[] | undefined, flags: number = 0) {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

@@ -67,6 +67,22 @@ pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObjec
     });
 }
 
+pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) bun.JSError!void {
+    group.begin(@src());
+    defer group.end();
+
+    bun.assert(!this.locked);
+    group.log("enqueueTestCallback", .{});
+
+    _ = name;
+
+    const test_scope = bun.create(this.bunTest().gpa, describe2.TestScope, .{
+        .mode = .testFn,
+        .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
+    });
+    try this.active_scope.entries.append(.{ .test_scope = test_scope });
+}
+
 pub fn run(this: *Collection, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
     group.begin(@src());
     defer group.end();

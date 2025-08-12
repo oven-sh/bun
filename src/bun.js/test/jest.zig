@@ -418,10 +418,11 @@ pub const Jest = struct {
             describe,
         );
 
-        const describe2 = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe2"), 2, Describe2.js_fns.describe, false);
+        const describe2 = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe2"), 2, Describe2.js_fns.describeFn, false);
         describe2.put(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), 2, Describe2.js_fns.forDebuggingExecuteTestsNow, false));
         describe2.put(globalObject, ZigString.static("forDebuggingDeinitNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingDeinitNow"), 2, Describe2.js_fns.forDebuggingDeinitNow, false));
         module.put(globalObject, ZigString.static("describe2"), describe2);
+        module.put(globalObject, ZigString.static("test2"), jsc.host_fn.NewFunction(globalObject, ZigString.static("test2"), 2, Describe2.js_fns.testFn, false));
 
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
             const function = if (outside_of_test)

@@ -121,7 +121,7 @@ declare module "bun:sqlite" {
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      */
-    constructor(filename?: string | URL, options?: number | DatabaseOptions);
+    constructor(filename?: string, options?: number | DatabaseOptions);
 
     /**
      * Open or create a SQLite3 databases
@@ -133,7 +133,7 @@ declare module "bun:sqlite" {
      *
      * See {@link Database}
      */
-    static open(filename: string | URL, options?: number | DatabaseOptions): Database;
+    static open(filename: string, options?: number | DatabaseOptions): Database;
 
     /**
      * Execute a SQL query **without returning any results**.

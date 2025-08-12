@@ -915,10 +915,10 @@ pub fn fromJS(
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
                 var value_iter = try tls.arrayIterator(global);
-                if (value_iter.len == 1) {
-                    return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
-                }
-                while (try value_iter.next()) |item| {
+                if (value_iter.len == 0) {
+                    // Empty TLS array means no TLS - this is valid
+                } else {
+                    while (try value_iter.next()) |item| {
                     var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
                         if (global.hasException()) {
                             return error.JSError;
@@ -941,6 +941,7 @@ pub fn fromJS(
 
                         args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
                     }
+                }
                 }
             } else {
                 if (try SSLConfig.fromJS(vm, global, tls)) |ssl_config| {

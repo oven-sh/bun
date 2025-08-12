@@ -159,11 +159,6 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
         filename = filename.toString();
       }
 
-      if (filename !== ":memory:" && !filename.startsWith("/")) {
-        const path = require("node:path");
-        filename = path.resolve(filename);
-      }
-
       const options: BunSQLiteModule.DatabaseOptions = {};
 
       if (this.connectionInfo.readonly) {

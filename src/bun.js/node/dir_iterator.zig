@@ -469,11 +469,10 @@ const builtin = @import("builtin");
 const bun = @import("bun");
 const FD = bun.FD;
 const PathString = bun.PathString;
+const jsc = bun.jsc;
 const strings = bun.strings;
-
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const Entry = JSC.Node.Dirent;
+const Maybe = bun.sys.Maybe;
+const Entry = jsc.Node.Dirent;
 
 const std = @import("std");
 const mem = std.mem;

@@ -109,7 +109,7 @@ InspectorTestReporterAgent::~InspectorTestReporterAgent()
     }
 }
 
-void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorTestReporterAgent::didCreateFrontendAndBackend()
 {
 }
 

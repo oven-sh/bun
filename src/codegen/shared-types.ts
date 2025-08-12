@@ -38,6 +38,7 @@ export const sharedTypes: Record<string, string> = {
   // Common Bun types
   "BunString": "bun.String",
   "JSC::EncodedJSValue": "jsc.JSValue",
+  "EncodedJSValue": "jsc.JSValue",
   "JSC::JSGlobalObject": "jsc.JSGlobalObject",
   "ZigException": "jsc.ZigException",
   "Inspector::InspectorHTTPServerAgent": "HTTPServerAgent.InspectorHTTPServerAgent",
@@ -48,11 +49,11 @@ export const sharedTypes: Record<string, string> = {
   "JSC::VM": "jsc.VM",
   "WTF::StringImpl": "bun.WTF._StringImplStruct",
   "WebCore::DOMURL": "bun.DOMURL",
-  "ZigString": "bun.JSC.ZigString",
-  "JSC::JSPromise": "bun.JSC.JSPromise",
-  "JSC::JSMap": "bun.JSC.JSMap",
-  "JSC::CustomGetterSetter": "bun.JSC.CustomGetterSetter",
-  "JSC::SourceProvider": "bun.JSC.SourceProvider",
+  "ZigString": "bun.jsc.ZigString",
+  "JSC::JSPromise": "bun.jsc.JSPromise",
+  "JSC::JSMap": "bun.jsc.JSMap",
+  "JSC::CustomGetterSetter": "bun.jsc.CustomGetterSetter",
+  "JSC::SourceProvider": "bun.jsc.SourceProvider",
 };
 
 export const bannedTypes: Record<string, string> = {

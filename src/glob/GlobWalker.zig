@@ -25,7 +25,7 @@ const isWindows = @import("builtin").os.tag == .windows;
 
 // const Codepoint = u32;
 
-const log = bun.Output.scoped(.Glob, false);
+const log = bun.Output.scoped(.Glob, .visible);
 
 const CursorState = struct {
     cursor: CodepointIterator.Cursor = .{},
@@ -446,12 +446,12 @@ pub fn GlobWalker_(
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
                                         this.iter_state = .{ .matched = path };
-                                        return Maybe(void).success;
+                                        return .success;
                                     }
                                     // Doesn't exist
                                     if (e.getErrno() == bun.sys.E.NOENT) {
                                         this.iter_state = .get_next;
-                                        return Maybe(void).success;
+                                        return .success;
                                     }
                                     const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
                                     return .{ .err = e.withPath(errpath) };
@@ -460,7 +460,7 @@ pub fn GlobWalker_(
                             };
                             _ = Accessor.close(fd);
                             this.iter_state = .{ .matched = path };
-                            return Maybe(void).success;
+                            return .success;
                         }
 
                         // In the above branch, if `starting_compoennt_dix >= pattern_components.len` then
@@ -504,7 +504,7 @@ pub fn GlobWalker_(
                     else => {},
                 }
 
-                return Maybe(void).success;
+                return .success;
             }
 
             pub fn deinit(this: *Iterator) void {
@@ -640,7 +640,7 @@ pub fn GlobWalker_(
                             var e: bun.sys.Error = e_;
                             if (e.getErrno() == .NOENT) {
                                 this.iter_state = .get_next;
-                                return Maybe(void).success;
+                                return .success;
                             }
                             return .{ .err = e.withPath(this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern)) };
                         },
@@ -656,7 +656,7 @@ pub fn GlobWalker_(
                     } else {
                         this.iter_state = .get_next;
                     }
-                    return Maybe(void).success;
+                    return .success;
                 }
 
                 this.iter_state.directory.dir_path = dir_path;
@@ -674,7 +674,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
-                return Maybe(void).success;
+                return .success;
             }
 
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
@@ -1057,7 +1057,7 @@ pub fn GlobWalker_(
                 this.debugPatternComopnents();
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         /// NOTE This also calls deinit on the arena, if you don't want to do that then
@@ -1078,7 +1078,7 @@ pub fn GlobWalker_(
         }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {
-            if (this.patternComponents.items.len == 0) return Maybe(void).success;
+            if (this.patternComponents.items.len == 0) return .success;
 
             var iter = GlobWalker.Iterator{ .walker = this };
             defer iter.deinit();
@@ -1096,7 +1096,7 @@ pub fn GlobWalker_(
                 // so we don't need to do anything here
             }
 
-            return Maybe(void).success;
+            return .success;
         }
 
         // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
@@ -1669,20 +1669,21 @@ pub const matchImpl = match;
 
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const match = @import("./match.zig").match;
+
+const bun = @import("bun");
+const BunString = bun.String;
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const isAllAscii = bun.strings.isAllASCII;
+
+const jsc = bun.jsc;
+const ZigString = bun.jsc.ZigString;
 
 const Cursor = CodepointIterator.Cursor;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
 
-const bun = @import("bun");
-const BunString = bun.String;
 const Syscall = bun.sys;
-
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const ZigString = bun.JSC.ZigString;
+const Maybe = bun.sys.Maybe;
 
 const std = @import("std");
 const ArrayList = std.ArrayListUnmanaged;

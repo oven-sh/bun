@@ -141,9 +141,10 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     };
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 
 const bun = @import("bun");
-const string = bun.string;
 const strings = bun.strings;

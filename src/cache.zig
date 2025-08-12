@@ -14,7 +14,7 @@ pub const Set = struct {
         };
     }
 };
-const debug = Output.scoped(.fs, false);
+const debug = Output.scoped(.fs, .visible);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
@@ -313,6 +313,8 @@ pub const Json = struct {
     }
 };
 
+const string = []const u8;
+
 const fs = @import("./fs.zig");
 const std = @import("std");
 const Define = @import("./defines.zig").Define;
@@ -325,9 +327,8 @@ const MutableString = bun.MutableString;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
+const json_parser = bun.json;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;

@@ -2,7 +2,7 @@
 
 const WebWorker = @This();
 
-const log = Output.scoped(.Worker, true);
+const log = Output.scoped(.Worker, .hidden);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -250,7 +250,7 @@ pub fn create(
 pub fn startWithErrorHandling(
     this: *WebWorker,
 ) void {
-    bun.Analytics.Features.workers_spawned += 1;
+    bun.analytics.Features.workers_spawned += 1;
     start(this) catch |err| {
         Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
     };
@@ -291,7 +291,7 @@ pub fn start(
         var diag: bun.clap.Diagnostic = .{};
         var iter: bun.clap.args.SliceIterator = .init(new_args.items);
 
-        var args = bun.clap.parseEx(bun.clap.Help, bun.CLI.Command.Tag.RunCommand.params(), &iter, .{
+        var args = bun.clap.parseEx(bun.clap.Help, bun.cli.Command.Tag.RunCommand.params(), &iter, .{
             .diagnostic = &diag,
             .allocator = bun.default_allocator,
 
@@ -310,7 +310,7 @@ pub fn start(
         // this should go through most flags and update the options.
     }
 
-    this.arena = try bun.MimallocArena.init();
+    this.arena = bun.MimallocArena.init();
     var vm = try jsc.VirtualMachine.initWorker(this, .{
         .allocator = this.arena.?.allocator(),
         .args = transform_options,
@@ -568,7 +568,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
-    bun.Analytics.Features.workers_terminated += 1;
+    bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;

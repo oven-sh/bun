@@ -1,4 +1,4 @@
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
@@ -52,6 +52,38 @@ pub fn detectAndLoadOtherLockfile(
         return migrate_result;
     }
 
+    yarn: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
+        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            if (Environment.isDebug) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
+                log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("Invalid yarn.lock\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
+                Global.exit(1);
+            }
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "yarn.lock",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>yarn.lock<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
     return LoadResult{ .not_found = {} };
 }
 
@@ -95,7 +127,7 @@ pub fn migrateNPMLockfile(
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(abs_path, data);
-    const json = bun.JSON.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.json.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -111,7 +143,7 @@ pub fn migrateNPMLockfile(
         return error.InvalidNPMLockfile;
     }
 
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.analytics.Features.lockfile_migration_from_package_lock += 1;
 
     // Count pass
 
@@ -1019,6 +1051,8 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
     return pkg_path[pkg_name_start..];
 }
 
+const string = []const u8;
+
 const Dependency = @import("./dependency.zig");
 const Install = @import("./install.zig");
 const Npm = @import("./npm.zig");
@@ -1036,13 +1070,12 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const File = bun.sys.File;
-
-const JSAst = bun.JSAst;
-const E = JSAst.E;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 const stringHash = String.Builder.stringHash;
+
+const JSAst = bun.ast;
+const E = JSAst.E;

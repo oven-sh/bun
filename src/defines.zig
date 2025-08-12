@@ -343,10 +343,13 @@ pub const Define = struct {
 
     pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool, omit_unused_global_calls: bool) bun.OOM!*@This() {
         const define = try allocator.create(Define);
-        define.allocator = allocator;
-        define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
-        define.dots = bun.StringHashMap([]DotDefine).init(allocator);
-        define.drop_debugger = drop_debugger;
+        errdefer allocator.destroy(define);
+        define.* = .{
+            .allocator = allocator,
+            .identifiers = bun.StringHashMap(IdentifierDefine).init(allocator),
+            .dots = bun.StringHashMap([]DotDefine).init(allocator),
+            .drop_debugger = drop_debugger,
+        };
         try define.dots.ensureTotalCapacity(124);
 
         const value_define = &DefineData{
@@ -398,18 +401,20 @@ pub const Define = struct {
     }
 };
 
+const string = []const u8;
+
 const fs = @import("./fs.zig");
 const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
 
 const table = @import("./defines-table.zig");
 const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
 const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
 
 const bun = @import("bun");
-const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const json_parser = bun.JSON;
+const json_parser = bun.json;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
+
+const js_ast = bun.ast;
+const Ref = bun.ast.Ref;

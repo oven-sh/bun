@@ -1,5 +1,5 @@
 pub const SourceMap = @This();
-const debug = bun.Output.scoped(.SourceMap, false);
+const debug = bun.Output.scoped(.SourceMap, .visible);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -109,16 +109,16 @@ pub fn parseJSON(
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    bun.JSAst.Expr.Data.Store.reset();
-    bun.JSAst.Stmt.Data.Store.reset();
+    bun.ast.Expr.Data.Store.reset();
+    bun.ast.Stmt.Data.Store.reset();
     defer {
         // the allocator given to the JS parser is not respected for all parts
         // of the parse, so we need to remember to reset the ast store
-        bun.JSAst.Expr.Data.Store.reset();
-        bun.JSAst.Stmt.Data.Store.reset();
+        bun.ast.Expr.Data.Store.reset();
+        bun.ast.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
+    var json = bun.json.parse(&json_src, &log, arena, false) catch {
         return error.InvalidJSON;
     };
 
@@ -249,6 +249,7 @@ pub fn parseJSON(
     };
 }
 
+/// Corresponds to a segment in the "mappings" field of a sourcemap
 pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
@@ -321,7 +322,7 @@ pub const Mapping = struct {
                 const step = count / 2;
                 const i: usize = index + step;
                 const mapping = line_column_offsets[i];
-                if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
+                if (mapping.lines.zeroBased() < line or (mapping.lines.zeroBased() == line and mapping.columns.zeroBased() <= column)) {
                     index = i + 1;
                     count -|= step + 1;
                 } else {
@@ -330,7 +331,7 @@ pub const Mapping = struct {
             }
 
             if (index > 0) {
-                if (line_column_offsets[index - 1].lines == line) {
+                if (line_column_offsets[index - 1].lines.zeroBased() == line) {
                     return index - 1;
                 }
             }
@@ -356,7 +357,7 @@ pub const Mapping = struct {
                 const a = ctx.generated[a_index];
                 const b = ctx.generated[b_index];
 
-                return a.lines < b.lines or (a.lines == b.lines and a.columns <= b.columns);
+                return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() <= b.columns.zeroBased());
             }
         };
 
@@ -495,7 +496,7 @@ pub const Mapping = struct {
         ///
         /// This data is freed after printed on the assumption that printing
         /// errors to the console are rare (this isnt used for error.stack)
-        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
+        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.jsc.ZigString.Slice {
             const bytes = bytes: {
                 if (lookup.prefetched_source_code) |code| {
                     break :bytes code;
@@ -518,7 +519,7 @@ pub const Mapping = struct {
 
                     const code = serialized.sourceFileContents(@intCast(index));
 
-                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
+                    return bun.jsc.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
                 }
 
                 if (provider.getSourceMap(
@@ -551,16 +552,16 @@ pub const Mapping = struct {
                 }
             };
 
-            return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
+            return bun.jsc.ZigString.Slice.init(bun.default_allocator, bytes);
         }
     };
 
     pub inline fn generatedLine(mapping: *const Mapping) i32 {
-        return mapping.generated.lines;
+        return mapping.generated.lines.zeroBased();
     }
 
     pub inline fn generatedColumn(mapping: *const Mapping) i32 {
-        return mapping.generated.columns;
+        return mapping.generated.columns.zeroBased();
     }
 
     pub inline fn sourceIndex(mapping: *const Mapping) i32 {
@@ -568,11 +569,11 @@ pub const Mapping = struct {
     }
 
     pub inline fn originalLine(mapping: *const Mapping) i32 {
-        return mapping.original.lines;
+        return mapping.original.lines.zeroBased();
     }
 
     pub inline fn originalColumn(mapping: *const Mapping) i32 {
-        return mapping.original.columns;
+        return mapping.original.columns.zeroBased();
     }
 
     pub inline fn nameIndex(mapping: *const Mapping) i32 {
@@ -607,8 +608,8 @@ pub const Mapping = struct {
             };
         }
 
-        var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
-        var original = LineColumnOffset{ .lines = 0, .columns = 0 };
+        var generated = LineColumnOffset{ .lines = bun.Ordinal.start, .columns = bun.Ordinal.start };
+        var original = LineColumnOffset{ .lines = bun.Ordinal.start, .columns = bun.Ordinal.start };
         var name_index: i32 = 0;
         var source_index: i32 = 0;
         var needs_sort = false;
@@ -616,18 +617,18 @@ pub const Mapping = struct {
         var has_names = false;
         while (remain.len > 0) {
             if (remain[0] == ';') {
-                generated.columns = 0;
+                generated.columns = bun.Ordinal.start;
 
                 while (strings.hasPrefixComptime(
                     remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
-                    generated.lines += (@sizeOf(usize) / 2);
+                    generated.lines = generated.lines.addScalar(@sizeOf(usize) / 2);
                     remain = remain[@sizeOf(usize) / 2 ..];
                 }
 
                 while (remain.len > 0 and remain[0] == ';') {
-                    generated.lines += 1;
+                    generated.lines = generated.lines.addScalar(1);
                     remain = remain[1..];
                 }
 
@@ -644,7 +645,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing generated column value",
                         .err = error.MissingGeneratedColumnValue,
-                        .value = generated.columns,
+                        .value = generated.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -652,13 +653,13 @@ pub const Mapping = struct {
 
             needs_sort = needs_sort or generated_column_delta.value < 0;
 
-            generated.columns += generated_column_delta.value;
-            if (generated.columns < 0) {
+            generated.columns = generated.columns.addScalar(generated_column_delta.value);
+            if (generated.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid generated column value",
                         .err = error.InvalidGeneratedColumnValue,
-                        .value = generated.columns,
+                        .value = generated.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -721,13 +722,13 @@ pub const Mapping = struct {
                 };
             }
 
-            original.lines += original_line_delta.value;
-            if (original.lines < 0) {
+            original.lines = original.lines.addScalar(original_line_delta.value);
+            if (original.lines.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid original line value",
                         .err = error.InvalidOriginalLineValue,
-                        .value = original.lines,
+                        .value = original.lines.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -741,19 +742,19 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing original column value",
                         .err = error.MissingOriginalColumnValue,
-                        .value = original.columns,
+                        .value = original.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
 
-            original.columns += original_column_delta.value;
-            if (original.columns < 0) {
+            original.columns = original.columns.addScalar(original_column_delta.value);
+            if (original.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid original column value",
                         .err = error.InvalidOriginalColumnValue,
-                        .value = original.columns,
+                        .value = original.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -974,23 +975,23 @@ pub const ParsedSourceMap = struct {
             map.mappings.sourceIndex(),
             0..,
         ) |gen, orig, source_index, i| {
-            if (current_line != gen.lines) {
-                assert(gen.lines > current_line);
-                const inc = gen.lines - current_line;
+            if (current_line != gen.lines.zeroBased()) {
+                assert(gen.lines.zeroBased() > current_line);
+                const inc = gen.lines.zeroBased() - current_line;
                 try writer.writeByteNTimes(';', @intCast(inc));
-                current_line = gen.lines;
+                current_line = gen.lines.zeroBased();
                 last_col = 0;
             } else if (i != 0) {
                 try writer.writeByte(',');
             }
-            try VLQ.encode(gen.columns - last_col).writeTo(writer);
-            last_col = gen.columns;
+            try VLQ.encode(gen.columns.zeroBased() - last_col).writeTo(writer);
+            last_col = gen.columns.zeroBased();
             try VLQ.encode(source_index - last_src).writeTo(writer);
             last_src = source_index;
-            try VLQ.encode(orig.lines - last_ol).writeTo(writer);
-            last_ol = orig.lines;
-            try VLQ.encode(orig.columns - last_oc).writeTo(writer);
-            last_oc = orig.columns;
+            try VLQ.encode(orig.lines.zeroBased() - last_ol).writeTo(writer);
+            last_ol = orig.lines.zeroBased();
+            try VLQ.encode(orig.columns.zeroBased() - last_oc).writeTo(writer);
+            last_oc = orig.columns.zeroBased();
         }
     }
 
@@ -1020,14 +1021,14 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
-fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
     const found = bun.strings.indexOfT(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
-        u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
-        u16 => bun.JSC.ZigString.Slice.init(
+        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.jsc.ZigString.Slice.init(
             alloc,
             bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
         ),
@@ -1089,7 +1090,7 @@ pub fn getSourceMapImpl(
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
-                const global = bun.JSC.VirtualMachine.get().global;
+                const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
                 // be Bake::GlobalObject and we can fetch the sourcemap from it,
                 // if not fallback to the normal way
@@ -1117,7 +1118,7 @@ pub fn getSourceMapImpl(
                             source_filename,
                             @errorName(err),
                         }); // Disable the "try using --sourcemap=external" hint
-                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                         return null;
                     },
                 };
@@ -1151,7 +1152,7 @@ pub fn getSourceMapImpl(
                         source_filename,
                         @errorName(err),
                     }); // Disable the "try using --sourcemap=external" hint
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                    bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                     return null;
                 },
             };
@@ -1163,7 +1164,7 @@ pub fn getSourceMapImpl(
                 @errorName(err),
             });
             // Disable the "try using --sourcemap=external" hint
-            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+            bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
             return null;
         }
 
@@ -1204,9 +1205,9 @@ pub const SourceProviderMap = opaque {
     }
 };
 
-extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.JSC.JSGlobalObject) bool;
+extern "c" fn BakeGlobalObject__isBakeGlobalObject(global: *bun.jsc.JSGlobalObject) bool;
 
-extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.JSC.JSGlobalObject) *bun.bake.production.PerThread;
+extern "c" fn BakeGlobalObject__getPerThreadData(global: *bun.jsc.JSGlobalObject) *bun.bake.production.PerThread;
 
 pub const BakeSourceProvider = opaque {
     extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
@@ -1215,7 +1216,7 @@ pub const BakeSourceProvider = opaque {
         return ParsedSourceMap.SourceContentPtr.fromBakeProvider(this);
     }
 
-    pub fn getExternal(_: *BakeSourceProvider, global: *bun.JSC.JSGlobalObject, source_filename: []const u8) []const u8 {
+    pub fn getExternal(_: *BakeSourceProvider, global: *bun.jsc.JSGlobalObject, source_filename: []const u8) []const u8 {
         bun.assert(BakeGlobalObject__isBakeGlobalObject(global));
         const pt = BakeGlobalObject__getPerThreadData(global);
         if (pt.source_maps.get(source_filename)) |value| {
@@ -1241,9 +1242,12 @@ pub const BakeSourceProvider = opaque {
     }
 };
 
+/// The sourcemap spec says line and column offsets are zero-based
 pub const LineColumnOffset = struct {
-    lines: i32 = 0,
-    columns: i32 = 0,
+    /// The zero-based line offset
+    lines: bun.Ordinal = bun.Ordinal.start,
+    /// The zero-based column offset
+    columns: bun.Ordinal = bun.Ordinal.start,
 
     pub const Optional = union(enum) {
         null: void,
@@ -1265,10 +1269,10 @@ pub const LineColumnOffset = struct {
     };
 
     pub fn add(this: *LineColumnOffset, b: LineColumnOffset) void {
-        if (b.lines == 0) {
-            this.columns += b.columns;
+        if (b.lines.zeroBased() == 0) {
+            this.columns = this.columns.add(b.columns);
         } else {
-            this.lines += b.lines;
+            this.lines = this.lines.add(b.lines);
             this.columns = b.columns;
         }
     }
@@ -1293,7 +1297,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                this.columns += 1;
+                this.columns = this.columns.addScalar(1);
                 offset = i + 1;
                 continue;
             }
@@ -1304,19 +1308,19 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        this.columns += 1;
+                        this.columns = this.columns.addScalar(1);
                         continue;
                     }
 
-                    this.lines += 1;
-                    this.columns = 0;
+                    this.lines = this.lines.addScalar(1);
+                    this.columns = bun.Ordinal.start;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    this.columns += switch (c) {
+                    this.columns = this.columns.addScalar(switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
-                    };
+                    });
                 },
             }
         }
@@ -1329,19 +1333,19 @@ pub const LineColumnOffset = struct {
             assert(!bun.strings.containsChar(remain, '\r'));
         }
 
-        this.columns += @intCast(remain.len);
+        this.columns = this.columns.addScalar(@intCast(remain.len));
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
-        return a.lines < b.lines or (a.lines == b.lines and a.columns < b.columns);
+        return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() < b.columns.zeroBased());
     }
 
     pub fn cmp(_: void, a: LineColumnOffset, b: LineColumnOffset) std.math.Order {
-        if (a.lines != b.lines) {
-            return std.math.order(a.lines, b.lines);
+        if (a.lines.zeroBased() != b.lines.zeroBased()) {
+            return std.math.order(a.lines.zeroBased(), b.lines.zeroBased());
         }
 
-        return std.math.order(a.columns, b.columns);
+        return std.math.order(a.columns.zeroBased(), b.columns.zeroBased());
     }
 };
 
@@ -1398,8 +1402,8 @@ pub const SourceMapPieces = struct {
 
         while (current < mappings.len) {
             if (mappings[current] == ';') {
-                generated.lines += 1;
-                generated.columns = 0;
+                generated.lines = generated.lines.addScalar(1);
+                generated.columns = bun.Ordinal.start;
                 prev_shift_column_delta = 0;
                 current += 1;
                 continue;
@@ -1408,7 +1412,7 @@ pub const SourceMapPieces = struct {
             const potential_end_of_run = current;
 
             const decode_result = decodeVLQ(mappings, current);
-            generated.columns += decode_result.value;
+            generated.columns = generated.columns.addScalar(decode_result.value);
             current = decode_result.start;
 
             const potential_start_of_run = current;
@@ -1439,15 +1443,15 @@ pub const SourceMapPieces = struct {
             }
 
             const shift = shifts[0];
-            if (shift.after.lines != generated.lines) {
+            if (shift.after.lines.zeroBased() != generated.lines.zeroBased()) {
                 continue;
             }
 
             j.pushStatic(mappings[start_of_run..potential_end_of_run]);
 
-            assert(shift.before.lines == shift.after.lines);
+            assert(shift.before.lines.zeroBased() == shift.after.lines.zeroBased());
 
-            const shift_column_delta = shift.after.columns - shift.before.columns;
+            const shift_column_delta = shift.after.columns.zeroBased() - shift.before.columns.zeroBased();
             const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
             const encode = VLQ.encode(vlq_value);
             j.pushCloned(encode.slice());
@@ -1473,7 +1477,13 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(
+    j: *StringJoiner,
+    allocator: std.mem.Allocator,
+    prev_end_state_: SourceMapState,
+    start_state_: SourceMapState,
+    source_map_: []const u8,
+) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
@@ -1516,15 +1526,9 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
 
-    j.push(
-        appendMappingToBuffer(
-            MutableString.initEmpty(allocator),
-            j.lastByte(),
-            prev_end_state,
-            start_state,
-        ).list.items,
-        allocator,
-    );
+    var str = MutableString.initEmpty(allocator);
+    appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
+    j.push(str.slice(), allocator);
 
     // Then append everything after that without modification.
     j.pushStatic(source_map);
@@ -1549,8 +1553,7 @@ pub fn appendSourceMappingURLRemote(
 }
 
 /// This function is extremely hot.
-pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
-    var buffer = buffer_;
+pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) void {
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
     const vlqs = [_]VLQ{
@@ -1583,8 +1586,6 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
     }
-
-    return buffer;
 }
 
 pub const Chunk = struct {
@@ -1604,22 +1605,28 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
-    pub const empty: Chunk = .{
-        .buffer = MutableString.initEmpty(bun.default_allocator),
-        .mappings_count = 0,
-        .end_state = .{},
-        .final_generated_column = 0,
-        .should_ignore = true,
-    };
+    pub fn initEmpty() Chunk {
+        return .{
+            .buffer = MutableString.initEmpty(bun.default_allocator),
+            .mappings_count = 0,
+            .end_state = .{},
+            .final_generated_column = 0,
+            .should_ignore = true,
+        };
+    }
+
+    pub fn deinit(this: *Chunk) void {
+        this.buffer.deinit();
+    }
 
     pub fn printSourceMapContents(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
-    ) !MutableString {
-        return printSourceMapContentsAtOffset(
+    ) !void {
+        try printSourceMapContentsAtOffset(
             chunk,
             source,
             mutable,
@@ -1632,13 +1639,11 @@ pub const Chunk = struct {
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
         source: *const Logger.Source,
-        mutable: MutableString,
+        mutable: *MutableString,
         include_sources_contents: bool,
         offset: usize,
         comptime ascii_only: bool,
-    ) !MutableString {
-        var output = mutable;
-
+    ) !void {
         // attempt to pre-allocate
 
         var filename_buf: bun.PathBuffer = undefined;
@@ -1651,23 +1656,21 @@ pub const Chunk = struct {
             filename = filename_buf[0 .. filename.len + 1];
         }
 
-        output.growIfNeeded(
+        mutable.growIfNeeded(
             filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
-        try output.append("{\n  \"version\":3,\n  \"sources\": [");
+        try mutable.append("{\n  \"version\":3,\n  \"sources\": [");
 
-        output = try JSPrinter.quoteForJSON(filename, output, ascii_only);
+        try JSPrinter.quoteForJSON(filename, mutable, ascii_only);
 
         if (include_sources_contents) {
-            try output.append("],\n  \"sourcesContent\": [");
-            output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+            try mutable.append("],\n  \"sourcesContent\": [");
+            try JSPrinter.quoteForJSON(source.contents, mutable, ascii_only);
         }
 
-        try output.append("],\n  \"mappings\": ");
-        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], output, ascii_only);
-        try output.append(", \"names\": []\n}");
-
-        return output;
+        try mutable.append("],\n  \"mappings\": ");
+        try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], mutable, ascii_only);
+        try mutable.append(", \"names\": []\n}");
     }
 
     // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
@@ -1696,6 +1699,10 @@ pub const Chunk = struct {
                 return this.ctx.getBuffer();
             }
 
+            pub inline fn takeBuffer(this: *Format) MutableString {
+                return this.ctx.takeBuffer();
+            }
+
             pub inline fn getCount(this: Format) usize {
                 return this.ctx.getCount();
             }
@@ -1707,8 +1714,6 @@ pub const Chunk = struct {
         count: usize = 0,
         offset: usize = 0,
         approximate_input_line_count: usize = 0,
-
-        pub const Format = SourceMapFormat(VLQSourceMap);
 
         pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
             var map = VLQSourceMap{
@@ -1734,7 +1739,7 @@ pub const Chunk = struct {
             else
                 0;
 
-            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            appendMappingToBuffer(&this.data, last_byte, prev_state, current_state);
             this.count += 1;
         }
 
@@ -1746,6 +1751,11 @@ pub const Chunk = struct {
             return this.data;
         }
 
+        pub fn takeBuffer(this: *VLQSourceMap) MutableString {
+            defer this.data = .initEmpty(this.data.allocator);
+            return this.data;
+        }
+
         pub fn getCount(this: VLQSourceMap) usize {
             return this.count;
         }
@@ -1754,7 +1764,6 @@ pub const Chunk = struct {
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
             const ThisBuilder = @This();
-            input_source_map: ?*SourceMap = null,
             source_map: SourceMapper,
             line_offset_tables: LineOffsetTable.List = .{},
             prev_state: SourceMapState = SourceMapState{},
@@ -1785,13 +1794,14 @@ pub const Chunk = struct {
 
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
+                var buffer = b.source_map.getBuffer();
                 if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
-                    b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
-                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
+                    buffer.list.items[0..8].* = @as([8]u8, @bitCast(buffer.list.items.len));
+                    buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                    buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
-                    .buffer = b.source_map.getBuffer(),
+                    .buffer = b.source_map.takeBuffer(),
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,
@@ -1867,17 +1877,7 @@ pub const Chunk = struct {
                 b.last_generated_update = @as(u32, @truncate(output.len));
             }
 
-            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
-                var current_state = current_state_;
-                // If the input file had a source map, map all the way back to the original
-                if (b.input_source_map) |input| {
-                    if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
-                        current_state.source_index = mapping.sourceIndex();
-                        current_state.original_line = mapping.originalLine();
-                        current_state.original_column = mapping.originalColumn();
-                    }
-                }
-
+            pub fn appendMapping(b: *ThisBuilder, current_state: SourceMapState) void {
                 b.appendMappingWithoutRemapping(current_state);
             }
 
@@ -1973,16 +1973,16 @@ pub const JSSourceMap = @import("./JSSourceMap.zig");
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;
 
+const string = []const u8;
+
 const std = @import("std");
 
 const bun = @import("bun");
-const JSAst = bun.JSAst;
 const JSPrinter = bun.js_printer;
 const Logger = bun.logger;
 const MutableString = bun.MutableString;
 const StringJoiner = bun.StringJoiner;
 const URL = bun.URL;
 const assert = bun.assert;
-const string = bun.string;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;

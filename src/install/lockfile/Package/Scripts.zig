@@ -23,16 +23,6 @@ pub const Scripts = extern struct {
         cwd: stringZ,
         package_name: string,
 
-        pub fn initPreinstall(allocator: std.mem.Allocator, preinstall: string, cwd: string, package_name: string) @This() {
-            return .{
-                .items = .{ allocator.dupe(u8, preinstall) catch bun.outOfMemory(), null, null, null, null, null },
-                .first_index = 0,
-                .total = 1,
-                .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
-                .package_name = allocator.dupe(u8, package_name) catch bun.outOfMemory(),
-            };
-        }
-
         pub fn printScripts(
             this: Package.Scripts.List,
             resolution: *const Resolution,
@@ -367,7 +357,7 @@ pub const Scripts = extern struct {
 
 const string = []const u8;
 const stringZ = [:0]const u8;
-const debug = Output.scoped(.Lockfile, true);
+const debug = Output.scoped(.Lockfile, .hidden);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -375,14 +365,12 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const assert = bun.assert;
 const logger = bun.logger;
 const strings = bun.strings;
-
-const JSAst = bun.JSAst;
-const Expr = bun.JSAst.Expr;
+const Expr = bun.ast.Expr;
 
 const Semver = bun.Semver;
 const String = Semver.String;

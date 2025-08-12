@@ -44,13 +44,8 @@ pub const Source = struct {
         stream: StreamType,
         err_stream: StreamType,
     ) Source {
-        if (comptime Environment.isDebug) {
-            if (comptime use_mimalloc) {
-                if (!source_set) {
-                    const Mimalloc = @import("./allocators/mimalloc.zig");
-                    Mimalloc.mi_option_set(.show_errors, 1);
-                }
-            }
+        if ((comptime Environment.isDebug and use_mimalloc) and !source_set) {
+            bun.mimalloc.mi_option_set(.show_errors, 1);
         }
         source_set = true;
 
@@ -75,7 +70,7 @@ pub const Source = struct {
         bun.StackCheck.configureThread();
     }
 
-    pub fn configureNamedThread(name: StringTypes.stringZ) void {
+    pub fn configureNamedThread(name: [:0]const u8) void {
         Global.setThreadName(name);
         configureThread();
     }
@@ -746,7 +741,19 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
-pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
+pub const Visibility = enum {
+    /// Hide logs for this scope by default.
+    hidden,
+    /// Show logs for this scope by default.
+    visible,
+
+    /// Show logs for this scope by default if and only if `condition` is true.
+    pub fn visibleIf(condition: bool) Visibility {
+        return if (condition) .visible else .hidden;
+    }
+};
+
+pub fn Scoped(comptime tag: anytype, comptime visibility: Visibility) type {
     const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
@@ -759,10 +766,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         break :brk ascii_slice;
     };
 
-    return ScopedLogger(&tagname, disabled);
+    return ScopedLogger(&tagname, visibility);
 }
 
-fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) type {
     if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
@@ -778,7 +785,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = std.atomic.Value(bool).init(disabled);
+        var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
         var lock = bun.Mutex{};
 
@@ -870,11 +877,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
     };
 }
 
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(
-        tag,
-        disabled,
-    ).log;
+pub fn scoped(comptime tag: anytype, comptime visibility: Visibility) LogFunction {
+    return Scoped(tag, visibility).log;
 }
 
 pub fn up(n: usize) void {
@@ -918,9 +922,6 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
-    if (comptime bun.fast_debug_build_mode)
-        return fmt ++ "\x00";
-
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
 
@@ -1006,9 +1007,6 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime bun.fast_debug_build_mode)
-        return printFn(ctx, comptime prettyFmt(fmt, false), args);
-
     if (enable_ansi_colors) {
         printFn(ctx, comptime prettyFmt(fmt, true), args);
     } else {
@@ -1284,6 +1282,8 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
 
+const string = []const u8;
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");
@@ -1292,9 +1292,7 @@ const SystemTimer = @import("./system_timer.zig").Timer;
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Global = bun.Global;
-const StringTypes = bun.StringTypes;
 const c = bun.c;
-const string = bun.string;
 const strings = bun.strings;
 const use_mimalloc = bun.use_mimalloc;
 const File = bun.sys.File;

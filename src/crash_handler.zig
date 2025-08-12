@@ -57,6 +57,11 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
+/// Prevents crash reports from being uploaded to any server. Reports will still be printed and
+/// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
+/// things that affect crash reporting. See suppressReporting() for intended usage.
+var suppress_reporting: bool = false;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -272,7 +277,7 @@ pub fn crashHandler(
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
-                    if (bun.CLI.Cli.is_main_thread) {
+                    if (bun.cli.Cli.is_main_thread) {
                         writer.writeAll("(main thread)") catch std.posix.abort();
                     } else switch (bun.Environment.os) {
                         .windows => {
@@ -898,6 +903,12 @@ extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 export var Bun__reported_memory_size: usize = 0;
 
 pub fn printMetadata(writer: anytype) !void {
+    if (comptime bun.Environment.isDebug) {
+        if (Output.isAIAgent()) {
+            return;
+        }
+    }
+
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
@@ -906,18 +917,18 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
-        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const platform = bun.analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
         if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
                 try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
         } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
-            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
@@ -945,7 +956,7 @@ pub fn printMetadata(writer: anytype) !void {
             }
         }
     }
-    try writer.print("\n{}", .{bun.Analytics.Features.formatter()});
+    try writer.print("\n{}", .{bun.analytics.Features.formatter()});
 
     if (bun.use_mimalloc) {
         var elapsed_msecs: usize = 0;
@@ -1261,7 +1272,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
             "/" ++
             .{@intFromEnum(Platform.current)},
     );
-    try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
+    try writer.writeByte(if (bun.cli.Cli.cmd) |cmd| cmd.char() else '_');
 
     try writer.writeAll(version_char ++ git_sha);
 
@@ -1350,6 +1361,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 }
 
 fn isReportingEnabled() bool {
+    if (suppress_reporting) return false;
+
     // If trying to test the crash handler backend, implicitly enable reporting
     if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
         return value.len > 0;
@@ -1622,10 +1635,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             return;
         },
         .linux => {
-            // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperclover): see if zig 0.14 fixes this
-            WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
-            return;
+            if (!bun.Environment.isDebug) {
+                // Linux doesnt seem to be able to decode it's own debug info.
+                // TODO(@paperclover): see if zig 0.14 fixes this
+                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+                return;
+            }
         },
         else => {
             // Assume debug symbol tooling is reliable.
@@ -1675,25 +1690,31 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
     }
 
-    // std.process is used here because bun.spawnSync with libuv does not work within
-    // the crash handler.
-    const proc = std.process.Child.run(.{
-        .allocator = alloc,
-        .argv = argv.items,
-    }) catch {
+    var child = std.process.Child.init(argv.items, alloc);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    child.expand_arg0 = .expand;
+    child.progress_node = std.Progress.Node.none;
+
+    child.spawn() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
         if (bun.Environment.isWindows) {
             stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch return;
         }
         return;
     };
-    if (proc.term != .Exited or proc.term.Exited != 0) {
+
+    const result = child.spawnAndWait() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
+    };
+
+    if (result != .Exited or result.Exited != 0) {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
     }
-    defer alloc.free(proc.stderr);
-    defer alloc.free(proc.stdout);
-    stderr.writeAll(proc.stdout) catch return;
-    stderr.writeAll(proc.stderr) catch return;
 }
 
 pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimits) void {
@@ -1701,6 +1722,29 @@ pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimit
     var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
     std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
     dumpStackTrace(stack, limits);
+}
+
+/// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
+/// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
+/// with core dumps.
+fn suppressCoreDumpsIfNecessary() void {
+    if (bun.Environment.isPosix) {
+        var existing_limit = std.posix.getrlimit(.CORE) catch return;
+        if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
+            existing_limit.cur = 0;
+            std.posix.setrlimit(.CORE, existing_limit) catch {};
+        }
+    }
+}
+
+/// From now on, prevent crashes from being reported to bun.report or the URL overridden in
+/// BUN_CRASH_REPORT_URL. Should only be used for tests that are going to intentionally crash,
+/// so that they do not fail CI due to having a crash reported. And those cases should guard behind
+/// a feature flag and call right before the crash, in order to make sure that crashes other than
+/// the expected one are not suppressed.
+pub fn suppressReporting() void {
+    suppressCoreDumpsIfNecessary();
+    suppress_reporting = true;
 }
 
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
@@ -1753,11 +1797,11 @@ pub const StoredTrace = struct {
 };
 
 pub const js_bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
 
-    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
-        const obj = JSC.JSValue.createEmptyObject(global, 3);
+    pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
+        const obj = jsc.JSValue.createEmptyObject(global, 3);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
             .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
@@ -1769,13 +1813,13 @@ pub const js_bindings = struct {
             .{ "outOfMemory", jsOutOfMemory },
             .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
-            const name = JSC.ZigString.static(tuple[0]);
-            obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
+            const name = jsc.ZigString.static(tuple[0]);
+            obj.put(global, name, jsc.createCallback(global, name, 1, tuple[1]));
         }
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.jsc.JSGlobalObject, _: *bun.jsc.CallFrame) bun.JSError!JSValue {
         if (!bun.Environment.isMac) return .js_undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .js_undefined;
@@ -1785,32 +1829,36 @@ pub const js_bindings = struct {
         return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsSegfault(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         @setRuntimeSafety(false);
+        suppressCoreDumpsIfNecessary();
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
         return .js_undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsPanic(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsRootError(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.outOfMemory();
     }
 
-    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const bits = bun.Analytics.packedFeatures();
+    pub fn jsGetFeaturesAsVLQ(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const bits = bun.analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
             // there is definitely enough space in the bounded array
@@ -1820,22 +1868,22 @@ pub const js_bindings = struct {
         return str.transferToJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn jsGetFeatureData(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
-        const list = bun.Analytics.packed_features_list;
+        const list = bun.analytics.packed_features_list;
         const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
-        obj.put(global, JSC.ZigString.static("features"), array);
-        obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
-        obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+        obj.put(global, jsc.ZigString.static("features"), array);
+        obj.put(global, jsc.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, jsc.ZigString.static("is_canary"), jsc.JSValue.jsBoolean(bun.Environment.is_canary));
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
-        obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, jsc.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
 
-        obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
+        obj.put(global, jsc.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };
@@ -2166,6 +2214,9 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+        suppressReporting();
+    }
     std.debug.panic("unsupported uv function: {s}", .{name.?});
 }
 
@@ -2195,7 +2246,6 @@ comptime {
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 const builtin = @import("builtin");
-const mimalloc = @import("./allocators/mimalloc.zig");
 const std = @import("std");
 const windows = std.os.windows;
 
@@ -2205,7 +2255,8 @@ const VLQ = SourceMap.VLQ;
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
-const Features = bun.Analytics.Features;
+const mimalloc = bun.mimalloc;
+const Features = bun.analytics.Features;
 
 const debug = std.debug;
 const SourceLocation = debug.SourceLocation;

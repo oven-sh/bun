@@ -15,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
-const log = bun.Output.scoped(.jest, true);
+const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,
@@ -218,8 +218,8 @@ const bun = @import("bun");
 const Transpiler = bun.Transpiler;
 const FileSystem = bun.fs.FileSystem;
 
-const JSC = bun.JSC;
-const jest = JSC.Jest;
+const jsc = bun.jsc;
+const jest = jsc.Jest;
 
 const strings = bun.strings;
 const StringOrTinyString = strings.StringOrTinyString;

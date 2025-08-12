@@ -41,7 +41,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #endif
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
 #if ENABLE(MALLOC_BREAKDOWN)
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext, ScriptExecutionContext);
 #else
     WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
 #endif
@@ -130,10 +130,6 @@ public:
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
-    // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(EventLoopTask* task, Seconds timeout);
-    // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)

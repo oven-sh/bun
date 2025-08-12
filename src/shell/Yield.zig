@@ -46,7 +46,7 @@ pub const Yield = union(enum) {
     ///       it is only used in 2 places. we might need to implement signals
     ///       first tho.
     on_io_writer_chunk: struct {
-        err: ?JSC.SystemError,
+        err: ?jsc.SystemError,
         written: usize,
         /// This type is actually `IOWriterChildPtr`, but because
         /// of an annoying cyclic Zig compile error we're doing this
@@ -101,6 +101,13 @@ pub const Yield = union(enum) {
         // execution. Don't touch it.
         state: switch (this) {
             .pipeline => |x| {
+                if (x.state == .done) {
+                    // remove it from the pipeline stack as calling `.next()` will now deinit it
+                    if (std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x)) |idx| {
+                        _ = pipeline_stack.orderedRemove(idx);
+                    }
+                    continue :state x.next();
+                }
                 pipeline_stack.append(x) catch bun.outOfMemory();
                 continue :state x.next();
             },
@@ -144,7 +151,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const shell = bun.shell;
 const log = bun.shell.interpret.log;
 

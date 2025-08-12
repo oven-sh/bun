@@ -652,6 +652,41 @@ nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };
 
+nativeTests.test_bigint_word_count = () => {
+  // Test with a 2-word BigInt
+  const bigint = 0x123456789ABCDEF0123456789ABCDEFn;
+  const result = nativeTests.test_bigint_actual_word_count(bigint);
+  
+  console.log(`BigInt: ${bigint.toString(16)}`);
+  console.log(`Queried word count: ${result.queriedWordCount}`);
+  console.log(`Actual word count: ${result.actualWordCount}`);
+  console.log(`Sign bit: ${result.signBit}`);
+  
+  // Both counts should be 2 for this BigInt
+  if (result.queriedWordCount === 2 && result.actualWordCount === 2) {
+    console.log("✅ PASS: Word count correctly returns 2");
+  } else {
+    console.log(`❌ FAIL: Expected word count 2, got queried=${result.queriedWordCount}, actual=${result.actualWordCount}`);
+  }
+};
+
+nativeTests.test_ref_unref_underflow = () => {
+  // Test that napi_reference_unref properly handles refCount == 0
+  const obj = { test: "value" };
+  const result = nativeTests.test_reference_unref_underflow(obj);
+  
+  console.log(`First unref count: ${result.firstUnrefCount}`);
+  console.log(`Second unref status: ${result.secondUnrefStatus}`);
+  
+  // First unref should succeed and return count of 0
+  // Second unref should fail with napi_generic_failure (status = 1)
+  if (result.firstUnrefCount === 0 && result.secondUnrefStatus === 1) {
+    console.log("✅ PASS: Reference unref correctly prevents underflow");
+  } else {
+    console.log(`❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`);
+  }
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
@@ -692,6 +727,10 @@ nativeTests.test_get_value_string = () => {
       fn(string);
     }
   }
+};
+
+nativeTests.test_constructor_order = () => {
+  require("./build/Debug/constructor_order_addon.node");
 };
 
 module.exports = nativeTests;

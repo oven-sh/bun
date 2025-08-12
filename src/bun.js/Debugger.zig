@@ -21,7 +21,7 @@ must_block_until_connected: bool = false,
 
 pub const Wait = enum { off, shortly, forever };
 
-pub const log = Output.scoped(.debugger, false);
+pub const log = Output.scoped(.debugger, .visible);
 
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
@@ -42,7 +42,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     if (comptime Environment.enable_logs)
         Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
-            .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
+            .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});
 
     Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
@@ -82,7 +82,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.eventLoop().autoTickActive();
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
             },
             .shortly => {
                 // Handle .incrementRefConcurrently
@@ -97,7 +97,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.uwsLoop().tickWithTimeout(&deadline);
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
 
                 const elapsed = bun.timespec.now();
                 if (elapsed.order(&deadline) != .lt) {
@@ -141,14 +141,14 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
 }
 
 pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
-    var arena = bun.MimallocArena.init() catch unreachable;
+    var arena = bun.MimallocArena.init();
     Output.Source.configureNamedThread("Debugger");
     log("startJSDebuggerThread", .{});
     jsc.markBinding(@src());
 
     var vm = VirtualMachine.init(.{
         .allocator = arena.allocator(),
-        .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
+        .args = std.mem.zeroes(bun.schema.api.TransformOptions),
         .store_fd = false,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
@@ -289,7 +289,7 @@ pub fn willDispatchAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType,
 
 pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
-    const debug = Output.scoped(.TestReporterAgent, false);
+    const debug = Output.scoped(.TestReporterAgent, .visible);
 
     pub const TestStatus = enum(u8) {
         pass,
@@ -363,7 +363,7 @@ pub const TestReporterAgent = struct {
 
 pub const LifecycleAgent = struct {
     handle: ?*Handle = null,
-    const debug = Output.scoped(.LifecycleAgent, false);
+    const debug = Output.scoped(.LifecycleAgent, .visible);
 
     pub const Handle = opaque {
         extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;

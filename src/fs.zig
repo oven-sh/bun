@@ -1,6 +1,6 @@
 const Fs = @This();
 
-pub const debug = Output.scoped(.fs, true);
+pub const debug = Output.scoped(.fs, .hidden);
 
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
 
@@ -1950,9 +1950,12 @@ pub const Path = struct {
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
-
 // }
+
 pub const StatHash = @import("./fs/stat_hash.zig");
+
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const path_handler = @import("./resolver/resolve_path.zig");
 const std = @import("std");
@@ -1973,6 +1976,4 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const WPathBuffer = bun.WPathBuffer;
 const allocators = bun.allocators;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;

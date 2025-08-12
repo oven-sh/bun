@@ -99,7 +99,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                         // imported stylesheet subtree is wrapped in all of the conditions
                         if (rule.import.hasConditions()) {
                             // Fork our state
-                            var nested_conditions = wrapping_conditions.deepClone2(visitor.allocator);
+                            var nested_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
                             var nested_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
 
                             // Clone these import conditions and append them to the state
@@ -113,7 +113,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
 
                     // Record external depednencies
                     if (!record.is_internal) {
-                        var all_conditions = wrapping_conditions.deepClone2(visitor.allocator);
+                        var all_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
                         var all_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
                         // If this import has conditions, append it to the list of overall
                         // conditions for this external import. Note that an external import
@@ -666,6 +666,10 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const default_allocator = bun.default_allocator;
 
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Symbol = js_ast.Symbol;
+
 const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const Graph = bundler.Graph;
@@ -674,7 +678,3 @@ const LinkerGraph = bundler.LinkerGraph;
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const debug = LinkerContext.debug;
-
-const js_ast = bun.js_ast;
-const B = js_ast.B;
-const Symbol = js_ast.Symbol;

@@ -290,7 +290,7 @@ pub fn loadFromDir(
             }
         };
 
-        bun.Analytics.Features.text_lockfile += 1;
+        bun.analytics.Features.text_lockfile += 1;
 
         return .{
             .ok = .{
@@ -333,7 +333,7 @@ pub fn loadFromDir(
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.Analytics.Features.text_lockfile += 1;
+                bun.analytics.Features.text_lockfile += 1;
             }
         },
         else => {},
@@ -1039,7 +1039,7 @@ pub const Printer = struct {
             break :brk loader;
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
         try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
         var log = logger.Log.init(allocator);
         try options.load(
@@ -2008,6 +2008,9 @@ const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 pub const StringPool = String.Builder.StringPool;
 
+const string = []const u8;
+const stringZ = [:0]const u8;
+
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Path = @import("../resolver/resolve_path.zig");
@@ -2018,7 +2021,6 @@ const Crypto = @import("../sha.zig").Hashers;
 const Resolution = @import("./resolution.zig").Resolution;
 const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
 const which = @import("../which.zig").which;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Allocator = std.mem.Allocator;
 
 const Fs = @import("../fs.zig");
@@ -2031,16 +2033,15 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
+const z_allocator = bun.z_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const File = bun.sys.File;
 

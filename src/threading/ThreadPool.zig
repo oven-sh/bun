@@ -550,6 +550,8 @@ pub const Thread = struct {
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
+        bun.mimalloc.mi_thread_set_in_threadpool();
+
         {
             var counter_buf: [100]u8 = undefined;
             const int = counter.fetchAdd(1, .seq_cst);
@@ -658,6 +660,7 @@ const Event = struct {
     noinline fn wait(self: *Event) void {
         var acquire_with: u32 = EMPTY;
         var state = self.state.load(.monotonic);
+        var has_shrunk_memory: bool = false;
 
         while (true) {
             // If we're shutdown then exit early.
@@ -697,7 +700,11 @@ const Event = struct {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            Futex.wait(&self.state, WAITING, null) catch unreachable;
+            Futex.wait(&self.state, WAITING, if (!has_shrunk_memory) std.time.ns_per_s * 10 else null) catch {
+                has_shrunk_memory = true;
+                bun.Global.mimalloc_cleanup(false);
+                bun.jsc.wtf.releaseFastMallocFreeMemoryForThisThread();
+            };
             state = self.state.load(.monotonic);
             acquire_with = WAITING;
         }

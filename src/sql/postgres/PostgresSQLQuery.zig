@@ -52,7 +52,7 @@ pub const Status = enum(u8) {
 };
 
 pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.getCount() > 1;
+    return this.ref_count.get() > 1;
 }
 
 pub fn deinit(this: *@This()) void {

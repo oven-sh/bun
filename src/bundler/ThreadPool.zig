@@ -193,6 +193,7 @@ pub const ThreadPool = struct {
 
         worker.* = .{
             .ctx = this.v2,
+            .heap = undefined,
             .allocator = undefined,
             .thread = ThreadPoolLib.Thread.current,
         };
@@ -202,7 +203,7 @@ pub const ThreadPool = struct {
     }
 
     pub const Worker = struct {
-        heap: ThreadLocalArena = ThreadLocalArena{},
+        heap: ThreadLocalArena,
 
         /// Thread-local memory allocator
         /// All allocations are freed in `deinit` at the very end of bundling.
@@ -284,7 +285,7 @@ pub const ThreadPool = struct {
 
             this.has_created = true;
             Output.Source.configureThread();
-            this.heap = ThreadLocalArena.init() catch unreachable;
+            this.heap = ThreadLocalArena.init();
             this.allocator = this.heap.allocator();
 
             const allocator = this.allocator;

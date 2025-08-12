@@ -731,8 +731,10 @@ src/s3/multipart.zig
 src/s3/simple_request.zig
 src/s3/storage_class.zig
 src/safety.zig
-src/safety/alloc_ptr.zig
+src/safety/alloc.zig
 src/safety/CriticalSection.zig
+src/safety/thread_id.zig
+src/safety/ThreadLock.zig
 src/semver.zig
 src/semver/ExternalString.zig
 src/semver/SemverObject.zig

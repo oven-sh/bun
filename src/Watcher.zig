@@ -32,7 +32,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {

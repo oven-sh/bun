@@ -31,6 +31,7 @@ pub const GitCommandRunner = struct {
             resolved: strings.StringOrTinyString,
             resolution: Resolution,
             target_dir: []const u8,
+            patch_name_and_version_hash: ?u64,
         },
     };
 
@@ -671,6 +672,12 @@ pub const GitCommandRunner = struct {
                     .data = undefined,
                     .status = undefined,
                     .err = null,
+                    .apply_patch_task = if (checkout.patch_name_and_version_hash) |h| brk: {
+                        const patch_hash = this.manager.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+                        const ptask = PatchTask.newApplyPatchHash(this.manager, checkout.dependency_id, patch_hash, h);
+                        ptask.callback.apply.task_id = this.task_id;
+                        break :brk ptask;
+                    } else null,
                 };
 
                 switch (status) {
@@ -848,6 +855,7 @@ pub const GitCommandRunner = struct {
             .data = .{ .git_checkout = .{} },
             .status = .fail,
             .err = err,
+            .apply_patch_task = null, // Don't apply patches on error
         };
 
         this.manager.resolve_tasks.push(task);
@@ -864,6 +872,7 @@ const Repository = @import("./repository.zig").Repository;
 const DependencyID = @import("./install.zig").DependencyID;
 const ExtractData = @import("./install.zig").ExtractData;
 const PackageManager = @import("./install.zig").PackageManager;
+const PatchTask = @import("./install.zig").PatchTask;
 const Resolution = @import("./install.zig").Resolution;
 const Task = @import("./install.zig").Task;
 

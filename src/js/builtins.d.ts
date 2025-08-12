@@ -843,7 +843,7 @@ interface ObjectConstructor {
 declare const $Object: ObjectConstructor;
 
 /** gets a property on an object */
-declare function $getByIdDirect<T = any>(obj: any, key: string): T;
+declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
 
 /**
  * Gets a private property on an object.

@@ -153,7 +153,16 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
 
     try {
       const SQLiteModule = getSQLiteModule();
-      const { filename } = this.connectionInfo;
+      let { filename } = this.connectionInfo;
+
+      if (filename instanceof URL) {
+        filename = filename.toString();
+      }
+
+      if (filename !== ":memory:" && !filename.startsWith("/")) {
+        const path = require("node:path");
+        filename = path.resolve(filename);
+      }
 
       const options: BunSQLiteModule.DatabaseOptions = {};
 
@@ -171,7 +180,7 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
         options.strict = this.connectionInfo.strict;
       }
 
-      this.db = new SQLiteModule.Database(filename.toString(), options);
+      this.db = new SQLiteModule.Database(filename, options);
     } catch (err) {
       this.storedError = err as Error;
       this.db = null;
@@ -186,36 +195,69 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
             throw new Error("SQLite database not initialized");
           }
 
-          // Prepare the statement to check if it has multiple statements
-          const stmt = db.prepare(sql);
-          const hasMultipleStatements = stmt.hasMultipleStatements;
+          // Check for multiple statements by looking for semicolons (simple check)
+          const hasMultipleStatements = sql.includes(";") && sql.split(";").filter(s => s.trim()).length > 1;
 
           // Check if this is a multi-statement query
           if (hasMultipleStatements) {
-            // Finalize the prepared statement since we won't use it
-            stmt.finalize();
+            // For multiple statements, we need to execute them separately
+            // and return the last result
+            const statements = sql.split(";").filter(s => s.trim());
+            let lastResult = new SQLResultArray();
 
-            // For multiple statements, use db.run() directly
-            // This executes all statements in the SQL string
-            const runResult = db.run(sql, ...values);
+            for (let i = 0; i < statements.length; i++) {
+              const stmtSql = statements[i].trim();
+              if (!stmtSql) continue;
 
-            const sqlResult = new SQLResultArray();
-            sqlResult.command = "MULTI";
-            sqlResult.count = runResult?.changes || 0;
-            // @ts-ignore - lastInsertRowid exists on the result
-            if (runResult?.lastInsertRowid !== undefined) {
-              // @ts-ignore
-              sqlResult.lastInsertRowid = runResult.lastInsertRowid;
+              const stmt = db.prepare(stmtSql);
+              const commandMatch = stmtSql.match(/^(\w+)/i);
+              const command = commandMatch ? commandMatch[1].toUpperCase() : "";
+
+              if (
+                command === "SELECT" ||
+                stmtSql.toUpperCase().includes("RETURNING") ||
+                command === "PRAGMA" ||
+                command === "WITH"
+              ) {
+                // For SELECT/PRAGMA queries, use all()
+                const result = stmt.all(...(i === 0 ? values : []));
+                lastResult = new SQLResultArray();
+                lastResult.push(...result);
+                lastResult.command = command;
+                lastResult.count = result.length;
+              } else {
+                // For INSERT/UPDATE/DELETE, use run()
+                const changes = stmt.run(...(i === 0 ? values : []));
+                lastResult = new SQLResultArray();
+                lastResult.command = command;
+                lastResult.count = changes.changes;
+                // @ts-ignore - lastInsertRowid exists on the changes object
+                if (changes.lastInsertRowid !== undefined) {
+                  // @ts-ignore
+                  lastResult.lastInsertRowid = changes.lastInsertRowid;
+                }
+              }
+
+              stmt.finalize();
             }
-            query.resolve(sqlResult);
+
+            query.resolve(lastResult);
           } else {
+            // Prepare the statement
+            const stmt = db.prepare(sql);
             // Single statement handling (existing code)
             let result: any;
 
             const commandMatch = sql.trim().match(/^(\w+)/i);
             const command = commandMatch ? commandMatch[1].toUpperCase() : "";
 
-            if (command === "SELECT" || sql.trim().toUpperCase().includes("RETURNING")) {
+            if (
+              command === "SELECT" ||
+              sql.trim().toUpperCase().includes("RETURNING") ||
+              command === "PRAGMA" ||
+              command === "WITH" ||
+              command === "EXPLAIN"
+            ) {
               // For SELECT queries, use all()
               result = stmt.all(...values);
               const sqlResult = new SQLResultArray();
@@ -236,6 +278,8 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
               }
               query.resolve(sqlResult);
             }
+
+            stmt.finalize();
           }
         } catch (err) {
           query.reject(err as Error);
@@ -451,7 +495,23 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     if (this.storedError) {
       onConnected(this.storedError, null);
     } else if (this.db) {
-      onConnected(null, this.db);
+      // For reserved connections (used in transactions), we need to provide an object
+      // that mimics the PostgreSQL pooled connection interface
+      if (reserved) {
+        const connection = {
+          connection: this.db,
+          onClose: (callback: Function) => {
+            // SQLite doesn't have connection events, but we can track it
+          },
+          flush: () => {
+            // SQLite doesn't need flush
+          },
+          queries: new Set(),
+        };
+        onConnected(null, connection as any);
+      } else {
+        onConnected(null, this.db);
+      }
     } else {
       onConnected(connectionClosedError(), null);
     }
@@ -468,6 +528,8 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     }
 
     this._closed = true;
+
+    this.storedError = new Error("Connection closed");
 
     if (this.db) {
       try {

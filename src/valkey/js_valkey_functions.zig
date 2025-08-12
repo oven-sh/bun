@@ -41,7 +41,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn get(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -65,7 +65,7 @@ pub fn get(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 }
 
 pub fn getBuffer(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -89,7 +89,7 @@ pub fn getBuffer(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 }
 
 pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -139,7 +139,7 @@ pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 }
 
 pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -163,7 +163,7 @@ pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -187,7 +187,7 @@ pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub fn exists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -212,7 +212,7 @@ pub fn exists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn expire(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -247,7 +247,7 @@ pub fn expire(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn ttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -272,7 +272,7 @@ pub fn ttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 
 // Implement srem (remove value from a set)
 pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -301,7 +301,7 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement srandmember (get random member from set)
 pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -326,7 +326,7 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
 
 // Implement smembers (get all members of a set)
 pub fn smembers(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -351,7 +351,7 @@ pub fn smembers(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfr
 
 // Implement spop (pop a random member from a set)
 pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -376,7 +376,7 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement sadd (add member to a set)
 pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -405,7 +405,7 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement sismember (check if value is member of a set)
 pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -435,7 +435,7 @@ pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 
 // Implement hmget (get multiple values from hash)
 pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -486,7 +486,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
 
 // Implement hincrby (increment hash field by integer value)
 pub fn hincrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -520,7 +520,7 @@ pub fn hincrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfra
 
 // Implement hincrbyfloat (increment hash field by float value)
 pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -554,7 +554,7 @@ pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, ca
 
 // Implement hmset (set multiple values in hash)
 pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
 
@@ -651,10 +651,6 @@ pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub fn publish(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
-        return globalObject.throw("Cannot use in subscriber mode", .{});
-    }
-
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
@@ -689,300 +685,344 @@ pub fn publish(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfra
     return promise.toJS();
 }
 
-// Implement subscribe (subscribe to one or more channels)
 pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    std.log.info("[DEBUG] Subscribe function called", .{});
     const args_view = callframe.arguments();
 
-    if (args_view.len < 1) {
-        return globalObject.throw("subscribe requires at least one channel", .{});
+    if (args_view.len != 2) {
+        return globalObject.toInvalidArguments("subscribe requires two arguments", .{});
     }
 
-    // All arguments except the last are channel names
-    const channel_count = args_view.len;
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), channel_count);
+    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
-        for (args.items) |*item| {
+        for (redis_channels.items) |*item| {
             item.deinit();
         }
-        args.deinit();
+        redis_channels.deinit();
     }
 
-    // Process each channel argument
-    for (args_view[0..channel_count]) |channel_arg| {
-        const channel = (try fromJS(globalObject, channel_arg)) orelse {
+    // The first argument given is the channel or may be an array of channels.
+    const channelOrMany = callframe.argument(0);
+    if (channelOrMany.isArray()) {
+        // It is an array, so let's iterate over it
+        var array_iter = try channelOrMany.arrayIterator(globalObject);
+        while (try array_iter.next()) |channel_arg| {
+            const channel = (try fromJS(globalObject, channel_arg)) orelse {
+                return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
+            };
+            redis_channels.appendAssumeCapacity(channel);
+        }
+    } else if (channelOrMany.isString()) {
+        // It is a single string channel
+        const channel = (try fromJS(globalObject, channelOrMany)) orelse {
             return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
         };
-        args.appendAssumeCapacity(channel);
+        redis_channels.appendAssumeCapacity(channel);
+    } else {
+        return globalObject.throwInvalidArgumentType("subscribe", "channel", "string or array");
     }
 
+    // Unpack the second argument -- the callback
+    const handler_callback = callframe.argument(1);
+    if (!handler_callback.isCallable()) {
+        return globalObject.throwInvalidArgumentType("subscribe", "message", "callable");
+    }
+
+    // We now need to register the callback with our subscription context,
+    // which may or may not exist.
+    var subscription_ctx = try this.getOrCreateSubscriptionCtxEnteringSubscriptionMode(globalObject);
+    std.log.info("[DEBUG] Created subscription context", .{});
+
+    // Now we need to add those receive handlers in. There's two different
+    // behaviors we will observe, depending on the type of the channel
+    // parameter.
+    // TODO(markovejnovic): The fact that we have two separate places where we
+    // check the type of channel feels like a hack, but I couldn't figure out a
+    // better way to do this.
+    if (channelOrMany.isArray()) {
+        var array_iter = try channelOrMany.arrayIterator(globalObject);
+        while (try array_iter.next()) |channel_arg| {
+            try subscription_ctx.setReceiveHandler(globalObject, channel_arg, handler_callback);
+        }
+        std.log.info("[DEBUG] Set handlers for array of channels", .{});
+    } else {
+        try subscription_ctx.setReceiveHandler(globalObject, channelOrMany, handler_callback);
+        std.log.info("[DEBUG] Set handler for single channel", .{});
+    }
+
+    std.log.info("[DEBUG] Sending SUBSCRIBE command with {} channels", .{redis_channels.items.len});
+    const command: valkey.Command = .{
+        .command = "SUBSCRIBE",
+        .args = .{ .args = redis_channels.items },
+    };
     const promise = this.send(
         globalObject,
         callframe.this(),
-        &.{
-            .command = "SUBSCRIBE",
-            .args = .{ .args = args.items },
-        },
+        &command,
     ) catch |err| {
+        // If we find an error, we need to clean up the subscription context.
+        std.log.err("[DEBUG] Failed to send SUBSCRIBE command: {}", .{err});
+        this.deleteSubscriptionCtx();
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SUBSCRIBE command", err);
     };
 
-    // TODO(marko): This is kind of wrong, we should really wait for the
-    // promise to land before setting is_subscriber, but works in the happy
-    // path.
-    this.client.is_subscriber = true;
-
+    std.log.info("[DEBUG] SUBSCRIBE command sent, returning promise (client status: {})", .{this.client.status});
     return promise.toJS();
 }
 
 // Implement on("event", callback) for pub/sub event handling
 pub fn on(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments();
+    _ = this;
+    _ = globalObject;
+    _ = callframe;
+    return .js_undefined;
+    //const args = callframe.arguments();
 
-    if (args.len < 2) {
-        return globalObject.throw("on() requires event name and callback", .{});
-    }
+    //if (args.len < 2) {
+    //    return globalObject.throw("on() requires event name and callback", .{});
+    //}
 
-    // Get event name (first argument)
-    const event_name_js = args[0];
+    //// Get event name (first argument)
+    //const event_name_js = args[0];
 
-    // Get callback (second argument)
-    const callback = args[1];
-    if (!callback.isCallable()) {
-        return globalObject.throwInvalidArgumentType("on", "callback", "function");
-    }
+    //// Get callback (second argument)
+    //const callback = args[1];
+    //if (!callback.isCallable()) {
+    //    return globalObject.throwInvalidArgumentType("on", "callback", "function");
+    //}
 
-    try this.subs_ctx.registerCallback(globalObject, event_name_js, callback);
+    //try this.subs_ctx.registerCallback(globalObject, event_name_js, callback);
 
-    // Return 'this' for method chaining
-    return callframe.this();
+    //// Return 'this' for method chaining
+    //return callframe.this();
 }
 
 // Wrapper functions that check subscriber mode before delegating to compile-generated functions
 pub fn bitcount(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call(this, globalObject, callframe);
 }
 
 pub fn dump(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("dump", "DUMP", "key").call(this, globalObject, callframe);
 }
 
 pub fn expiretime(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call(this, globalObject, callframe);
 }
 
 pub fn getdel(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("getdel", "GETDEL", "key").call(this, globalObject, callframe);
 }
 
 pub fn getex(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("getex", "GETEX", "key").call(this, globalObject, callframe);
 }
 
 pub fn hgetall(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("hgetall", "HGETALL", "key").call(this, globalObject, callframe);
 }
 
 pub fn hkeys(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key").call(this, globalObject, callframe);
 }
 
 pub fn hlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("hlen", "HLEN", "key").call(this, globalObject, callframe);
 }
 
 pub fn hvals(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("hvals", "HVALS", "key").call(this, globalObject, callframe);
 }
 
 pub fn keys(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("keys", "KEYS", "key").call(this, globalObject, callframe);
 }
 
 pub fn llen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("llen", "LLEN", "key").call(this, globalObject, callframe);
 }
 
 pub fn lpop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("lpop", "LPOP", "key").call(this, globalObject, callframe);
 }
 
 pub fn persist(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("persist", "PERSIST", "key").call(this, globalObject, callframe);
 }
 
 pub fn pexpiretime(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key").call(this, globalObject, callframe);
 }
 
 pub fn pttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("pttl", "PTTL", "key").call(this, globalObject, callframe);
 }
 
 pub fn rpop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("rpop", "RPOP", "key").call(this, globalObject, callframe);
 }
 
 pub fn scard(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("scard", "SCARD", "key").call(this, globalObject, callframe);
 }
 
 pub fn strlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("strlen", "STRLEN", "key").call(this, globalObject, callframe);
 }
 
 pub fn @"type"(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("type", "TYPE", "key").call(this, globalObject, callframe);
 }
 
 pub fn zcard(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call(this, globalObject, callframe);
 }
 
 pub fn zpopmax(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call(this, globalObject, callframe);
 }
 
 pub fn zpopmin(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call(this, globalObject, callframe);
 }
 
 pub fn zrandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call(this, globalObject, callframe);
 }
 
 pub fn append(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call(this, globalObject, callframe);
 }
 pub fn getset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call(this, globalObject, callframe);
 }
 pub fn lpush(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call(this, globalObject, callframe);
 }
 pub fn lpushx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call(this, globalObject, callframe);
 }
 pub fn pfadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call(this, globalObject, callframe);
 }
 pub fn rpush(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH").call(this, globalObject, callframe);
 }
 pub fn rpushx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX").call(this, globalObject, callframe);
 }
 pub fn setnx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value").call(this, globalObject, callframe);
 }
 pub fn zscore(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value").call(this, globalObject, callframe);
 }
 
 pub fn del(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key").call(this, globalObject, callframe);
 }
 pub fn mget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key").call(this, globalObject, callframe);
@@ -990,49 +1030,49 @@ pub fn mget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // pub const publish = compile.@"(...strings: string[])"("publish", "PUBLISH").call; // Replaced with custom implementation above
 pub fn script(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("script", "SCRIPT").call(this, globalObject, callframe);
 }
 pub fn select(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("select", "SELECT").call(this, globalObject, callframe);
 }
 pub fn spublish(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("spublish", "SPUBLISH").call(this, globalObject, callframe);
 }
 pub fn smove(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("smove", "SMOVE").call(this, globalObject, callframe);
 }
 pub fn substr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("substr", "SUBSTR").call(this, globalObject, callframe);
 }
 pub fn hstrlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("hstrlen", "HSTRLEN").call(this, globalObject, callframe);
 }
 pub fn zrank(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("zrank", "ZRANK").call(this, globalObject, callframe);
 }
 pub fn zrevrank(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("zrevrank", "ZREVRANK").call(this, globalObject, callframe);
@@ -1042,7 +1082,7 @@ pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRI
 pub const unsubscribe = compile.@"(...strings: string[])"("unsubscribe", "UNSUBSCRIBE").call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE").call;
 pub fn pubsub(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.client.is_subscriber) {
+    if (this.isSubscriber()) {
         return globalObject.throw("Cannot use in subscriber mode", .{});
     }
     return compile.@"(...strings: string[])"("pubsub", "PUBSUB").call(this, globalObject, callframe);
@@ -1274,3 +1314,26 @@ const Slice = jsc.ZigString.Slice;
 const valkey = bun.valkey;
 const Command = valkey.Command;
 const protocol = valkey.protocol;
+
+// Promise callback functions for subscribe failure handling
+fn onSubscribeResolveImpl(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    _ = globalObject;
+    std.log.info("[DEBUG] Subscribe promise resolved successfully", .{});
+    // On successful subscribe, we don't need to do anything special - just return the result
+    return callframe.argument(0);
+}
+
+fn onSubscribeRejectImpl(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    _ = globalObject;
+    std.log.err("[DEBUG] Subscribe promise rejected, cleaning up subscription context", .{});
+    // On failed subscribe, clean up the subscription context
+    const this_value = callframe.this();
+    if (JSValkeyClient.fromJS(this_value)) |client| {
+        client.deleteSubscriptionCtx();
+    }
+    // Re-throw the error
+    return callframe.argument(0);
+}
+
+const onSubscribeResolve = jsc.toJSHostFn(onSubscribeResolveImpl);
+const onSubscribeReject = jsc.toJSHostFn(onSubscribeRejectImpl);

@@ -166,8 +166,6 @@ pub const ValkeyClient = struct {
     flags: ConnectionFlags = .{},
     allocator: std.mem.Allocator,
 
-    is_subscriber: bool = false,
-
     // Auto-pipelining
     auto_flusher: AutoFlusher = .{},
 
@@ -609,31 +607,71 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    fn handleSubscriberResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
+    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
+        // TODO(marko): Implement dropping out of subscription mode on error.
+        var pair = this.in_flight.readItem() orelse {
+            debug("Received response but no promise in queue", .{});
+            return;
+        };
+
+        // Resolve the promise with the potentially transformed value
+        var promise_ptr = &pair.promise;
+        const globalThis = this.globalObject();
+        const loop = this.vm.eventLoop();
+
+        loop.enter();
+        defer loop.exit();
+
+        if (value.* == .Error) {
+            promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
+
+            // TODO(markovejnovic): This currently leaks the callbacks if an
+            // error occurs while subscribing. There is nothing cleaning up the
+            // callback map right now.
+        } else {
+            promise_ptr.resolve(globalThis, value);
+        }
+
         debug("Processing data as a subscriber.", .{});
 
         switch (value.*) {
             .Error => |err| {
-                this.fail(err, protocol.RedisError.InvalidArgument);
-                return;
+                this.fail(err, protocol.RedisError.InvalidResponse);
             },
             .Push => |push| {
-                std.debug.assert(push.data.len == 2);
-                const channel = try push.data[0].toJS(this.globalObject());
-                const payload = try push.data[1].toJS(this.globalObject());
-                debug("Received push message on channel: {s}", .{channel.toString(this.globalObject()).getZigString(this.globalObject())});
-                const callback = try this.parent().subs_ctx.getCallback(this.globalObject(), channel);
-                if (callback) |cb| {
-                    std.debug.assert(cb.isCallable());
-                    _ = try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
-                } else {
-                    debug("I don't have a callback to handle this push message", .{});
+                if (std.mem.eql(u8, push.kind, "subscribe")) {
+                    debug("A subscription message has been received: {any}", .{push.data});
+                    this.onValkeySubscribe(value);
                 }
             },
             else => {
-                this.fail("Unexpected message type received", protocol.RedisError.InvalidArgument);
+                debug("Received unexpected message type in subscriber mode: {any}", .{value.*});
+                this.fail("Unexpected message while attempting to subscribe", protocol.RedisError.InvalidResponseType);
             }
         }
+
+        //switch (value.*) {
+        //    .Error => |err| {
+        //        this.fail(err, protocol.RedisError.InvalidArgument);
+        //        return;
+        //    },
+        //    .Push => |push| {
+        //        std.debug.assert(push.data.len == 2);
+        //        const channel = try push.data[0].toJS(this.globalObject());
+        //        const payload = try push.data[1].toJS(this.globalObject());
+        //        debug("Received push message on channel: {s}", .{channel.toString(this.globalObject()).getZigString(this.globalObject())});
+        //        const callback = try subscription_ctx.getCallback(this.globalObject(), channel);
+        //        if (callback) |cb| {
+        //            std.debug.assert(cb.isCallable());
+        //            _ = try cb.call(this.globalObject(), jsc.JSValue.js_undefined, &.{ channel, payload });
+        //        } else {
+        //            debug("I don't have a callback to handle this push message", .{});
+        //        }
+        //    },
+        //    else => {
+        //        this.fail("Unexpected message type received", protocol.RedisError.InvalidArgument);
+        //    }
+        //}
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -702,9 +740,11 @@ pub const ValkeyClient = struct {
             return;
         }
 
-        if (this.is_subscriber) {
-            try this.handleSubscriberResponse(value);
-            return;
+        // We handle subscriptions specially because they are not regular
+        // commands and their failure will potentially cause the client to drop
+        // out of subscriber mode.
+        if (this.parent().isSubscriber()) {
+            return this.handleSubscribeResponse(value);
         }
 
         // For regular commands, get the next command+promise pair from the queue
@@ -977,6 +1017,10 @@ pub const ValkeyClient = struct {
 
     pub fn onValkeyConnect(this: *ValkeyClient, value: *protocol.RESPValue) void {
         this.parent().onValkeyConnect(value);
+    }
+
+    pub fn onValkeySubscribe(this: *ValkeyClient, value: *protocol.RESPValue) void {
+        this.parent().onValkeySubscribe(value);
     }
 
     pub fn onValkeyReconnect(this: *ValkeyClient) void {

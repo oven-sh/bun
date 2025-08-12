@@ -228,6 +228,6 @@ export default [
       pubsub: { fn: "pubsub" },
       on: { fn: "on" },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscription_map"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCtx"],
   }),
 ];

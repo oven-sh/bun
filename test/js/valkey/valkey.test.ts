@@ -184,24 +184,32 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     const testMessage = "test-message";
     const flushTimeoutMs = 100;
 
+    const connectedRedis = async () => {
+      const redis = new RedisClient("redis://localhost:6379");
+      await redis.connect();
+      return redis;
+    };
+
     test("publishing to a channel does not fail", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       await redis.subscribe(testChannel, () => {});
+      console.log("Subscribed to the channel.")
 
       expect(await redis.publish(testChannel, testMessage)).toBe(1);
+      console.log("Published message to the channel.");
     });
 
     test("setting in subscriber mode gracefully fails", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(redis.set(testKey, testValue)).rejects.toEqual('error');
+      expect(redis.set(testKey, testValue)).rejects.toThrowError("Cannot use in subscriber mode");
     });
 
     test("setting after unsubscribing works", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       await redis.subscribe(testChannel, () => {});
       await redis.unsubscribe(testChannel);
@@ -211,7 +219,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     test("subscribing to a channel receives messages", async () => {
       const TEST_MESSAGE_COUNT = 128;
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       var receiveCount = 0;
       await redis.subscribe(testChannel, (message, channel) => {
@@ -232,7 +240,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     test("messages are received in order", async () => {
       const TEST_MESSAGE_COUNT = 1024;
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       var receivedMessages: string[] = [];
       await redis.subscribe(testChannel, (message) => {
@@ -255,7 +263,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     test("subscribing to multiple channels receives messages", async () => {
       const TEST_MESSAGE_COUNT = 128;
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       const channels = [testChannel, "another-test-channel"];
 
@@ -291,7 +299,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("unsubscribing from specific channels while remaining subscribed to others", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel1 = "channel-1";
       const channel2 = "channel-2";
       const channel3 = "channel-3";
@@ -328,7 +336,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("subscribing to the same channel multiple times", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "duplicate-channel";
 
       let callCount = 0;
@@ -350,7 +358,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("empty string messages", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "empty-message-channel";
 
       let receivedMessage: string | undefined = undefined;
@@ -366,7 +374,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("special characters in channel names", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
 
       const specialChannels = [
         "channel:with:colons",
@@ -391,7 +399,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("ping works in subscription mode", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "ping-test-channel";
 
       await redis.subscribe(channel, () => {});
@@ -405,7 +413,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("publish works from a subscribed client", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "self-publish-channel";
 
       let receivedMessage: string | undefined = undefined;
@@ -422,7 +430,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("complete unsubscribe restores normal command mode", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "restore-test-channel";
       const testKey = "restore-test-key";
 
@@ -443,7 +451,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("publishing without subscribers succeeds", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "no-subscribers-channel";
 
       // Publishing without subscribers should not throw
@@ -451,7 +459,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("unsubscribing from non-subscribed channels", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "never-subscribed-channel";
 
       // Should not throw when unsubscribing from a channel we never subscribed to
@@ -459,7 +467,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("callback errors don't crash the client", async () => {
-      const redis = ctx.redis;
+      const redis = await connectedRedis();
       const channel = "error-callback-channel";
 
       let messageCount = 0;

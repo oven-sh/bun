@@ -2,6 +2,8 @@ pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 
+const SamplingProfilerTraceEvent = @import("./bun.js/bindings/SamplingProfilerTraceEvent.zig").SamplingProfilerTraceEvent;
+
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -323,6 +325,12 @@ pub const Run = struct {
 
         var printed_sourcemap_warning_and_version = false;
 
+        // Start profiler if --profile flag is set
+        const should_profile = this.ctx.runtime_options.profile_file != null;
+        if (should_profile) {
+            SamplingProfilerTraceEvent.start(vm.global.vm());
+        }
+
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
@@ -343,6 +351,11 @@ pub const Run = struct {
                             "<r>\n<d>{s}<r>",
                             .{Global.unhandled_error_bun_version_string},
                         );
+                    }
+                    // Stop profiler on error if --profile flag is set  
+                    if (should_profile) {
+                        const profile_file = this.ctx.runtime_options.profile_file.?;
+                        _ = SamplingProfilerTraceEvent.stop(vm.global.vm(), profile_file);
                     }
                     vm.globalExit();
                 }
@@ -374,6 +387,11 @@ pub const Run = struct {
                     "<r>\n<d>{s}<r>",
                     .{Global.unhandled_error_bun_version_string},
                 );
+            }
+            // Stop profiler on error if --profile flag is set
+            if (should_profile) {
+                const profile_file = this.ctx.runtime_options.profile_file.?;
+                _ = SamplingProfilerTraceEvent.stop(vm.global.vm(), profile_file);
             }
             vm.globalExit();
         }
@@ -464,6 +482,17 @@ pub const Run = struct {
                 "<r>\n<d>{s}<r>",
                 .{Global.unhandled_error_bun_version_string},
             );
+        }
+
+        // Stop profiler if --profile flag is set
+        if (should_profile) {
+            const profile_file = this.ctx.runtime_options.profile_file.?;
+            if (!SamplingProfilerTraceEvent.stop(vm.global.vm(), profile_file)) {
+                Output.errGeneric("Failed to write profiling data to {s}", .{profile_file});
+            } else {
+                Output.prettyErrorln("<r><green>Profile data written to:<r> <cyan>{s}<r>", .{profile_file});
+                Output.flush();
+            }
         }
 
         bun.api.napi.fixDeadCodeElimination();

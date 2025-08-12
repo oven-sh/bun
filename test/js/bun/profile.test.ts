@@ -59,31 +59,29 @@ console.log("Script completed");
 
   // Verify profile file contains valid .cpuprofile JSON format
   const profileData = JSON.parse(readFileSync(profileFile, "utf8"));
-  
+
   // Check required .cpuprofile fields
   expect(profileData).toHaveProperty("nodes");
   expect(profileData).toHaveProperty("startTime");
   expect(profileData).toHaveProperty("endTime");
   expect(profileData).toHaveProperty("samples");
   expect(profileData).toHaveProperty("timeDeltas");
-  
+
   expect(Array.isArray(profileData.nodes)).toBe(true);
   expect(Array.isArray(profileData.samples)).toBe(true);
   expect(Array.isArray(profileData.timeDeltas)).toBe(true);
   expect(profileData.nodes.length).toBeGreaterThan(0);
   expect(profileData.samples.length).toBeGreaterThan(0);
-  
+
   // Verify node structure
   const rootNode = profileData.nodes[0];
   expect(rootNode).toHaveProperty("id");
   expect(rootNode).toHaveProperty("callFrame");
   expect(rootNode.callFrame).toHaveProperty("functionName");
   expect(rootNode.callFrame.functionName).toBe("(root)");
-  
+
   // Check for fibonacci function in nodes
-  const fibonacciNode = profileData.nodes.find(n => 
-    n.callFrame && n.callFrame.functionName === "fibonacci"
-  );
+  const fibonacciNode = profileData.nodes.find(n => n.callFrame && n.callFrame.functionName === "fibonacci");
   expect(fibonacciNode).toBeDefined();
 });
 

@@ -392,7 +392,7 @@ const SQL: typeof Bun.SQL = function SQL(
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
+          throw Error(`SQLite doesn't support distributed transactions`);
         default:
           throw Error(`Unsupported adapter: ${adapter}.`);
       }
@@ -408,7 +408,7 @@ const SQL: typeof Bun.SQL = function SQL(
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
+          throw Error(`SQLite doesn't support distributed transactions`);
         default:
           throw Error(`Unsupported adapter: ${adapter}.`);
       }
@@ -728,7 +728,7 @@ const SQL: typeof Bun.SQL = function SQL(
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
+          throw Error(`SQLite doesn't support distributed transactions`);
         default:
           throw Error(`Unsupported adapter: ${adapter}.`);
       }
@@ -743,7 +743,7 @@ const SQL: typeof Bun.SQL = function SQL(
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
-          throw Error(`SQLite dont support distributed transactions.`);
+          throw Error(`SQLite doesn't support distributed transactions`);
         default:
           throw Error(`Unsupported adapter: ${adapter}.`);
       }

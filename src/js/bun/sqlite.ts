@@ -114,7 +114,6 @@ interface CppSQLStatement {
 }
 
 interface CppSQL {
-  new (...args: TODO[]): CppSQLStatement;
   open(filename: string, flags: number, db: Database): TODO;
   isInTransaction(handle: TODO): boolean;
   loadExtension(handle: TODO, name: string, entryPoint: string): void;

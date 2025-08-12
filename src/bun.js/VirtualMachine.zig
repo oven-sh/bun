@@ -2360,27 +2360,44 @@ pub fn printErrorlikeObject(
     }
 
     if (value.isAggregateError(this.global)) {
-        const AggregateErrorIterator = struct {
-            writer: Writer,
-            current_exception_list: ?*ExceptionList = null,
-            formatter: *ConsoleObject.Formatter,
+        was_internal = this.printErrorFromMaybePrivateData(
+            value,
+            exception_list,
+            formatter,
+            Writer,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
 
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, true);
+        const errors_array = value.getErrorsProperty(this.global);
+        if (!errors_array.isEmptyOrUndefinedOrNull()) {
+            writer.writeAll(" {\n  [errors]: [\n") catch return;
+
+            const AggregateErrorIterator = struct {
+                writer: Writer,
+                current_exception_list: ?*ExceptionList = null,
+                formatter: *ConsoleObject.Formatter,
+
+                pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, true);
+                }
+                pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, false);
+                }
+                fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                    const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
+                }
+            };
+            var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
+            if (comptime allow_ansi_color) {
+                errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return;
+            } else {
+                errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return;
             }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, false);
-            }
-            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
-            }
-        };
-        var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
-        if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
-        } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
+
+            writer.writeAll("  ]\n}\n") catch return;
         }
         return;
     }

@@ -1,25 +1,24 @@
 const Self = @This();
 
-heap: ?*mimalloc.Heap = null,
+heap: *mimalloc.Heap,
 
-const log = bun.Output.scoped(.mimalloc, true);
+const log = bun.Output.scoped(.mimalloc, .hidden);
 
 /// Internally, mimalloc calls mi_heap_get_default()
 /// to get the default heap.
 /// It uses pthread_getspecific to do that.
 /// We can save those extra calls if we just do it once in here
-pub fn getThreadlocalDefault() Allocator {
+pub fn getThreadLocalDefault() Allocator {
     return Allocator{ .ptr = mimalloc.mi_heap_get_default(), .vtable = &c_allocator_vtable };
 }
 
 pub fn backingAllocator(self: Self) Allocator {
-    var arena = Self{ .heap = self.heap.?.backing() };
+    var arena = Self{ .heap = self.heap.backing() };
     return arena.allocator();
 }
 
 pub fn allocator(self: Self) Allocator {
-    @setRuntimeSafety(false);
-    return Allocator{ .ptr = self.heap.?, .vtable = &c_allocator_vtable };
+    return Allocator{ .ptr = self.heap, .vtable = &c_allocator_vtable };
 }
 
 pub fn dumpThreadStats(self: *Self) void {
@@ -47,14 +46,16 @@ pub fn dumpStats(self: *Self) void {
 }
 
 pub fn deinit(self: *Self) void {
-    mimalloc.mi_heap_destroy(bun.take(&self.heap).?);
+    mimalloc.mi_heap_destroy(self.heap);
+    self.* = undefined;
 }
-pub fn init() !Self {
-    return .{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
+
+pub fn init() Self {
+    return .{ .heap = mimalloc.mi_heap_new() orelse bun.outOfMemory() };
 }
 
 pub fn gc(self: Self) void {
-    mimalloc.mi_heap_collect(self.heap orelse return, false);
+    mimalloc.mi_heap_collect(self.heap, false);
 }
 
 pub inline fn helpCatchMemoryIssues(self: Self) void {
@@ -65,7 +66,7 @@ pub inline fn helpCatchMemoryIssues(self: Self) void {
 }
 
 pub fn ownsPtr(self: Self, ptr: *const anyopaque) bool {
-    return mimalloc.mi_heap_check_owned(self.heap.?, ptr);
+    return mimalloc.mi_heap_check_owned(self.heap, ptr);
 }
 pub const supports_posix_memalign = true;
 

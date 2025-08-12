@@ -52,7 +52,7 @@ pub const Status = enum(u8) {
 };
 
 pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.getCount() > 1;
+    return this.ref_count.get() > 1;
 }
 
 pub fn deinit(this: *@This()) void {
@@ -507,7 +507,7 @@ comptime {
     @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 pub const js = jsc.Codegen.JSPostgresSQLQuery;
 pub const fromJS = js.fromJS;

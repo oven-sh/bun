@@ -9,7 +9,7 @@ tail: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
 // Consumer index (main thread reads).
 head: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
 
-const log = bun.Output.scoped(.PosixSignalHandle, true);
+const log = bun.Output.scoped(.PosixSignalHandle, .hidden);
 
 pub const new = bun.TrivialNew(@This());
 

@@ -326,7 +326,7 @@ pub const S3UploadStreamWrapper = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
     pub const ResumableSink = @import("../bun.js/webcore/ResumableSink.zig").ResumableS3UploadSink;
-    const log = bun.Output.scoped(.S3UploadStream, false);
+    const log = bun.Output.scoped(.S3UploadStream, .visible);
 
     ref_count: RefCount,
 

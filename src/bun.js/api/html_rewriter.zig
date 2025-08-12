@@ -387,7 +387,7 @@ pub const HTMLRewriter = struct {
         bodyValueBufferer: ?jsc.WebCore.Body.ValueBufferer = null,
         tmp_sync_error: ?*jsc.JSValue = null,
 
-        // const log = bun.Output.scoped(.BufferOutputSink, false);
+        // const log = bun.Output.scoped(.BufferOutputSink, .visible);
         pub fn init(context: *LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) bun.JSError!jsc.JSValue {
             var sink = bun.new(BufferOutputSink, .{
                 .ref_count = .init(),

@@ -68,7 +68,7 @@ pub inline fn bltn(this: *Echo) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-const log = bun.Output.scoped(.echo, true);
+const log = bun.Output.scoped(.echo, .hidden);
 
 const interpreter = @import("../interpreter.zig");
 const std = @import("std");

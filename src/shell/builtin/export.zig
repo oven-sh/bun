@@ -123,7 +123,7 @@ pub inline fn bltn(this: *Export) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellExport, true);
+const debug = bun.Output.scoped(.ShellExport, .hidden);
 const log = debug;
 
 const std = @import("std");

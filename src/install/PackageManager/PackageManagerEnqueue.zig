@@ -1149,7 +1149,7 @@ fn enqueueGitClone(
     const folder_name = std.fmt.bufPrintZ(&git_folder_name_buf, "{any}.git", .{
         bun.fmt.hexIntLower(task_id.get()),
     }) catch unreachable;
-    
+
     // Build full path for git clone target
     const target = Path.joinAbsStringZ(this.cache_directory_path, &.{folder_name}, .auto);
 

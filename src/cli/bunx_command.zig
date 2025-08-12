@@ -66,25 +66,25 @@ pub const BunxCommand = struct {
                         i += 1;
                         if (i >= argv.len) {
                             Output.errGeneric("--package requires a package name", .{});
-                            exitWithUsage();
+                            Global.exit(1);
                         }
                         if (argv[i].len == 0) {
                             Output.errGeneric("--package requires a non-empty package name", .{});
-                            exitWithUsage();
+                            Global.exit(1);
                         }
                         opts.specified_package = argv[i];
                     } else if (strings.hasPrefixComptime(positional, "--package=")) {
                         const package_value = positional["--package=".len..];
                         if (package_value.len == 0) {
                             Output.errGeneric("--package requires a non-empty package name", .{});
-                            exitWithUsage();
+                            Global.exit(1);
                         }
                         opts.specified_package = package_value;
                     } else if (strings.hasPrefixComptime(positional, "-p=")) {
                         const package_value = positional["-p=".len..];
                         if (package_value.len == 0) {
                             Output.errGeneric("--package requires a non-empty package name", .{});
-                            exitWithUsage();
+                            Global.exit(1);
                         }
                         opts.specified_package = package_value;
                     }
@@ -99,12 +99,16 @@ pub const BunxCommand = struct {
 
             // Handle --package flag case differently
             if (opts.specified_package != null) {
-                // When using --package, the first non-flag argument is the binary name
-                if (maybe_package_name == null) {
-                    // The binary name is the first non-flag argument after --package
+                if (maybe_package_name) |package_name| {
+                    if (package_name.len == 0) {
+                        Output.errGeneric("When using --package, you must specify the binary to run", .{});
+                        Output.prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", .{});
+                        Global.exit(1);
+                    }
+                } else {
                     Output.errGeneric("When using --package, you must specify the binary to run", .{});
-                    Output.prettyln("  <d>usage: bunx --package=package-name binary-name [args...]<r>", .{});
-                    exitWithUsage();
+                    Output.prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", .{});
+                    Global.exit(1);
                 }
                 opts.binary_name = maybe_package_name;
                 opts.package_name = opts.specified_package.?;

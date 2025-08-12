@@ -117,7 +117,8 @@ class UnsupportedAdapterError extends Error {
   }
 }
 
-function parseDefinitelySqliteUrl(value: string | URL): string | null {
+function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
+  if (value === null) return null;
   const str = value instanceof URL ? value.toString() : value;
 
   if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
@@ -180,7 +181,7 @@ function parseOptions(
     return {
       ...options,
       adapter: "sqlite",
-      filename: options.filename || stringOrUrl || ":memory:",
+      filename: parseDefinitelySqliteUrl(options.filename || stringOrUrl) || ":memory:",
     };
   }
 

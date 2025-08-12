@@ -10,33 +10,12 @@ const {
   symbols: { _handle, _flags, _results },
 } = require("internal/sql/query");
 const { normalizeQuery } = require("internal/sql/postgres");
-const { SQLHelper, parseOptions, SSLMode } = require("internal/sql/shared");
+const { SQLHelper, parseOptions, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const { connectionClosedError } = require("internal/sql/utils");
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const PublicArray = globalThis.Array;
-
 const defineProperties = Object.defineProperties;
-
-class SQLResultArray extends PublicArray {
-  public count!: number | null;
-  public command!: string | null;
-
-  static [Symbol.toStringTag] = "SQLResults";
-
-  constructor() {
-    super();
-    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
-    Object.defineProperties(this, {
-      count: { value: null, writable: true },
-      command: { value: null, writable: true },
-    });
-  }
-  static get [Symbol.species]() {
-    return Array;
-  }
-}
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
@@ -48,7 +27,7 @@ const {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
-      result: SQLResultArray,
+      result: InstanceType<typeof SQLResultArray>,
       commandTag: string,
       count: number,
       queries: any,
@@ -76,7 +55,7 @@ const {
   createQuery: (
     sql: string,
     values: unknown[],
-    pendingValue: SQLResultArray,
+    pendingValue: InstanceType<typeof SQLResultArray>,
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
@@ -84,7 +63,14 @@ const {
 };
 
 initPostgres(
-  function onResolvePostgresQuery(query: Query<any, any>, result: SQLResultArray, commandTag, count, queries, is_last) {
+  function onResolvePostgresQuery(
+    query: Query<any, any>,
+    result: InstanceType<typeof SQLResultArray>,
+    commandTag,
+    count,
+    queries,
+    is_last,
+  ) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
       // simple can have multiple results or a single result
@@ -173,6 +159,7 @@ enum PooledConnectionState {
   connected = 1,
   closed = 2,
 }
+
 enum PooledConnectionFlags {
   /// canBeConnected is used to indicate that at least one time we were able to connect to the database
   canBeConnected = 1 << 0,
@@ -322,7 +309,7 @@ class PooledPostgresConnection {
 }
 
 class PostgresConnectionPool {
-  connectionInfo: any;
+  connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
 
   connections: PooledPostgresConnection[];
   readyConnections: Set<PooledPostgresConnection>;
@@ -334,7 +321,8 @@ class PostgresConnectionPool {
   closed: boolean = false;
   totalQueries: number = 0;
   onAllQueriesFinished: (() => void) | null = null;
-  constructor(connectionInfo) {
+
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
@@ -493,7 +481,9 @@ class PostgresConnectionPool {
         pendingReserved(connectionClosedError(), null);
       }
     }
+
     const promises: Array<Promise<any>> = [];
+
     if (this.poolStarted) {
       this.poolStarted = false;
       const pollSize = this.connections.length;
@@ -508,6 +498,7 @@ class PostgresConnectionPool {
               connection.connection?.close();
             }
             break;
+
           case PooledConnectionState.connected:
             {
               const { promise, resolve } = Promise.withResolvers();
@@ -522,20 +513,24 @@ class PostgresConnectionPool {
         this.connections[i] = null;
       }
     }
+
     this.readyConnections.clear();
     this.waitingQueue.length = 0;
     return Promise.all(promises);
   }
+
   async close(options?: { timeout?: number }) {
     if (this.closed) {
       return;
     }
+
     let timeout = options?.timeout;
     if (timeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+
       this.closed = true;
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
@@ -549,6 +544,7 @@ class PostgresConnectionPool {
         this.#close().finally(resolve);
       }, timeout * 1000);
       timer.unref(); // dont block the event loop
+
       this.onAllQueriesFinished = () => {
         clearTimeout(timer);
         // everything is closed, lets close the pool
@@ -563,12 +559,15 @@ class PostgresConnectionPool {
         await this.#close();
         return;
       }
+
       // gracefully close the pool
       const { promise, resolve } = Promise.withResolvers();
+
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool
         this.#close().finally(resolve);
       };
+
       return promise;
     }
   }
@@ -747,6 +746,7 @@ function doCreateQuery(
   simple: boolean,
 ) {
   const [sqlString, final_values] = normalizeQuery(strings, values);
+
   if (!allowUnsafeTransaction) {
     if (poolSize !== 1) {
       const upperCaseSqlString = sqlString.toUpperCase().trim();

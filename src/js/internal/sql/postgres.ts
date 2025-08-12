@@ -1,12 +1,12 @@
 import type { Query } from "./query";
 import type { SQLHelper } from "./shared";
 
-const { SQLHelper } = require("./shared.ts");
+const { SQLHelper } = require("internal/sql/shared");
 const {
   Query,
   symbols: { _strings, _values },
-} = require("./query.ts");
-const { escapeIdentifier } = require("./utils.ts");
+} = require("internal/sql/query");
+const { escapeIdentifier } = require("internal/sql/utils");
 
 enum SQLCommand {
   insert = 0,
@@ -60,7 +60,8 @@ function normalizeQuery(
       if (values.length > i) {
         const value = values[i];
         if (value instanceof Query) {
-          const [sub_query, sub_values] = normalizeQuery(value[_strings], value[_values], binding_idx);
+          const q = value as Query<any, any>;
+          const [sub_query, sub_values] = normalizeQuery(q[_strings], q[_values], binding_idx);
           query += sub_query;
           for (let j = 0; j < sub_values.length; j++) {
             binding_values.push(sub_values[j]);

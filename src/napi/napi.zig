@@ -1367,9 +1367,11 @@ pub const Finalizer = struct {
 
         napi_internal_remove_finalizer(env, this.fun, this.hint, this.data);
 
-        if (env.getAndClearPendingException()) |exception| {
+        if (env.toJS().tryTakeException()) |exception| {
             _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
-        } else if (env.toJS().tryTakeException()) |exception| {
+        }
+
+        if (env.getAndClearPendingException()) |exception| {
             _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
         }
     }

@@ -290,7 +290,7 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
             pipe[1] = .fromUV(fds[1]);
             pipe.* = switch (bun.sys.pipe()) {
                 .result => |p| p,
-                .err => |e| return .{ .err = e }
+                .err => |e| return .{ .err = e },
             };
         } else {
             switch (bun.sys.socketpairForShell(

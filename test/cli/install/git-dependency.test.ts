@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { existsSync } from "fs";
 
 test("install github dependency", async () => {
   const dir = tempDirWithFiles("test-github-install", {
@@ -25,11 +25,11 @@ test("install github dependency", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).not.toContain("error");
-  
+
   // Check that the package was installed
   const packagePath = join(dir, "node_modules", "awesome-bun");
   expect(existsSync(packagePath)).toBe(true);
-  
+
   // Should have README.md
   const readmePath = join(packagePath, "README.md");
   expect(existsSync(readmePath)).toBe(true);
@@ -56,7 +56,7 @@ test("install git+https URL dependency", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).not.toContain("error");
-  
+
   // Check that the package was installed
   const packagePath = join(dir, "node_modules", "awesome-bun");
   expect(existsSync(packagePath)).toBe(true);
@@ -83,7 +83,7 @@ test("install git URL without commit hash", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).not.toContain("error");
-  
+
   // Check that the package was installed
   const packagePath = join(dir, "node_modules", "awesome-bun-2");
   expect(existsSync(packagePath)).toBe(true);

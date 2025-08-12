@@ -298,7 +298,6 @@ const Npm = install.Npm;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;
 const PatchTask = install.PatchTask;
-const Repository = install.Repository;
 const Resolution = install.Resolution;
 const Task = install.Task;
 const invalid_package_id = install.invalid_package_id;

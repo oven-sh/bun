@@ -720,7 +720,6 @@ const Path = bun.path;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
-const Output = bun.Output;
 
 const Semver = bun.Semver;
 const GitSHA = String;

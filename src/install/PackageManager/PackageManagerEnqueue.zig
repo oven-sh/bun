@@ -1143,16 +1143,16 @@ fn enqueueGitClone(
 ) void {
     _ = patch_name_and_version_hash; // TODO: handle patches
     _ = dependency; // Currently unused
-    
+
     const url = this.lockfile.str(&repository.repo);
     // Enqueue git clone for url
     const folder_name = std.fmt.bufPrintZ(&git_folder_name_buf, "{any}.git", .{
         bun.fmt.hexIntLower(task_id.get()),
     }) catch unreachable;
-    
+
     // Build git command arguments
     var argc: usize = 0;
-    
+
     // Try HTTPS first
     const argv = if (Repository.tryHTTPS(url)) |https| blk: {
         const args: [10]?[*:0]const u8 = .{
@@ -1212,7 +1212,7 @@ fn enqueueGitClone(
         this.wake();
         return;
     };
-    
+
     // Spawn GitCommandRunner
     // Increment pending tasks so the event loop knows to wait for this
     this.incrementPendingTasks(1);
@@ -1258,7 +1258,7 @@ pub fn enqueueGitCheckout(
     patch_name_and_version_hash: ?u64,
 ) void {
     _ = patch_name_and_version_hash; // TODO: handle patches
-    
+
     const folder_name = PackageManager.cachedGitFolderNamePrint(&git_folder_name_buf, resolved, null);
     const target = Path.joinAbsString(this.cache_directory_path, &.{folder_name}, .auto);
     const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {
@@ -1291,7 +1291,7 @@ pub fn enqueueGitCheckout(
         this.wake();
         return;
     };
-    
+
     // Build git command arguments for clone --no-checkout
     const argv: [10]?[*:0]const u8 = .{
         "git",
@@ -1306,7 +1306,7 @@ pub fn enqueueGitCheckout(
         null,
     };
     const argc: usize = 8;
-    
+
     // Spawn GitCommandRunner
     // Increment pending tasks so the event loop knows to wait for this
     this.incrementPendingTasks(1);
@@ -1874,6 +1874,7 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
+const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Path = bun.path;
@@ -1893,13 +1894,12 @@ const DependencyID = bun.install.DependencyID;
 const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
+const GitCommandRunner = bun.install.GitCommandRunner;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
-const GitCommandRunner = bun.install.GitCommandRunner;
-const DotEnv = bun.DotEnv;
 const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

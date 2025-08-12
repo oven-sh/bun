@@ -18,11 +18,19 @@ static inline bool isPrefixChar(const CharacterType c)
     return c == '[' || c == ']' || c == '(' || c == ')' || c == '#' || c == ';' || c == '?';
 }
 
+// Add back the OSC payload char class exactly as ansi-regex expects:
+// [-a-zA-Z\d\/#&.:=?%@~_]
 template<typename CharacterType>
 static inline bool isOSCChar(const CharacterType c)
 {
-    // [-a-zA-Z\d\/#&.:=?%@~_]
     return c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '#' || c == '&' || c == '.' || c == ':' || c == '=' || c == '?' || c == '%' || c == '@' || c == '~' || c == '_';
+}
+
+template<typename CharacterType>
+static inline bool isStringTerminator(const CharacterType c)
+{
+    // BEL (0x07) or C1 ST (0x9C)
+    return c == static_cast<CharacterType>(0x07) || c == static_cast<CharacterType>(0x9C);
 }
 
 template<typename CharacterType>
@@ -33,164 +41,135 @@ static inline bool isCSIFinalByte(const CharacterType c)
 }
 
 template<typename CharacterType>
+static inline bool isAlphaNumeric(const CharacterType c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+template<typename CharacterType>
 static inline bool isDigit(const CharacterType c)
 {
     return c >= '0' && c <= '9';
 }
 
-// Helper to parse CSI parameter digits
-// Matches: \d{1,4}(?:;\d{0,4})*
-template<typename CharacterType>
-static const CharacterType* parseCSIParameters(const CharacterType* cursor, const CharacterType* const end)
-{
-    // Optional: \d{1,4}
-    int digitCount = 0;
-    while (cursor < end && isDigit(*cursor) && digitCount < 4) {
-        cursor++;
-        digitCount++;
-    }
-
-    // Optional: (?:;\d{0,4})*
-    // But don't consume a semicolon unless it leads to valid content
-    while (cursor < end && *cursor == ';') {
-        const CharacterType* beforeSemi = cursor;
-        cursor++; // tentatively consume semicolon
-        
-        // Consume optional digits after semicolon
-        digitCount = 0;
-        while (cursor < end && isDigit(*cursor) && digitCount < 4) {
-            cursor++;
-            digitCount++;
-        }
-        
-        // Check if this position is valid for a CSI sequence to end
-        // If not, backtrack to before the semicolon
-        if (cursor >= end) {
-            // At end - the last consumed char might be a valid final byte
-            if (digitCount > 0 && isCSIFinalByte(*(cursor - 1))) {
-                // Valid: ended with a digit that's also a final byte
-                break;
-            } else {
-                // Invalid: ended with just semicolon or incomplete params
-                cursor = beforeSemi;
-                break;
-            }
-        }
-        // If we have more content, continue the loop to process more semicolon groups
-    }
-
-    return cursor;
-}
-
 template<typename CharacterType>
 static const CharacterType* matchAnsiRegex(const CharacterType* const start, const CharacterType* const end)
 {
-    const CharacterType* cursor = start;
+    const CharacterType* p = start;
 
     // Must start with ESC (0x1B) or C1 CSI (0x9B)
-    if (cursor >= end || (*cursor != 0x1B && *cursor != 0x9B)) {
+    if (p >= end || (*p != static_cast<CharacterType>(0x1B) && *p != static_cast<CharacterType>(0x9B)))
         return nullptr;
-    }
-    cursor++;
 
-    // Skip optional prefix characters [[\]()#;?]*
-    while (cursor < end && isPrefixChar(*cursor)) {
-        cursor++;
-    }
+    ++p;
 
-    // Now we have two possible patterns to match
-    // The regex uses alternation (|) so either pattern can match
-    // CSI pattern is often shorter, so regex engines typically try it first
+    // Consume prefix: [[\]()#;?]*
+    while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))
+        ++p;
 
-    // Save position after prefix for both pattern attempts
-    const CharacterType* const afterPrefix = cursor;
+    const CharacterType* afterPrefix = p;
 
-    // The regex alternation order matters: OSC pattern is listed first in the regex,
-    // but CSI often matches first due to regex engine optimization
-    // We need to try CSI first to match the actual behavior
-    
-    const CharacterType* pattern2End = nullptr;
-
-    // Try Pattern 2: CSI sequences first
-    // (?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])
+    // ---- Alternative 1: OSC-style with strict payload and required terminator ----
+    // Structure:
+    //    ( ( ; [oscChars]+ )* | ( [a-zA-Z\d]+ ( ; [oscChars]* )* ) )?  ( BEL | ESC\ | 0x9C )
     {
-        // First check if we have an immediate CSI final byte (handles \x1b]0, \x1b[A, etc.)
-        if (afterPrefix < end && isCSIFinalByte(*afterPrefix)) {
-            // For digits, try to consume more to see if we get a longer match
-            if (isDigit(*afterPrefix)) {
-                const CharacterType* greedyCursor = parseCSIParameters(afterPrefix, end);
-                if (greedyCursor < end && isCSIFinalByte(*greedyCursor)) {
-                    // Found a longer match with parameters
-                    pattern2End = greedyCursor + 1;
-                } else if (greedyCursor > afterPrefix) {
-                    // Consumed parameters but no final byte after - use all consumed
-                    pattern2End = greedyCursor;
-                } else {
-                    // No parameters consumed, use the digit as final byte
-                    pattern2End = afterPrefix + 1;
+        const CharacterType* q = afterPrefix;
+
+        // Immediate terminator allowed (empty payload)
+        if (q < end) {
+            if (isStringTerminator(*q))
+                return q + 1;
+            if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
+                return q + 2; // ESC
+        }
+
+        // Try branch B: [a-zA-Z\d]+ ( ; [oscChars]* )*
+        if (q < end && isAlphaNumeric(*q)) {
+            do {
+                ++q;
+            } while (q < end && isAlphaNumeric(*q));
+            while (q < end && *q == static_cast<CharacterType>(';')) {
+                ++q; // ';'
+                while (q < end && isOSCChar(*q))
+                    ++q; // zero-or-more osc chars
+            }
+            if (q < end) {
+                if (isStringTerminator(*q))
+                    return q + 1;
+                if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
+                    return q + 2; // ESC
+            }
+        }
+
+        // Try branch A: ( ; [oscChars]+ )*
+        q = afterPrefix;
+        bool sawAnyGroup = false;
+        while (q < end && *q == static_cast<CharacterType>(';')) {
+            const CharacterType* groupStart = q; // at ';'
+            ++q; // consume ';'
+            const CharacterType* before = q;
+            while (q < end && isOSCChar(*q))
+                ++q; // require at least one char
+            if (q == before) {
+                // This branch requires '+' after ';' — zero length breaks the branch.
+                // Rewind to before this ';' and stop trying branch A.
+                q = groupStart;
+                break;
+            }
+            sawAnyGroup = true;
+        }
+        if (sawAnyGroup && q < end) {
+            if (isStringTerminator(*q))
+                return q + 1;
+            if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
+                return q + 2; // ESC
+        }
+        // If OSC payload doesn't satisfy the strict class or lacks a terminator, alt 1 fails.
+    }
+
+    // ---- Alternative 2: CSI/other with greedy optional digits and backtracking ----
+    // (?:(?:\d{1,4}(?:;\d{0,4})*)? [\dA-PR-TZcf-nq-uy=><~])
+    {
+        const CharacterType* q = afterPrefix;
+
+        // If next is a digit, try the greedy "digits present" path first (like JS regex does)
+        if (q < end && isDigit(*q)) {
+            const CharacterType* lastDigit = nullptr;
+
+            // \d{1,4}
+            int dcount = 0;
+            while (q < end && isDigit(*q) && dcount < 4) {
+                lastDigit = q;
+                ++q;
+                ++dcount;
+            }
+            // (;\d{0,4})*
+            while (q < end && *q == static_cast<CharacterType>(';')) {
+                ++q; // ';'
+                int k = 0;
+                while (q < end && isDigit(*q) && k < 4) {
+                    lastDigit = q;
+                    ++q;
+                    ++k;
                 }
-            } else {
-                // Non-digit final byte, match immediately
-                pattern2End = afterPrefix + 1;
             }
-        } else {
-            // No immediate final byte, try parsing parameters
-            const CharacterType* pattern2Cursor = parseCSIParameters(afterPrefix, end);
-            
-            if (pattern2Cursor < end && isCSIFinalByte(*pattern2Cursor)) {
-                pattern2End = pattern2Cursor + 1;
-            } else if (pattern2Cursor > afterPrefix) {
-                // Consumed parameters but no final byte - use all consumed
-                pattern2End = pattern2Cursor;
-            }
+
+            // Prefer final byte immediately after the digits block
+            if (q < end && isCSIFinalByte(*q))
+                return q + 1;
+
+            // Backtrack one digit to serve as the final byte when needed
+            if (lastDigit)
+                return lastDigit + 1;
+
+            // Fall through to "no-digits" variant if something odd happened
         }
-    }
-    
-    // Try Pattern 1: OSC-like sequences with terminators
-    // (?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?(?:\u0007|\u001B\u005C|\u009C))
-    const CharacterType* pattern1End = nullptr;
-    {
-        const CharacterType* pattern1Cursor = afterPrefix;
 
-        // The OSC content is optional, but we need a terminator
-        // Try to scan until we find a terminator or invalid character
-        while (pattern1Cursor < end) {
-            CharacterType ch = *pattern1Cursor;
-
-            // Check for terminators
-            if (ch == 0x07 || ch == 0x9C) { // BEL or String Terminator
-                pattern1End = pattern1Cursor + 1;
-                break;
-            }
-            if (ch == 0x1B && pattern1Cursor + 1 < end && pattern1Cursor[1] == '\\') { // ESC\
-                pattern1End = pattern1Cursor + 2;
-                break;
-            }
-
-            // Check if this is a valid OSC character or semicolon
-            if (ch == ';' || isOSCChar(ch)) {
-                pattern1Cursor++;
-            } else {
-                // Invalid character for OSC, this pattern fails
-                break;
-            }
-        }
+        // No digits present: final byte must be the very next char
+        if (q < end && isCSIFinalByte(*q))
+            return q + 1;
     }
 
-    // Return the longer match (OSC is usually longer when both match)
-    if (pattern1End && pattern2End) {
-        size_t len1 = pattern1End - start;
-        size_t len2 = pattern2End - start;
-        return len1 > len2 ? pattern1End : pattern2End;
-    }
-    if (pattern2End) {
-        return pattern2End;
-    }
-    if (pattern1End) {
-        return pattern1End;
-    }
-
-    // Neither pattern matched
     return nullptr;
 }
 

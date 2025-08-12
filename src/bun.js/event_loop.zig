@@ -106,16 +106,21 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     }
 }
 
-extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) void;
+const DrainMicrotasksResult = enum(u8) {
+    success = 0,
+    JSExecutionTerminated = 1,
+};
+extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
     jsc.markBinding(@src());
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalObject, @src());
-    defer scope.deinit();
-
     jsc_vm.releaseWeakRefs();
-    JSC__JSGlobalObject__drainMicrotasks(globalObject);
-    try scope.assertNoExceptionExceptTermination();
+
+    switch (JSC__JSGlobalObject__drainMicrotasks(globalObject)) {
+        .success => {},
+        .JSExecutionTerminated => {
+            return error.JSExecutionTerminated;
+        },
+    }
 
     this.virtual_machine.is_inside_deferred_task_queue = true;
     this.deferred_tasks.run();
@@ -521,20 +526,6 @@ pub fn enqueueTask(this: *EventLoop, task: Task) void {
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
     this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-}
-
-pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-    // TODO: make this more efficient!
-    const loop = this.virtual_machine.uwsLoop();
-    var timer = uws.Timer.createFallthrough(loop, task.ptr());
-    timer.set(task.ptr(), callTask, timeout, 0);
-}
-
-pub fn callTask(timer: *uws.Timer) callconv(.C) void {
-    const task = Task.from(timer.as(*anyopaque));
-    defer timer.deinit(true);
-
-    VirtualMachine.get().enqueueTask(task);
 }
 
 pub fn ensureWaker(this: *EventLoop) void {

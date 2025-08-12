@@ -1402,7 +1402,7 @@ const Writable = union(enum) {
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
                     pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
-                        bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
+                        bun.debugAssert(subprocess.ref_count.get() == debug_ref_count.get());
                     }
                     return pipe.toJS(globalThis);
                 } else {

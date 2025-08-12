@@ -754,16 +754,22 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
-                const slice = this.value.WTFStringImpl.toUTF8(allocator);
+                const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
 
-                bun.debugAssert(!slice.allocator.isNull());
+                if (slice.allocator.isNull()) {
+                    // This is an ASCII latin1 string with the same reference as the original.
+                    return .{
+                        .utf8 = ZigString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
+                        .underlying = empty,
+                    };
+                }
 
                 if (comptime bun.Environment.allow_assert) {
-                    // bun.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
-                    // bun.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
+                    bun.assert(!isWTFAllocator(slice.allocator.get().?)); // toUTF8WithoutRef() should never return a WTF allocator
+                    bun.assert(slice.allocator.get().?.vtable == allocator.vtable); // assert that the allocator is the same
                 }
 
                 // We've already cloned the string, so let's just return the slice.

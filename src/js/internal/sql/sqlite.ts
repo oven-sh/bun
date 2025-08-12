@@ -151,24 +151,19 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
 
-    // Initialize the database connection immediately
     try {
       const SQLiteModule = getSQLiteModule();
       const { filename } = this.connectionInfo;
 
-      // Build options object for Bun.SQLite
-      const options: any = {};
+      const options: BunSQLiteModule.DatabaseOptions = {};
 
-      // Handle read/write modes
       if (this.connectionInfo.readonly) {
         options.readonly = true;
       } else {
-        // Default to creating and readwrite if not readonly
         options.create = this.connectionInfo.create !== false;
         options.readwrite = true;
       }
 
-      // Handle other options
       if ("safeIntegers" in this.connectionInfo) {
         options.safeIntegers = this.connectionInfo.safeIntegers;
       }
@@ -184,7 +179,6 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
   }
 
   createQueryHandle(sql: string, values: unknown[]) {
-    // Return a handle that will use the database connection when run() is called
     return {
       run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
         try {

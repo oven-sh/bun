@@ -192,12 +192,11 @@ function parseOptions(
 
   assertIsOptionsOfAdapter(options, "postgres");
 
-  // TODO: Better typing for these vars
-  let hostname: any,
+  let hostname: string | undefined,
     port: number | string | undefined,
     username: string | null | undefined,
     password: string | (() => Bun.MaybePromise<string>) | undefined | null,
-    database: any,
+    database: string | undefined,
     tls: Bun.TLSOptions | boolean | undefined,
     url: URL | undefined,
     query: string,
@@ -207,7 +206,7 @@ function parseOptions(
     onconnect: ((client: Bun.SQL) => void) | undefined,
     onclose: ((client: Bun.SQL) => void) | undefined,
     max: number | null | undefined,
-    bigint: any,
+    bigint: boolean | undefined,
     path: string | string[];
 
   let prepare = true;

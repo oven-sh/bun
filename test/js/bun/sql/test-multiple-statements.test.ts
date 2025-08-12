@@ -32,7 +32,7 @@ test("SQLite hasMultipleStatements detection", () => {
 });
 
 test("SQL template multi-statement execution", async () => {
-  const sql = new SQL(`:memory:`);
+  const sql = new SQL(":memory:");
 
   const result = await sql`
     CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);

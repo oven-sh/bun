@@ -63,7 +63,7 @@ declare module "bun" {
        *
        * @default ":memory:"
        */
-      filename?: URL | string | undefined;
+      filename?: URL | ":memory:" | `${string}.db` | (string & {}) | undefined;
     }
 
     interface PostgresOptions {

@@ -1114,9 +1114,9 @@ pub const napi_async_execute_callback = *const fn (napi_env, ?*anyopaque) callco
 pub const napi_async_complete_callback = *const fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
 pub const napi_threadsafe_function_call_js = *const fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_node_version = extern struct {
-    major: u32,
-    minor: u32,
-    patch: u32,
+    major: u64,
+    minor: u64,
+    patch: u64,
     release: [*:0]const u8,
 
     const parsed_nodejs_version = std.SemanticVersion.parse(bun.Environment.reported_nodejs_version) catch @panic("Invalid reported Node.js version");

@@ -1218,6 +1218,11 @@ const common = {
   get checkoutEOL() {
     return fs.readFileSync(__filename).includes('\r\n') ? '\r\n' : '\n';
   },
+
+  skipIfSQLiteMissing() {
+    // In Bun, SQLite is always available, so this is a no-op
+    return;
+  },
 };
 
 const validProperties = new Set(Object.keys(common));

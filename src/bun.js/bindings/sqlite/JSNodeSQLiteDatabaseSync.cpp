@@ -69,6 +69,7 @@ JSC::GCClient::IsoSubspace* JSNodeSQLiteDatabaseSync::subspaceFor(JSC::VM& vm)
 JSNodeSQLiteDatabaseSync::JSNodeSQLiteDatabaseSync(VM& vm, Structure* structure)
     : Base(vm, structure)
     , m_db(nullptr)
+    , m_path()
 {
 }
 

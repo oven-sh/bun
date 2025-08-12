@@ -4,6 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
+#include <wtf/text/WTFString.h>
 #include "sqlite3_local.h"
 
 namespace Bun {
@@ -27,6 +28,9 @@ public:
     sqlite3* database() const { return m_db; }
     void setDatabase(sqlite3* db) { m_db = db; }
     void closeDatabase();
+    
+    const WTF::String& path() const { return m_path; }
+    void setPath(const WTF::String& path) { m_path = path; }
 
 private:
     JSNodeSQLiteDatabaseSync(JSC::VM& vm, JSC::Structure* structure);
@@ -34,6 +38,7 @@ private:
     void finishCreation(JSC::VM& vm);
 
     sqlite3* m_db;
+    WTF::String m_path;
 
 public:
 };

@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import path from "path";
 
@@ -876,6 +877,1090 @@ describe("Memory and resource management", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
+    }
+  });
+});
+
+describe("Connection URL Edge Cases", () => {
+  test("handles various file:// URL formats", async () => {
+    const dir = tempDirWithFiles("sqlite-url-test", {});
+
+    // file:// with three slashes (local file)
+    const dbPath1 = path.join(dir, "test1.db");
+    const sql1 = new SQL(`file://${dbPath1}`);
+    await sql1`CREATE TABLE test (id INTEGER)`;
+    await sql1`INSERT INTO test VALUES (1)`;
+    const result1 = await sql1`SELECT * FROM test`;
+    expect(result1).toHaveLength(1);
+    await sql1.close();
+
+    // file: with just path
+    const dbPath2 = path.join(dir, "test2.db");
+    const sql2 = new SQL(`file:${dbPath2}`);
+    await sql2`CREATE TABLE test (id INTEGER)`;
+    await sql2.close();
+
+    await rm(dir, { recursive: true });
+  });
+
+  test("handles special characters in database paths", async () => {
+    const specialNames = [
+      "test with spaces.db",
+      "test-with-dash.db",
+      "test.with.dots.db",
+      "test_underscore.db",
+      "test@symbol.db",
+      "test#hash.db",
+      "test%percent.db",
+      "test&ampersand.db",
+      "test(parens).db",
+      "test[brackets].db",
+      "test{braces}.db",
+      "test'quote.db",
+    ];
+
+    for (const name of specialNames) {
+      const dir = tempDirWithFiles(`sqlite-special-${Math.random()}`, {});
+      const dbPath = path.join(dir, name);
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      await sql`CREATE TABLE test (id INTEGER)`;
+      await sql`INSERT INTO test VALUES (1)`;
+
+      const result = await sql`SELECT * FROM test`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test("handles relative vs absolute paths", async () => {
+    const dir = tempDirWithFiles("sqlite-path-test", {});
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(dir);
+
+      // Relative path
+      const sql1 = new SQL("sqlite://./relative.db");
+      await sql1`CREATE TABLE test (id INTEGER)`;
+      await sql1.close();
+
+      expect(existsSync(path.join(dir, "relative.db"))).toBe(true);
+
+      // Absolute path
+      const absPath = path.join(dir, "absolute.db");
+      const sql2 = new SQL(`sqlite://${absPath}`);
+      await sql2`CREATE TABLE test (id INTEGER)`;
+      await sql2.close();
+
+      expect(existsSync(absPath)).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  test("handles readonly mode via URL parameters", async () => {
+    const dir = tempDirWithFiles("sqlite-readonly-test", {});
+    const dbPath = path.join(dir, "readonly.db");
+
+    // First create the database
+    const sql1 = new SQL(`sqlite://${dbPath}`);
+    await sql1`CREATE TABLE test (id INTEGER)`;
+    await sql1`INSERT INTO test VALUES (1)`;
+    await sql1.close();
+
+    // Open in readonly mode
+    const sql2 = new SQL(`sqlite://${dbPath}?mode=ro`);
+
+    const result = await sql2`SELECT * FROM test`;
+    expect(result).toHaveLength(1);
+
+    try {
+      await sql2`INSERT INTO test VALUES (2)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("readonly");
+    }
+
+    await sql2.close();
+    await rm(dir, { recursive: true });
+  });
+
+  test("handles URI parameters for cache and other settings", async () => {
+    const dir = tempDirWithFiles("sqlite-uri-test", {});
+    const dbPath = path.join(dir, "uri.db");
+
+    // Test various URI parameters
+    const sql = new SQL(`sqlite://${dbPath}?cache=shared&mode=rwc`);
+
+    await sql`CREATE TABLE test (id INTEGER)`;
+    await sql`INSERT INTO test VALUES (1)`;
+
+    const pragmas = await sql`PRAGMA cache_size`;
+    expect(pragmas).toBeDefined();
+
+    await sql.close();
+    await rm(dir, { recursive: true });
+  });
+});
+
+describe("BLOB Edge Cases and Binary Data", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("handles zero-length BLOBs", async () => {
+    await sql`CREATE TABLE blob_test (id INTEGER, data BLOB)`;
+
+    const emptyBuffer = Buffer.alloc(0);
+    await sql`INSERT INTO blob_test VALUES (1, ${emptyBuffer})`;
+
+    const result = await sql`SELECT * FROM blob_test`;
+    expect(Buffer.from(result[0].data)).toHaveLength(0);
+  });
+
+  test("handles large BLOBs", async () => {
+    await sql`CREATE TABLE large_blob (id INTEGER, data BLOB)`;
+
+    // Test with 1MB, 10MB binary data
+    const sizes = [1024 * 1024, 10 * 1024 * 1024];
+
+    for (const size of sizes) {
+      const largeBuffer = Buffer.alloc(size);
+      // Fill with pattern to verify integrity
+      for (let i = 0; i < size; i++) {
+        largeBuffer[i] = i % 256;
+      }
+
+      await sql`INSERT INTO large_blob VALUES (${size}, ${largeBuffer})`;
+
+      const result = await sql`SELECT * FROM large_blob WHERE id = ${size}`;
+      const retrieved = Buffer.from(result[0].data);
+
+      expect(retrieved.length).toBe(size);
+      // Verify pattern integrity
+      for (let i = 0; i < Math.min(100, size); i++) {
+        expect(retrieved[i]).toBe(i % 256);
+      }
+    }
+  });
+
+  test("handles binary data with all byte values", async () => {
+    await sql`CREATE TABLE binary_test (id INTEGER, data BLOB)`;
+
+    // Create buffer with all possible byte values
+    const allBytes = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) {
+      allBytes[i] = i;
+    }
+
+    await sql`INSERT INTO binary_test VALUES (1, ${allBytes})`;
+
+    const result = await sql`SELECT * FROM binary_test`;
+    const retrieved = Buffer.from(result[0].data);
+
+    expect(retrieved.length).toBe(256);
+    for (let i = 0; i < 256; i++) {
+      expect(retrieved[i]).toBe(i);
+    }
+  });
+
+  test("handles Uint8Array and ArrayBuffer", async () => {
+    await sql`CREATE TABLE array_test (id INTEGER, data BLOB)`;
+
+    // Test Uint8Array
+    const uint8 = new Uint8Array([1, 2, 3, 4, 5]);
+    await sql`INSERT INTO array_test VALUES (1, ${uint8})`;
+
+    // Test ArrayBuffer
+    const arrayBuffer = new ArrayBuffer(8);
+    const view = new DataView(arrayBuffer);
+    view.setInt32(0, 0x12345678);
+    view.setInt32(4, 0x9abcdef0);
+    await sql`INSERT INTO array_test VALUES (2, ${Buffer.from(arrayBuffer)})`;
+
+    const results = await sql`SELECT * FROM array_test ORDER BY id`;
+    expect(Buffer.from(results[0].data)).toEqual(Buffer.from([1, 2, 3, 4, 5]));
+    expect(Buffer.from(results[1].data).length).toBe(8);
+  });
+});
+
+describe("Special Characters and Escape Sequences", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE special_chars (id INTEGER, text_val TEXT)`;
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("handles various quote types", async () => {
+    const quotes = [
+      `Single ' quote`,
+      `Double " quote`,
+      `Both ' and " quotes`,
+      `Backtick \` quote`,
+      `'Multiple' "quote" 'types'`,
+      `It's a "test"`,
+      `\\'escaped\\' quotes`,
+      `"""triple quotes"""`,
+      `'''triple single'''`,
+    ];
+
+    for (let i = 0; i < quotes.length; i++) {
+      await sql`INSERT INTO special_chars VALUES (${i}, ${quotes[i]})`;
+      const result = await sql`SELECT text_val FROM special_chars WHERE id = ${i}`;
+      expect(result[0].text_val).toBe(quotes[i]);
+    }
+  });
+
+  test("handles control characters and escape sequences", async () => {
+    const controls = [
+      "\n\r\t", // Newline, carriage return, tab
+      "\x00\x01\x02", // NULL and control chars
+      "\b\f\v", // Backspace, form feed, vertical tab
+      "\\n\\r\\t", // Escaped sequences
+      "\u0000\u001F", // Unicode control characters
+      "\x1B[31mANSI\x1B[0m", // ANSI escape codes
+    ];
+
+    await sql`CREATE TABLE control_chars (id INTEGER, val TEXT)`;
+
+    for (let i = 0; i < controls.length; i++) {
+      await sql`INSERT INTO control_chars VALUES (${i}, ${controls[i]})`;
+      const result = await sql`SELECT val FROM control_chars WHERE id = ${i}`;
+      expect(result[0].val).toBe(controls[i]);
+    }
+  });
+
+  test("handles Unicode and emoji", async () => {
+    const unicode = [
+      "Hello 世界", // Chinese
+      "مرحبا بالعالم", // Arabic
+      "שלום עולם", // Hebrew
+      "Здравствуй мир", // Russian
+      "🚀🎉🌟", // Emojis
+      "👨‍👩‍👧‍👦", // Family emoji with ZWJ
+      "𝓗𝓮𝓵𝓵𝓸", // Mathematical bold script
+      "A\u0301", // Combining diacritical marks
+      "🏴󠁧󠁢󠁥󠁮󠁧󠁿", // Flag emoji with tags
+    ];
+
+    await sql`CREATE TABLE unicode_test (id INTEGER, val TEXT)`;
+
+    for (let i = 0; i < unicode.length; i++) {
+      await sql`INSERT INTO unicode_test VALUES (${i}, ${unicode[i]})`;
+      const result = await sql`SELECT val FROM unicode_test WHERE id = ${i}`;
+      expect(result[0].val).toBe(unicode[i]);
+    }
+  });
+
+  test("handles very long strings", async () => {
+    await sql`CREATE TABLE long_strings (id INTEGER, val TEXT)`;
+
+    // Test various long string scenarios
+    const lengths = [1000, 10000, 100000, 1000000];
+
+    for (const len of lengths) {
+      const longString = Buffer.alloc(len, "a").toString();
+      await sql`INSERT INTO long_strings VALUES (${len}, ${longString})`;
+
+      const result = await sql`SELECT LENGTH(val) as len FROM long_strings WHERE id = ${len}`;
+      expect(result[0].len).toBe(len);
+    }
+  });
+});
+
+describe("Triggers and Views", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("CREATE and use TRIGGER", async () => {
+    await sql`CREATE TABLE audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_name TEXT,
+      operation TEXT,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+    await sql`CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      updated_at TEXT
+    )`;
+
+    await sql`CREATE TRIGGER user_update_trigger
+      AFTER UPDATE ON users
+      BEGIN
+        INSERT INTO audit_log (table_name, operation) 
+        VALUES ('users', 'UPDATE');
+        UPDATE users SET updated_at = CURRENT_TIMESTAMP 
+        WHERE id = NEW.id;
+      END`;
+
+    await sql`INSERT INTO users (id, name) VALUES (1, 'Alice')`;
+    await sql`UPDATE users SET name = 'Alice Updated' WHERE id = 1`;
+
+    const logs = await sql`SELECT * FROM audit_log`;
+    expect(logs).toHaveLength(1);
+    expect(logs[0].operation).toBe("UPDATE");
+
+    const user = await sql`SELECT * FROM users WHERE id = 1`;
+    expect(user[0].updated_at).toBeDefined();
+  });
+
+  test("CREATE and query VIEW", async () => {
+    await sql`CREATE TABLE orders (
+      id INTEGER PRIMARY KEY,
+      customer_id INTEGER,
+      amount REAL,
+      status TEXT
+    )`;
+
+    await sql`INSERT INTO orders VALUES 
+      (1, 1, 100.0, 'completed'),
+      (2, 1, 50.0, 'pending'),
+      (3, 2, 200.0, 'completed'),
+      (4, 2, 75.0, 'cancelled')`;
+
+    await sql`CREATE VIEW customer_summary AS
+      SELECT 
+        customer_id,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) as total_spent,
+        AVG(amount) as avg_order_value
+      FROM orders
+      GROUP BY customer_id`;
+
+    const summary = await sql`SELECT * FROM customer_summary ORDER BY customer_id`;
+    expect(summary).toHaveLength(2);
+    expect(summary[0].total_orders).toBe(2);
+    expect(summary[0].total_spent).toBe(100.0);
+    expect(summary[1].total_orders).toBe(2);
+    expect(summary[1].total_spent).toBe(200.0);
+  });
+
+  test("triggers with WHEN conditions", async () => {
+    await sql`CREATE TABLE inventory (
+      id INTEGER PRIMARY KEY,
+      product TEXT,
+      quantity INTEGER,
+      reorder_level INTEGER DEFAULT 10
+    )`;
+
+    await sql`CREATE TABLE reorder_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product TEXT,
+      quantity INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+    await sql`CREATE TRIGGER low_stock_trigger
+      AFTER UPDATE OF quantity ON inventory
+      WHEN NEW.quantity < NEW.reorder_level
+      BEGIN
+        INSERT INTO reorder_alerts (product, quantity)
+        VALUES (NEW.product, NEW.quantity);
+      END`;
+
+    await sql`INSERT INTO inventory VALUES (1, 'Widget', 100, 10)`;
+    await sql`UPDATE inventory SET quantity = 5 WHERE id = 1`;
+
+    const alerts = await sql`SELECT * FROM reorder_alerts`;
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].product).toBe("Widget");
+    expect(alerts[0].quantity).toBe(5);
+
+    // Update that shouldn't trigger
+    await sql`UPDATE inventory SET quantity = 15 WHERE id = 1`;
+    const alerts2 = await sql`SELECT * FROM reorder_alerts`;
+    expect(alerts2).toHaveLength(1); // Still just one alert
+  });
+});
+
+describe("Indexes and Query Optimization", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("CREATE various types of indexes", async () => {
+    await sql`CREATE TABLE products (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      category TEXT,
+      price REAL,
+      sku TEXT UNIQUE,
+      description TEXT
+    )`;
+
+    // Simple index
+    await sql`CREATE INDEX idx_category ON products(category)`;
+
+    // Composite index
+    await sql`CREATE INDEX idx_category_price ON products(category, price DESC)`;
+
+    // Unique index
+    await sql`CREATE UNIQUE INDEX idx_sku ON products(sku)`;
+
+    // Partial index
+    await sql`CREATE INDEX idx_expensive ON products(price) WHERE price > 100`;
+
+    // Expression index
+    await sql`CREATE INDEX idx_name_lower ON products(LOWER(name))`;
+
+    // Insert test data
+    for (let i = 1; i <= 100; i++) {
+      await sql`INSERT INTO products VALUES (
+        ${i}, 
+        ${"Product " + i}, 
+        ${"Category " + (i % 10)},
+        ${i * 10.5},
+        ${"SKU-" + i.toString().padStart(5, "0")},
+        ${"Description for product " + i}
+      )`;
+    }
+
+    // Verify unique constraint works
+    try {
+      await sql`INSERT INTO products VALUES (101, 'Test', 'Test', 10, 'SKU-00001', 'Duplicate SKU')`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("UNIQUE");
+    }
+
+    // Query using indexes
+    const results = await sql`SELECT * FROM products WHERE category = 'Category 5'`;
+    expect(results.length).toBeGreaterThan(0);
+
+    const expensive = await sql`SELECT * FROM products WHERE price > 500`;
+    expect(expensive.length).toBeGreaterThan(0);
+  });
+
+  test("ANALYZE and query planning", async () => {
+    await sql`CREATE TABLE stats_test (
+      id INTEGER PRIMARY KEY,
+      type TEXT,
+      value INTEGER
+    )`;
+
+    await sql`CREATE INDEX idx_type ON stats_test(type)`;
+
+    // Insert skewed data
+    for (let i = 1; i <= 1000; i++) {
+      const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
+      await sql`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
+    }
+
+    // Update statistics
+    await sql`ANALYZE`;
+
+    // Check that statistics were gathered
+    const stats = await sql`SELECT * FROM sqlite_stat1`;
+    expect(stats.length).toBeGreaterThan(0);
+  });
+
+  test("covering indexes", async () => {
+    await sql`CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      email TEXT,
+      username TEXT,
+      created_at TEXT
+    )`;
+
+    // Create a covering index for common query
+    await sql`CREATE INDEX idx_email_username ON users(email, username)`;
+
+    for (let i = 1; i <= 100; i++) {
+      await sql`INSERT INTO users VALUES (
+        ${i},
+        ${"user" + i + "@example.com"},
+        ${"user" + i},
+        ${new Date().toISOString()}
+      )`;
+    }
+
+    // Query that can be satisfied entirely from the index
+    const result = await sql`SELECT email, username FROM users WHERE email LIKE 'user1%'`;
+    expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+describe("VACUUM and Database Maintenance", () => {
+  test("VACUUM command", async () => {
+    const dir = tempDirWithFiles("sqlite-vacuum-test", {});
+    const dbPath = path.join(dir, "vacuum.db");
+    const sql = new SQL(`sqlite://${dbPath}`);
+
+    // Create and populate table
+    await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
+
+    // Insert and delete lots of data to create fragmentation
+    for (let i = 0; i < 1000; i++) {
+      await sql`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
+    }
+
+    await sql`DELETE FROM vacuum_test WHERE id % 2 = 0`;
+
+    const statsBefore = await stat(dbPath);
+    const sizeBefore = statsBefore.size;
+
+    // Run VACUUM
+    await sql`VACUUM`;
+
+    const statsAfter = await stat(dbPath);
+    const sizeAfter = statsAfter.size;
+
+    // Database should be smaller after VACUUM
+    expect(sizeAfter).toBeLessThanOrEqual(sizeBefore);
+
+    await sql.close();
+    await rm(dir, { recursive: true });
+  });
+
+  test("incremental VACUUM with auto_vacuum", async () => {
+    const dir = tempDirWithFiles("sqlite-auto-vacuum-test", {});
+    const dbPath = path.join(dir, "auto_vacuum.db");
+    const sql = new SQL(`sqlite://${dbPath}`);
+
+    // Enable incremental auto-vacuum
+    await sql`PRAGMA auto_vacuum = 2`;
+
+    await sql`CREATE TABLE test (id INTEGER, data TEXT)`;
+
+    for (let i = 0; i < 100; i++) {
+      await sql`INSERT INTO test VALUES (${i}, ${Buffer.alloc(1000, "x").toString()})`;
+    }
+
+    await sql`DELETE FROM test WHERE id < 50`;
+
+    // Incremental vacuum - free up some pages
+    await sql`PRAGMA incremental_vacuum(10)`;
+
+    const pageCount = await sql`PRAGMA page_count`;
+    expect(pageCount[0].page_count).toBeGreaterThan(0);
+
+    await sql.close();
+    await rm(dir, { recursive: true });
+  });
+});
+
+describe("Backup and Restore Operations", () => {
+  test("backup to another file", async () => {
+    const dir = tempDirWithFiles("sqlite-backup-test", {});
+    const sourcePath = path.join(dir, "source.db");
+    const backupPath = path.join(dir, "backup.db");
+
+    const source = new SQL(`sqlite://${sourcePath}`);
+
+    // Create and populate source database
+    await source`CREATE TABLE backup_test (id INTEGER PRIMARY KEY, data TEXT)`;
+    for (let i = 1; i <= 10; i++) {
+      await source`INSERT INTO backup_test VALUES (${i}, ${"Data " + i})`;
+    }
+
+    // Use VACUUM INTO for backup (SQLite 3.27.0+)
+    await source.unsafe(`VACUUM INTO '${backupPath}'`);
+
+    await source.close();
+
+    // Verify backup
+    const backup = new SQL(`sqlite://${backupPath}`);
+    const data = await backup`SELECT * FROM backup_test`;
+    expect(data).toHaveLength(10);
+    expect(data[0].data).toBe("Data 1");
+
+    await backup.close();
+    await rm(dir, { recursive: true });
+  });
+});
+
+describe("Custom Collations and Functions", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("case-insensitive collation with NOCASE", async () => {
+    await sql`CREATE TABLE collation_test (
+      id INTEGER PRIMARY KEY,
+      name TEXT COLLATE NOCASE
+    )`;
+
+    await sql`INSERT INTO collation_test VALUES 
+      (1, 'Alice'),
+      (2, 'alice'),
+      (3, 'ALICE'),
+      (4, 'Bob')`;
+
+    // NOCASE collation makes comparison case-insensitive
+    const result = await sql`SELECT * FROM collation_test WHERE name = 'alice'`;
+    expect(result).toHaveLength(3);
+
+    // But preserves original case in storage
+    expect(result.map(r => r.name).sort()).toEqual(["ALICE", "Alice", "alice"]);
+  });
+
+  test("binary collation", async () => {
+    await sql`CREATE TABLE binary_collation (
+      id INTEGER PRIMARY KEY,
+      data TEXT COLLATE BINARY
+    )`;
+
+    await sql`INSERT INTO binary_collation VALUES 
+      (1, 'A'),
+      (2, 'a'),
+      (3, 'B'),
+      (4, 'b')`;
+
+    // BINARY collation is case-sensitive
+    const result = await sql`SELECT * FROM binary_collation ORDER BY data`;
+    expect(result.map(r => r.data)).toEqual(["A", "B", "a", "b"]);
+  });
+});
+
+describe("Window Functions", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE sales (
+      id INTEGER PRIMARY KEY,
+      employee TEXT,
+      department TEXT,
+      amount REAL,
+      sale_date TEXT
+    )`;
+
+    const sales = [
+      ["Alice", "Sales", 1000, "2024-01-01"],
+      ["Alice", "Sales", 1500, "2024-01-02"],
+      ["Bob", "Sales", 800, "2024-01-01"],
+      ["Bob", "Sales", 1200, "2024-01-02"],
+      ["Charlie", "Marketing", 900, "2024-01-01"],
+      ["Charlie", "Marketing", 1100, "2024-01-02"],
+    ];
+
+    for (const [employee, department, amount, date] of sales) {
+      await sql`INSERT INTO sales (employee, department, amount, sale_date) 
+                VALUES (${employee}, ${department}, ${amount}, ${date})`;
+    }
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("ROW_NUMBER window function", async () => {
+    const result = await sql`
+      SELECT 
+        employee,
+        amount,
+        ROW_NUMBER() OVER (ORDER BY amount DESC) as rank
+      FROM sales
+      ORDER BY rank
+    `;
+
+    expect(result[0].rank).toBe(1);
+    expect(result[0].amount).toBe(1500);
+    expect(result[result.length - 1].rank).toBe(6);
+  });
+
+  test("partition by with window functions", async () => {
+    const result = await sql`
+      SELECT 
+        employee,
+        department,
+        amount,
+        SUM(amount) OVER (PARTITION BY department) as dept_total,
+        AVG(amount) OVER (PARTITION BY employee) as employee_avg
+      FROM sales
+      ORDER BY department, employee
+    `;
+
+    // Verify department totals
+    const marketingRows = result.filter(r => r.department === "Marketing");
+    expect(marketingRows[0].dept_total).toBe(2000);
+
+    const salesRows = result.filter(r => r.department === "Sales");
+    expect(salesRows[0].dept_total).toBe(4500);
+  });
+
+  test("running totals with window functions", async () => {
+    const result = await sql`
+      SELECT 
+        employee,
+        sale_date,
+        amount,
+        SUM(amount) OVER (
+          PARTITION BY employee 
+          ORDER BY sale_date 
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) as running_total
+      FROM sales
+      WHERE employee = 'Alice'
+      ORDER BY sale_date
+    `;
+
+    expect(result[0].running_total).toBe(1000);
+    expect(result[1].running_total).toBe(2500);
+  });
+});
+
+describe("Check Constraints and Complex Validations", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("CHECK constraints on columns", async () => {
+    await sql`CREATE TABLE validated (
+      id INTEGER PRIMARY KEY,
+      age INTEGER CHECK (age >= 0 AND age <= 150),
+      email TEXT CHECK (email LIKE '%@%.%'),
+      status TEXT CHECK (status IN ('active', 'inactive', 'pending')),
+      percentage REAL CHECK (percentage >= 0 AND percentage <= 100)
+    )`;
+
+    // Valid insert
+    await sql`INSERT INTO validated VALUES (1, 25, 'test@example.com', 'active', 50.5)`;
+
+    // Invalid age
+    try {
+      await sql`INSERT INTO validated VALUES (2, -1, 'test@example.com', 'active', 50)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("CHECK");
+    }
+
+    // Invalid email
+    try {
+      await sql`INSERT INTO validated VALUES (3, 25, 'notanemail', 'active', 50)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("CHECK");
+    }
+
+    // Invalid status
+    try {
+      await sql`INSERT INTO validated VALUES (4, 25, 'test@example.com', 'invalid', 50)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("CHECK");
+    }
+
+    // Invalid percentage
+    try {
+      await sql`INSERT INTO validated VALUES (5, 25, 'test@example.com', 'active', 101)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("CHECK");
+    }
+  });
+
+  test("table-level CHECK constraints", async () => {
+    await sql`CREATE TABLE orders (
+      id INTEGER PRIMARY KEY,
+      start_date TEXT,
+      end_date TEXT,
+      quantity INTEGER,
+      price REAL,
+      CHECK (end_date >= start_date),
+      CHECK (quantity * price >= 0)
+    )`;
+
+    // Valid insert
+    await sql`INSERT INTO orders VALUES (1, '2024-01-01', '2024-01-31', 10, 9.99)`;
+
+    // Invalid date range
+    try {
+      await sql`INSERT INTO orders VALUES (2, '2024-02-01', '2024-01-01', 10, 9.99)`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("CHECK");
+    }
+  });
+});
+
+describe("Generated Columns", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("GENERATED ALWAYS AS virtual columns", async () => {
+    await sql`CREATE TABLE products (
+      id INTEGER PRIMARY KEY,
+      price REAL,
+      tax_rate REAL,
+      total_price REAL GENERATED ALWAYS AS (price * (1 + tax_rate)) VIRTUAL,
+      price_category TEXT GENERATED ALWAYS AS (
+        CASE 
+          WHEN price < 10 THEN 'cheap'
+          WHEN price < 100 THEN 'moderate'
+          ELSE 'expensive'
+        END
+      ) VIRTUAL
+    )`;
+
+    await sql`INSERT INTO products (id, price, tax_rate) VALUES 
+      (1, 5.00, 0.1),
+      (2, 50.00, 0.2),
+      (3, 500.00, 0.15)`;
+
+    const results = await sql`SELECT * FROM products ORDER BY id`;
+
+    expect(results[0].total_price).toBeCloseTo(5.5, 2);
+    expect(results[0].price_category).toBe("cheap");
+
+    expect(results[1].total_price).toBeCloseTo(60.0, 2);
+    expect(results[1].price_category).toBe("moderate");
+
+    expect(results[2].total_price).toBeCloseTo(575.0, 2);
+    expect(results[2].price_category).toBe("expensive");
+  });
+
+  test("GENERATED ALWAYS AS stored columns", async () => {
+    await sql`CREATE TABLE rectangles (
+      id INTEGER PRIMARY KEY,
+      width REAL,
+      height REAL,
+      area REAL GENERATED ALWAYS AS (width * height) STORED,
+      perimeter REAL GENERATED ALWAYS AS (2 * (width + height)) STORED
+    )`;
+
+    await sql`INSERT INTO rectangles (id, width, height) VALUES 
+      (1, 10, 20),
+      (2, 5.5, 3.2)`;
+
+    const results = await sql`SELECT * FROM rectangles ORDER BY id`;
+
+    expect(results[0].area).toBe(200);
+    expect(results[0].perimeter).toBe(60);
+
+    expect(results[1].area).toBeCloseTo(17.6, 2);
+    expect(results[1].perimeter).toBeCloseTo(17.4, 2);
+
+    // Update and verify generated columns update
+    await sql`UPDATE rectangles SET width = 15 WHERE id = 1`;
+    const updated = await sql`SELECT * FROM rectangles WHERE id = 1`;
+    expect(updated[0].area).toBe(300);
+    expect(updated[0].perimeter).toBe(70);
+  });
+});
+
+describe("Partial Indexes", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("partial index with WHERE clause", async () => {
+    await sql`CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY,
+      title TEXT,
+      status TEXT,
+      priority INTEGER,
+      due_date TEXT
+    )`;
+
+    // Index only incomplete high-priority tasks
+    await sql`CREATE INDEX idx_urgent_tasks 
+              ON tasks(due_date, priority) 
+              WHERE status != 'completed' AND priority > 3`;
+
+    // Insert test data
+    const tasks = [
+      ["Task 1", "pending", 5, "2024-01-01"],
+      ["Task 2", "completed", 5, "2024-01-01"],
+      ["Task 3", "pending", 2, "2024-01-01"],
+      ["Task 4", "pending", 4, "2024-01-02"],
+    ];
+
+    for (let i = 0; i < tasks.length; i++) {
+      const [title, status, priority, due_date] = tasks[i];
+      await sql`INSERT INTO tasks VALUES (${i + 1}, ${title}, ${status}, ${priority}, ${due_date})`;
+    }
+
+    // Query that uses the partial index
+    const urgent = await sql`
+      SELECT * FROM tasks 
+      WHERE status != 'completed' AND priority > 3
+      ORDER BY due_date, priority
+    `;
+
+    expect(urgent).toHaveLength(2);
+    expect(urgent[0].title).toBe("Task 1");
+    expect(urgent[1].title).toBe("Task 4");
+  });
+});
+
+describe("UPSERT Operations", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("INSERT OR REPLACE", async () => {
+    await sql`CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      email TEXT UNIQUE,
+      name TEXT,
+      login_count INTEGER DEFAULT 0
+    )`;
+
+    await sql`INSERT INTO users VALUES (1, 'alice@example.com', 'Alice', 1)`;
+
+    // This will replace the entire row
+    await sql`INSERT OR REPLACE INTO users VALUES (1, 'alice@example.com', 'Alice Updated', 5)`;
+
+    const result = await sql`SELECT * FROM users WHERE id = 1`;
+    expect(result[0].name).toBe("Alice Updated");
+    expect(result[0].login_count).toBe(5);
+  });
+
+  test("INSERT ON CONFLICT DO UPDATE", async () => {
+    await sql`CREATE TABLE inventory (
+      product_id INTEGER PRIMARY KEY,
+      name TEXT,
+      quantity INTEGER,
+      last_updated TEXT
+    )`;
+
+    await sql`INSERT INTO inventory VALUES (1, 'Widget', 100, '2024-01-01')`;
+
+    // UPSERT - update quantity if exists
+    await sql`
+      INSERT INTO inventory VALUES (1, 'Widget', 50, '2024-01-02')
+      ON CONFLICT(product_id) DO UPDATE SET
+        quantity = quantity + excluded.quantity,
+        last_updated = excluded.last_updated
+    `;
+
+    const result = await sql`SELECT * FROM inventory WHERE product_id = 1`;
+    expect(result[0].quantity).toBe(150);
+    expect(result[0].last_updated).toBe("2024-01-02");
+
+    // Insert new product
+    await sql`
+      INSERT INTO inventory VALUES (2, 'Gadget', 75, '2024-01-02')
+      ON CONFLICT(product_id) DO UPDATE SET
+        quantity = quantity + excluded.quantity
+    `;
+
+    const all = await sql`SELECT * FROM inventory ORDER BY product_id`;
+    expect(all).toHaveLength(2);
+  });
+
+  test("INSERT ON CONFLICT DO NOTHING", async () => {
+    await sql`CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )`;
+
+    await sql`INSERT INTO settings VALUES ('theme', 'dark')`;
+
+    // This should do nothing
+    const result = await sql`
+      INSERT INTO settings VALUES ('theme', 'light')
+      ON CONFLICT(key) DO NOTHING
+      RETURNING *
+    `;
+
+    expect(result).toHaveLength(0);
+
+    // Verify original value is unchanged
+    const setting = await sql`SELECT * FROM settings WHERE key = 'theme'`;
+    expect(setting[0].value).toBe("dark");
+  });
+});
+
+describe("WITHOUT ROWID Tables", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("WITHOUT ROWID table with composite primary key", async () => {
+    await sql`CREATE TABLE sessions (
+      user_id INTEGER,
+      device_id TEXT,
+      token TEXT,
+      created_at TEXT,
+      PRIMARY KEY (user_id, device_id)
+    ) WITHOUT ROWID`;
+
+    await sql`INSERT INTO sessions VALUES 
+      (1, 'phone', 'token1', '2024-01-01'),
+      (1, 'laptop', 'token2', '2024-01-01'),
+      (2, 'phone', 'token3', '2024-01-01')`;
+
+    const results = await sql`SELECT * FROM sessions WHERE user_id = 1`;
+    expect(results).toHaveLength(2);
+
+    // Verify composite key uniqueness
+    try {
+      await sql`INSERT INTO sessions VALUES (1, 'phone', 'token4', '2024-01-02')`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("UNIQUE");
     }
   });
 });

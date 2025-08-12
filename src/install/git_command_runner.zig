@@ -117,10 +117,42 @@ pub const GitCommandRunner = struct {
 
         runner.manager.active_git_commands.insert(runner);
 
-        // Copy argv to a local array to avoid const issues
+        // Find the git executable
+        var path_buf: bun.PathBuffer = undefined;
+        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", manager.cache_directory_path, "git") orelse {
+            log("Failed to find git executable in PATH", .{});
+            // Create a failed task
+            const task = manager.preallocated_resolve_tasks.get();
+            task.* = Task{
+                .package_manager = manager,
+                .log = logger.Log.init(manager.allocator),
+                .tag = .git_clone,
+                .request = .{
+                    .git_clone = .{
+                        .name = operation.clone.name,
+                        .url = operation.clone.url,
+                        .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                        .dep_id = operation.clone.dep_id,
+                        .res = operation.clone.res,
+                    },
+                },
+                .id = task_id,
+                .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                .data = .{ .git_clone = bun.invalid_fd },
+                .status = .fail,
+                .err = error.GitCommandFailed,
+            };
+            manager.resolve_tasks.push(task);
+            manager.wake();
+            runner.deinit();
+            return;
+        };
+
+        // Copy argv to a local array to avoid const issues, using the full git path
         var argv: [16]?[*:0]const u8 = undefined;
-        var argc: usize = 0;
-        for (argv_input) |arg| {
+        argv[0] = git_path.ptr; // Use the full path to git
+        var argc: usize = 1;
+        for (argv_input[1..]) |arg| {
             if (arg == null) break;
             argv[argc] = arg;
             argc += 1;
@@ -170,6 +202,7 @@ pub const GitCommandRunner = struct {
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = runner.stdout.source.?.pipe },
             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = runner.stderr.source.?.pipe },
             .cwd = manager.cache_directory_path,
+            .argv0 = git_path.ptr,
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&manager.event_loop),
             },
@@ -496,9 +529,17 @@ pub const GitCommandRunner = struct {
                         // Now run the actual checkout command
                         this.checkout_phase = .checkout;
 
+                        // Find the git executable
+                        var path_buf2: bun.PathBuffer = undefined;
+                        const git_path = bun.which(&path_buf2, bun.getenvZ("PATH") orelse "", this.manager.cache_directory_path, "git") orelse {
+                            log("Failed to find git executable in PATH for checkout", .{});
+                            this.handleCheckoutError(error.GitCommandFailed);
+                            return;
+                        };
+
                         // Build checkout command: git -C <folder> checkout --quiet <resolved>
                         const argv: [7]?[*:0]const u8 = .{
-                            "git",
+                            git_path.ptr,
                             "-C",
                             bun.default_allocator.dupeZ(u8, checkout.target_dir) catch unreachable,
                             "checkout",
@@ -529,6 +570,7 @@ pub const GitCommandRunner = struct {
                             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
                             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = this.stderr.source.?.pipe },
                             .cwd = this.manager.cache_directory_path,
+                            .argv0 = git_path.ptr,
                             .windows = if (Environment.isWindows) .{
                                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
                             },

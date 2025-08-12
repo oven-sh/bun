@@ -7,6 +7,7 @@ declare global {
   }
 }
 
+export type { SQLResultArray };
 class SQLResultArray extends PublicArray {
   public count!: number | null;
   public command!: string | null;
@@ -428,8 +429,19 @@ function parseOptions(
   return ret;
 }
 
-export interface SQLAdapter {
-  //
+export type OnConnected<Connection> = (
+  ...args: [error: null, connection: Connection] | [error: Error, connection: null]
+) => void;
+
+export interface DatabaseAdapter<Connection, Handle> {
+  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
+  createQueryHandle(sql: string, values: unknown[], flags: number): Handle;
+  connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
+  release(connection: Connection, connectingEvent?: boolean): void;
+  close(options?: { timeout?: number }): Promise<void>;
+  flush(): void;
+  isConnected(): boolean;
+  get closed(): boolean;
 }
 
 export default {

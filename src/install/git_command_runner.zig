@@ -152,7 +152,7 @@ pub const GitCommandRunner = struct {
                 .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                 .data = .{ .git_clone = bun.invalid_fd },
                 .status = .fail,
-                .err = err,
+                .err = error.GitCommandFailed,
             };
             manager.resolve_tasks.push(task);
             manager.wake();
@@ -176,10 +176,12 @@ pub const GitCommandRunner = struct {
             .stream = false,
         };
         
-        // About to spawn git process
-        // About to spawn git process
+        // About to spawn git process with argv[0]="{s}"
+        if (comptime Environment.allow_assert) {
+            log("Spawning git with argv[0]={s}, cwd={s}", .{ argv[0].?, manager.cache_directory_path });
+        }
         var spawn_result = bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), envp) catch |err| {
-            log("Failed to spawn git process: {}", .{err});
+            log("Failed to spawn git process: {} (argv[0]={s})", .{ err, argv[0].? });
             // Create a failed task with proper error message
             const task = manager.preallocated_resolve_tasks.get();
             task.* = Task{
@@ -199,7 +201,7 @@ pub const GitCommandRunner = struct {
                 .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                 .data = .{ .git_clone = bun.invalid_fd },
                 .status = .fail,
-                .err = err,
+                .err = error.GitCommandFailed,
             };
             manager.resolve_tasks.push(task);
             manager.wake();
@@ -227,7 +229,7 @@ pub const GitCommandRunner = struct {
                 .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                 .data = .{ .git_clone = bun.invalid_fd },
                 .status = .fail,
-                .err = err,
+                .err = error.GitCommandFailed,
             };
             manager.resolve_tasks.push(task);
             manager.wake();
@@ -266,7 +268,7 @@ pub const GitCommandRunner = struct {
                             .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                             .data = .{ .git_clone = bun.invalid_fd },
                             .status = .fail,
-                            .err = err,
+                            .err = error.GitCommandFailed,
                         };
                         manager.resolve_tasks.push(task);
                         manager.wake();
@@ -309,7 +311,7 @@ pub const GitCommandRunner = struct {
                             .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                             .data = .{ .git_clone = bun.invalid_fd },
                             .status = .fail,
-                            .err = err,
+                            .err = error.GitCommandFailed,
                         };
                         manager.resolve_tasks.push(task);
                         manager.wake();
@@ -349,7 +351,7 @@ pub const GitCommandRunner = struct {
                         .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                         .data = .{ .git_clone = bun.invalid_fd },
                         .status = .fail,
-                        .err = err,
+                        .err = error.GitCommandFailed,
                     };
                     manager.resolve_tasks.push(task);
                     manager.wake();
@@ -381,7 +383,7 @@ pub const GitCommandRunner = struct {
                         .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
                         .data = .{ .git_clone = bun.invalid_fd },
                         .status = .fail,
-                        .err = err,
+                        .err = error.GitCommandFailed,
                     };
                     manager.resolve_tasks.push(task);
                     manager.wake();

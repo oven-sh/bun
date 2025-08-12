@@ -11122,12 +11122,129 @@ describe("should proper handle connection errors", () => {
   });
 });
 
-// describe("Misc", () => {
-//   test("UnsupportedAdapterError exists", () => {
-//     expect(Bun.SQL.UnsupportedAdapterError).toBeDefined();
-//     expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toHaveProperty("options");
-//     expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toMatchInlineSnapshot(
-//       `[UnsupportedAdapterError: Unsupported adapter: sqlite. Supported adapters: "postgres", "sqlite"]`,
-//     );
-//   });
-// });
+describe("Misc", () => {
+  // test("UnsupportedAdapterError exists", () => {
+  //   expect(Bun.SQL.UnsupportedAdapterError).toBeDefined();
+  //   expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toHaveProperty("options");
+  //   expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toMatchInlineSnapshot(
+  //     `[UnsupportedAdapterError: Unsupported adapter: sqlite. Supported adapters: "postgres", "sqlite"]`,
+  //   );
+  // });
+
+  describe("Adapter override URL parsing", () => {
+    test("explicit adapter='sqlite' overrides postgres:// URL", async () => {
+      // Even though URL suggests postgres, explicit adapter should win
+      const sql = new Bun.SQL("postgres://localhost:5432/testdb", {
+        adapter: "sqlite",
+        filename: ":memory:",
+      });
+
+      // Verify it's actually SQLite by checking the adapter type
+      expect(sql.options.adapter).toBe("sqlite");
+
+      // SQLite-specific operation should work
+      await sql`CREATE TABLE test_adapter (id INTEGER PRIMARY KEY)`;
+      await sql`INSERT INTO test_adapter (id) VALUES (1)`;
+      const result = await sql`SELECT * FROM test_adapter`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+    });
+
+    test("explicit adapter='postgres' with sqlite:// URL should throw as invalid url", async () => {
+      // Skip if no postgres available
+      if (!process.env.DATABASE_URL) {
+        return;
+      }
+
+      let sql: Bun.SQL | undefined;
+      let thrown = false;
+
+      try {
+        sql = new Bun.SQL("sqlite://:memory:", {
+          adapter: "postgres",
+          hostname: new URL(process.env.DATABASE_URL).hostname,
+          port: parseInt(new URL(process.env.DATABASE_URL).port || "5432"),
+          username: new URL(process.env.DATABASE_URL).username || "postgres",
+          password: new URL(process.env.DATABASE_URL).password || "",
+          database: new URL(process.env.DATABASE_URL).pathname.slice(1),
+          max: 1,
+        });
+
+        expect(false).toBeTrue();
+      } catch (e) {
+        thrown = true;
+        expect(e).toBeInstanceOf(TypeError);
+        expect(e.message).toMatchInlineSnapshot(`""sqlite://:memory:" cannot be parsed as a URL."`);
+      }
+
+      expect(sql).toBeUndefined();
+      expect(thrown).toBeTrue();
+    });
+
+    test("explicit adapter='sqlite' with sqlite:// URL works", async () => {
+      // Both URL and adapter agree on sqlite
+      const sql = new Bun.SQL("sqlite://:memory:", {
+        adapter: "sqlite",
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+
+      await sql`CREATE TABLE test_consistent (id INTEGER)`;
+      await sql`INSERT INTO test_consistent VALUES (42)`;
+      const result = await sql`SELECT * FROM test_consistent`;
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(42);
+
+      await sql.close();
+    });
+
+    test("explicit adapter='postgres' with postgres:// URL works", async () => {
+      // Skip if no postgres available
+      if (!process.env.DATABASE_URL) {
+        return;
+      }
+
+      // Both URL and adapter agree on postgres
+      const sql = new Bun.SQL(process.env.DATABASE_URL, {
+        adapter: "postgres",
+        max: 1,
+      });
+
+      expect(sql.options.adapter).toBe("postgres");
+
+      const randomTable = "test_consistent_" + Math.random().toString(36).substring(7);
+      await sql`CREATE TEMP TABLE ${sql(randomTable)} (value INT)`;
+      await sql`INSERT INTO ${sql(randomTable)} VALUES (42)`;
+      const result = await sql`SELECT * FROM ${sql(randomTable)}`;
+      expect(result).toHaveLength(1);
+      expect(result[0].value).toBe(42);
+
+      await sql.close();
+    });
+
+    test("explicit adapter overrides even with conflicting connection string patterns", async () => {
+      // Test that adapter explicitly set to sqlite works even with postgres-like connection info
+      const sql = new Bun.SQL(undefined as never, {
+        adapter: "sqlite",
+        filename: ":memory:",
+        hostname: "localhost", // These would normally suggest postgres
+        port: 5432,
+        username: "postgres",
+        password: "password",
+        database: "testdb",
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+
+      // Should still work as SQLite
+      await sql`CREATE TABLE override_test (name TEXT)`;
+      await sql`INSERT INTO override_test VALUES ('test')`;
+      const result = await sql`SELECT * FROM override_test`;
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("test");
+
+      await sql.close();
+    });
+  });
+});

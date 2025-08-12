@@ -195,13 +195,13 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
             throw new Error("SQLite database not initialized");
           }
 
-          // Check for multiple statements by looking for semicolons (simple check)
-          const hasMultipleStatements = sql.includes(";") && sql.split(";").filter(s => s.trim()).length > 1;
+          const stmt = db.prepare(sql);
+          const hasMultipleStatements = stmt.hasMultipleStatements;
 
-          // Check if this is a multi-statement query
           if (hasMultipleStatements) {
-            // For multiple statements, we need to execute them separately
-            // and return the last result
+            // finalize because we split it up(maybe change this?)
+            stmt.finalize();
+
             const statements = sql.split(";").filter(s => s.trim());
             let lastResult = new SQLResultArray();
 
@@ -237,15 +237,10 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
                   lastResult.lastInsertRowid = changes.lastInsertRowid;
                 }
               }
-
-              stmt.finalize();
             }
 
             query.resolve(lastResult);
           } else {
-            // Prepare the statement
-            const stmt = db.prepare(sql);
-            // Single statement handling (existing code)
             let result: any;
 
             const commandMatch = sql.trim().match(/^(\w+)/i);

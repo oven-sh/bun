@@ -178,10 +178,12 @@ function parseOptions(
   }
 
   if (options.adapter === "sqlite") {
+    const filenameFromOptions = options.filename || stringOrUrl;
+
     return {
       ...options,
       adapter: "sqlite",
-      filename: parseDefinitelySqliteUrl(options.filename || stringOrUrl) || ":memory:",
+      filename: filenameFromOptions || ":memory:",
     };
   }
 
@@ -245,7 +247,11 @@ function parseOptions(
       tls = options.tls;
     }
   } else if (typeof stringOrUrl === "string") {
-    url = new URL(stringOrUrl);
+    try {
+      url = new URL(stringOrUrl);
+    } catch (e) {
+      throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`);
+    }
   }
   query = "";
 

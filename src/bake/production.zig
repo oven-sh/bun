@@ -1,5 +1,5 @@
 //! Implements building a Bake application to production
-const log = bun.Output.scoped(.production, false);
+const log = bun.Output.scoped(.production, .visible);
 
 pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
     bun.bake.printWarning();

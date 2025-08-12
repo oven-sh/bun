@@ -46,7 +46,7 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SYS, .visible);
 pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {

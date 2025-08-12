@@ -1,7 +1,7 @@
 pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 
-const debuglog = Output.scoped(.Resolver, true);
+const debuglog = Output.scoped(.Resolver, .hidden);
 
 pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
@@ -1602,7 +1602,7 @@ pub const Resolver = struct {
         }
     }
 
-    const dev = Output.scoped(.Resolver, false);
+    const dev = Output.scoped(.Resolver, .visible);
 
     /// Directory cache keys must follow the following rules. If the rules are broken,
     /// then there will be conflicting cache entries, and trying to bust the cache may not work.

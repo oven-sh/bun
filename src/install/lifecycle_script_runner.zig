@@ -1,4 +1,4 @@
-const log = Output.scoped(.Script, false);
+const log = Output.scoped(.Script, .visible);
 pub const LifecycleScriptSubprocess = struct {
     package_name: string,
 

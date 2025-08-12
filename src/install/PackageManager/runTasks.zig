@@ -743,7 +743,7 @@ pub fn runTasks(
                     const git = clone.res.value.git;
                     const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
                     const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
-                    
+
                     if (comptime Environment.isDebug) {
                         Output.prettyErrorln("[git-clone] Processing git clone result: repo={s}, committish={s}", .{ repo, committish });
                     }
@@ -757,7 +757,7 @@ pub fn runTasks(
                         committish,
                         task.id,
                     );
-                    
+
                     if (comptime Environment.isDebug) {
                         Output.prettyErrorln("[git-clone] Resolved commit: {s}", .{resolved});
                     }

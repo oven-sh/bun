@@ -1,6 +1,6 @@
-import type * as BunTypes from "bun";
 import type { PostgresAdapter, PostgresDotZig } from "internal/sql/postgres";
 import type { Query } from "internal/sql/query";
+import type { DatabaseAdapter, SQLHelper } from "internal/sql/shared";
 
 const {
   Query,
@@ -137,6 +137,17 @@ interface TransactionState {
   queries: Set<Query<any, any>>;
 }
 
+function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): DatabaseAdapter<any, any> {
+  switch (options.adapter) {
+    case "postgres":
+      return new PostgresAdapter(options);
+    case "sqlite":
+      throw new Error("SQLite is unsupported right now");
+    default:
+      throw new Error(`Unsupported adapter: ${(options as { adapter?: string }).adapter}.`);
+  }
+}
+
 const SQL: typeof Bun.SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
@@ -147,7 +158,7 @@ const SQL: typeof Bun.SQL = function SQL(
     throw new Error("SQLite is unsupported right now");
   }
 
-  const pool = new PostgresAdapter(connectionInfo);
+  const pool = adapterFromOptions(connectionInfo);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
     // connection closed mid query this will not be called if the query finishes first
@@ -328,10 +339,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function reserved_sql(
-      strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-      ...values: any[]
-    ) {
+    function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -349,9 +357,11 @@ const SQL: typeof Bun.SQL = function SQL(
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
+
     reserved_sql.unsafe = (string, args = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
+
     reserved_sql.file = async (path: string, args = []) => {
       return await Bun.file(path)
         .text()
@@ -359,6 +369,7 @@ const SQL: typeof Bun.SQL = function SQL(
           return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
         });
     };
+
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
@@ -1052,7 +1063,7 @@ const SQL: typeof Bun.SQL = function SQL(
   return sql;
 };
 
-var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
+var lazyDefaultSQL: Bun.SQL;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;

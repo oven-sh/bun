@@ -16,40 +16,40 @@ test.skipIf(process.platform !== "darwin")("Darwin accept() with socklen=0 shoul
 
   try {
     const port = server.port;
-    
+
     // Create the problematic scenario: IPv4 connections to IPv6 dual-stack
     // listener with immediate abort (RST packet). This is the exact condition
     // that triggers the Darwin kernel bug where accept() returns socklen=0.
     const abortConnections = async (count: number) => {
       const promises: Promise<void>[] = [];
-      
+
       for (let i = 0; i < count; i++) {
         promises.push(
-          new Promise<void>((resolve) => {
+          new Promise<void>(resolve => {
             const socket = new net.Socket();
-            
+
             const cleanup = () => {
               socket.destroy();
               resolve();
             };
-            
+
             socket.connect(port, "127.0.0.1", () => {
               // Immediate destroy to send RST packet
               socket.destroy();
             });
-            
+
             socket.on("error", cleanup);
             socket.on("close", cleanup);
-          })
+          }),
         );
       }
-      
+
       await Promise.all(promises);
     };
-    
+
     // Fire off aborted connections that could trigger the bug
     await abortConnections(50);
-    
+
     // Verify server is still responding (didn't crash or hang)
     const response = await fetch(`http://127.0.0.1:${port}/`);
     expect(response.ok).toBe(true);
@@ -57,12 +57,11 @@ test.skipIf(process.platform !== "darwin")("Darwin accept() with socklen=0 shoul
 
     // Try a few more aborts to stress test the fix
     await abortConnections(25);
-    
+
     // Final verification
     const finalResponse = await fetch(`http://127.0.0.1:${port}/test`);
     expect(finalResponse.ok).toBe(true);
     expect(await finalResponse.text()).toBe("OK");
-    
   } finally {
     server.stop();
   }
@@ -80,25 +79,26 @@ test.skipIf(process.platform !== "darwin")("rapid IPv4->IPv6 dual-stack connecti
 
   try {
     const port = server.port;
-    
+
     // Concurrent connection attempts to maximize chances of race condition
     const connectAndAbort = () => {
-      return new Promise<void>((resolve) => {
+      return new Promise<void>(resolve => {
         const socket = new net.Socket();
         socket.connect(port, "127.0.0.1", () => socket.destroy());
         socket.on("error", resolve);
         socket.on("close", resolve);
       });
     };
-    
+
     // Execute many concurrent connection aborts
-    const connections = Array(100).fill(null).map(() => connectAndAbort());
+    const connections = Array(100)
+      .fill(null)
+      .map(() => connectAndAbort());
     await Promise.all(connections);
-    
+
     // Server should still be functional
     const response = await fetch(`http://127.0.0.1:${port}/`);
     expect(await response.text()).toBe("Server alive");
-    
   } finally {
     server.stop();
   }

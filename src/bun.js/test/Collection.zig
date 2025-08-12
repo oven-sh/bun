@@ -134,11 +134,13 @@ pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, prev
     this.active_scope = previous_scope;
 }
 
+const std = @import("std");
+
+const describe2 = @import("./describe2.zig");
+const BunTest = describe2.BunTest;
+const Collection = describe2.Collection;
+const DescribeScope = describe2.DescribeScope;
+const group = describe2.group;
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const std = @import("std");
-const describe2 = @import("describe2.zig");
-const DescribeScope = describe2.DescribeScope;
-const Collection = describe2.Collection;
-const group = describe2.group;
-const BunTest = describe2.BunTest;

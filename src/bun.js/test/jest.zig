@@ -60,8 +60,6 @@ const CurrentFile = struct {
     }
 };
 
-const Describe2 = @import("describe2.zig");
-
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
@@ -2492,6 +2490,7 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
 
 const string = []const u8;
 
+const Describe2 = @import("./describe2.zig");
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;

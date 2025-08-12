@@ -84,7 +84,7 @@ pub const BunTest = struct {
         execution,
     },
     collection: Collection,
-    execution: TestExecution,
+    execution: Execution,
 
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
         var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
@@ -115,7 +115,7 @@ pub const BunTest = struct {
     }
 };
 
-pub const Collection = @import("collection.zig");
+pub const Collection = @import("./Collection.zig");
 
 pub const DescribeScope = struct {
     parent: ?*DescribeScope,
@@ -165,11 +165,7 @@ const TestScheduleEntry2 = union(enum) {
     }
 };
 
-const TestExecution = struct {
-    pub fn init(_: std.mem.Allocator) TestExecution {
-        return .{};
-    }
-};
+pub const Execution = @import("./Execution.zig");
 
 // here's how to execute describe blocks:
 // - when you call describe:
@@ -229,6 +225,7 @@ pub const group = struct {
     }
 };
 
+const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const std = @import("std");

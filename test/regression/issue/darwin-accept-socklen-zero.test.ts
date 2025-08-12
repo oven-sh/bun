@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, isPosix } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import net from "node:net";
 
 // Test for Darwin accept() bug where socklen=0 indicates dead socket
@@ -92,7 +92,7 @@ export default {
 
     for (let i = 0; i < 50; i++) {
       promises.push(
-        new Promise<void>((resolve) => {
+        new Promise<void>(resolve => {
           // Create IPv4 connection to the IPv6 dual-stack listener
           const socket = net.createConnection({
             host: "127.0.0.1", // IPv4 address
@@ -116,12 +116,12 @@ export default {
             socket.destroy();
             resolve();
           }, 100);
-        })
+        }),
       );
 
       // Small delay between connections to increase chances of hitting race condition
       if (i % 10 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
 
@@ -141,7 +141,7 @@ export default {
     }
 
     // Give server time to process all connections
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Send termination signal
     serverProc.kill();
@@ -151,10 +151,9 @@ export default {
 
     // Server should exit cleanly without crashing
     expect(exitCode).toBe(0);
-
   } finally {
     reader.releaseLock();
-    
+
     // Ensure cleanup
     if (!serverProc.killed) {
       serverProc.kill();
@@ -181,36 +180,36 @@ test("IPv4 to IPv6 dual-stack with immediate abort pattern", async () => {
 
   try {
     const port = server.port;
-    
+
     // Rapid fire IPv4 connections with immediate abort
     // This pattern is most likely to trigger the Darwin kernel bug
     const abortPromises: Promise<void>[] = [];
-    
+
     for (let i = 0; i < 100; i++) {
       abortPromises.push(
-        new Promise<void>((resolve) => {
+        new Promise<void>(resolve => {
           const socket = new net.Socket();
-          
+
           socket.connect(port, "127.0.0.1", () => {
             // Immediate destroy to send RST
             socket.destroy();
           });
-          
+
           socket.on("error", () => resolve());
           socket.on("close", () => resolve());
-          
+
           // Ensure resolve even if events don't fire
           setTimeout(() => {
             socket.destroy();
             resolve();
           }, 50);
-        })
+        }),
       );
     }
-    
+
     // Execute all connection attempts concurrently
     await Promise.all(abortPromises);
-    
+
     // Verify server is still responding
     const response = await fetch(`http://127.0.0.1:${port}/`);
     const text = await response.text();
@@ -218,88 +217,90 @@ test("IPv4 to IPv6 dual-stack with immediate abort pattern", async () => {
 
     // Server should still be functional - no crash, no hang
     expect(server.port).toBe(port);
-    
   } finally {
     server.stop();
   }
 }, 5000);
 
 // Stress test to maximize chances of hitting the race condition
-test.skipIf(process.platform !== "darwin")("stress test: concurrent IPv4->IPv6 dual-stack abort storm", async () => {
-  // This is an aggressive stress test designed to maximize the probability
-  // of hitting the exact race condition that causes addr->len == 0
-  const server = Bun.serve({
-    hostname: "::", // IPv6 dual-stack listener
-    port: 0,
-    fetch(req) {
-      return new Response(`Request handled: ${Date.now()}`);
-    },
-  });
+test.skipIf(process.platform !== "darwin")(
+  "stress test: concurrent IPv4->IPv6 dual-stack abort storm",
+  async () => {
+    // This is an aggressive stress test designed to maximize the probability
+    // of hitting the exact race condition that causes addr->len == 0
+    const server = Bun.serve({
+      hostname: "::", // IPv6 dual-stack listener
+      port: 0,
+      fetch(req) {
+        return new Response(`Request handled: ${Date.now()}`);
+      },
+    });
 
-  try {
-    const port = server.port;
-    console.log(`Testing with server on port ${port}`);
-    
-    // Multi-wave attack to increase chances of race condition
-    const waves = 5;
-    const connectionsPerWave = 200;
-    
-    for (let wave = 0; wave < waves; wave++) {
-      console.log(`Starting wave ${wave + 1}/${waves} with ${connectionsPerWave} connections`);
-      
-      const wavePromises: Promise<void>[] = [];
-      
-      for (let i = 0; i < connectionsPerWave; i++) {
-        wavePromises.push(
-          new Promise<void>((resolve) => {
-            const socket = new net.Socket();
-            
-            // Vary the timing slightly to hit different race windows
-            const delayMs = Math.random() * 5;
-            
-            setTimeout(() => {
-              socket.connect(port, "127.0.0.1", () => {
-                // Immediate destruction to create RST packet
-                socket.destroy();
-              });
-              
-              socket.on("error", () => resolve());
-              socket.on("close", () => resolve());
-              
-              // Failsafe
+    try {
+      const port = server.port;
+      console.log(`Testing with server on port ${port}`);
+
+      // Multi-wave attack to increase chances of race condition
+      const waves = 5;
+      const connectionsPerWave = 200;
+
+      for (let wave = 0; wave < waves; wave++) {
+        console.log(`Starting wave ${wave + 1}/${waves} with ${connectionsPerWave} connections`);
+
+        const wavePromises: Promise<void>[] = [];
+
+        for (let i = 0; i < connectionsPerWave; i++) {
+          wavePromises.push(
+            new Promise<void>(resolve => {
+              const socket = new net.Socket();
+
+              // Vary the timing slightly to hit different race windows
+              const delayMs = Math.random() * 5;
+
               setTimeout(() => {
-                socket.destroy();
-                resolve();
-              }, 100);
-            }, delayMs);
-          })
-        );
+                socket.connect(port, "127.0.0.1", () => {
+                  // Immediate destruction to create RST packet
+                  socket.destroy();
+                });
+
+                socket.on("error", () => resolve());
+                socket.on("close", () => resolve());
+
+                // Failsafe
+                setTimeout(() => {
+                  socket.destroy();
+                  resolve();
+                }, 100);
+              }, delayMs);
+            }),
+          );
+        }
+
+        // Wait for this wave to complete
+        await Promise.all(wavePromises);
+
+        // Verify server survived this wave
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`);
+          const text = await response.text();
+          expect(text).toContain("Request handled:");
+          console.log(`Wave ${wave + 1} completed, server still responsive`);
+        } catch (error) {
+          throw new Error(`Server became unresponsive after wave ${wave + 1}: ${error}`);
+        }
+
+        // Small delay between waves
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
-      
-      // Wait for this wave to complete
-      await Promise.all(wavePromises);
-      
-      // Verify server survived this wave
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/health`);
-        const text = await response.text();
-        expect(text).toContain("Request handled:");
-        console.log(`Wave ${wave + 1} completed, server still responsive`);
-      } catch (error) {
-        throw new Error(`Server became unresponsive after wave ${wave + 1}: ${error}`);
-      }
-      
-      // Small delay between waves
-      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Final verification that server is still fully functional
+      const finalResponse = await fetch(`http://127.0.0.1:${port}/final`);
+      expect(finalResponse.ok).toBe(true);
+
+      console.log(`Stress test completed successfully: ${waves * connectionsPerWave} aborted connections processed`);
+    } finally {
+      server.stop();
     }
-    
-    // Final verification that server is still fully functional
-    const finalResponse = await fetch(`http://127.0.0.1:${port}/final`);
-    expect(finalResponse.ok).toBe(true);
-    
-    console.log(`Stress test completed successfully: ${waves * connectionsPerWave} aborted connections processed`);
-    
-  } finally {
-    server.stop();
-  }
-}, 15000); // Extended timeout for stress test
+  },
+  15000,
+); // Extended timeout for stress test

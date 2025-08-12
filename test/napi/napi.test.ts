@@ -523,8 +523,12 @@ describe("napi", () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
 
-  it("runs the napi_module_register callback after dlopen finishes", () => {
-    checkSameOutput("test_constructor_order", []);
+  it("runs the napi_module_register callback after dlopen finishes", async () => {
+    await checkSameOutput("test_constructor_order", []);
+  });
+
+  it("works when creating an empty object with an exception pending", async () => {
+    await checkSameOutput("test_deferred_exceptions", []);
   });
 });
 

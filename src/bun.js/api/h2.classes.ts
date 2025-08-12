@@ -125,6 +125,7 @@ export default [
     finalize: true,
     construct: true,
     constructNeedsThis: true,
+    memoryCost: true,
     klass: {},
     values: [
       "context",

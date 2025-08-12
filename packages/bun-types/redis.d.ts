@@ -587,7 +587,17 @@ declare module "bun" {
      */
     ping(message: RedisClient.KeyLike): Promise<string>;
 
-    publish(channel: string, message: string): Promise<void>;
+    /**
+     * Publish a message to a Redis channel.
+     *
+     * @param channel The channel to publish to.
+     * @param message The message to publish.
+     *
+     * @returns The number of clients that received the message. Note that in a
+     *          cluster this returns the total number of clients in the same
+     *          node.
+     */
+    publish(channel: string, message: string): Promise<number>;
 
     /**
      * Subscribe to a Redis channel.

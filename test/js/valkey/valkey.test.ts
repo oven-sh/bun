@@ -189,7 +189,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(redis.publish(testChannel, testMessage)).resolves.toBeUndefined();
+      expect(await redis.publish(testChannel, testMessage)).toBe(1);
     });
 
     test("setting in subscriber mode gracefully fails", async () => {
@@ -221,7 +221,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       });
 
       Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-        await redis.publish(testChannel, testMessage);
+        expect(await redis.publish(testChannel, testMessage)).toBe(1);
       });
 
       // Wait a little bit just to ensure all the messages are flushed.
@@ -242,7 +242,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       var sentMessages: string[] = [];
       Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
         const message = randomUUIDv7();
-        await redis.publish(testChannel, message);
+        expect(await redis.publish(testChannel, message)).toBe(1);
         sentMessages.push(message);
       });
 
@@ -270,7 +270,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
         const channel = channels[randomCoinFlip() ? 0 : 1];
         const message = randomUUIDv7();
 
-        await redis.publish(channel, message);
+        expect(await redis.publish(channel, message)).toBe(1);
 
         sentMessages[channel] = sentMessages[channel] || [];
         sentMessages[channel].push(message);
@@ -305,9 +305,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       });
 
       // Send initial messages to all channels
-      await redis.publish(channel1, "msg1-before");
-      await redis.publish(channel2, "msg2-before");
-      await redis.publish(channel3, "msg3-before");
+      expect(await redis.publish(channel1, "msg1-before")).toBe(1);
+      expect(await redis.publish(channel2, "msg2-before")).toBe(1);
+      expect(await redis.publish(channel3, "msg3-before")).toBe(1);
 
       await sleep(flushTimeoutMs);
 
@@ -315,9 +315,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.unsubscribe(channel2);
 
       // Send messages after unsubscribing from channel2
-      await redis.publish(channel1, "msg1-after");
-      await redis.publish(channel2, "msg2-after"); // Should not be received
-      await redis.publish(channel3, "msg3-after");
+      expect(await redis.publish(channel1, "msg1-after")).toBe(1);
+      expect(await redis.publish(channel2, "msg2-after")).toBe(1);
+      expect(await redis.publish(channel3, "msg3-after")).toBe(1);
 
       await sleep(flushTimeoutMs);
 
@@ -341,7 +341,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(channel, listener);
 
       // Publish a single message
-      await redis.publish(channel, "test-message");
+      expect(await redis.publish(channel, "test-message")).toBe(2);
 
       await sleep(flushTimeoutMs);
 
@@ -358,7 +358,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
         receivedMessage = message;
       });
 
-      await redis.publish(channel, "");
+      expect(await redis.publish(channel, "")).toBe(1);
       await sleep(flushTimeoutMs);
 
       expect(receivedMessage).not.toBeUndefined();
@@ -382,7 +382,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
           received = true;
         });
 
-        await redis.publish(channel, "test");
+        expect(await redis.publish(channel, "test")).toBe(1);
         await sleep(flushTimeoutMs);
 
         expect(received).toBe(true);
@@ -414,7 +414,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       });
 
       // Publishing from the same client should work
-      await redis.publish(channel, "self-published");
+      expect(await redis.publish(channel, "self-published")).toBe(1);
       await sleep(flushTimeoutMs);
 
       expect(receivedMessage).toBeDefined();
@@ -447,7 +447,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const channel = "no-subscribers-channel";
 
       // Publishing without subscribers should not throw
-      expect(redis.publish(channel, "message")).resolves.toBeUndefined();
+      expect(await redis.publish(channel, "message")).toBe(0);
     });
 
     test("unsubscribing from non-subscribed channels", async () => {
@@ -471,9 +471,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       });
 
       // Send multiple messages
-      await redis.publish(channel, "message1");
-      await redis.publish(channel, "message2"); // This will throw in callback
-      await redis.publish(channel, "message3");
+      expect(await redis.publish(channel, "message1")).toBe(1);
+      expect(await redis.publish(channel, "message2")).toBe(1);
+      expect(await redis.publish(channel, "message3")).toBe(1);
 
       await sleep(flushTimeoutMs);
 

@@ -75,20 +75,9 @@ pub fn MaybeOwnedWithOpts(comptime Pointer: type, comptime options: Options) typ
         }
 
         /// Returns the inner pointer or slice.
-        pub const get = switch (info.isConst()) {
-            // Non-const pointer (e.g., `*u8`, `[]u8`).
-            false => struct {
-                pub fn get(self: *Self) Pointer {
-                    return self.unsafe_raw_pointer;
-                }
-            },
-            // Const pointer (e.g., `*const u8`, `[]const u8`).
-            true => struct {
-                pub fn get(self: Self) Pointer {
-                    return self.unsafe_raw_pointer;
-                }
-            },
-        }.get;
+        pub fn get(self: if (info.isConst()) Self else *Self) Pointer {
+            return self.unsafe_raw_pointer;
+        }
 
         /// Returns a const version of the inner pointer or slice.
         ///

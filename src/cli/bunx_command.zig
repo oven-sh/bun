@@ -68,11 +68,25 @@ pub const BunxCommand = struct {
                             Output.errGeneric("--package requires a package name", .{});
                             exitWithUsage();
                         }
+                        if (argv[i].len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            exitWithUsage();
+                        }
                         opts.specified_package = argv[i];
                     } else if (strings.hasPrefixComptime(positional, "--package=")) {
-                        opts.specified_package = positional["--package=".len..];
+                        const package_value = positional["--package=".len..];
+                        if (package_value.len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            exitWithUsage();
+                        }
+                        opts.specified_package = package_value;
                     } else if (strings.hasPrefixComptime(positional, "-p=")) {
-                        opts.specified_package = positional["-p=".len..];
+                        const package_value = positional["-p=".len..];
+                        if (package_value.len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            exitWithUsage();
+                        }
+                        opts.specified_package = package_value;
                     }
                 } else {
                     if (!found_subcommand_name) {
@@ -89,6 +103,7 @@ pub const BunxCommand = struct {
                 if (maybe_package_name == null) {
                     // The binary name is the first non-flag argument after --package
                     Output.errGeneric("When using --package, you must specify the binary to run", .{});
+                    Output.prettyln("  <d>usage: bunx --package=package-name binary-name [args...]<r>", .{});
                     exitWithUsage();
                 }
                 opts.binary_name = maybe_package_name;
@@ -654,7 +669,12 @@ pub const BunxCommand = struct {
                     }
                 } else |err| {
                     if (err == error.NoBinFound) {
-                        Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+                        if (opts.specified_package != null and opts.binary_name != null) {
+                            Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
+                            Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
+                        } else {
+                            Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+                        }
                         Global.exit(1);
                     }
                 }
@@ -821,7 +841,12 @@ pub const BunxCommand = struct {
             } else |_| {}
         }
 
-        Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+        if (opts.specified_package != null and opts.binary_name != null) {
+            Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
+            Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
+        } else {
+            Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+        }
         Global.exit(1);
     }
 };

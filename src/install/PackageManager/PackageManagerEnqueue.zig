@@ -1285,12 +1285,12 @@ pub fn enqueueGitCheckout(
 ) void {
     const folder_name = PackageManager.cachedGitFolderNamePrint(&git_folder_name_buf, resolved, null);
     const target = Path.joinAbsString(this.cache_directory_path, &.{folder_name}, .auto);
-    
+
     // Check if the checkout directory already exists - if so, just return success immediately
     if (this.getCacheDirectory().openDir(folder_name, .{})) |package_dir_const| {
         var package_dir = package_dir_const;
         package_dir.close();
-        
+
         // Directory already exists, create a success task immediately
         const task = this.preallocated_resolve_tasks.get();
         task.* = Task{
@@ -1328,7 +1328,7 @@ pub fn enqueueGitCheckout(
         this.wake();
         return;
     } else |_| {}
-    
+
     const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {
         // If we can't get the path, create a failed task
         const task = this.preallocated_resolve_tasks.get();

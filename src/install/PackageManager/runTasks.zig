@@ -766,7 +766,7 @@ pub fn runTasks(
                         var resolution_buf: [8192]u8 = undefined;
                         var stream = std.io.fixedBufferStream(&resolution_buf);
                         var writer = stream.writer();
-                        
+
                         // Write the git resolution format
                         if (strings.hasPrefixComptime(repo, "git@")) {
                             // Transform SCP-like URL to SSH URL format
@@ -781,22 +781,22 @@ pub fn runTasks(
                         }
                         writer.writeByte('#') catch unreachable;
                         writer.writeAll(resolved) catch unreachable;
-                        
+
                         const package_version = stream.getWritten();
-                        
+
                         // Calculate the hash for "name@version"
                         var name_and_version_buf: [8192]u8 = undefined;
                         const name_and_version = std.fmt.bufPrint(&name_and_version_buf, "{s}@{s}", .{
                             dep_name,
                             package_version,
                         }) catch unreachable;
-                        
+
                         const hash = String.Builder.stringHash(name_and_version);
-                        
+
                         if (comptime Environment.isDebug) {
                             Output.prettyErrorln("[git-patch] Looking for patch: {s} (hash={d})", .{ name_and_version, hash });
                         }
-                        
+
                         // Check if this dependency has a patch
                         if (manager.lockfile.patched_dependencies.get(hash)) |_| {
                             if (comptime Environment.isDebug) {
@@ -804,7 +804,7 @@ pub fn runTasks(
                             }
                             break :brk hash;
                         }
-                        
+
                         // Also try checking all patched dependencies to see what we have
                         if (comptime Environment.isDebug) {
                             var iter = manager.lockfile.patched_dependencies.iterator();
@@ -812,7 +812,7 @@ pub fn runTasks(
                                 Output.prettyErrorln("[git-patch] Available patch: hash={d}", .{entry.key_ptr.*});
                             }
                         }
-                        
+
                         break :brk null;
                     } else null;
 
@@ -1148,6 +1148,7 @@ const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
+const String = bun.Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
@@ -1166,7 +1167,6 @@ const Repository = bun.install.Repository;
 const Store = bun.install.Store;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
-const String = bun.Semver.String;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

@@ -182,8 +182,8 @@ enum PooledConnectionFlags {
   preReserved = 1 << 2,
 }
 
-class PooledConnection {
-  pool: ConnectionPool;
+class PooledPostgresConnection {
+  pool: PostgresConnectionPool;
   connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
@@ -247,7 +247,7 @@ class PooledConnection {
 
     this.pool.release(this, true);
   }
-  constructor(connectionInfo, pool: ConnectionPool) {
+  constructor(connectionInfo, pool: PostgresConnectionPool) {
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
@@ -320,11 +320,13 @@ class PooledConnection {
     return true;
   }
 }
-class ConnectionPool {
+
+class PostgresConnectionPool {
   connectionInfo: any;
 
-  connections: PooledConnection[];
-  readyConnections: Set<PooledConnection>;
+  connections: PooledPostgresConnection[];
+  readyConnections: Set<PooledPostgresConnection>;
+
   waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   reservedQueue: Array<(err: Error | null, result: any) => void> = [];
 
@@ -370,7 +372,7 @@ class ConnectionPool {
     }
   }
 
-  release(connection: PooledConnection, connectingEvent: boolean = false) {
+  release(connection: PooledPostgresConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
       connection.queryCount--;
       this.totalQueries--;
@@ -639,18 +641,18 @@ class ConnectionPool {
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      const firstConnection = new PooledConnection(this.connectionInfo, this);
+      const firstConnection = new PooledPostgresConnection(this.connectionInfo, this);
       this.connections[0] = firstConnection;
       if (reserved) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
       }
       for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = new PooledConnection(this.connectionInfo, this);
+        this.connections[i] = new PooledPostgresConnection(this.connectionInfo, this);
       }
       return;
     }
     if (reserved) {
-      let connectionWithLeastQueries: PooledConnection | null = null;
+      let connectionWithLeastQueries: PooledPostgresConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
@@ -780,7 +782,7 @@ const SQL: typeof Bun.SQL = function SQL(
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-  const pool = new ConnectionPool(connectionInfo);
+  const pool = new PostgresConnectionPool(connectionInfo);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
     // connection closed mid query this will not be called if the query finishes first
@@ -878,7 +880,7 @@ const SQL: typeof Bun.SQL = function SQL(
   function queryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledConnection,
+    pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
@@ -903,7 +905,7 @@ const SQL: typeof Bun.SQL = function SQL(
   function unsafeQueryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledConnection,
+    pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
@@ -942,7 +944,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection: PooledConnection) {
+  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection: PooledPostgresConnection) {
     const { resolve, reject } = this;
 
     if (err) {

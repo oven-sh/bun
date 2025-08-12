@@ -346,6 +346,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
 
   // check if we are already closed
   if (us_internal_ssl_socket_is_closed(s)) return s;
+  us_internal_set_loop_ssl_data(s);
   us_internal_update_handshake(s);
 
   if (s->handshake_state != HANDSHAKE_COMPLETED) {

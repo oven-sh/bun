@@ -66,13 +66,18 @@ void JSNodeSQLiteStatementSyncPrototype::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-static JSValue convertSQLiteValueToJS(VM& vm, JSGlobalObject* globalObject, sqlite3_stmt* stmt, int column)
+static JSValue convertSQLiteValueToJS(VM& vm, JSGlobalObject* globalObject, sqlite3_stmt* stmt, int column, bool readBigInts)
 {
     int type = sqlite3_column_type(stmt, column);
     
     switch (type) {
-    case SQLITE_INTEGER:
-        return jsNumber(sqlite3_column_int64(stmt, column));
+    case SQLITE_INTEGER: {
+        int64_t value = sqlite3_column_int64(stmt, column);
+        if (readBigInts) {
+            return JSBigInt::createFrom(globalObject, value);
+        }
+        return jsNumber(value);
+    }
     case SQLITE_FLOAT:
         return jsNumber(sqlite3_column_double(stmt, column));
     case SQLITE_TEXT: {
@@ -93,21 +98,31 @@ static JSValue convertSQLiteValueToJS(VM& vm, JSGlobalObject* globalObject, sqli
     }
 }
 
-static JSObject* createResultObject(VM& vm, JSGlobalObject* globalObject, sqlite3_stmt* stmt)
+static JSValue createResultObject(VM& vm, JSGlobalObject* globalObject, sqlite3_stmt* stmt, bool returnArrays, bool readBigInts)
 {
     int columnCount = sqlite3_column_count(stmt);
-    JSObject* result = constructEmptyObject(globalObject);
     
-    for (int i = 0; i < columnCount; i++) {
-        const char* columnName = sqlite3_column_name(stmt, i);
-        JSValue value = convertSQLiteValueToJS(vm, globalObject, stmt, i);
-        result->putDirect(vm, Identifier::fromString(vm, String::fromUTF8(columnName)), value);
+    if (returnArrays) {
+        JSArray* result = constructEmptyArray(globalObject, nullptr, columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            JSValue value = convertSQLiteValueToJS(vm, globalObject, stmt, i, readBigInts);
+            result->putDirectIndex(globalObject, i, value);
+        }
+        return result;
+    } else {
+        JSObject* result = constructEmptyObject(globalObject);
+        
+        for (int i = 0; i < columnCount; i++) {
+            const char* columnName = sqlite3_column_name(stmt, i);
+            JSValue value = convertSQLiteValueToJS(vm, globalObject, stmt, i, readBigInts);
+            result->putDirect(vm, Identifier::fromString(vm, String::fromUTF8(columnName)), value);
+        }
+        
+        return result;
     }
-    
-    return result;
 }
 
-static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* stmt, JSValue parameters)
+static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* stmt, JSValue parameters, JSNodeSQLiteDatabaseSync* database)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -198,10 +213,22 @@ static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* stmt, JSV
                 int paramIndex = sqlite3_bind_parameter_index(stmt, paramNameUtf8.data());
                 
                 if (paramIndex == 0) {
-                    // Try with leading colon
+                    // Try with leading colon or dollar sign for bare named parameters
                     String colonName = makeString(":"_s, paramName);
                     CString colonNameUtf8 = colonName.utf8();
                     paramIndex = sqlite3_bind_parameter_index(stmt, colonNameUtf8.data());
+                    
+                    if (paramIndex == 0) {
+                        String dollarName = makeString("$"_s, paramName);
+                        CString dollarNameUtf8 = dollarName.utf8();
+                        paramIndex = sqlite3_bind_parameter_index(stmt, dollarNameUtf8.data());
+                        
+                        // If found with $ prefix but allowBareNamedParameters is false, throw error
+                        if (paramIndex > 0 && !database->allowBareNamedParameters()) {
+                            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, makeString("Unknown named parameter '"_s, paramName, "'"_s));
+                            return false;
+                        }
+                    }
                 }
                 
                 if (paramIndex > 0) {
@@ -260,7 +287,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncRun, (JSGlobalObject*
     sqlite3_clear_bindings(stmt);
 
     JSValue parameters = callFrame->argument(0);
-    if (!bindParameters(globalObject, stmt, parameters)) {
+    if (!bindParameters(globalObject, stmt, parameters, thisObject->database())) {
         RETURN_IF_EXCEPTION(scope, {});
         throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
         return {};
@@ -269,9 +296,20 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncRun, (JSGlobalObject*
     int result = sqlite3_step(stmt);
     
     if (result == SQLITE_DONE) {
+        JSNodeSQLiteDatabaseSync* database = thisObject->database();
+        bool readBigInts = database->readBigInts();
+        
         JSObject* info = constructEmptyObject(globalObject);
-        info->putDirect(vm, Identifier::fromString(vm, "changes"_s), jsNumber(sqlite3_changes(thisObject->database()->database())));
-        info->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), jsNumber(sqlite3_last_insert_rowid(thisObject->database()->database())));
+        int changes = sqlite3_changes(database->database());
+        int64_t lastInsertRowid = sqlite3_last_insert_rowid(database->database());
+        
+        if (readBigInts) {
+            info->putDirect(vm, Identifier::fromString(vm, "changes"_s), JSBigInt::createFrom(globalObject, changes));
+            info->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), JSBigInt::createFrom(globalObject, lastInsertRowid));
+        } else {
+            info->putDirect(vm, Identifier::fromString(vm, "changes"_s), jsNumber(changes));
+            info->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), jsNumber(lastInsertRowid));
+        }
         return JSValue::encode(info);
     } else if (result == SQLITE_ROW) {
         throwVMError(globalObject, scope, createError(globalObject, "Statement returned rows. Use get() or all() instead"_s));
@@ -309,7 +347,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncGet, (JSGlobalObject*
     sqlite3_clear_bindings(stmt);
 
     JSValue parameters = callFrame->argument(0);
-    if (!bindParameters(globalObject, stmt, parameters)) {
+    if (!bindParameters(globalObject, stmt, parameters, thisObject->database())) {
         RETURN_IF_EXCEPTION(scope, {});
         throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
         return {};
@@ -318,7 +356,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncGet, (JSGlobalObject*
     int result = sqlite3_step(stmt);
     
     if (result == SQLITE_ROW) {
-        return JSValue::encode(createResultObject(vm, globalObject, stmt));
+        JSNodeSQLiteDatabaseSync* database = thisObject->database();
+        bool readBigInts = database->readBigInts();
+        bool returnArrays = database->returnArrays();
+        return JSValue::encode(createResultObject(vm, globalObject, stmt, returnArrays, readBigInts));
     } else if (result == SQLITE_DONE) {
         return JSValue::encode(jsUndefined());
     } else {
@@ -354,7 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncAll, (JSGlobalObject*
     sqlite3_clear_bindings(stmt);
 
     JSValue parameters = callFrame->argument(0);
-    if (!bindParameters(globalObject, stmt, parameters)) {
+    if (!bindParameters(globalObject, stmt, parameters, thisObject->database())) {
         RETURN_IF_EXCEPTION(scope, {});
         throwVMError(globalObject, scope, createError(globalObject, "Failed to bind parameters"_s));
         return {};
@@ -363,9 +404,13 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteStatementSyncProtoFuncAll, (JSGlobalObject*
     JSArray* results = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), 0);
     unsigned index = 0;
     
+    JSNodeSQLiteDatabaseSync* database = thisObject->database();
+    bool readBigInts = database->readBigInts();
+    bool returnArrays = database->returnArrays();
+    
     int result;
     while ((result = sqlite3_step(stmt)) == SQLITE_ROW) {
-        JSObject* row = createResultObject(vm, globalObject, stmt);
+        JSValue row = createResultObject(vm, globalObject, stmt, returnArrays, readBigInts);
         results->putDirectIndex(globalObject, index++, row);
         RETURN_IF_EXCEPTION(scope, {});
     }

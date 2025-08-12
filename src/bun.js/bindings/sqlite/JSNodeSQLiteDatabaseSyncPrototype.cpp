@@ -71,14 +71,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncExec, (JSGlobalObject*
 
     sqlite3* db = thisObject->database();
     if (!db) {
-        throwVMError(globalObject, scope, createError(globalObject, "Database is closed"_s));
-        return {};
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is not open"_s);
     }
 
     JSValue sqlValue = callFrame->argument(0);
-    if (sqlValue.isUndefined()) {
-        throwVMError(globalObject, scope, createError(globalObject, "SQL statement is required"_s));
-        return {};
+    if (sqlValue.isUndefined() || !sqlValue.isString()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"sql\" argument must be a string."_s);
     }
 
     String sql = sqlValue.toWTFString(globalObject);
@@ -93,8 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncExec, (JSGlobalObject*
         if (errorMsg) {
             sqlite3_free(errorMsg);
         }
-        throwVMError(globalObject, scope, createError(globalObject, errorString));
-        return {};
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_SQLITE_ERROR, errorString);
     }
 
     return JSValue::encode(jsUndefined());
@@ -118,14 +115,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncPrepare, (JSGlobalObje
 
     sqlite3* db = thisObject->database();
     if (!db) {
-        throwVMError(globalObject, scope, createError(globalObject, "Database is closed"_s));
-        return {};
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is not open"_s);
     }
 
     JSValue sqlValue = callFrame->argument(0);
-    if (sqlValue.isUndefined()) {
-        throwVMError(globalObject, scope, createError(globalObject, "SQL statement is required"_s));
-        return {};
+    if (sqlValue.isUndefined() || !sqlValue.isString()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"sql\" argument must be a string."_s);
     }
 
     String sql = sqlValue.toWTFString(globalObject);
@@ -139,8 +134,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncPrepare, (JSGlobalObje
 
     if (!statement->statement()) {
         const char* errorMsg = sqlite3_errmsg(db);
-        throwVMError(globalObject, scope, createError(globalObject, String::fromUTF8(errorMsg)));
-        return {};
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_SQLITE_ERROR, String::fromUTF8(errorMsg));
     }
 
     return JSValue::encode(statement);
@@ -155,6 +149,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncClose, (JSGlobalObject
     if (!thisObject) {
         throwVMTypeError(globalObject, scope, "Method DatabaseSync.prototype.close called on incompatible receiver"_s);
         return {};
+    }
+
+    // Check if already closed
+    if (!thisObject->database()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is not open"_s);
     }
 
     thisObject->closeDatabase();

@@ -31,6 +31,18 @@ public:
     
     const WTF::String& path() const { return m_path; }
     void setPath(const WTF::String& path) { m_path = path; }
+    
+    void setOptions(bool readBigInts, bool returnArrays, bool allowBareNamedParameters, bool allowUnknownNamedParameters) {
+        m_readBigInts = readBigInts;
+        m_returnArrays = returnArrays;
+        m_allowBareNamedParameters = allowBareNamedParameters;
+        m_allowUnknownNamedParameters = allowUnknownNamedParameters;
+    }
+    
+    bool readBigInts() const { return m_readBigInts; }
+    bool returnArrays() const { return m_returnArrays; }
+    bool allowBareNamedParameters() const { return m_allowBareNamedParameters; }
+    bool allowUnknownNamedParameters() const { return m_allowUnknownNamedParameters; }
 
 private:
     JSNodeSQLiteDatabaseSync(JSC::VM& vm, JSC::Structure* structure);
@@ -39,6 +51,10 @@ private:
 
     sqlite3* m_db;
     WTF::String m_path;
+    bool m_readBigInts = false;
+    bool m_returnArrays = false;
+    bool m_allowBareNamedParameters = true;
+    bool m_allowUnknownNamedParameters = false;
 
 public:
 };

@@ -83,12 +83,44 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
         if (databasePath.contains('\0')) {
             return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
         }
+    } else if (pathValue.isObject()) {
+        // Check if it's a URL object
+        JSObject* pathObject = pathValue.getObject();
+        JSValue hrefValue = pathObject->get(globalObject, Identifier::fromString(vm, "href"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        
+        if (!hrefValue.isUndefined()) {
+            // It's a URL object - check for file: scheme
+            String href = hrefValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            
+            if (!href.startsWith("file:"_s)) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_URL_SCHEME, "The URL must be of scheme file:"_s);
+            }
+            
+            // Extract path from file:// URL
+            if (href.startsWith("file:///"_s)) {
+                databasePath = href.substring(7); // Remove "file://"
+            } else if (href.startsWith("file:/"_s)) {
+                databasePath = href.substring(5); // Remove "file:"
+            } else {
+                databasePath = href.substring(5); // Remove "file:"
+            }
+        } else {
+            // Handle Uint8Array/Buffer case
+            databasePath = pathValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        
+        // Check for null bytes in buffer/binary data
+        if (databasePath.contains('\0')) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
+        }
     } else {
-        // Handle Uint8Array/Buffer case
         databasePath = pathValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         
-        // Check for null bytes in buffer/binary data
+        // Check for null bytes
         if (databasePath.contains('\0')) {
             return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
         }
@@ -99,6 +131,12 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
     bool shouldOpen = true; // Default: open the database
     bool readOnly = false; // Default: read-write mode
     int timeout = 5000; // Default timeout
+    bool enableForeignKeyConstraints = true; // Default: enabled
+    bool enableDoubleQuotedStringLiterals = false; // Default: disabled
+    bool readBigInts = false; // Default: disabled
+    bool returnArrays = false; // Default: disabled  
+    bool allowBareNamedParameters = true; // Default: enabled
+    bool allowUnknownNamedParameters = false; // Default: disabled
     
     if (!optionsValue.isUndefined()) {
         if (!optionsValue.isObject()) {
@@ -140,6 +178,66 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
             }
             timeout = static_cast<int>(timeoutDouble);
         }
+        
+        // Parse "enableForeignKeyConstraints" option
+        JSValue enableForeignKeyConstraintsValue = optionsObject->get(globalObject, Identifier::fromString(vm, "enableForeignKeyConstraints"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!enableForeignKeyConstraintsValue.isUndefined()) {
+            if (!enableForeignKeyConstraintsValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.enableForeignKeyConstraints\" argument must be a boolean."_s);
+            }
+            enableForeignKeyConstraints = enableForeignKeyConstraintsValue.asBoolean();
+        }
+        
+        // Parse "enableDoubleQuotedStringLiterals" option  
+        JSValue enableDoubleQuotedStringLiteralsValue = optionsObject->get(globalObject, Identifier::fromString(vm, "enableDoubleQuotedStringLiterals"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!enableDoubleQuotedStringLiteralsValue.isUndefined()) {
+            if (!enableDoubleQuotedStringLiteralsValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.enableDoubleQuotedStringLiterals\" argument must be a boolean."_s);
+            }
+            enableDoubleQuotedStringLiterals = enableDoubleQuotedStringLiteralsValue.asBoolean();
+        }
+        
+        // Parse "readBigInts" option
+        JSValue readBigIntsValue = optionsObject->get(globalObject, Identifier::fromString(vm, "readBigInts"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!readBigIntsValue.isUndefined()) {
+            if (!readBigIntsValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.readBigInts\" argument must be a boolean."_s);
+            }
+            readBigInts = readBigIntsValue.asBoolean();
+        }
+        
+        // Parse "returnArrays" option
+        JSValue returnArraysValue = optionsObject->get(globalObject, Identifier::fromString(vm, "returnArrays"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!returnArraysValue.isUndefined()) {
+            if (!returnArraysValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.returnArrays\" argument must be a boolean."_s);
+            }
+            returnArrays = returnArraysValue.asBoolean();
+        }
+        
+        // Parse "allowBareNamedParameters" option
+        JSValue allowBareNamedParametersValue = optionsObject->get(globalObject, Identifier::fromString(vm, "allowBareNamedParameters"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!allowBareNamedParametersValue.isUndefined()) {
+            if (!allowBareNamedParametersValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.allowBareNamedParameters\" argument must be a boolean."_s);
+            }
+            allowBareNamedParameters = allowBareNamedParametersValue.asBoolean();
+        }
+        
+        // Parse "allowUnknownNamedParameters" option
+        JSValue allowUnknownNamedParametersValue = optionsObject->get(globalObject, Identifier::fromString(vm, "allowUnknownNamedParameters"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!allowUnknownNamedParametersValue.isUndefined()) {
+            if (!allowUnknownNamedParametersValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"options.allowUnknownNamedParameters\" argument must be a boolean."_s);
+            }
+            allowUnknownNamedParameters = allowUnknownNamedParametersValue.asBoolean();
+        }
     }
     
     // TODO: Use timeout for busy timeout on database connection
@@ -151,8 +249,9 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
     JSNodeSQLiteDatabaseSync* thisObject = JSNodeSQLiteDatabaseSync::create(vm, structure);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Store the path in the object
+    // Store the path and options in the object
     thisObject->setPath(databasePath);
+    thisObject->setOptions(readBigInts, returnArrays, allowBareNamedParameters, allowUnknownNamedParameters);
 
     // Only open the database if shouldOpen is true
     if (shouldOpen) {
@@ -171,6 +270,18 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
             throwVMError(globalObject, scope, createError(globalObject, String::fromUTF8(errorMsg)));
             return {};
         }
+
+        // Apply SQLite settings based on options
+        if (enableForeignKeyConstraints) {
+            sqlite3_exec(db, "PRAGMA foreign_keys = ON", nullptr, nullptr, nullptr);
+        } else {
+            sqlite3_exec(db, "PRAGMA foreign_keys = OFF", nullptr, nullptr, nullptr);
+        }
+        
+        // Note: SQLite doesn't have a direct way to control double-quoted string literals
+        // This behavior is handled at compile time, not runtime
+        // For now, we store the option but don't apply any PRAGMA
+        (void)enableDoubleQuotedStringLiterals;
 
         thisObject->setDatabase(db);
     }

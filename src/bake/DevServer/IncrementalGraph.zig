@@ -182,7 +182,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    if (@import("builtin").mode == .ReleaseFast or @import("builtin").mode == .ReleaseSmall) {
+                    if (!Environment.ci_assert) {
                         bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
                         bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }

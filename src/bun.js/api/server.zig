@@ -1642,7 +1642,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = Arena.getThreadLocalDefault(),
                 .dev_server = dev_server,
             });
 

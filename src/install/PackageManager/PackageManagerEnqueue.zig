@@ -1257,7 +1257,6 @@ pub fn enqueueGitCheckout(
     /// if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: ?u64,
 ) void {
-
     const folder_name = PackageManager.cachedGitFolderNamePrint(&git_folder_name_buf, resolved, null);
     const target = Path.joinAbsString(this.cache_directory_path, &.{folder_name}, .auto);
     const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {

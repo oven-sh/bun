@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { spawnSync } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("console.assert outputs 'Assertion failed' prefix like Node.js", () => {

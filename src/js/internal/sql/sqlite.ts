@@ -178,40 +178,64 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     }
   }
 
-  createQueryHandle(sql: string, values: unknown[]) {
+  createQueryHandle(sql: string, values: any[]) {
     return {
       run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
         try {
           if (!db) {
             throw new Error("SQLite database not initialized");
           }
-          // Prepare the statement just-in-time
+
+          // Prepare the statement to check if it has multiple statements
           const stmt = db.prepare(sql);
-          let result: any;
+          const hasMultipleStatements = stmt.hasMultipleStatements;
 
-          const commandMatch = sql.trim().match(/^(\w+)/i);
-          const command = commandMatch ? commandMatch[1].toUpperCase() : "";
+          // Check if this is a multi-statement query
+          if (hasMultipleStatements) {
+            // Finalize the prepared statement since we won't use it
+            stmt.finalize();
 
-          if (command === "SELECT" || sql.trim().toUpperCase().includes("RETURNING")) {
-            // For SELECT queries, use all()
-            result = stmt.all(...values);
+            // For multiple statements, use db.run() directly
+            // This executes all statements in the SQL string
+            const runResult = db.run(sql, ...values);
+
             const sqlResult = new SQLResultArray();
-            sqlResult.push(...result);
-            sqlResult.command = command;
-            sqlResult.count = result.length;
-            query.resolve(sqlResult);
-          } else {
-            // For INSERT/UPDATE/DELETE, use run()
-            const changes = stmt.run(...values);
-            const sqlResult = new SQLResultArray();
-            sqlResult.command = command;
-            sqlResult.count = changes.changes;
-            // @ts-ignore - lastInsertRowid exists on the changes object
-            if (changes.lastInsertRowid !== undefined) {
+            sqlResult.command = "MULTI";
+            sqlResult.count = runResult?.changes || 0;
+            // @ts-ignore - lastInsertRowid exists on the result
+            if (runResult?.lastInsertRowid !== undefined) {
               // @ts-ignore
-              sqlResult.lastInsertRowid = changes.lastInsertRowid;
+              sqlResult.lastInsertRowid = runResult.lastInsertRowid;
             }
             query.resolve(sqlResult);
+          } else {
+            // Single statement handling (existing code)
+            let result: any;
+
+            const commandMatch = sql.trim().match(/^(\w+)/i);
+            const command = commandMatch ? commandMatch[1].toUpperCase() : "";
+
+            if (command === "SELECT" || sql.trim().toUpperCase().includes("RETURNING")) {
+              // For SELECT queries, use all()
+              result = stmt.all(...values);
+              const sqlResult = new SQLResultArray();
+              sqlResult.push(...result);
+              sqlResult.command = command;
+              sqlResult.count = result.length;
+              query.resolve(sqlResult);
+            } else {
+              // For INSERT/UPDATE/DELETE, use run()
+              const changes = stmt.run(...values);
+              const sqlResult = new SQLResultArray();
+              sqlResult.command = command;
+              sqlResult.count = changes.changes;
+              // @ts-ignore - lastInsertRowid exists on the changes object
+              if (changes.lastInsertRowid !== undefined) {
+                // @ts-ignore
+                sqlResult.lastInsertRowid = changes.lastInsertRowid;
+              }
+              query.resolve(sqlResult);
+            }
           }
         } catch (err) {
           query.reject(err as Error);

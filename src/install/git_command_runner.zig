@@ -43,6 +43,7 @@ pub const GitCommandRunner = struct {
     pub const new = bun.TrivialNew(@This());
     
     pub const OutputReader = bun.io.BufferedReader;
+    const uv = bun.windows.libuv;
     
     fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
         output.flags.nonblocking = true;
@@ -105,7 +106,7 @@ pub const GitCommandRunner = struct {
         task_id: Task.Id,
         argv_input: []const ?[*:0]const u8,
         operation: Operation,
-    ) !void {
+    ) void {
         // GitCommandRunner.spawn called
         
         const runner = bun.new(GitCommandRunner, .{
@@ -130,12 +131,44 @@ pub const GitCommandRunner = struct {
         
         runner.remaining_fds = 0;
         var env_map = Repository.shared_env.get(manager.allocator, manager.env);
-        const envp = try env_map.createNullDelimitedEnvMap(manager.allocator);
+        const envp = env_map.createNullDelimitedEnvMap(manager.allocator) catch |err| {
+            log("Failed to create env map: {}", .{err});
+            // Create a failed task
+            const task = manager.preallocated_resolve_tasks.get();
+            task.* = Task{
+                .package_manager = manager,
+                .log = logger.Log.init(manager.allocator),
+                .tag = .git_clone,
+                .request = .{
+                    .git_clone = .{
+                        .name = operation.clone.name,
+                        .url = operation.clone.url,
+                        .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                        .dep_id = operation.clone.dep_id,
+                        .res = operation.clone.res,
+                    },
+                },
+                .id = task_id,
+                .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                .data = .{ .git_clone = bun.invalid_fd },
+                .status = .fail,
+                .err = err,
+            };
+            manager.resolve_tasks.push(task);
+            manager.wake();
+            runner.deinit();
+            return;
+        };
+        
+        if (Environment.isWindows) {
+            runner.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            runner.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+        }
         
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
-            .stdout = .buffer,
-            .stderr = .buffer,
+            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = runner.stdout.source.?.pipe },
+            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = runner.stderr.source.?.pipe },
             .cwd = manager.cache_directory_path,
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&manager.event_loop),
@@ -145,10 +178,61 @@ pub const GitCommandRunner = struct {
         
         // About to spawn git process
         // About to spawn git process
-        var spawn_result = try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), envp);
+        var spawn_result = bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), envp) catch |err| {
+            log("Failed to spawn git process: {}", .{err});
+            // Create a failed task with proper error message
+            const task = manager.preallocated_resolve_tasks.get();
+            task.* = Task{
+                .package_manager = manager,
+                .log = logger.Log.init(manager.allocator),
+                .tag = .git_clone,
+                .request = .{
+                    .git_clone = .{
+                        .name = operation.clone.name,
+                        .url = operation.clone.url,
+                        .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                        .dep_id = operation.clone.dep_id,
+                        .res = operation.clone.res,
+                    },
+                },
+                .id = task_id,
+                .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                .data = .{ .git_clone = bun.invalid_fd },
+                .status = .fail,
+                .err = err,
+            };
+            manager.resolve_tasks.push(task);
+            manager.wake();
+            runner.deinit();
+            return;
+        };
         var spawned = spawn_result.unwrap() catch |err| {
-            log("Failed to spawn git: {}", .{err});
-            return err;
+            log("Failed to unwrap spawn result: {}", .{err});
+            // Create a failed task with proper error message
+            const task = manager.preallocated_resolve_tasks.get();
+            task.* = Task{
+                .package_manager = manager,
+                .log = logger.Log.init(manager.allocator),
+                .tag = .git_clone,
+                .request = .{
+                    .git_clone = .{
+                        .name = operation.clone.name,
+                        .url = operation.clone.url,
+                        .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                        .dep_id = operation.clone.dep_id,
+                        .res = operation.clone.res,
+                    },
+                },
+                .id = task_id,
+                .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                .data = .{ .git_clone = bun.invalid_fd },
+                .status = .fail,
+                .err = err,
+            };
+            manager.resolve_tasks.push(task);
+            manager.wake();
+            runner.deinit();
+            return;
         };
         
         // Git process spawned
@@ -161,7 +245,34 @@ pub const GitCommandRunner = struct {
                     runner.remaining_fds += 1;
                     
                     resetOutputFlags(&runner.stdout, stdout);
-                    try runner.stdout.start(stdout, true).unwrap();
+                    runner.stdout.start(stdout, true).unwrap() catch |err| {
+                        log("Failed to start stdout reader: {}", .{err});
+                        // Create a failed task
+                        const task = manager.preallocated_resolve_tasks.get();
+                        task.* = Task{
+                            .package_manager = manager,
+                            .log = logger.Log.init(manager.allocator),
+                            .tag = .git_clone,
+                            .request = .{
+                                .git_clone = .{
+                                    .name = operation.clone.name,
+                                    .url = operation.clone.url,
+                                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                                    .dep_id = operation.clone.dep_id,
+                                    .res = operation.clone.res,
+                                },
+                            },
+                            .id = task_id,
+                            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                            .data = .{ .git_clone = bun.invalid_fd },
+                            .status = .fail,
+                            .err = err,
+                        };
+                        manager.resolve_tasks.push(task);
+                        manager.wake();
+                        runner.deinit();
+                        return;
+                    };
                     if (runner.stdout.handle.getPoll()) |poll| {
                         poll.flags.insert(.socket);
                     }
@@ -177,7 +288,34 @@ pub const GitCommandRunner = struct {
                     runner.remaining_fds += 1;
                     
                     resetOutputFlags(&runner.stderr, stderr);
-                    try runner.stderr.start(stderr, true).unwrap();
+                    runner.stderr.start(stderr, true).unwrap() catch |err| {
+                        log("Failed to start stderr reader: {}", .{err});
+                        // Create a failed task
+                        const task = manager.preallocated_resolve_tasks.get();
+                        task.* = Task{
+                            .package_manager = manager,
+                            .log = logger.Log.init(manager.allocator),
+                            .tag = .git_clone,
+                            .request = .{
+                                .git_clone = .{
+                                    .name = operation.clone.name,
+                                    .url = operation.clone.url,
+                                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                                    .dep_id = operation.clone.dep_id,
+                                    .res = operation.clone.res,
+                                },
+                            },
+                            .id = task_id,
+                            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                            .data = .{ .git_clone = bun.invalid_fd },
+                            .status = .fail,
+                            .err = err,
+                        };
+                        manager.resolve_tasks.push(task);
+                        manager.wake();
+                        runner.deinit();
+                        return;
+                    };
                     if (runner.stderr.handle.getPoll()) |poll| {
                         poll.flags.insert(.socket);
                     }
@@ -190,12 +328,66 @@ pub const GitCommandRunner = struct {
             if (spawned.stdout == .buffer) {
                 runner.stdout.parent = runner;
                 runner.remaining_fds += 1;
-                try runner.stdout.startWithCurrentPipe().unwrap();
+                runner.stdout.startWithCurrentPipe().unwrap() catch |err| {
+                    log("Failed to start stdout reader on Windows: {}", .{err});
+                    // Create a failed task
+                    const task = manager.preallocated_resolve_tasks.get();
+                    task.* = Task{
+                        .package_manager = manager,
+                        .log = logger.Log.init(manager.allocator),
+                        .tag = .git_clone,
+                        .request = .{
+                            .git_clone = .{
+                                .name = operation.clone.name,
+                                .url = operation.clone.url,
+                                .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                                .dep_id = operation.clone.dep_id,
+                                .res = operation.clone.res,
+                            },
+                        },
+                        .id = task_id,
+                        .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                        .data = .{ .git_clone = bun.invalid_fd },
+                        .status = .fail,
+                        .err = err,
+                    };
+                    manager.resolve_tasks.push(task);
+                    manager.wake();
+                    runner.deinit();
+                    return;
+                };
             }
             if (spawned.stderr == .buffer) {
                 runner.stderr.parent = runner;
                 runner.remaining_fds += 1;
-                try runner.stderr.startWithCurrentPipe().unwrap();
+                runner.stderr.startWithCurrentPipe().unwrap() catch |err| {
+                    log("Failed to start stderr reader on Windows: {}", .{err});
+                    // Create a failed task
+                    const task = manager.preallocated_resolve_tasks.get();
+                    task.* = Task{
+                        .package_manager = manager,
+                        .log = logger.Log.init(manager.allocator),
+                        .tag = .git_clone,
+                        .request = .{
+                            .git_clone = .{
+                                .name = operation.clone.name,
+                                .url = operation.clone.url,
+                                .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(manager.allocator) },
+                                .dep_id = operation.clone.dep_id,
+                                .res = operation.clone.res,
+                            },
+                        },
+                        .id = task_id,
+                        .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                        .data = .{ .git_clone = bun.invalid_fd },
+                        .status = .fail,
+                        .err = err,
+                    };
+                    manager.resolve_tasks.push(task);
+                    manager.wake();
+                    runner.deinit();
+                    return;
+                };
             }
         }
         
@@ -325,10 +517,15 @@ pub const GitCommandRunner = struct {
                             return;
                         };
                         
+                        if (Environment.isWindows) {
+                            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                        }
+                        
                         const spawn_options = bun.spawn.SpawnOptions{
                             .stdin = .ignore,
-                            .stdout = .buffer,
-                            .stderr = .buffer,
+                            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
+                            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = this.stderr.source.?.pipe },
                             .cwd = this.manager.cache_directory_path,
                             .windows = if (Environment.isWindows) .{
                                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),

@@ -1216,7 +1216,7 @@ fn enqueueGitClone(
     // Spawn GitCommandRunner
     // Increment pending tasks so the event loop knows to wait for this
     this.incrementPendingTasks(1);
-    _ = GitCommandRunner.spawn(
+    GitCommandRunner.spawn(
         this,
         task_id,
         argv[0..argc],
@@ -1237,31 +1237,7 @@ fn enqueueGitClone(
                 .attempt = 1,
             },
         },
-    ) catch |err| {
-        // If spawning fails, create a failed task
-        const task = this.preallocated_resolve_tasks.get();
-        task.* = Task{
-            .package_manager = this,
-            .log = logger.Log.init(this.allocator),
-            .tag = Task.Tag.git_clone,
-            .request = .{
-                .git_clone = .{
-                    .name = strings.StringOrTinyString.init(name),
-                    .url = strings.StringOrTinyString.init(url),
-                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
-                    .dep_id = dep_id,
-                    .res = res.*,
-                },
-            },
-            .id = task_id,
-            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
-            .data = .{ .git_clone = bun.invalid_fd },
-            .status = .fail,
-            .err = err,
-        };
-        this.resolve_tasks.push(task);
-        this.wake();
-    };
+    );
 }
 
 fn dummyCallback(_: *ThreadPool.Task) void {
@@ -1334,7 +1310,7 @@ pub fn enqueueGitCheckout(
     // Spawn GitCommandRunner
     // Increment pending tasks so the event loop knows to wait for this
     this.incrementPendingTasks(1);
-    _ = GitCommandRunner.spawn(
+    GitCommandRunner.spawn(
         this,
         task_id,
         argv[0..argc],
@@ -1361,33 +1337,7 @@ pub fn enqueueGitCheckout(
                 .target_dir = bun.default_allocator.dupe(u8, target) catch unreachable,
             },
         },
-    ) catch |err| {
-        // If spawning fails, create a failed task
-        const task = this.preallocated_resolve_tasks.get();
-        task.* = Task{
-            .package_manager = this,
-            .log = logger.Log.init(this.allocator),
-            .tag = Task.Tag.git_checkout,
-            .request = .{
-                .git_checkout = .{
-                    .repo_dir = dir,
-                    .resolution = resolution,
-                    .dependency_id = dependency_id,
-                    .name = strings.StringOrTinyString.init(name),
-                    .url = strings.StringOrTinyString.init(this.lockfile.str(&resolution.value.git.repo)),
-                    .resolved = strings.StringOrTinyString.init(resolved),
-                    .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
-                },
-            },
-            .id = task_id,
-            .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
-            .data = .{ .git_checkout = .{} },
-            .status = .fail,
-            .err = err,
-        };
-        this.resolve_tasks.push(task);
-        this.wake();
-    };
+    );
 }
 
 var git_path_buf: bun.PathBuffer = undefined;

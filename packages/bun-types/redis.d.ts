@@ -656,8 +656,24 @@ declare module "bun" {
      */
     unsubscribe(channels: string[]): Promise<void>;
 
-    on(event: string,
-       listener: (channel: string, message: string) => void): this;
+    /**
+     * Handle messages coming from the Redis server.
+     *
+     * @note This interface, contrary to `ioredis`, is not the recommended way
+     *       to handle messages. We suggest using the `subscribe` method's
+     *       listener instead.
+     */
+    on(event: "message",
+       listener: (channel: string, message: string) => void): void;
+
+    /**
+     * Register a listener for error events.
+     *
+     * @param event The event to listen for, in this case "error".
+     * @param listener The listener to call when an error occurs.
+     *
+     */
+    on(event: "error", listener: (error: Error) => void): void;
   }
 
   /**

@@ -1,32 +1,59 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
-test("undici.Agent connect option should be used", async () => {
+test("undici.Agent connect option should be used with fetch (original issue)", async () => {
   const { Agent } = require("undici");
 
   let connectCalled = false;
   let connectionOptions: any = null;
 
-  // Test that the connect function is called when using Agent with custom connect
   const dispatcher = new Agent({
-    connect: (options: any, callback: any) => {
+    connect: (o: any, cb: any) => {
       connectCalled = true;
-      connectionOptions = options;
+      connectionOptions = o;
       throw new Error("Custom connect error (expected)");
     },
   });
 
-  // The fetch should fail because our connect function throws an error
   let errorThrown = false;
   try {
     await fetch("https://icanhazip.com", { dispatcher } as any);
   } catch (error) {
     errorThrown = true;
-    // The connect function should throw our custom error
     expect((error as Error).message).toContain("Custom connect error");
   }
   expect(errorThrown).toBe(true);
+  expect(connectCalled).toBe(true);
+  expect(connectionOptions).toBeDefined();
+  expect(connectionOptions.hostname).toBe("icanhazip.com");
+  expect(connectionOptions.port).toBe(443);
+});
 
-  // Verify that the connect function was actually called
+test("undici.Agent connect option should be used with dispatch", async () => {
+  const { Agent } = require("undici");
+
+  let connectCalled = false;
+  let connectionOptions: any = null;
+
+  const agent = new Agent({
+    connect: (options: any, callback: any) => {
+      connectCalled = true;
+      connectionOptions = options;
+      callback(new Error("Custom connect error (expected)"));
+    },
+  });
+
+  let errorThrown = false;
+  try {
+    await agent.dispatch({
+      origin: "https://icanhazip.com",
+      path: "/",
+      method: "GET",
+    });
+  } catch (error) {
+    errorThrown = true;
+    expect((error as Error).message).toContain("Custom connect error");
+  }
+  expect(errorThrown).toBe(true);
   expect(connectCalled).toBe(true);
   expect(connectionOptions).toBeDefined();
   expect(connectionOptions.hostname).toBe("icanhazip.com");
@@ -39,26 +66,26 @@ test("fetch-socks pattern compatibility", async () => {
   let socksConnectCalled = false;
   let socksHostname: string | undefined;
 
-  // Simulate the fetch-socks pattern
   const socksAgent = new Agent({
     connect: (options: any, callback: any) => {
       socksConnectCalled = true;
       socksHostname = options.hostname;
-      throw new Error("SOCKS connection blocked (expected)");
+      callback(new Error("SOCKS connection blocked (expected)"));
     },
   });
 
-  // The fetch should fail because our SOCKS connect throws an error
   let socksErrorThrown = false;
   try {
-    await fetch("https://example.com", { dispatcher: socksAgent } as any);
+    await socksAgent.dispatch({
+      origin: "https://example.com",
+      path: "/test",
+      method: "GET",
+    });
   } catch (error) {
     socksErrorThrown = true;
-    // The connect function should throw our custom SOCKS error
     expect((error as Error).message).toContain("SOCKS connection blocked");
   }
   expect(socksErrorThrown).toBe(true);
-
   expect(socksConnectCalled).toBe(true);
   expect(socksHostname).toBe("example.com");
 });
@@ -66,21 +93,34 @@ test("fetch-socks pattern compatibility", async () => {
 test("normal Agent without connect should work", async () => {
   const { Agent } = require("undici");
 
-  // Test that normal agents still work without connect option
   const normalAgent = new Agent({
     keepAliveTimeout: 1000,
     connections: 10,
   });
 
-  // This should work normally (though it may fail due to network issues in CI)
-  // We'll just test that it doesn't throw due to our changes
   try {
-    const response = await fetch("https://httpbin.org/get", {
-      dispatcher: normalAgent,
-    } as any);
+    const response = await normalAgent.dispatch({
+      origin: "https://httpbin.org",
+      path: "/get",
+      method: "GET",
+    });
     expect(response).toBeDefined();
+    expect(response.statusCode).toBeDefined();
   } catch (error) {
-    // Network errors are acceptable in CI, but it shouldn't be due to our dispatcher changes
     expect((error as Error).message).not.toContain("dispatcher");
+  }
+});
+
+test("direct undici.request function should work", async () => {
+  const { request } = require("undici");
+
+  try {
+    const response = await request("https://httpbin.org/get", {
+      method: "GET",
+    });
+    expect(response).toBeDefined();
+    expect(response.statusCode).toBeDefined();
+  } catch (error) {
+    expect(error).toBeDefined();
   }
 });

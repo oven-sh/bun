@@ -151,7 +151,7 @@ async function request(
     reset: false,
     throwOnError: false,
     body: null,
-    dispatcher,
+    // dispatcher,
   },
 ) {
   let {
@@ -168,7 +168,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    dispatcher,
+    // dispatcher,
   } = options;
 
   // TODO: More validations
@@ -225,7 +225,7 @@ async function request(
     body: inputBody,
     redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
     keepalive: !reset,
-    dispatcher,
+    // dispatcher,
   }));
 
   // Throw if received 4xx or 5xx response indicating HTTP error
@@ -275,11 +275,72 @@ class Agent extends Dispatcher {
   }
 
   dispatch(opts, handler) {
-    // Custom connect function should be handled by fetch layer
+    // If there's a custom connect function, call it and handle the connection
     if (this.connect && typeof this.connect === "function") {
-      throw new Error("fetch failed");
+      return new Promise((resolve, reject) => {
+        try {
+          // Parse URL for connection options
+          const urlStr = opts.origin || opts.path;
+          const url = new globalThis.URL(urlStr);
+
+          // Call the custom connect function with connection options and a callback
+          this.connect(
+            {
+              hostname: url.hostname,
+              port: parseInt(url.port) || (url.protocol === "https:" ? 443 : 80),
+              protocol: url.protocol,
+              path: opts.path || url.pathname,
+              method: opts.method || "GET",
+            },
+            (error, socket) => {
+              if (error) {
+                if (handler && handler.onError) {
+                  handler.onError(error);
+                }
+                reject(error);
+              } else {
+                // For now, just reject, can't handle the socket directly
+                const fetchError = new Error("fetch failed");
+                if (handler && handler.onError) {
+                  handler.onError(fetchError);
+                }
+                reject(fetchError);
+              }
+            },
+          );
+        } catch (error) {
+          if (handler && handler.onError) {
+            handler.onError(error);
+          }
+          reject(error);
+        }
+      });
     }
-    return super.dispatch(opts, handler);
+
+    // Default behavior - delegate to request function
+    return request(opts.origin || opts.path, {
+      method: opts.method,
+      headers: opts.headers,
+      body: opts.body,
+    })
+      .then(response => {
+        if (handler && handler.onHeaders) {
+          handler.onHeaders(response.statusCode, response.headers);
+        }
+        if (handler && handler.onData && response.body) {
+          response.body.on("data", chunk => handler.onData(chunk));
+        }
+        if (handler && handler.onComplete) {
+          handler.onComplete(response.trailers || {});
+        }
+        return response;
+      })
+      .catch(error => {
+        if (handler && handler.onError) {
+          handler.onError(error);
+        }
+        throw error;
+      });
   }
 }
 class Pool extends Dispatcher {

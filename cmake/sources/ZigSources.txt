@@ -3789,6 +3789,7 @@ src/sql/mysql/AuthMethod.zig
 src/sql/mysql/Capabilities.zig
 src/sql/mysql/ConnectionState.zig
 src/sql/mysql/MySQLConnection.zig
+src/sql/mysql/MySQLContext.zig
 src/sql/mysql/MySQLQuery.zig
 src/sql/mysql/MySQLStatement.zig
 src/sql/mysql/MySQLTypes.zig
@@ -3812,7 +3813,6 @@ src/sql/mysql/protocol/OKPacket.zig
 src/sql/mysql/protocol/PacketHeader.zig
 src/sql/mysql/protocol/PacketType.zig
 src/sql/mysql/protocol/PreparedStatement.zig
-src/sql/mysql/protocol/QueryBindingIterator.zig
 src/sql/mysql/protocol/ResultSet.zig
 src/sql/mysql/protocol/ResultSetHeader.zig
 src/sql/mysql/protocol/Signature.zig
@@ -3830,7 +3830,6 @@ src/sql/postgres/Data.zig
 src/sql/postgres/DataCell.zig
 src/sql/postgres/DebugSocketMonitorReader.zig
 src/sql/postgres/DebugSocketMonitorWriter.zig
-src/sql/postgres/ObjectIterator.zig
 src/sql/postgres/PostgresCachedStructure.zig
 src/sql/postgres/PostgresProtocol.zig
 src/sql/postgres/PostgresRequest.zig
@@ -3877,7 +3876,6 @@ src/sql/postgres/protocol/StartupMessage.zig
 src/sql/postgres/protocol/TransactionStatusIndicator.zig
 src/sql/postgres/protocol/WriteWrap.zig
 src/sql/postgres/protocol/zHelpers.zig
-src/sql/postgres/QueryBindingIterator.zig
 src/sql/postgres/SASL.zig
 src/sql/postgres/Signature.zig
 src/sql/postgres/SocketMonitor.zig
@@ -3892,6 +3890,8 @@ src/sql/postgres/types/json.zig
 src/sql/postgres/types/numeric.zig
 src/sql/postgres/types/PostgresString.zig
 src/sql/postgres/types/Tag.zig
+src/sql/shared/ObjectIterator.zig
+src/sql/shared/QueryBindingIterator.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig
 src/string.zig

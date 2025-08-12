@@ -27,9 +27,9 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
         name.deinit();
     }
 
-    var iter = QueryBindingIterator.init(array_value, columns, globalObject);
+    var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
 
-    while (iter.next()) |value| {
+    while (try iter.next()) |value| {
         if (value.isEmptyOrUndefinedOrNull()) {
             // Allow MySQL to decide the type
             try fields.append(.MYSQL_TYPE_NULL);
@@ -59,4 +59,4 @@ const types = @import("../MySQLTypes.zig");
 const FieldType = types.FieldType;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../../shared/QueryBindingIterator.zig").QueryBindingIterator;

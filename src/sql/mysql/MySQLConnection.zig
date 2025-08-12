@@ -34,8 +34,8 @@ tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
 
-on_connect: jsc.Strong = .{},
-on_close: jsc.Strong = .{},
+on_connect: jsc.Strong.Optional = .empty,
+on_close: jsc.Strong.Optional = .empty,
 
 auth_data: []const u8 = "",
 database: []const u8 = "",
@@ -43,8 +43,6 @@ user: []const u8 = "",
 password: []const u8 = "",
 options: []const u8 = "",
 options_buf: []const u8 = "",
-
-pub const js = jsc.Codegen.JSMySQLConnection;
 
 pub const AuthState = union(enum) {
     pending: void,
@@ -104,13 +102,13 @@ pub fn finalize(this: *MySQLConnection) void {
 pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.ref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.unref(this.globalObject.bunVM());
     this.updateHasPendingActivity();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn doFlush(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -118,7 +116,7 @@ pub fn doFlush(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, callfr
     _ = globalObject;
     _ = this;
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn createQuery(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -126,7 +124,7 @@ pub fn createQuery(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, ca
     _ = globalObject;
     _ = this;
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getConnected(this: *MySQLConnection, _: *jsc.JSGlobalObject) JSValue {
@@ -138,20 +136,19 @@ pub fn doClose(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, _: *js
     this.disconnect();
     this.write_buffer.deinit(bun.default_allocator);
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*MySQLConnection {
     _ = callframe;
 
-    globalObject.ERR_ILLEGAL_CONSTRUCTOR("MySQLConnection cannot be constructed directly", .{}).throw();
-    return error.JSError;
+    return globalObject.throw("MySQLConnection cannot be constructed directly", .{});
 }
 
 pub fn flushData(this: *MySQLConnection) void {
     const chunk = this.write_buffer.remaining();
     if (chunk.len == 0) return;
-    const wrote = this.socket.write(chunk, false);
+    const wrote = this.socket.write(chunk);
     if (wrote > 0) {
         // SocketMonitor.write(chunk[0..@intCast(wrote)]);
         this.write_buffer.consume(@intCast(wrote));
@@ -1187,6 +1184,46 @@ pub fn resetStatement(this: *MySQLConnection, statement: *MySQLStatement) !void 
     try reset.write(this.writer());
     this.flushData();
 }
+
+pub fn getQueries(_: *@This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    if (js.queriesGetCached(thisValue)) |value| {
+        return value;
+    }
+
+    const array = try jsc.JSValue.createEmptyArray(globalObject, 0);
+    js.queriesSetCached(thisValue, globalObject, array);
+
+    return array;
+}
+
+pub fn getOnConnect(_: *@This(), thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
+    if (js.onconnectGetCached(thisValue)) |value| {
+        return value;
+    }
+
+    return .js_undefined;
+}
+
+pub fn setOnConnect(_: *@This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+    js.onconnectSetCached(thisValue, globalObject, value);
+}
+
+pub fn getOnClose(_: *@This(), thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
+    if (js.oncloseGetCached(thisValue)) |value| {
+        return value;
+    }
+
+    return .js_undefined;
+}
+
+pub fn setOnClose(_: *@This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+    js.oncloseSetCached(thisValue, globalObject, value);
+}
+
+pub const js = jsc.Codegen.JSMySQLConnection;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
 const std = @import("std");
 const bun = @import("bun");

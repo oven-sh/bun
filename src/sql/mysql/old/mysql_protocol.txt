@@ -504,6 +504,7 @@ pub const HandshakeV10 = struct {
     pub const decode = decoderWrap(HandshakeV10, decodeInternal).decode;
 };
 
+<<<<<<< Updated upstream
 // Client authentication response
 pub const HandshakeResponse41 = struct {
     capability_flags: mysql.Capabilities,
@@ -599,6 +600,8 @@ pub const HandshakeResponse41 = struct {
 
     pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
 };
+=======
+>>>>>>> Stashed changes
 
 // OK Packet
 pub const OKPacket = struct {
@@ -1207,7 +1210,6 @@ pub const StmtResetPacket = struct {
         try writer.int1(@intFromEnum(this.command));
         try writer.int4(this.statement_id);
     }
-
     pub const write = writeWrap(StmtResetPacket, writeInternal).write;
 };
 

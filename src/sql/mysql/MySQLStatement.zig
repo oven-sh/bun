@@ -1,12 +1,13 @@
 const MySQLStatement = @This();
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 cached_structure: jsc.Strong.Optional = .empty,
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 statement_id: u32 = 0,
 params: []const types.FieldType = &[_]types.FieldType{},
-// columns: []const protocol.ColumnDefinition41 = &[_]protocol.ColumnDefinition41{},
+columns: []const ColumnDefinition41 = &[_]ColumnDefinition41{},
 signature: Signature,
 status: Status = Status.parsing,
-// error_response: protocol.ErrorPacket = .{ .error_code = 0 },
+error_response: ErrorPacket = .{ .error_code = 0 },
 
 pub const Status = enum {
     parsing,
@@ -14,10 +15,11 @@ pub const Status = enum {
     failed,
 };
 
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
 pub fn deinit(this: *MySQLStatement) void {
     debug("MySQLStatement deinit", .{});
-
-    bun.assert(this.ref_count == 0);
 
     for (this.columns) |*column| {
         @constCast(column).deinit();
@@ -58,6 +60,8 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const types = @import("./MySQLTypes.zig");
 const Signature = @import("./protocol/Signature.zig");
+const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
+const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const JSValue = jsc.JSValue;
 const String = bun.String;
 const debug = bun.Output.scoped(.MySQLStatement, false);

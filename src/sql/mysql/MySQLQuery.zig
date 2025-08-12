@@ -1,4 +1,6 @@
 const MySQLQuery = @This();
+const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+
 statement: ?*MySQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -6,9 +8,12 @@ thisValue: JSValue = .js_undefined,
 target: jsc.Strong.Optional = .empty,
 status: Status = Status.pending,
 is_done: bool = false,
-ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+ref_count: RefCount = RefCount.init(),
 binary: bool = false,
-pending_value: jsc.Strong = .{},
+pending_value: jsc.Strong.Optional = .empty,
+
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub const Status = enum(u8) {
     pending,
@@ -106,10 +111,10 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
 }
 
 pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
-    const binding_value = MySQLQuery.bindingGetCached(this.thisValue) orelse .zero;
-    const columns_value = MySQLQuery.columnsGetCached(this.thisValue) orelse .zero;
+    const binding_value = js.bindingGetCached(this.thisValue) orelse .zero;
+    const columns_value = js.columnsGetCached(this.thisValue) orelse .zero;
 
-    var iter = QueryBindingIterator.init(binding_value, columns_value, globalObject);
+    var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
     var i: u32 = 0;
     var params = try bun.default_allocator.alloc(Data, execute.params.len);
@@ -119,7 +124,7 @@ pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject
         }
         bun.default_allocator.free(params);
     }
-    while (iter.next()) |js_value| {
+    while (try iter.next()) |js_value| {
         const param = execute.param_types[i];
         var value = try Value.fromJS(
             js_value,
@@ -208,7 +213,7 @@ pub fn onSuccess(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*MySQLQuery {
     _ = callframe;
-    return globalThis.throw2("MySQLQuery cannot be constructed directly", .{});
+    return globalThis.throw("MySQLQuery cannot be constructed directly", .{});
 }
 
 pub fn estimatedSize(this: *MySQLQuery) usize {
@@ -223,19 +228,16 @@ pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
     const columns = arguments[3];
 
     if (!query.isString()) {
-        globalThis.throw("query must be a string", .{});
-        return .zero;
+        return globalThis.throw("query must be a string", .{});
     }
 
     if (values.jsType() != .Array) {
-        globalThis.throw("values must be an array", .{});
-        return .zero;
+        return globalThis.throw("values must be an array", .{});
     }
 
     const pending_value = arguments[2];
     if (!pending_value.jsType().isArrayLike()) {
-        globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
-        return .zero;
+        return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
     }
 
     var ptr = bun.default_allocator.create(MySQLQuery) catch |err| {
@@ -246,25 +248,50 @@ pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
     this_value.ensureStillAlive();
 
     ptr.* = .{
-        .query = query.toBunString(globalThis),
+        .query = try query.toBunString(globalThis),
         .thisValue = this_value,
     };
     ptr.query.ref();
 
-    MySQLQuery.bindingSetCached(this_value, globalThis, values);
-    MySQLQuery.pendingValueSetCached(this_value, globalThis, pending_value);
-    if (columns != .undefined) {
-        MySQLQuery.columnsSetCached(this_value, globalThis, columns);
+    js.bindingSetCached(this_value, globalThis, values);
+    js.pendingValueSetCached(this_value, globalThis, pending_value);
+    if (columns != .js_undefined) {
+        js.columnsSetCached(this_value, globalThis, columns);
     }
     ptr.pending_value.set(globalThis, pending_value);
 
     return this_value;
 }
 
+pub fn setPendingValue(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    _ = globalObject;
+    _ = callframe;
+    _ = this;
+    // const result = callframe.argument(0);
+    // const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
+    // js.pendingValueSetCached(thisValue, globalObject, result);
+    return .js_undefined;
+}
+pub fn setMode(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    _ = globalObject;
+    _ = callframe;
+    _ = this;
+    // const js_mode = callframe.argument(0);
+    // if (js_mode.isEmptyOrUndefinedOrNull() or !js_mode.isNumber()) {
+    //     return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
+    // }
+
+    // const mode = try js_mode.coerce(i32, globalObject);
+    // this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
+    //     return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
+    // };
+    return .js_undefined;
+}
+
 pub fn doDone(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
     this.is_done = true;
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn doCancel(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -272,28 +299,42 @@ pub fn doCancel(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe:
     _ = globalObject;
     _ = this;
 
-    return .undefined;
+    return .js_undefined;
+}
+
+pub fn doSetMode(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    _ = callframe;
+    _ = globalObject;
+    _ = this;
+
+    return .js_undefined;
+}
+
+pub fn doSetPendingValue(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    _ = callframe;
+    _ = globalObject;
+    _ = this;
+
+    return .js_undefined;
 }
 
 pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
     var connection: *MySQLConnection = arguments[0].as(MySQLConnection) orelse {
-        globalObject.throw("connection must be a MySQLConnection", .{});
-        return error.JSError;
+        return globalObject.throw("connection must be a MySQLConnection", .{});
     };
     var query = arguments[1];
 
     if (!query.isObject()) {
-        globalObject.throwInvalidArgumentType("run", "query", "Query");
-        return error.JSError;
+        return globalObject.throwInvalidArgumentType("run", "query", "Query");
     }
 
     this.target.set(globalObject, query);
-    const binding_value = MySQLQuery.bindingGetCached(callframe.this()) orelse .zero;
+    const binding_value = js.bindingGetCached(callframe.this()) orelse .zero;
     var query_str = this.query.toUTF8(bun.default_allocator);
     defer query_str.deinit();
-    const columns_value = MySQLQuery.columnsGetCached(callframe.this()) orelse .undefined;
+    const columns_value = js.columnsGetCached(callframe.this()) orelse .js_undefined;
 
     var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
         if (!globalObject.hasException())
@@ -338,7 +379,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         };
         stmt.* = .{
             .signature = signature,
-            .ref_count = 2,
+            .ref_count = .initExactRefs(2),
             .status = .parsing,
             .statement_id = 0,
         };
@@ -353,13 +394,17 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     if (connection.is_ready_for_query)
         connection.flushData();
 
-    return .undefined;
+    return .js_undefined;
 }
 
 comptime {
-    const jscall = jsc.toJSHostFunction(call);
-    @export(jscall, .{ .name = "MySQLQuery__createInstance" });
+    @export(&jsc.toJSHostFn(call), .{ .name = "MySQLQuery__createInstance" });
 }
+
+pub const js = jsc.Codegen.JSMySQLQuery;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
 
 const std = @import("std");
 const bun = @import("bun");
@@ -370,7 +415,7 @@ const Data = @import("./protocol/Data.zig").Data;
 const Value = @import("./MySQLTypes.zig").Value;
 const debug = bun.Output.scoped(.MySQLQuery, false);
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
-const QueryBindingIterator = @import("./protocol/QueryBindingIterator.zig");
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");

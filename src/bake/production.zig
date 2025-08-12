@@ -26,7 +26,7 @@ pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
     bun.ast.Expr.Data.Store.create();
     bun.ast.Stmt.Data.Store.create();
 
-    var arena = try bun.MimallocArena.init();
+    var arena = bun.MimallocArena.init();
     defer arena.deinit();
 
     const vm = try VirtualMachine.initBake(.{

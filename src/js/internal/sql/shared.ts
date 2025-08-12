@@ -120,10 +120,16 @@ class UnsupportedAdapterError extends Error {
 function parseDefinitelySqliteUrl(value: string | URL): string | null {
   const str = value instanceof URL ? value.toString() : value;
 
-  // ':memory:' is a sqlite url
   if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
 
-  if (str.startsWith("sqlite://")) return new URL(str).pathname;
+  if (str.startsWith("sqlite://")) {
+    try {
+      return value instanceof URL ? value.pathname : str.slice(9);
+    } catch {
+      // If it's not a valid URL, just strip the prefix
+      return str.slice(9); // "sqlite://".length
+    }
+  }
   if (str.startsWith("sqlite:")) return str.slice(7); // "sqlite:".length
 
   // We can't guarantee this is exclusively an sqlite url here
@@ -142,10 +148,6 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   options: Bun.SQL.Options,
   adapter: A,
 ): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (options.adapter === undefined) {
-    return; // best effort
-  }
-
   if (!isOptionsOfAdapter(options, adapter)) {
     throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
   }
@@ -189,6 +191,7 @@ function parseOptions(
 
   // @ts-expect-error Compatibility
   if (options.adapter === "postgresql") options.adapter = "postgres";
+  if (options.adapter === undefined) options.adapter = "postgres";
 
   assertIsOptionsOfAdapter(options, "postgres");
 

@@ -63,7 +63,7 @@ declare module "bun" {
        *
        * @default ":memory:"
        */
-      filename?: URL | ":memory:" | `${string}.db` | (string & {}) | undefined;
+      filename?: URL | ":memory:" | (string & {}) | undefined;
     }
 
     interface PostgresOptions {
@@ -431,7 +431,7 @@ declare module "bun" {
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      * ```
      */
-    constructor(connectionString: string | URL, options: Bun.DistributedOmit<SQL.Options, "url">);
+    constructor(connectionString: string | URL, options: Bun.DistributedOmit<SQL.Options, "url" | "filename">);
 
     /**
      * Creates a new SQL client instance with options

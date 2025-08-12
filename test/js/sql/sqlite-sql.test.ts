@@ -6,6 +6,29 @@ import { rm, stat } from "node:fs/promises";
 import path from "path";
 
 describe("Connection & Initialization", () => {
+  describe("common default connection strings", () => {
+    test("should parse common connection strings", () => {
+      const memory = new SQL(":memory:");
+      expect(memory.options.adapter).toBe("sqlite");
+      expect(memory.options.filename).toBe(":memory:");
+
+      const myapp = new SQL("sqlite://myapp.db");
+      expect(myapp.options.adapter).toBe("sqlite");
+      expect(myapp.options.filename).toBe("myapp.db");
+
+      const myapp2 = new SQL("myapp.db", { adapter: "sqlite" });
+      expect(myapp2.options.adapter).toBe("sqlite");
+      expect(myapp2.options.filename).toBe("myapp.db");
+
+      const myapp3 = new SQL("myapp.db");
+      expect(myapp3.options.adapter).toBe("sqlite");
+      expect(myapp3.options.filename).toBe("myapp.db");
+
+      const postgres = new SQL("postgres://user1:pass2@localhost:5432/mydb");
+      expect(postgres.options.adapter).not.toBe("sqlite");
+    });
+  });
+
   test("should connect to in-memory SQLite database", async () => {
     const sql = new SQL("sqlite://:memory:");
     expect(sql).toBeDefined();
@@ -760,7 +783,7 @@ describe("Performance & Edge Cases", () => {
   });
 
   test("handles many columns", async () => {
-    const sql = new SQL("sqlite://:memory:");
+    const sql = new SQL(":memory:");
 
     const columnCount = 100;
     const columns = Array.from({ length: columnCount }, (_, i) => `col${i} INTEGER`).join(", ");
@@ -882,6 +905,73 @@ describe("Memory and resource management", () => {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
     }
+  });
+
+  test("properly finalizes prepared statements", async () => {
+    const sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
+
+    // Run many queries to ensure statements are finalized properly
+    // If statements weren't finalized, we'd eventually run out of resources
+    const iterations = 10000;
+
+    for (let i = 0; i < iterations; i++) {
+      // Test single statements
+      await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
+
+      // Test SELECT statements
+      if (i % 100 === 0) {
+        const result = await sql`SELECT COUNT(*) as count FROM stmt_test`;
+        expect(result[0].count).toBe(i + 1);
+      }
+    }
+
+    // Test multi-statement queries with unsafe
+    await sql.unsafe(`
+      DELETE FROM stmt_test WHERE id < 100;
+      DELETE FROM stmt_test WHERE id < 200;
+      DELETE FROM stmt_test WHERE id < 300;
+    `);
+
+    // Verify the database is still functional
+    const finalCount = await sql`SELECT COUNT(*) as count FROM stmt_test`;
+    expect(finalCount[0].count).toBe(iterations - 300);
+
+    await sql.close();
+  });
+
+  test("handles many concurrent prepared statements", async () => {
+    const sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE concurrent_test (id INTEGER, value TEXT)`;
+
+    // Create many queries in parallel
+    const promises = [];
+    for (let i = 0; i < 1000; i++) {
+      promises.push(sql`INSERT INTO concurrent_test VALUES (${i}, ${"value" + i})`);
+    }
+
+    // Wait for all to complete
+    await Promise.all(promises);
+
+    // Verify all were inserted
+    const result = await sql`SELECT COUNT(*) as count FROM concurrent_test`;
+    expect(result[0].count).toBe(1000);
+
+    // Run many SELECT queries in parallel
+    const selectPromises = [];
+    for (let i = 0; i < 100; i++) {
+      selectPromises.push(sql`SELECT * FROM concurrent_test WHERE id = ${i}`);
+    }
+
+    const results = await Promise.all(selectPromises);
+    results.forEach((result, i) => {
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(i);
+    });
+
+    await sql.close();
   });
 });
 

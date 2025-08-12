@@ -74,7 +74,7 @@ console.log("Script completed");
   expect(sampleEvent).toHaveProperty("ts");
   expect(sampleEvent).toHaveProperty("pid");
   expect(sampleEvent).toHaveProperty("tid");
-  
+
   expect(metadataEvent).toBeDefined();
   expect(metadataEvent).toHaveProperty("name");
   expect(metadataEvent).toHaveProperty("ph", "M");

@@ -49,7 +49,7 @@ private:
     static WTF::String convertToChromeTraceEvents(const WTF::String& jscJson)
     {
         WTF::StringBuilder builder;
-        
+
         // Start the trace event JSON object
         builder.append("{\n  \"traceEvents\": [\n"_s);
 
@@ -60,52 +60,52 @@ private:
         if (!jscJson.isEmpty()) {
             // Simple approach: split the JSON into trace objects using pattern matching
             // Look for timestamp and frame name patterns
-            
+
             WTF::Vector<WTF::String> traces;
             auto currentPos = 0u;
-            
+
             while (true) {
                 auto timestampPos = jscJson.find("\"timestamp\":"_s, currentPos);
                 if (timestampPos == WTF::notFound) break;
-                
+
                 // Find the timestamp value
                 auto timestampStart = timestampPos + 12;
                 auto timestampEnd = jscJson.find(","_s, timestampStart);
                 if (timestampEnd == WTF::notFound) break;
-                
+
                 auto timestampStr = jscJson.substring(timestampStart, timestampEnd - timestampStart);
                 double timestampSeconds = timestampStr.toDouble();
                 long long timestampMicros = static_cast<long long>(timestampSeconds * 1000000.0);
-                
+
                 // Find frames in this trace
                 auto framesPos = jscJson.find("\"frames\":["_s, timestampPos);
                 if (framesPos != WTF::notFound) {
                     WTF::Vector<WTF::String> frameNames;
                     auto frameSearchStart = framesPos + 10;
-                    
+
                     // Find all function names in this frames array
                     while (true) {
                         auto namePos = jscJson.find("\"name\":\""_s, frameSearchStart);
                         if (namePos == WTF::notFound) break;
-                        
+
                         // Check if this name is still within the current frames array
                         auto nextFramesPos = jscJson.find("\"frames\":["_s, frameSearchStart);
                         if (nextFramesPos != WTF::notFound && namePos > nextFramesPos) break;
-                        
+
                         auto nameStart = namePos + 8;
                         auto nameEnd = jscJson.find("\""_s, nameStart);
                         if (nameEnd == WTF::notFound) break;
-                        
+
                         auto functionName = jscJson.substring(nameStart, nameEnd - nameStart);
                         frameNames.append(functionName);
-                        
+
                         frameSearchStart = nameEnd + 1;
                     }
-                    
+
                     // Create Chrome trace event
                     builder.append(",\n    {\"name\": \"sample\", \"ph\": \"P\", \"cat\": \"bun\", \"pid\": 1, \"tid\": 1, \"ts\": "_s);
                     builder.append(WTF::String::number(timestampMicros));
-                    
+
                     // Add stack trace if we have frame names
                     if (!frameNames.isEmpty()) {
                         builder.append(", \"stack\": ["_s);
@@ -117,10 +117,10 @@ private:
                         }
                         builder.append("]"_s);
                     }
-                    
+
                     builder.append("}"_s);
                 }
-                
+
                 currentPos = timestampEnd + 1;
             }
         }

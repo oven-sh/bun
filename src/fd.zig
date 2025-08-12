@@ -663,9 +663,23 @@ pub const MovableFD = union(enum) {
     __owned: FD,
     __moved,
 
-    pub fn dupOnWindows(self: MovableFD) bun.sys.Maybe(FD) {
+    pub fn isValid(this: MovableFD) bool {
+        return switch (this) {
+            .__owned => |fd| fd.isValid(),
+            .__moved => false,
+        };
+    }
+
+    pub fn close(this: MovableFD) void {
+        switch (this) {
+            .__owned => |fd| fd.close(),
+            .__moved => {},
+        }
+    }
+
+    pub fn dupOnWindowsDoNothingPosix(self: MovableFD) bun.sys.Maybe(FD) {
         if (comptime bun.Environment.isPosix) {
-            @compileError("don't call this function on posix");
+            return .{ .result = self.__owned };
         }
         return bun.sys.dup(self.__owned);
     }
@@ -686,6 +700,13 @@ pub const MovableFD = union(enum) {
         return MovableFD{ .__owned = fd };
     }
 
+    pub fn isOwned(self: MovableFD) bool {
+        return switch (self) {
+            .__owned => true,
+            .__moved => false,
+        };
+    }
+
     pub fn move(self: *MovableFD) FD {
         if (comptime bun.Environment.isPosix) @compileError("Don't call `.move()` on Posix.");
 
@@ -701,8 +722,8 @@ pub const MovableFD = union(enum) {
             return;
         }
         switch (self.*) {
-            .owned => |fd| try writer.print("{}", .{fd}),
-            .moved => try writer.print("[moved]", .{}),
+            .__owned => |fd| try writer.print("{}", .{fd}),
+            .__moved => try writer.print("[moved]", .{}),
         }
     }
 };

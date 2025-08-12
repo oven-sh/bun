@@ -339,7 +339,7 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        pub fn start(this: *PosixWriter, rawfd: bun.FileDescriptor, pollable: bool) bun.sys.Maybe(void) {
+        pub fn start(this: *PosixWriter, rawfd: anytype, pollable: bool) bun.sys.Maybe(void) {
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
                 bun.FileDescriptor => rawfd,

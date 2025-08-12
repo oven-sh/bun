@@ -1964,3 +1964,870 @@ describe("WITHOUT ROWID Tables", () => {
     }
   });
 });
+
+describe("Concurrency and Locking", () => {
+  test("concurrent reads work correctly", async () => {
+    const dir = tempDirWithFiles("sqlite-concurrent-test", {});
+    const dbPath = path.join(dir, "concurrent.db");
+
+    const sql1 = new SQL(`sqlite://${dbPath}`);
+    await sql1`CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)`;
+
+    for (let i = 1; i <= 100; i++) {
+      await sql1`INSERT INTO test VALUES (${i}, ${"value" + i})`;
+    }
+
+    // Open multiple connections for reading
+    const sql2 = new SQL(`sqlite://${dbPath}`);
+    const sql3 = new SQL(`sqlite://${dbPath}`);
+
+    // Concurrent reads should all succeed
+    const [result1, result2, result3] = await Promise.all([
+      sql1`SELECT COUNT(*) as count FROM test`,
+      sql2`SELECT COUNT(*) as count FROM test`,
+      sql3`SELECT COUNT(*) as count FROM test`,
+    ]);
+
+    expect(result1[0].count).toBe(100);
+    expect(result2[0].count).toBe(100);
+    expect(result3[0].count).toBe(100);
+
+    await sql1.close();
+    await sql2.close();
+    await sql3.close();
+    await rm(dir, { recursive: true });
+  });
+
+  test("write lock prevents concurrent writes", async () => {
+    const dir = tempDirWithFiles("sqlite-write-lock-test", {});
+    const dbPath = path.join(dir, "writelock.db");
+
+    const sql = new SQL(`sqlite://${dbPath}`);
+    await sql`CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)`;
+    await sql`INSERT INTO counter VALUES (1, 0)`;
+
+    // Start a transaction that will hold a write lock
+    const updatePromise = sql.begin(async tx => {
+      await tx`UPDATE counter SET value = value + 1 WHERE id = 1`;
+      // Simulate some work
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await tx`UPDATE counter SET value = value + 1 WHERE id = 1`;
+      return "done";
+    });
+
+    // Try to write from another connection while transaction is active
+    const sql2 = new SQL(`sqlite://${dbPath}`);
+
+    // This should complete after the transaction
+    const startTime = Date.now();
+    await updatePromise;
+    const duration = Date.now() - startTime;
+
+    expect(duration).toBeGreaterThanOrEqual(40); // Should have waited
+
+    const final = await sql`SELECT value FROM counter WHERE id = 1`;
+    expect(final[0].value).toBe(2);
+
+    await sql.close();
+    await sql2.close();
+    await rm(dir, { recursive: true });
+  });
+
+  test("busy timeout handling", async () => {
+    const dir = tempDirWithFiles("sqlite-busy-test", {});
+    const dbPath = path.join(dir, "busy.db");
+
+    const sql1 = new SQL(`sqlite://${dbPath}`);
+    await sql1`CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)`;
+
+    // Set a short busy timeout
+    await sql1`PRAGMA busy_timeout = 100`;
+
+    const sql2 = new SQL(`sqlite://${dbPath}`);
+    await sql2`PRAGMA busy_timeout = 100`;
+
+    // Start a long transaction in sql1
+    const longTransaction = sql1.begin(async tx => {
+      await tx`INSERT INTO test VALUES (1, 'test')`;
+      await new Promise(resolve => setTimeout(resolve, 200));
+      return "done";
+    });
+
+    // Try to write from sql2 - should timeout
+    try {
+      await sql2`INSERT INTO test VALUES (2, 'test2')`;
+      expect(true).toBe(false); // Should not reach here
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      // SQLite busy error
+    }
+
+    await longTransaction;
+
+    await sql1.close();
+    await sql2.close();
+    await rm(dir, { recursive: true });
+  });
+});
+
+describe("Date and Time Functions", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("date and time functions", async () => {
+    await sql`CREATE TABLE timestamps (
+      id INTEGER PRIMARY KEY,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      date_only TEXT DEFAULT (DATE('now')),
+      time_only TEXT DEFAULT (TIME('now'))
+    )`;
+
+    await sql`INSERT INTO timestamps (id) VALUES (1)`;
+
+    const result = await sql`SELECT * FROM timestamps`;
+    expect(result[0].created_at).toBeDefined();
+    expect(result[0].date_only).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result[0].time_only).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  test("date arithmetic", async () => {
+    const results = await sql`
+      SELECT 
+        DATE('2024-01-15', '+1 month') as next_month,
+        DATE('2024-01-15', '-7 days') as last_week,
+        DATE('2024-01-15', '+1 year') as next_year,
+        julianday('2024-01-15') - julianday('2024-01-01') as days_diff
+    `;
+
+    expect(results[0].next_month).toBe("2024-02-15");
+    expect(results[0].last_week).toBe("2024-01-08");
+    expect(results[0].next_year).toBe("2025-01-15");
+    expect(results[0].days_diff).toBe(14);
+  });
+
+  test("strftime formatting", async () => {
+    const results = await sql`
+      SELECT 
+        strftime('%Y-%m-%d', '2024-01-15 14:30:45') as date_only,
+        strftime('%H:%M:%S', '2024-01-15 14:30:45') as time_only,
+        strftime('%w', '2024-01-15') as day_of_week,
+        strftime('%j', '2024-01-15') as day_of_year,
+        strftime('%s', '2024-01-15 00:00:00') as unix_timestamp
+    `;
+
+    expect(results[0].date_only).toBe("2024-01-15");
+    expect(results[0].time_only).toBe("14:30:45");
+    expect(results[0].day_of_week).toBe("1"); // Monday
+    expect(results[0].day_of_year).toBe("015");
+    expect(parseInt(results[0].unix_timestamp)).toBeGreaterThan(0);
+  });
+});
+
+describe("Aggregate Functions and Grouping", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE sales_data (
+      id INTEGER PRIMARY KEY,
+      region TEXT,
+      product TEXT,
+      quantity INTEGER,
+      price REAL,
+      sale_date TEXT
+    )`;
+
+    const salesData = [
+      ["North", "Widget", 10, 25.5, "2024-01-01"],
+      ["North", "Widget", 15, 25.5, "2024-01-02"],
+      ["North", "Gadget", 5, 75.0, "2024-01-01"],
+      ["South", "Widget", 20, 25.5, "2024-01-01"],
+      ["South", "Gadget", 8, 75.0, "2024-01-02"],
+      ["East", "Widget", 12, 25.5, "2024-01-01"],
+      ["East", "Gadget", 3, 75.0, "2024-01-01"],
+      ["West", "Widget", 18, 25.5, "2024-01-02"],
+    ];
+
+    for (let i = 0; i < salesData.length; i++) {
+      const [region, product, quantity, price, date] = salesData[i];
+      await sql`INSERT INTO sales_data VALUES (${i + 1}, ${region}, ${product}, ${quantity}, ${price}, ${date})`;
+    }
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("basic aggregate functions", async () => {
+    const result = await sql`
+      SELECT 
+        COUNT(*) as total_records,
+        SUM(quantity) as total_quantity,
+        AVG(price) as avg_price,
+        MIN(quantity) as min_quantity,
+        MAX(quantity) as max_quantity,
+        GROUP_CONCAT(DISTINCT region) as all_regions
+      FROM sales_data
+    `;
+
+    expect(result[0].total_records).toBe(8);
+    expect(result[0].total_quantity).toBe(91);
+    expect(result[0].avg_price).toBeCloseTo(40.3125, 2);
+    expect(result[0].min_quantity).toBe(3);
+    expect(result[0].max_quantity).toBe(20);
+    expect(result[0].all_regions.split(",")).toHaveLength(4);
+  });
+
+  test("GROUP BY with HAVING", async () => {
+    const result = await sql`
+      SELECT 
+        region,
+        SUM(quantity * price) as total_sales,
+        COUNT(*) as transaction_count
+      FROM sales_data
+      GROUP BY region
+      HAVING SUM(quantity * price) > 500
+      ORDER BY total_sales DESC
+    `;
+
+    expect(result.length).toBeGreaterThan(0);
+    result.forEach(row => {
+      expect(row.total_sales).toBeGreaterThan(500);
+    });
+  });
+
+  test("ROLLUP grouping", async () => {
+    const result = await sql`
+      SELECT 
+        region,
+        product,
+        SUM(quantity) as total_quantity
+      FROM sales_data
+      GROUP BY ROLLUP(region, product)
+      ORDER BY region NULLS LAST, product NULLS LAST
+    `;
+
+    // Should include subtotals and grand total
+    const grandTotal = result.find(r => r.region === null && r.product === null);
+    expect(grandTotal).toBeDefined();
+    expect(grandTotal.total_quantity).toBe(91);
+  });
+});
+
+describe("STRICT Tables", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("STRICT table type enforcement", async () => {
+    await sql`CREATE TABLE strict_test (
+      id INTEGER PRIMARY KEY,
+      int_col INTEGER,
+      real_col REAL,
+      text_col TEXT,
+      blob_col BLOB,
+      any_col ANY
+    ) STRICT`;
+
+    // Valid inserts
+    await sql`INSERT INTO strict_test VALUES (1, 42, 3.14, 'text', X'0102', 'anything')`;
+
+    // Type violations should fail
+    try {
+      await sql`INSERT INTO strict_test VALUES (2, 'not an int', 3.14, 'text', X'0102', 'anything')`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+    }
+
+    try {
+      await sql`INSERT INTO strict_test VALUES (3, 42, 'not a real', 'text', X'0102', 'anything')`;
+      expect(true).toBe(false);
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+    }
+
+    // ANY column accepts anything
+    await sql`INSERT INTO strict_test VALUES (4, 42, 3.14, 'text', X'0102', 123)`;
+    await sql`INSERT INTO strict_test VALUES (5, 42, 3.14, 'text', X'0102', X'ABCD')`;
+
+    const results = await sql`SELECT * FROM strict_test ORDER BY id`;
+    expect(results).toHaveLength(3);
+  });
+});
+
+describe("Virtual Tables (besides FTS)", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("generate_series virtual table", async () => {
+    const result = await sql`
+      SELECT value 
+      FROM generate_series(1, 10, 2)
+    `;
+
+    expect(result).toHaveLength(5);
+    expect(result.map(r => r.value)).toEqual([1, 3, 5, 7, 9]);
+  });
+
+  test("json_each virtual table", async () => {
+    const jsonArray = JSON.stringify([1, 2, 3, 4, 5]);
+
+    const result = await sql`
+      SELECT value
+      FROM json_each(${jsonArray})
+    `;
+
+    expect(result).toHaveLength(5);
+    expect(result.map(r => r.value)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("json_tree virtual table", async () => {
+    const jsonObj = JSON.stringify({
+      name: "root",
+      children: [
+        { name: "child1", value: 1 },
+        { name: "child2", value: 2 },
+      ],
+    });
+
+    const result = await sql`
+      SELECT key, value, type, path
+      FROM json_tree(${jsonObj})
+      WHERE type != 'object' AND type != 'array'
+    `;
+
+    expect(result.length).toBeGreaterThan(0);
+    const nameRow = result.find(r => r.key === "name" && r.value === "root");
+    expect(nameRow).toBeDefined();
+  });
+});
+
+describe("Recursive Queries and Complex CTEs", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("factorial using recursive CTE", async () => {
+    const result = await sql`
+      WITH RECURSIVE factorial(n, fact) AS (
+        SELECT 1, 1
+        UNION ALL
+        SELECT n + 1, fact * (n + 1)
+        FROM factorial
+        WHERE n < 10
+      )
+      SELECT n, fact FROM factorial
+    `;
+
+    expect(result).toHaveLength(10);
+    expect(result[0].fact).toBe(1);
+    expect(result[9].fact).toBe(3628800); // 10!
+  });
+
+  test("Fibonacci sequence", async () => {
+    const result = await sql`
+      WITH RECURSIVE fib(n, a, b) AS (
+        SELECT 1, 0, 1
+        UNION ALL
+        SELECT n + 1, b, a + b
+        FROM fib
+        WHERE n < 10
+      )
+      SELECT n, a as fibonacci FROM fib
+    `;
+
+    expect(result).toHaveLength(10);
+    expect(result[0].fibonacci).toBe(0);
+    expect(result[9].fibonacci).toBe(34);
+  });
+
+  test("tree traversal with path", async () => {
+    await sql`CREATE TABLE tree (
+      id INTEGER PRIMARY KEY,
+      parent_id INTEGER,
+      name TEXT
+    )`;
+
+    await sql`INSERT INTO tree VALUES 
+      (1, NULL, 'root'),
+      (2, 1, 'branch1'),
+      (3, 1, 'branch2'),
+      (4, 2, 'leaf1'),
+      (5, 2, 'leaf2'),
+      (6, 3, 'leaf3')`;
+
+    const result = await sql`
+      WITH RECURSIVE tree_path AS (
+        SELECT id, parent_id, name, name as path, 0 as depth
+        FROM tree
+        WHERE parent_id IS NULL
+        UNION ALL
+        SELECT t.id, t.parent_id, t.name, 
+               tp.path || '/' || t.name as path,
+               tp.depth + 1 as depth
+        FROM tree t
+        JOIN tree_path tp ON t.parent_id = tp.id
+      )
+      SELECT * FROM tree_path
+      ORDER BY path
+    `;
+
+    expect(result).toHaveLength(6);
+    expect(result[0].path).toBe("root");
+    expect(result[result.length - 1].depth).toBe(2);
+  });
+});
+
+describe("Mathematical and String Functions", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("mathematical functions", async () => {
+    const result = await sql`
+      SELECT 
+        ABS(-42) as abs_val,
+        ROUND(3.14159, 2) as rounded,
+        CEIL(4.3) as ceiling,
+        FLOOR(4.7) as floor,
+        SQRT(16) as square_root,
+        POWER(2, 10) as power_val,
+        LOG(100) as log_val,
+        LOG10(1000) as log10_val,
+        SIN(0) as sine,
+        COS(0) as cosine,
+        RADIANS(180) as radians,
+        DEGREES(3.14159265359) as degrees
+    `;
+
+    expect(result[0].abs_val).toBe(42);
+    expect(result[0].rounded).toBe(3.14);
+    expect(result[0].ceiling).toBe(5);
+    expect(result[0].floor).toBe(4);
+    expect(result[0].square_root).toBe(4);
+    expect(result[0].power_val).toBe(1024);
+    expect(result[0].log_val).toBeCloseTo(4.605, 2);
+    expect(result[0].log10_val).toBe(3);
+    expect(result[0].sine).toBe(0);
+    expect(result[0].cosine).toBe(1);
+    expect(result[0].radians).toBeCloseTo(3.14159, 4);
+    expect(result[0].degrees).toBeCloseTo(180, 1);
+  });
+
+  test("string functions", async () => {
+    const result = await sql`
+      SELECT 
+        LENGTH('Hello') as str_length,
+        UPPER('hello') as uppercase,
+        LOWER('HELLO') as lowercase,
+        TRIM('  hello  ') as trimmed,
+        LTRIM('  hello') as left_trimmed,
+        RTRIM('hello  ') as right_trimmed,
+        SUBSTR('Hello World', 7, 5) as substring,
+        REPLACE('Hello World', 'World', 'SQLite') as replaced,
+        INSTR('Hello World', 'World') as position,
+        PRINTF('%d-%02d-%02d', 2024, 1, 5) as formatted,
+        HEX('ABC') as hex_val,
+        CHAR(65, 66, 67) as char_val
+    `;
+
+    expect(result[0].str_length).toBe(5);
+    expect(result[0].uppercase).toBe("HELLO");
+    expect(result[0].lowercase).toBe("hello");
+    expect(result[0].trimmed).toBe("hello");
+    expect(result[0].left_trimmed).toBe("hello");
+    expect(result[0].right_trimmed).toBe("hello");
+    expect(result[0].substring).toBe("World");
+    expect(result[0].replaced).toBe("Hello SQLite");
+    expect(result[0].position).toBe(7);
+    expect(result[0].formatted).toBe("2024-01-05");
+    expect(result[0].hex_val).toBe("414243");
+    expect(result[0].char_val).toBe("ABC");
+  });
+
+  test("pattern matching with GLOB", async () => {
+    await sql`CREATE TABLE patterns (id INTEGER, text TEXT)`;
+    await sql`INSERT INTO patterns VALUES 
+      (1, 'hello'),
+      (2, 'Hello'),
+      (3, 'HELLO'),
+      (4, 'hELLo'),
+      (5, 'world')`;
+
+    // GLOB is case-sensitive unlike LIKE
+    const globResult = await sql`SELECT * FROM patterns WHERE text GLOB 'h*'`;
+    expect(globResult).toHaveLength(2); // 'hello' and 'hELLo'
+
+    const likeResult = await sql`SELECT * FROM patterns WHERE text LIKE 'h%'`;
+    expect(likeResult).toHaveLength(4); // All variants of hello
+  });
+});
+
+describe("Edge Cases for NULL handling", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("NULL in arithmetic operations", async () => {
+    const result = await sql`
+      SELECT 
+        NULL + 5 as null_add,
+        NULL * 10 as null_multiply,
+        NULL || 'text' as null_concat,
+        COALESCE(NULL, NULL, 'default') as coalesced,
+        IFNULL(NULL, 'replacement') as if_null,
+        NULLIF(5, 5) as null_if_equal,
+        NULLIF(5, 3) as null_if_not_equal
+    `;
+
+    expect(result[0].null_add).toBeNull();
+    expect(result[0].null_multiply).toBeNull();
+    expect(result[0].null_concat).toBe("text");
+    expect(result[0].coalesced).toBe("default");
+    expect(result[0].if_null).toBe("replacement");
+    expect(result[0].null_if_equal).toBeNull();
+    expect(result[0].null_if_not_equal).toBe(5);
+  });
+
+  test("NULL in comparisons", async () => {
+    await sql`CREATE TABLE null_test (id INTEGER, value INTEGER)`;
+    await sql`INSERT INTO null_test VALUES (1, 10), (2, NULL), (3, 20)`;
+
+    // NULL comparisons
+    const eq = await sql`SELECT * FROM null_test WHERE value = NULL`;
+    expect(eq).toHaveLength(0);
+
+    const isNull = await sql`SELECT * FROM null_test WHERE value IS NULL`;
+    expect(isNull).toHaveLength(1);
+
+    const notNull = await sql`SELECT * FROM null_test WHERE value IS NOT NULL`;
+    expect(notNull).toHaveLength(2);
+
+    // NULL in ORDER BY (NULLs come first in ASC, last in DESC)
+    const asc = await sql`SELECT * FROM null_test ORDER BY value ASC`;
+    expect(asc[0].value).toBeNull();
+
+    const desc = await sql`SELECT * FROM null_test ORDER BY value DESC`;
+    expect(desc[2].value).toBeNull();
+  });
+
+  test("NULL in aggregates", async () => {
+    await sql`CREATE TABLE agg_null (id INTEGER, value INTEGER)`;
+    await sql`INSERT INTO agg_null VALUES (1, 10), (2, NULL), (3, 20), (4, NULL), (5, 30)`;
+
+    const result = await sql`
+      SELECT 
+        COUNT(*) as count_all,
+        COUNT(value) as count_values,
+        SUM(value) as sum_values,
+        AVG(value) as avg_values,
+        MAX(value) as max_value,
+        MIN(value) as min_value
+      FROM agg_null
+    `;
+
+    expect(result[0].count_all).toBe(5);
+    expect(result[0].count_values).toBe(3); // NULLs not counted
+    expect(result[0].sum_values).toBe(60);
+    expect(result[0].avg_values).toBe(20);
+    expect(result[0].max_value).toBe(30);
+    expect(result[0].min_value).toBe(10);
+  });
+});
+
+describe("System Tables and Introspection", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE test_table (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+    await sql`CREATE INDEX idx_name ON test_table(name)`;
+    await sql`CREATE VIEW test_view AS SELECT id, name FROM test_table`;
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("sqlite_master table", async () => {
+    const objects = await sql`
+      SELECT type, name, sql 
+      FROM sqlite_master 
+      WHERE type IN ('table', 'index', 'view')
+      ORDER BY type, name
+    `;
+
+    expect(objects.length).toBeGreaterThan(0);
+
+    const table = objects.find(o => o.type === "table" && o.name === "test_table");
+    expect(table).toBeDefined();
+    expect(table.sql).toContain("CREATE TABLE");
+
+    const index = objects.find(o => o.type === "index" && o.name === "idx_name");
+    expect(index).toBeDefined();
+
+    const view = objects.find(o => o.type === "view" && o.name === "test_view");
+    expect(view).toBeDefined();
+  });
+
+  test("pragma table_info", async () => {
+    const columns = await sql`PRAGMA table_info(test_table)`;
+
+    expect(columns).toHaveLength(3);
+
+    const idCol = columns.find(c => c.name === "id");
+    expect(idCol.pk).toBe(1);
+    expect(idCol.type).toBe("INTEGER");
+
+    const nameCol = columns.find(c => c.name === "name");
+    expect(nameCol.notnull).toBe(1);
+    expect(nameCol.type).toBe("TEXT");
+
+    const createdCol = columns.find(c => c.name === "created_at");
+    expect(createdCol.dflt_value).toBe("CURRENT_TIMESTAMP");
+  });
+
+  test("pragma index_list and index_info", async () => {
+    const indexes = await sql`PRAGMA index_list(test_table)`;
+    expect(indexes.length).toBeGreaterThan(0);
+
+    const idx = indexes.find(i => i.name === "idx_name");
+    expect(idx).toBeDefined();
+
+    const indexInfo = await sql`PRAGMA index_info(idx_name)`;
+    expect(indexInfo).toHaveLength(1);
+    expect(indexInfo[0].name).toBe("name");
+  });
+});
+
+describe("Error Recovery and Database Integrity", () => {
+  test("handles corrupted data gracefully", async () => {
+    const dir = tempDirWithFiles("sqlite-corrupt-test", {});
+    const dbPath = path.join(dir, "test.db");
+    const sql = new SQL(`sqlite://${dbPath}`);
+
+    await sql`CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)`;
+    await sql`INSERT INTO test VALUES (1, 'test')`;
+
+    // Run integrity check
+    const integrityCheck = await sql`PRAGMA integrity_check`;
+    expect(integrityCheck[0].integrity_check).toBe("ok");
+
+    await sql.close();
+    await rm(dir, { recursive: true });
+  });
+
+  test("foreign key cascade actions", async () => {
+    const sql = new SQL("sqlite://:memory:");
+
+    await sql`PRAGMA foreign_keys = ON`;
+
+    await sql`CREATE TABLE authors (
+      id INTEGER PRIMARY KEY,
+      name TEXT
+    )`;
+
+    await sql`CREATE TABLE books (
+      id INTEGER PRIMARY KEY,
+      title TEXT,
+      author_id INTEGER,
+      FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE
+    )`;
+
+    await sql`INSERT INTO authors VALUES (1, 'Author 1'), (2, 'Author 2')`;
+    await sql`INSERT INTO books VALUES 
+      (1, 'Book 1', 1),
+      (2, 'Book 2', 1),
+      (3, 'Book 3', 2)`;
+
+    // Delete author 1 - should cascade delete books 1 and 2
+    await sql`DELETE FROM authors WHERE id = 1`;
+
+    const remainingBooks = await sql`SELECT * FROM books`;
+    expect(remainingBooks).toHaveLength(1);
+    expect(remainingBooks[0].author_id).toBe(2);
+
+    await sql.close();
+  });
+
+  test("deferred foreign key constraints", async () => {
+    const sql = new SQL("sqlite://:memory:");
+
+    await sql`PRAGMA foreign_keys = ON`;
+
+    await sql`CREATE TABLE parent (id INTEGER PRIMARY KEY)`;
+    await sql`CREATE TABLE child (
+      id INTEGER PRIMARY KEY,
+      parent_id INTEGER,
+      FOREIGN KEY (parent_id) REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED
+    )`;
+
+    await sql.begin(async tx => {
+      // Insert child before parent - normally would fail
+      await tx`INSERT INTO child VALUES (1, 1)`;
+      // Insert parent before commit
+      await tx`INSERT INTO parent VALUES (1)`;
+    });
+
+    const result = await sql`SELECT * FROM child`;
+    expect(result).toHaveLength(1);
+
+    await sql.close();
+  });
+});
+
+describe("Temp Tables and Attached Databases", () => {
+  test("temporary tables", async () => {
+    const sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TEMP TABLE temp_data (id INTEGER, value TEXT)`;
+    await sql`INSERT INTO temp_data VALUES (1, 'temp')`;
+
+    const result = await sql`SELECT * FROM temp_data`;
+    expect(result).toHaveLength(1);
+
+    // Temp tables should be in temp_master, not sqlite_master
+    const tempTables = await sql`SELECT name FROM sqlite_temp_master WHERE type = 'table'`;
+    expect(tempTables.some(t => t.name === "temp_data")).toBe(true);
+
+    const mainTables = await sql`SELECT name FROM sqlite_master WHERE name = 'temp_data'`;
+    expect(mainTables).toHaveLength(0);
+
+    await sql.close();
+  });
+
+  test("cross-database queries with ATTACH", async () => {
+    const dir = tempDirWithFiles("sqlite-attach-cross-test", {});
+    const mainPath = path.join(dir, "main.db");
+    const attachPath = path.join(dir, "attached.db");
+
+    // Create main database
+    const mainSql = new SQL(`sqlite://${mainPath}`);
+    await mainSql`CREATE TABLE main_table (id INTEGER, data TEXT)`;
+    await mainSql`INSERT INTO main_table VALUES (1, 'main data')`;
+
+    // Create attached database separately first
+    const attachSql = new SQL(`sqlite://${attachPath}`);
+    await attachSql`CREATE TABLE attached_table (id INTEGER, data TEXT)`;
+    await attachSql`INSERT INTO attached_table VALUES (2, 'attached data')`;
+    await attachSql.close();
+
+    // Attach the second database to main
+    await mainSql`ATTACH DATABASE ${attachPath} AS attached_db`;
+
+    // Cross-database query
+    const crossQuery = await mainSql`
+      SELECT m.data as main_data, a.data as attached_data
+      FROM main_table m, attached_db.attached_table a
+      WHERE m.id = 1 AND a.id = 2
+    `;
+
+    expect(crossQuery).toHaveLength(1);
+    expect(crossQuery[0].main_data).toBe("main data");
+    expect(crossQuery[0].attached_data).toBe("attached data");
+
+    await mainSql`DETACH DATABASE attached_db`;
+    await mainSql.close();
+
+    await rm(dir, { recursive: true });
+  });
+});
+
+describe("Query Explain and Optimization", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+
+    await sql`CREATE TABLE large_table (
+      id INTEGER PRIMARY KEY,
+      category TEXT,
+      value INTEGER,
+      description TEXT
+    )`;
+
+    // Insert test data
+    for (let i = 1; i <= 1000; i++) {
+      await sql`INSERT INTO large_table VALUES (
+        ${i},
+        ${"category" + (i % 10)},
+        ${i * 10},
+        ${"description for item " + i}
+      )`;
+    }
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("EXPLAIN QUERY PLAN", async () => {
+    // Without index
+    const planWithoutIndex = await sql`
+      EXPLAIN QUERY PLAN
+      SELECT * FROM large_table WHERE category = 'category5'
+    `;
+
+    expect(planWithoutIndex.length).toBeGreaterThan(0);
+    expect(planWithoutIndex[0].detail).toContain("SCAN");
+
+    // Add index
+    await sql`CREATE INDEX idx_category ON large_table(category)`;
+
+    // With index
+    const planWithIndex = await sql`
+      EXPLAIN QUERY PLAN
+      SELECT * FROM large_table WHERE category = 'category5'
+    `;
+
+    expect(planWithIndex.length).toBeGreaterThan(0);
+    // Should use index now
+    expect(planWithIndex[0].detail.toLowerCase()).toContain("index");
+  });
+});

@@ -225,7 +225,7 @@ pub fn editUpdateNoArgs(
                         const value = dep.value orelse continue;
                         if (value.data != .e_string) continue;
 
-                        const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
+                        const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory(error.OutOfMemory);
                         var tag = Dependency.Version.Tag.infer(version_literal);
 
                         // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
@@ -243,7 +243,7 @@ pub fn editUpdateNoArgs(
                         }
 
                         const key_str = try key.asStringCloned(allocator) orelse unreachable;
-                        const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
+                        const entry = manager.updating_packages.getOrPut(allocator, key_str) catch |oe| bun.outOfMemory(oe);
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -259,9 +259,9 @@ pub fn editUpdateNoArgs(
                         if (manager.options.do.update_to_latest) {
                             // is it an aliased package
                             const temp_version = if (alias_at_index) |at_index|
-                                std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}) catch bun.outOfMemory()
+                                std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}) catch |oe| bun.outOfMemory(oe)
                             else
-                                allocator.dupe(u8, "latest") catch bun.outOfMemory();
+                                allocator.dupe(u8, "latest") catch |oe| bun.outOfMemory(oe);
 
                             dep.value = Expr.allocate(allocator, E.String, .{
                                 .data = temp_version,
@@ -285,7 +285,7 @@ pub fn editUpdateNoArgs(
                         const value = dep.value orelse continue;
                         if (value.data != .e_string) continue;
 
-                        const key_str = key.asString(allocator) orelse bun.outOfMemory();
+                        const key_str = key.asString(allocator) orelse bun.outOfMemory(error.OutOfMemory);
 
                         updated: {
                             // fetchSwapRemove because we want to update the first dependency with a matching
@@ -432,7 +432,7 @@ pub fn edit(
 
                                             if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
 
-                                            const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+                                            const entry = manager.updating_packages.getOrPut(allocator, name) catch |oe| bun.outOfMemory(oe);
 
                                             // first come, first serve
                                             if (entry.found_existing) break :add_packages_to_update;

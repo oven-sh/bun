@@ -22,17 +22,17 @@ pub fn start(this: *Echo) Yield {
     for (args, 0..) |arg, i| {
         const thearg = std.mem.span(arg);
         if (i < args_len - 1) {
-            this.output.appendSlice(thearg) catch bun.outOfMemory();
-            this.output.append(' ') catch bun.outOfMemory();
+            this.output.appendSlice(thearg) catch |oe| bun.outOfMemory(oe);
+            this.output.append(' ') catch |oe| bun.outOfMemory(oe);
         } else {
             if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
                 has_leading_newline = true;
             }
-            this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
+            this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch |oe| bun.outOfMemory(oe);
         }
     }
 
-    if (!has_leading_newline and !no_newline) this.output.append('\n') catch bun.outOfMemory();
+    if (!has_leading_newline and !no_newline) this.output.append('\n') catch |oe| bun.outOfMemory(oe);
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .waiting;

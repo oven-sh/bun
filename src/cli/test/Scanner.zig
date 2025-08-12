@@ -65,8 +65,8 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
         switch (err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
-                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory());
-                    this.test_files.append(this.allocator(), rel_path) catch bun.outOfMemory();
+                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch |oe| bun.outOfMemory(oe));
+                    this.test_files.append(this.allocator(), rel_path) catch |oe| bun.outOfMemory(oe);
                 }
             },
             error.ENOENT => return error.DoesNotExist,

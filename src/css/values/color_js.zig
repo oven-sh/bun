@@ -399,7 +399,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                             break :color bun.String.createFormat("lab({d}, {d}, {d})", .{ lab.l, lab.a, lab.b });
                         },
                     }
-                } catch bun.outOfMemory();
+                } catch |oe| bun.outOfMemory(oe);
 
                 return str.transferToJS(globalThis);
             }

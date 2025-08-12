@@ -459,12 +459,12 @@ pub fn AstMaybe(
                             p.allocator,
                             id.ref,
                             .{},
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         const inner_use = gop.value_ptr.getOrPutValue(
                             p.allocator,
                             name,
                             .{},
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         inner_use.value_ptr.count_estimate += 1;
                     }
                 },
@@ -572,8 +572,8 @@ pub fn AstMaybe(
                                     p.allocator,
                                     "import.meta.hot.{s} does not exist",
                                     .{name},
-                                ) catch bun.outOfMemory(),
-                            ) catch bun.outOfMemory();
+                                ) catch |oe| bun.outOfMemory(oe),
+                            ) catch |oe| bun.outOfMemory(oe);
                             return .{ .data = .e_undefined, .loc = loc };
                         }
                     },

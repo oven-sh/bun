@@ -88,13 +88,13 @@ pub const OutdatedCommand = struct {
                         original_cwd,
                         manager,
                         filters,
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
                     try updateManifestsIfNecessary(manager, workspace_pkg_ids);
                     try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
                 } else if (manager.options.do.recursive) {
-                    const all_workspaces = getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+                    const all_workspaces = getAllWorkspaces(bun.default_allocator, manager) catch |oe| bun.outOfMemory(oe);
                     defer bun.default_allocator.free(all_workspaces);
 
                     try updateManifestsIfNecessary(manager, all_workspaces);
@@ -342,7 +342,7 @@ pub const OutdatedCommand = struct {
 
             var at_least_one_greater_than_zero = false;
 
-            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
+            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch |oe| bun.outOfMemory(oe);
             for (args, patterns_buf) |arg, *converted| {
                 if (arg.len == 0) {
                     converted.* = FilterType.init(&.{}, false);
@@ -459,15 +459,15 @@ pub const OutdatedCommand = struct {
 
                 if (package_name_len > max_name) max_name = package_name_len;
 
-                version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch |oe| bun.outOfMemory(oe);
                 if (version_buf.items.len > max_current) max_current = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
-                version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch |oe| bun.outOfMemory(oe);
                 if (version_buf.items.len > max_update) max_update = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
-                version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch |oe| bun.outOfMemory(oe);
                 if (version_buf.items.len > max_latest) max_latest = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
@@ -482,7 +482,7 @@ pub const OutdatedCommand = struct {
                         .workspace_pkg_id = workspace_pkg_id,
                         .is_catalog = dep.version.tag == .catalog,
                     },
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
             }
         }
 
@@ -603,7 +603,7 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch |oe| bun.outOfMemory(oe);
                     Output.pretty("{s}", .{version_buf.items});
                     for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
@@ -614,7 +614,7 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch |oe| bun.outOfMemory(oe);
                     Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
@@ -625,7 +625,7 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch |oe| bun.outOfMemory(oe);
                     Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();

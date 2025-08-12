@@ -322,7 +322,7 @@ fn appendFileAssumeCapacity(
     const watchlist_id = this.watchlist.len;
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch |oe| bun.outOfMemory(oe))
     else
         file_path;
 
@@ -409,7 +409,7 @@ fn appendDirectoryAssumeCapacity(
     };
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch |oe| bun.outOfMemory(oe))
     else
         file_path;
 
@@ -529,7 +529,7 @@ pub fn appendFileMaybeLock(
             }
         }
     }
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
+    this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch |oe| bun.outOfMemory(oe);
 
     if (autowatch_parent_dir) {
         parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, clone_file_path)) {
@@ -595,7 +595,7 @@ pub fn addDirectory(
         return .{ .result = @truncate(idx) };
     }
 
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
+    this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch |oe| bun.outOfMemory(oe);
 
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
 }

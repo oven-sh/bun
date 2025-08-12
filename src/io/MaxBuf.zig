@@ -13,7 +13,7 @@ pub fn createForSubprocess(owner: *Subprocess, ptr: *?*MaxBuf, initial: ?i64) vo
         ptr.* = null;
         return;
     }
-    const maxbuf = bun.default_allocator.create(MaxBuf) catch bun.outOfMemory();
+    const maxbuf = bun.default_allocator.create(MaxBuf) catch |oe| bun.outOfMemory(oe);
     maxbuf.* = .{
         .owned_by_subprocess = owner,
         .owned_by_reader = false,

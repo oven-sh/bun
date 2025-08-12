@@ -347,7 +347,7 @@ pub const SideEffects = enum(u1) {
         const stack_bottom = stack.items.len;
         defer stack.shrinkRetainingCapacity(stack_bottom);
 
-        stack.append(.{ .bin = expr.data.e_binary }) catch bun.outOfMemory();
+        stack.append(.{ .bin = expr.data.e_binary }) catch |oe| bun.outOfMemory(oe);
 
         // Build stack up of expressions
         var left: Expr = expr.data.e_binary.left;
@@ -357,7 +357,7 @@ pub const SideEffects = enum(u1) {
                 .bin_strict_ne,
                 .bin_comma,
                 => {
-                    stack.append(.{ .bin = left_bin }) catch bun.outOfMemory();
+                    stack.append(.{ .bin = left_bin }) catch |oe| bun.outOfMemory(oe);
                     left = left_bin.left;
                 },
                 else => break,

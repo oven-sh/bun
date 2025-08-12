@@ -1185,8 +1185,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
-            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            ws.send_buffer.ensureTotalCapacity(2048) catch |oe| bun.outOfMemory(oe);
+            ws.receive_buffer.ensureTotalCapacity(2048) catch |oe| bun.outOfMemory(oe);
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];

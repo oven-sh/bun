@@ -27,7 +27,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             pub fn initCapacity(allocator: Allocator, capacity: u32) HeapData {
                 return .{
                     .len = 0,
-                    .ptr = (allocator.alloc(T, capacity) catch bun.outOfMemory()).ptr,
+                    .ptr = (allocator.alloc(T, capacity) catch |oe| bun.outOfMemory(oe)).ptr,
                 };
             }
         };
@@ -175,7 +175,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub inline fn toOwnedSlice(this: *const @This(), allocator: Allocator) []T {
             if (this.spilled()) return this.data.heap.ptr[0..this.data.heap.len];
-            return allocator.dupe(T, this.data.inlined[0..this.capacity]) catch bun.outOfMemory();
+            return allocator.dupe(T, this.data.inlined[0..this.capacity]) catch |oe| bun.outOfMemory(oe);
         }
 
         /// NOTE: If this is inlined then this will refer to stack memory, if
@@ -237,7 +237,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                         break :images images;
                     };
                     if (!images.isEmpty()) {
-                        res.push(allocator, images) catch bun.outOfMemory();
+                        res.push(allocator, images) catch |oe| bun.outOfMemory(oe);
                     }
                 }
 
@@ -250,7 +250,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);
                             }
-                            r.push(alloc, images) catch bun.outOfMemory();
+                            r.push(alloc, images) catch |oe| bun.outOfMemory(oe);
                         }
                     }
                 }.helper;
@@ -261,7 +261,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
                 if (prefixes.none) {
                     if (rgb) |r| {
-                        res.push(allocator, r) catch bun.outOfMemory();
+                        res.push(allocator, r) catch |oe| bun.outOfMemory(oe);
                     }
 
                     if (fallbacks.p3) {
@@ -427,7 +427,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub fn clone(this: *const @This(), allocator: Allocator) @This() {
             var ret = this.*;
             if (!this.spilled()) return ret;
-            ret.data.heap.ptr = (allocator.dupe(T, ret.data.heap.ptr[0..ret.data.heap.len]) catch bun.outOfMemory()).ptr;
+            ret.data.heap.ptr = (allocator.dupe(T, ret.data.heap.ptr[0..ret.data.heap.len]) catch |oe| bun.outOfMemory(oe)).ptr;
             return ret;
         }
 
@@ -597,11 +597,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                 allocator.free(ptr[0..length]);
             } else if (new_cap != cap) {
                 const new_alloc: [*]T = if (unspilled) new_alloc: {
-                    const new_alloc = allocator.alloc(T, new_cap) catch bun.outOfMemory();
+                    const new_alloc = allocator.alloc(T, new_cap) catch |oe| bun.outOfMemory(oe);
                     @memcpy(new_alloc[0..length], ptr[0..length]);
                     break :new_alloc new_alloc.ptr;
                 } else new_alloc: {
-                    break :new_alloc (allocator.realloc(ptr[0..length], new_cap * @sizeOf(T)) catch bun.outOfMemory()).ptr;
+                    break :new_alloc (allocator.realloc(ptr[0..length], new_cap * @sizeOf(T)) catch |oe| bun.outOfMemory(oe)).ptr;
                 };
                 this.data = .{ .heap = .{ .ptr = new_alloc, .len = length } };
                 this.capacity = new_cap;
@@ -623,7 +623,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         fn growToHeap(this: *@This(), allocator: Allocator, additional: usize) void {
             bun.assert(!this.spilled());
             const new_size = growCapacity(this.capacity, this.capacity + additional);
-            var slc = allocator.alloc(T, new_size) catch bun.outOfMemory();
+            var slc = allocator.alloc(T, new_size) catch |oe| bun.outOfMemory(oe);
             @memcpy(slc[0..this.capacity], this.data.inlined[0..this.capacity]);
             this.data = .{ .heap = HeapData{ .len = this.capacity, .ptr = slc.ptr } };
             this.capacity = new_size;

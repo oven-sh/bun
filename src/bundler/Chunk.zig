@@ -349,7 +349,7 @@ pub const Chunk = struct {
                             remain,
                             "\n//# debugId={}\n",
                             .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch bun.outOfMemory()).len..];
+                        ) catch |oe| bun.outOfMemory(oe)).len..];
                     }
 
                     bun.assert(remain.len == 0);
@@ -377,7 +377,7 @@ pub const Chunk = struct {
                                 graph.allocator,
                                 "\n//# debugId={}\n",
                                 .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                            ) catch bun.outOfMemory();
+                            ) catch |oe| bun.outOfMemory(oe);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
                         }

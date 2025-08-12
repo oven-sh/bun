@@ -22,8 +22,8 @@ const CurrentFile = struct {
     pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
         if (Output.isAIAgent()) {
             this.freeAndClear();
-            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
-            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
+            this.title = bun.default_allocator.dupe(u8, title) catch |oe| bun.outOfMemory(oe);
+            this.prefix = bun.default_allocator.dupe(u8, prefix) catch |oe| bun.outOfMemory(oe);
             this.repeat_info.count = repeat_count;
             this.repeat_info.index = repeat_index;
             this.has_printed_filename = false;
@@ -1499,7 +1499,7 @@ pub const TestRunnerTask = struct {
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
+            const label = bun.default_allocator.dupe(u8, test_.label) catch |oe| bun.outOfMemory(oe);
             defer bun.default_allocator.free(label);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
@@ -2094,9 +2094,9 @@ fn consumeArg(
     if (should_write) {
         const owned_slice = try arg.toSliceOrNull(globalThis);
         defer owned_slice.deinit();
-        array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
+        array_list.appendSlice(allocator, owned_slice.slice()) catch |oe| bun.outOfMemory(oe);
     } else {
-        array_list.appendSlice(allocator, fallback) catch bun.outOfMemory();
+        array_list.appendSlice(allocator, fallback) catch |oe| bun.outOfMemory(oe);
     }
     str_idx.* += 1;
     args_idx.* += 1;
@@ -2107,7 +2107,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const allocator = bun.default_allocator;
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
+    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch |oe| bun.outOfMemory(oe);
 
     while (idx < label.len) {
         const char = label[idx];
@@ -2139,9 +2139,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 if (!value.isEmptyOrUndefinedOrNull()) {
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
-                    const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch bun.outOfMemory();
+                    const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch |oe| bun.outOfMemory(oe);
                     defer allocator.free(value_str);
-                    list.appendSlice(allocator, value_str) catch bun.outOfMemory();
+                    list.appendSlice(allocator, value_str) catch |oe| bun.outOfMemory(oe);
                     idx = var_end;
                     continue;
                 }
@@ -2151,8 +2151,8 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 }
             }
 
-            list.append(allocator, '$') catch bun.outOfMemory();
-            list.appendSlice(allocator, label[var_start..var_end]) catch bun.outOfMemory();
+            list.append(allocator, '$') catch |oe| bun.outOfMemory(oe);
+            list.appendSlice(allocator, label[var_start..var_end]) catch |oe| bun.outOfMemory(oe);
             idx = var_end;
         } else if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
@@ -2174,9 +2174,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var str = bun.String.empty;
                     defer str.deref();
                     try current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
+                    const owned_slice = str.toOwnedSlice(allocator) catch |oe| bun.outOfMemory(oe);
                     defer allocator.free(owned_slice);
-                    list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
+                    list.appendSlice(allocator, owned_slice) catch |oe| bun.outOfMemory(oe);
                     idx += 1;
                     args_idx += 1;
                 },
@@ -2184,27 +2184,27 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
-                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
+                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch |oe| bun.outOfMemory(oe);
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    list.appendSlice(allocator, test_index_str) catch |oe| bun.outOfMemory(oe);
                     idx += 1;
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
+                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch |oe| bun.outOfMemory(oe);
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    list.appendSlice(allocator, test_index_str) catch |oe| bun.outOfMemory(oe);
                     idx += 1;
                 },
                 '%' => {
-                    list.append(allocator, '%') catch bun.outOfMemory();
+                    list.append(allocator, '%') catch |oe| bun.outOfMemory(oe);
                     idx += 1;
                 },
                 else => {
                     // ignore unrecognized fmt
                 },
             }
-        } else list.append(allocator, char) catch bun.outOfMemory();
+        } else list.append(allocator, char) catch |oe| bun.outOfMemory(oe);
         idx += 1;
     }
 

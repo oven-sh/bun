@@ -73,16 +73,16 @@ pub const Result = union(enum) {
 
         switch (this.*) {
             .array_of_slice => {
-                this.array_of_slice.append(buf) catch bun.outOfMemory();
+                this.array_of_slice.append(buf) catch |oe| bun.outOfMemory(oe);
                 return .moved;
             },
             .array_of_ptr => {
-                this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+                this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch |oe| bun.outOfMemory(oe);
                 return .moved;
             },
             .single => {
                 if (this.single.done) return .copied;
-                this.single.list.appendSlice(buf[0 .. buf.len + 1]) catch bun.outOfMemory();
+                this.single.list.appendSlice(buf[0 .. buf.len + 1]) catch |oe| bun.outOfMemory(oe);
                 this.single.done = true;
                 return .copied;
             },
@@ -96,16 +96,16 @@ pub const Result = union(enum) {
 
         switch (this.*) {
             .array_of_slice => {
-                this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+                this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch |oe| bun.outOfMemory(oe);
                 return .moved;
             },
             .array_of_ptr => {
-                this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+                this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch |oe| bun.outOfMemory(oe);
                 return .moved;
             },
             .single => {
                 if (this.single.done) return .copied;
-                this.single.list.appendSlice(buf.items[0..]) catch bun.outOfMemory();
+                this.single.list.appendSlice(buf.items[0..]) catch |oe| bun.outOfMemory(oe);
                 return .copied;
             },
         }
@@ -172,7 +172,7 @@ pub fn next(this: *Expansion) Yield {
                     var has_unknown = false;
                     // + 1 for sentinel
                     const string_size = this.expansionSizeHint(this.node, &has_unknown);
-                    this.current_out.ensureUnusedCapacity(string_size + 1) catch bun.outOfMemory();
+                    this.current_out.ensureUnusedCapacity(string_size + 1) catch |oe| bun.outOfMemory(oe);
                 }
 
                 while (this.word_idx < this.node.atomsLen()) {
@@ -186,11 +186,11 @@ pub fn next(this: *Expansion) Yield {
                         if (this.current_out.items.len > 0) {
                             switch (this.current_out.items[0]) {
                                 '/', '\\' => {
-                                    this.current_out.insertSlice(0, homedir.slice()) catch bun.outOfMemory();
+                                    this.current_out.insertSlice(0, homedir.slice()) catch |oe| bun.outOfMemory(oe);
                                 },
                                 else => {
                                     // TODO: Handle username
-                                    this.current_out.insert(0, '~') catch bun.outOfMemory();
+                                    this.current_out.insert(0, '~') catch |oe| bun.outOfMemory(oe);
                                 },
                             }
                         }
@@ -225,9 +225,9 @@ pub fn next(this: *Expansion) Yield {
                 const brace_str = this.current_out.items[0..];
                 var lexer_output = if (bun.strings.isAllASCII(brace_str)) lexer_output: {
                     @branchHint(.likely);
-                    break :lexer_output Braces.Lexer.tokenize(arena_allocator, brace_str) catch bun.outOfMemory();
+                    break :lexer_output Braces.Lexer.tokenize(arena_allocator, brace_str) catch |oe| bun.outOfMemory(oe);
                 } else lexer_output: {
-                    break :lexer_output Braces.NewLexer(.wtf8).tokenize(arena_allocator, brace_str) catch bun.outOfMemory();
+                    break :lexer_output Braces.NewLexer(.wtf8).tokenize(arena_allocator, brace_str) catch |oe| bun.outOfMemory(oe);
                 };
                 const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
@@ -237,7 +237,7 @@ pub fn next(this: *Expansion) Yield {
                 }
                 var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, arena_allocator);
                 const stack_alloc = maybe_stack_alloc.get();
-                const expanded_strings = stack_alloc.alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
+                const expanded_strings = stack_alloc.alloc(std.ArrayList(u8), expansion_count) catch |oe| bun.outOfMemory(oe);
 
                 for (0..expansion_count) |i| {
                     expanded_strings[i] = std.ArrayList(u8).init(this.base.allocator());
@@ -248,13 +248,13 @@ pub fn next(this: *Expansion) Yield {
                     lexer_output.tokens.items[0..],
                     expanded_strings,
                     lexer_output.contains_nested,
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
 
                 this.outEnsureUnusedCapacity(expansion_count);
 
                 // Add sentinel values
                 for (0..expansion_count) |i| {
-                    expanded_strings[i].append(0) catch bun.outOfMemory();
+                    expanded_strings[i].append(0) catch |oe| bun.outOfMemory(oe);
                     switch (this.out.pushResult(&expanded_strings[i])) {
                         .copied => {
                             expanded_strings[i].deinit();
@@ -307,7 +307,7 @@ fn transitionToGlobState(this: *Expansion) Yield {
         false,
         false,
         false,
-    ) catch bun.outOfMemory()) {
+    ) catch |oe| bun.outOfMemory(oe)) {
         .result => {},
         .err => |e| {
             this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
@@ -426,13 +426,13 @@ fn postSubshellExpansion(this: *Expansion, stdout_: []u8) void {
         if (c == ' ') {
             b = i;
             prev_whitespace = true;
-            this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
+            this.current_out.appendSlice(stdout[a..b]) catch |oe| bun.outOfMemory(oe);
             this.pushCurrentOut();
         }
     }
     // "aa bbb"
 
-    this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
+    this.current_out.appendSlice(stdout[a..b]) catch |oe| bun.outOfMemory(oe);
 }
 
 fn convertNewlinesToSpaces(stdout_: []u8) []u8 {
@@ -504,7 +504,7 @@ pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) Yield {
             this.postSubshellExpansion(stdout);
         } else {
             const trimmed = std.mem.trimRight(u8, stdout, " \n\t\r");
-            this.current_out.appendSlice(trimmed) catch bun.outOfMemory();
+            this.current_out.appendSlice(trimmed) catch |oe| bun.outOfMemory(oe);
         }
 
         this.word_idx += 1;
@@ -529,7 +529,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
             },
             .unknown => |errtag| {
                 this.base.throw(&.{
-                    .custom = this.base.allocator().dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
+                    .custom = this.base.allocator().dupe(u8, @errorName(errtag)) catch |oe| bun.outOfMemory(oe),
                 });
             },
         }
@@ -545,7 +545,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
             return .{ .expansion = this };
         }
 
-        const msg = std.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
+        const msg = std.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch |oe| bun.outOfMemory(oe);
         this.state = .{
             .err = bun.shell.ShellErr{
                 .custom = msg,
@@ -558,7 +558,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 
     for (task.result.items) |sentinel_str| {
         // The string is allocated in the glob walker arena and will be freed, so needs to be duped here
-        const duped = this.base.allocator().dupeZ(u8, sentinel_str[0..sentinel_str.len]) catch bun.outOfMemory();
+        const duped = this.base.allocator().dupeZ(u8, sentinel_str[0..sentinel_str.len]) catch |oe| bun.outOfMemory(oe);
         switch (this.out.pushResultSliceOwned(duped)) {
             .copied => {
                 this.base.allocator().free(duped);
@@ -578,35 +578,35 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8), comptime expand_tilde: bool) bool {
     switch (atom.*) {
         .Text => |txt| {
-            str_list.appendSlice(txt) catch bun.outOfMemory();
+            str_list.appendSlice(txt) catch |oe| bun.outOfMemory(oe);
         },
         .Var => |label| {
-            str_list.appendSlice(this.expandVar(label)) catch bun.outOfMemory();
+            str_list.appendSlice(this.expandVar(label)) catch |oe| bun.outOfMemory(oe);
         },
         .VarArgv => |int| {
-            str_list.appendSlice(this.expandVarArgv(int)) catch bun.outOfMemory();
+            str_list.appendSlice(this.expandVarArgv(int)) catch |oe| bun.outOfMemory(oe);
         },
         .asterisk => {
-            str_list.append('*') catch bun.outOfMemory();
+            str_list.append('*') catch |oe| bun.outOfMemory(oe);
         },
         .double_asterisk => {
-            str_list.appendSlice("**") catch bun.outOfMemory();
+            str_list.appendSlice("**") catch |oe| bun.outOfMemory(oe);
         },
         .brace_begin => {
-            str_list.append('{') catch bun.outOfMemory();
+            str_list.append('{') catch |oe| bun.outOfMemory(oe);
         },
         .brace_end => {
-            str_list.append('}') catch bun.outOfMemory();
+            str_list.append('}') catch |oe| bun.outOfMemory(oe);
         },
         .comma => {
-            str_list.append(',') catch bun.outOfMemory();
+            str_list.append(',') catch |oe| bun.outOfMemory(oe);
         },
         .tilde => {
             if (expand_tilde) {
                 const homedir = this.base.shell.getHomedir();
                 defer homedir.deref();
-                str_list.appendSlice(homedir.slice()) catch bun.outOfMemory();
-            } else str_list.append('~') catch bun.outOfMemory();
+                str_list.appendSlice(homedir.slice()) catch |oe| bun.outOfMemory(oe);
+            } else str_list.append('~') catch |oe| bun.outOfMemory(oe);
         },
         .cmd_subst => {
             // TODO:
@@ -620,12 +620,12 @@ pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list:
 
 pub fn appendSlice(this: *Expansion, buf: *std.ArrayList(u8), slice: []const u8) void {
     _ = this;
-    buf.appendSlice(slice) catch bun.outOfMemory();
+    buf.appendSlice(slice) catch |oe| bun.outOfMemory(oe);
 }
 
 pub fn pushCurrentOut(this: *Expansion) void {
     if (this.current_out.items.len == 0) return;
-    if (this.current_out.items[this.current_out.items.len - 1] != 0) this.current_out.append(0) catch bun.outOfMemory();
+    if (this.current_out.items[this.current_out.items.len - 1] != 0) this.current_out.append(0) catch |oe| bun.outOfMemory(oe);
     switch (this.out.pushResult(&this.current_out)) {
         .copied => {
             this.current_out.clearRetainingCapacity();
@@ -727,10 +727,10 @@ fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom
 fn outEnsureUnusedCapacity(this: *Expansion, additional: usize) void {
     switch (this.out) {
         .array_of_ptr => {
-            this.out.array_of_ptr.ensureUnusedCapacity(additional) catch bun.outOfMemory();
+            this.out.array_of_ptr.ensureUnusedCapacity(additional) catch |oe| bun.outOfMemory(oe);
         },
         .array_of_slice => {
-            this.out.array_of_slice.ensureUnusedCapacity(additional) catch bun.outOfMemory();
+            this.out.array_of_slice.ensureUnusedCapacity(additional) catch |oe| bun.outOfMemory(oe);
         },
         .single => {},
     }
@@ -771,7 +771,7 @@ pub const ShellGlobTask = struct {
     pub fn createOnMainThread(walker: *GlobWalker, expansion: *Expansion) *This {
         debug("createOnMainThread", .{});
         var alloc_scope = bun.AllocationScope.init(bun.default_allocator);
-        var this = alloc_scope.allocator().create(This) catch bun.outOfMemory();
+        var this = alloc_scope.allocator().create(This) catch |oe| bun.outOfMemory(oe);
         this.* = .{
             .alloc_scope = alloc_scope,
             .event_loop = expansion.base.eventLoop(),
@@ -803,7 +803,7 @@ pub const ShellGlobTask = struct {
 
         var iter = GlobWalker.Iterator{ .walker = this.walker };
         defer iter.deinit();
-        switch (iter.init() catch bun.outOfMemory()) {
+        switch (iter.init() catch |oe| bun.outOfMemory(oe)) {
             .err => |err| return .{ .err = err },
             else => {},
         }
@@ -812,7 +812,7 @@ pub const ShellGlobTask = struct {
             .err => |err| return .{ .err = err },
             .result => |matched_path| matched_path,
         }) |path| {
-            this.result.append(path) catch bun.outOfMemory();
+            this.result.append(path) catch |oe| bun.outOfMemory(oe);
         }
 
         return .success;

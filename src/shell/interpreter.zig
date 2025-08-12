@@ -75,9 +75,9 @@ pub const stderr_no = 2;
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
-        if (e != error.OutOfMemory) bun.outOfMemory();
+        if (e != error.OutOfMemory) bun.outOfMemory(error.OutOfMemory);
     }
-    bun.outOfMemory();
+    bun.outOfMemory(error.OutOfMemory);
 }
 
 pub const log = bun.Output.scoped(.SHELL, .visible);
@@ -143,7 +143,7 @@ pub const CowFd = struct {
     const debug = bun.Output.scoped(.CowFd, .hidden);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
-        const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
+        const this = bun.default_allocator.create(CowFd) catch |oe| bun.outOfMemory(oe);
         this.* = .{
             .__fd = fd,
         };
@@ -441,7 +441,7 @@ pub const Interpreter = struct {
             io: IO,
             kind: Kind,
         ) Maybe(*ShellExecEnv) {
-            const duped = alloc.create(ShellExecEnv) catch bun.outOfMemory();
+            const duped = alloc.create(ShellExecEnv) catch |oe| bun.outOfMemory(oe);
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
                 .err => |err| return .{ .err = err },
@@ -480,8 +480,8 @@ pub const Interpreter = struct {
                 .cmd_local_env = EnvMap.init(alloc),
                 .export_env = this.export_env.clone(),
 
-                .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
-                .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
+                .__prev_cwd = this.__prev_cwd.clone() catch |oe| bun.outOfMemory(oe),
+                .__cwd = this.__cwd.clone() catch |oe| bun.outOfMemory(oe),
                 // TODO probably need to use os.dup here
                 .cwd_fd = dupedfd,
                 .__alloc_scope = alloc_scope,
@@ -562,10 +562,10 @@ pub const Interpreter = struct {
             _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
-            this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
+            this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch |oe| bun.outOfMemory(oe);
 
             this.__cwd.clearRetainingCapacity();
-            this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch bun.outOfMemory();
+            this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch |oe| bun.outOfMemory(oe);
 
             if (comptime bun.Environment.allow_assert) {
                 assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
@@ -605,7 +605,7 @@ pub const Interpreter = struct {
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
-                    bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+                    bufio.appendFmt(bun.default_allocator, fmt, args) catch |oe| bun.outOfMemory(oe);
                     return ctx.parent.childDone(ctx, 1);
                 },
                 // FIXME: This is not correct? This would just make the entire shell hang I think?
@@ -814,8 +814,8 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
-        cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
+        var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch |oe| bun.outOfMemory(oe);
+        cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch |oe| bun.outOfMemory(oe);
 
         if (comptime bun.Environment.allow_assert) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
@@ -829,7 +829,7 @@ pub const Interpreter = struct {
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
 
-        const interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
+        const interpreter = allocator.create(ThisInterpreter) catch |oe| bun.outOfMemory(oe);
         interpreter.* = .{
             .command_ctx = ctx,
             .event_loop = event_loop,
@@ -844,7 +844,7 @@ pub const Interpreter = struct {
                 .export_env = export_env,
 
                 .__cwd = cwd_arr,
-                .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
+                .__prev_cwd = cwd_arr.clone() catch |oe| bun.outOfMemory(oe),
                 .cwd_fd = cwd_fd,
 
                 .__alloc_scope = undefined,
@@ -1245,12 +1245,12 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyslice = key.toOwnedSlice(bun.default_allocator) catch |oe| bun.outOfMemory(oe);
             var value = object_iter.value;
             if (value.isUndefined()) continue;
 
             const value_str = value.getZigString(globalThis);
-            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = value_str.toOwnedSlice(bun.default_allocator) catch |oe| bun.outOfMemory(oe);
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
             const valueref = EnvStr.initRefCounted(slice);
@@ -1306,9 +1306,9 @@ pub const Interpreter = struct {
 
     pub fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
         if (this.vm_args_utf8.items.len != argv.len) {
-            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
+            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch |oe| bun.outOfMemory(oe);
             for (argv) |arg| {
-                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch |oe| bun.outOfMemory(oe);
             }
         }
         return this.vm_args_utf8.items[idx].slice();
@@ -1395,9 +1395,9 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         pub fn create(this: @This(), comptime Ty: type) *Ty {
             if (comptime bun.Environment.enableAllocScopes) {
-                return this.allocator().create(Ty) catch bun.outOfMemory();
+                return this.allocator().create(Ty) catch |oe| bun.outOfMemory(oe);
             }
-            return bun.default_allocator.create(Ty) catch bun.outOfMemory();
+            return bun.default_allocator.create(Ty) catch |oe| bun.outOfMemory(oe);
         }
 
         pub fn destroy(this: @This(), ptr: anytype) void {

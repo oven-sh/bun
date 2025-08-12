@@ -227,10 +227,10 @@ pub fn createExportsForFile(
 
     // 1 property per export
     var properties = std.ArrayList(js_ast.G.Property)
-        .initCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
+        .initCapacity(allocator, export_aliases.len) catch |oe| bun.outOfMemory(oe);
 
     var ns_export_symbol_uses = Part.SymbolUseMap{};
-    ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
+    ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch |oe| bun.outOfMemory(oe);
 
     const initial_flags = c.graph.meta.items(.flags)[id];
     const needs_exports_variable = initial_flags.needs_exports_variable;
@@ -246,11 +246,11 @@ pub fn createExportsForFile(
         // + 1 if we need to do module.exports = __toCommonJS(exports)
         @as(usize, @intFromBool(force_include_exports_for_entry_point));
 
-    var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch bun.outOfMemory();
+    var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch |oe| bun.outOfMemory(oe);
     defer stmts.done();
     const loc = Logger.Loc.Empty;
     // todo: investigate if preallocating this array is faster
-    var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count) catch bun.outOfMemory();
+    var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count) catch |oe| bun.outOfMemory(oe);
     for (export_aliases) |alias| {
         var exp = resolved_exports.getPtr(alias).?.*;
 
@@ -261,7 +261,7 @@ pub fn createExportsForFile(
         if (imports_to_bind[exp.data.source_index.get()].get(exp.data.import_ref)) |import_data| {
             exp.data.import_ref = import_data.data.import_ref;
             exp.data.source_index = import_data.data.source_index;
-            ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
+            ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch |oe| bun.outOfMemory(oe);
         }
 
         // Exports of imports need EImportIdentifier in case they need to be re-

@@ -383,7 +383,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch |oe| bun.outOfMemory(oe);
             with_ttls.hostent = start.?;
             for (addrttls[0..@intCast(naddrttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -399,7 +399,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch |oe| bun.outOfMemory(oe);
             with_ttls.hostent = start.?;
             for (addr6ttls[0..@intCast(naddr6ttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -1460,7 +1460,7 @@ pub const struct_any_reply = struct {
 
                 var any_success = false;
                 var last_error: ?c_int = null;
-                var reply = bun.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
+                var reply = bun.default_allocator.create(struct_any_reply) catch |oe| bun.outOfMemory(oe);
                 reply.* = .{};
 
                 switch (hostent_with_ttls.parse("a", buffer, buffer_length)) {
@@ -1687,9 +1687,9 @@ pub const Error = enum(i32) {
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
                 .message = if (this.hostname) |hostname|
-                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
+                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch |oe| bun.outOfMemory(oe)
                 else
-                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
+                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch |oe| bun.outOfMemory(oe),
                 .syscall = bun.String.cloneUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
@@ -1712,7 +1712,7 @@ pub const Error = enum(i32) {
                 }
             };
 
-            const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+            const context = bun.default_allocator.create(Context) catch |oe| bun.outOfMemory(oe);
             context.deferred = this;
             context.globalThis = globalThis;
             // TODO(@heimskr): new custom Task type
@@ -1742,7 +1742,7 @@ pub const Error = enum(i32) {
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static(syscall),
-            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
+            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch |oe| bun.outOfMemory(oe),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
@@ -1752,7 +1752,7 @@ pub const Error = enum(i32) {
         const instance = (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
-            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
+            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch |oe| bun.outOfMemory(oe),
             .syscall = bun.String.static(syscall),
             .hostname = bun.String.cloneUTF8(hostname),
         }).toErrorInstance(globalThis);

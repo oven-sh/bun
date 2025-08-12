@@ -125,7 +125,7 @@ fn parseWithError(
     // add
     // remove
     outer: for (positionals) |positional| {
-        var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
+        var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch |oe| bun.outOfMemory(oe);
         {
             var temp: [2048]u8 = undefined;
             const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
@@ -174,7 +174,7 @@ fn parseWithError(
             } else {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
                     positional,
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
             }
 
             return error.UnrecognizedDependencyFormat;
@@ -206,7 +206,7 @@ fn parseWithError(
             } else {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
                     positional,
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
             }
 
             return error.UnrecognizedDependencyFormat;
@@ -229,7 +229,7 @@ fn parseWithError(
         for (update_requests.items) |*prev| {
             if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
         }
-        update_requests.append(allocator, request) catch bun.outOfMemory();
+        update_requests.append(allocator, request) catch |oe| bun.outOfMemory(oe);
     }
 
     return update_requests.items;

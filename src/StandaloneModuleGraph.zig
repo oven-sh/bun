@@ -247,7 +247,7 @@ pub const StandaloneModuleGraph = struct {
                     };
 
                     const source_files = serialized.sourceFileNames();
-                    const slices = bun.default_allocator.alloc(?[]u8, source_files.len * 2) catch bun.outOfMemory();
+                    const slices = bun.default_allocator.alloc(?[]u8, source_files.len * 2) catch |oe| bun.outOfMemory(oe);
 
                     const file_names: [][]const u8 = @ptrCast(slices[0..source_files.len]);
                     const decompressed_contents_slice = slices[source_files.len..][0..source_files.len];
@@ -580,7 +580,7 @@ pub const StandaloneModuleGraph = struct {
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},
-                                    }) catch bun.outOfMemory();
+                                    }) catch |oe| bun.outOfMemory(oe);
                                     zname = zname_z[0..zname_z.len -| 1 :0];
                                     continue;
                                 }
@@ -663,7 +663,7 @@ pub const StandaloneModuleGraph = struct {
                 var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
                 const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
-                var buffered_writer = bun.default_allocator.create(BufferedWriter) catch bun.outOfMemory();
+                var buffered_writer = bun.default_allocator.create(BufferedWriter) catch |oe| bun.outOfMemory(oe);
                 buffered_writer.* = .{
                     .unbuffered_writer = writer,
                 };
@@ -1196,7 +1196,7 @@ pub const StandaloneModuleGraph = struct {
                 const compressed_file = compressed_codes[@intCast(index)].slice(this.map.bytes);
                 const size = bun.zstd.getDecompressedSize(compressed_file);
 
-                const bytes = bun.default_allocator.alloc(u8, size) catch bun.outOfMemory();
+                const bytes = bun.default_allocator.alloc(u8, size) catch |oe| bun.outOfMemory(oe);
                 const result = bun.zstd.decompress(bytes, compressed_file);
 
                 if (result == .err) {

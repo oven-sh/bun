@@ -477,7 +477,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
     var show_trace = bun.Environment.show_crash_trace;
 
     switch (err) {
-        error.OutOfMemory => bun.outOfMemory(),
+        error.OutOfMemory => bun.outOfMemory(err),
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
@@ -1849,7 +1849,7 @@ pub const js_bindings = struct {
 
     pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         suppressCoreDumpsIfNecessary();
-        bun.outOfMemory();
+        bun.outOfMemory(error.OutOfMemory);
     }
 
     pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {

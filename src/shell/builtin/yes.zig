@@ -30,7 +30,7 @@ pub fn start(this: *@This()) Yield {
         bufalloc = BUFSIZ;
     }
 
-    this.buffer = this.alloc_scope.allocator().alloc(u8, bufalloc) catch bun.outOfMemory();
+    this.buffer = this.alloc_scope.allocator().alloc(u8, bufalloc) catch |oe| bun.outOfMemory(oe);
 
     // Fill buffer with one copy of the output
     this.buffer_used = 0;

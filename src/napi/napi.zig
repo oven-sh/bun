@@ -1606,7 +1606,7 @@ pub const ThreadSafeFunction = struct {
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
-        this.queue.data.writeItem(ctx) catch bun.outOfMemory();
+        this.queue.data.writeItem(ctx) catch |oe| bun.outOfMemory(oe);
         this.scheduleDispatch();
         return @intFromEnum(NapiStatus.ok);
     }
@@ -2440,7 +2440,7 @@ pub const NapiFinalizerTask = struct {
     const AnyTask = jsc.AnyTask.New(@This(), runOnJSThread);
 
     pub fn init(finalizer: Finalizer) *NapiFinalizerTask {
-        const finalizer_task = bun.default_allocator.create(NapiFinalizerTask) catch bun.outOfMemory();
+        const finalizer_task = bun.default_allocator.create(NapiFinalizerTask) catch |oe| bun.outOfMemory(oe);
         finalizer_task.* = .{
             .finalizer = finalizer,
         };

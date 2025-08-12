@@ -31,7 +31,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch |oe| bun.outOfMemory(oe);
 }
 
 pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -142,38 +142,38 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
         try writer.writeAll("\"");
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch |oe| bun.outOfMemory(oe);
         try writer.writeAll("\n");
 
         formatter.resetLine();

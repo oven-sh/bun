@@ -740,7 +740,7 @@ pub const Bunfig = struct {
                             .values = values,
                         };
                     }
-                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch |oe| bun.outOfMemory(oe);
 
                     if (serve_obj.get("publicPath")) |public_path| {
                         if (public_path.asString(allocator)) |value| {

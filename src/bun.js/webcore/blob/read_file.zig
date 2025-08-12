@@ -442,9 +442,9 @@ pub const ReadFile = struct {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecis` so that it's an exact amount
                         // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch |oe| bun.outOfMemory(oe);
                     } else {
-                        this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch |oe| bun.outOfMemory(oe);
                     }
                     this.buffer.appendSliceAssumeCapacity(read);
                 } else {

@@ -49,7 +49,7 @@ pub const FallbackHandler = struct {
                                 else
                                     fallback,
                             ),
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     }
                     if (comptime has_vendor_prefix) {
                         if (has_fallbacks and @field(property, field.name[1]).contains(VendorPrefix{ .none = true })) {
@@ -72,7 +72,7 @@ pub const FallbackHandler = struct {
                             else
                                 val,
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 } else if (@field(this, field.name) != null) {
                     const index = @field(this, field.name).?;
                     dest.items[index] = @unionInit(
@@ -115,7 +115,7 @@ pub const FallbackHandler = struct {
                 dest.items[i] = Property{ .unparsed = unparsed };
             } else {
                 index.* = dest.items.len;
-                dest.append(context.allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
+                dest.append(context.allocator, Property{ .unparsed = unparsed }) catch |oe| bun.outOfMemory(oe);
             }
 
             return true;

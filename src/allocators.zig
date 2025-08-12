@@ -245,7 +245,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.default_allocator.create(Self) catch |oe| bun.outOfMemory(oe);
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
                 // https://github.com/ziglang/zig/issues/24313
@@ -332,7 +332,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.default_allocator.create(Self) catch |oe| bun.outOfMemory(oe);
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
                 // https://github.com/ziglang/zig/issues/24313
@@ -516,7 +516,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
                 // https://github.com/ziglang/zig/issues/24313
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.default_allocator.create(Self) catch |oe| bun.outOfMemory(oe);
                 instance.index = IndexMap{};
                 instance.allocator = allocator;
                 instance.overflow_list.zero();
@@ -669,7 +669,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance = bun.default_allocator.create(Self) catch |oe| bun.outOfMemory(oe);
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
                 // https://github.com/ziglang/zig/issues/24313

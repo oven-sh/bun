@@ -42,7 +42,7 @@ pub fn setup(
     const content_type, const content_type_allocated = brk: {
         if (blob.content_type_was_set) {
             if (blob.content_type_allocated) {
-                break :brk .{ bun.default_allocator.dupe(u8, blob.content_type) catch bun.outOfMemory(), true };
+                break :brk .{ bun.default_allocator.dupe(u8, blob.content_type) catch |oe| bun.outOfMemory(oe), true };
             }
 
             break :brk .{ blob.content_type, false };
@@ -167,7 +167,7 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
     var byte_list = bun.ByteList.init(temporary);
-    const cloned = byte_list.listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
+    const cloned = byte_list.listManaged(bun.default_allocator).clone() catch |oe| bun.outOfMemory(oe);
     this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
     this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 

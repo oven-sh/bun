@@ -451,7 +451,7 @@ const PosixBufferedReader = struct {
                             // Stream this chunk and register for next cycle
                             _ = parent.vtable.onReadChunk(stack_buffer[0..bytes_read], if (received_hup and bytes_read < stack_buffer.len) .eof else .progress);
                         } else {
-                            resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                            resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch |oe| bun.outOfMemory(oe);
                         }
                     },
                     .err => |err| {
@@ -463,7 +463,7 @@ const PosixBufferedReader = struct {
                     },
                 }
             } else {
-                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch |oe| bun.outOfMemory(oe);
                 var buf: []u8 = resizable_buffer.unusedCapacitySlice();
 
                 switch (bun.sys.readNonblocking(fd, buf)) {
@@ -584,7 +584,7 @@ const PosixBufferedReader = struct {
             switch (sys_fn(fd, stack_buffer, 0)) {
                 .result => |bytes_read| {
                     if (bytes_read > 0) {
-                        resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                        resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch |oe| bun.outOfMemory(oe);
                     }
                     if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                     parent._offset += bytes_read;
@@ -615,7 +615,7 @@ const PosixBufferedReader = struct {
         }
 
         while (true) {
-            resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+            resizable_buffer.ensureUnusedCapacity(16 * 1024) catch |oe| bun.outOfMemory(oe);
             var buf: []u8 = resizable_buffer.unusedCapacitySlice();
 
             switch (sys_fn(fd, buf, parent._offset)) {
@@ -854,7 +854,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsBufferedReader, suggested_size: usize) []u8 {
         this.flags.has_inflight_read = true;
-        this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
+        this._buffer.ensureUnusedCapacity(suggested_size) catch |oe| bun.outOfMemory(oe);
         const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
         return res;
     }

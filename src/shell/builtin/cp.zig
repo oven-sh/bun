@@ -219,17 +219,17 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                     err.sys.path.eqlUTF8(task.src_absolute.?)))
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
-                this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+                this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch |oe| bun.outOfMemory(oe);
                 this.next().run();
                 return;
             }
         } else {
             const tgt_absolute = task.tgt_absolute;
             task.tgt_absolute = null;
-            if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+            if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch |oe| bun.outOfMemory(oe);
             const src_absolute = task.src_absolute;
             task.src_absolute = null;
-            if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+            if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch |oe| bun.outOfMemory(oe);
         }
     }
 
@@ -466,12 +466,12 @@ pub const ShellCpTask = struct {
 
         // Any source directory without -R is an error
         if (src_is_dir and !this.opts.recursive) {
-            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory();
+            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch |oe| bun.outOfMemory(oe);
             return .{ .custom = errmsg };
         }
 
         if (!src_is_dir and bun.strings.eql(src, tgt)) {
-            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch bun.outOfMemory();
+            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch |oe| bun.outOfMemory(oe);
             return .{ .custom = errmsg };
         }
 
@@ -509,15 +509,15 @@ pub const ShellCpTask = struct {
             } else if (this.operands == 2) {
                 // source_dir -> new_target_dir
             } else {
-                const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
+                const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch |oe| bun.outOfMemory(oe);
                 return .{ .custom = errmsg };
             }
             copying_many = true;
         }
         // Handle the "3rd synopsis": source_files... -> target
         else {
-            if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory() };
-            if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt}) catch bun.outOfMemory() };
+            if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch |oe| bun.outOfMemory(oe) };
+            if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt}) catch |oe| bun.outOfMemory(oe) };
             const basename = ResolvePath.basename(src[0..src.len]);
             const parts: []const []const u8 = &.{
                 tgt[0..tgt.len],
@@ -527,8 +527,8 @@ pub const ShellCpTask = struct {
             copying_many = true;
         }
 
-        this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
-        this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
+        this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch |oe| bun.outOfMemory(oe);
+        this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch |oe| bun.outOfMemory(oe);
 
         const args = jsc.Node.fs.Arguments.Cp{
             .src = jsc.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
@@ -579,7 +579,7 @@ pub const ShellCpTask = struct {
         log("onCopy: {s} -> {s}\n", .{ src, dest });
         defer this.verbose_output_lock.unlock();
         var writer = this.verbose_output.writer();
-        writer.print("{s} -> {s}\n", .{ src, dest }) catch bun.outOfMemory();
+        writer.print("{s} -> {s}\n", .{ src, dest }) catch |oe| bun.outOfMemory(oe);
     }
 
     pub fn cpOnCopy(this: *ShellCpTask, src_: anytype, dest_: anytype) void {

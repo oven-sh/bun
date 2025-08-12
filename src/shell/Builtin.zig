@@ -619,11 +619,11 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
 
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
-        cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
+        cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch |oe| bun.outOfMemory(oe);
     }
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
-        cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
+        cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch |oe| bun.outOfMemory(oe);
     }
 
     return cmd.parent.childDone(cmd, this.exit_code.?);
@@ -683,7 +683,7 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
         .fd => @panic("writeNoIO(. " ++ @tagName(io_kind) ++ ", buf) can't write to a file descriptor, did you check that needsIO(." ++ @tagName(io_kind) ++ ") was false?"),
         .buf => {
             log("{s} write to buf len={d} str={s}{s}\n", .{ @tagName(this.kind), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
-            io.buf.appendSlice(buf) catch bun.outOfMemory();
+            io.buf.appendSlice(buf) catch |oe| bun.outOfMemory(oe);
             return Maybe(usize).initResult(buf.len);
         },
         .arraybuf => {
@@ -742,7 +742,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
 pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []const u8, args: anytype) []u8 {
     const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
     const fmt = cmd_str ++ fmt_;
-    return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
+    return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch |oe| bun.outOfMemory(oe);
 }
 
 // --- Shell Builtin Commands ---

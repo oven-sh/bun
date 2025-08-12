@@ -203,7 +203,7 @@ pub const Loop = struct {
             {
                 var pending_batch = this.pending.popBatch();
                 var pending = pending_batch.iterator();
-                events_list.ensureUnusedCapacity(pending.batch.count) catch bun.outOfMemory();
+                events_list.ensureUnusedCapacity(pending.batch.count) catch |oe| bun.outOfMemory(oe);
                 @memset(std.mem.sliceAsBytes(events_list.items.ptr[0..events_list.capacity]), 0);
 
                 while (pending.next()) |request| {

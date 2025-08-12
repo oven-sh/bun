@@ -814,7 +814,7 @@ pub const JSBundler = struct {
                 const source_code = jsc.Node.StringOrBuffer.fromJSToOwnedSlice(global, source_code_value, bun.default_allocator) catch |err| {
                     switch (err) {
                         error.OutOfMemory => {
-                            bun.outOfMemory();
+                            bun.outOfMemory(error.OutOfMemory);
                         },
                         error.JSError => {},
                     }
@@ -1024,7 +1024,7 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             resolve.import_record.source_file,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |oe| bun.outOfMemory(oe),
                     };
                     resolve.bv2.onResolveAsync(resolve);
                 },
@@ -1036,7 +1036,7 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             load.path,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |oe| bun.outOfMemory(oe),
                     };
                     load.bv2.onLoadAsync(load);
                 },

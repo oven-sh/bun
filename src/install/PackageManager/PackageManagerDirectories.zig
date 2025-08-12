@@ -15,7 +15,7 @@ pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
         this.temp_dir_ = ensureTemporaryDirectory(this);
         var pathbuf: bun.PathBuffer = undefined;
         const temp_dir_path = bun.getFdPathZ(.fromStdDir(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
-        this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
+        this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch |oe| bun.outOfMemory(oe);
         break :brk this.temp_dir_.?;
     };
 }
@@ -24,7 +24,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
     loop: while (true) {
         if (this.options.enable.cache) {
             const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
-            this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
+            this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch |oe| bun.outOfMemory(oe);
 
             return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                 this.options.enable.cache = false;
@@ -40,7 +40,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
                 ".cache",
             },
             .auto,
-        )) catch bun.outOfMemory();
+        )) catch |oe| bun.outOfMemory(oe);
 
         return std.fs.cwd().makeOpenPath("node_modules/.cache", .{}) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
@@ -383,7 +383,7 @@ pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
             Output.err(err, "failed to get the full path of the global directory", .{});
             Global.exit(1);
         };
-        this.global_link_dir_path = Fs.FileSystem.DirnameStore.instance.append([]const u8, _path) catch bun.outOfMemory();
+        this.global_link_dir_path = Fs.FileSystem.DirnameStore.instance.append([]const u8, _path) catch |oe| bun.outOfMemory(oe);
         break :brk this.global_link_dir.?;
     };
 }

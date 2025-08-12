@@ -127,7 +127,7 @@ pub inline fn getRequestBodySendBuffer(this: *@This(), estimated_size: usize) Re
 pub fn deflater(this: *@This()) *LibdeflateState {
     if (this.lazy_libdeflater == null) {
         this.lazy_libdeflater = LibdeflateState.new(.{
-            .decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory(),
+            .decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory(error.OutOfMemory),
         });
     }
 
@@ -406,7 +406,7 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
             .is_tls = http.client.isHTTPS(),
-        }) catch bun.outOfMemory();
+        }) catch |oe| bun.outOfMemory(oe);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -422,7 +422,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
                 .is_tls = http.client.isHTTPS(),
                 .type = messageType,
             },
-        }) catch bun.outOfMemory();
+        }) catch |oe| bun.outOfMemory(oe);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -431,7 +431,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
     // this is always called on the http thread
     {
-        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch |oe| bun.outOfMemory(oe);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();

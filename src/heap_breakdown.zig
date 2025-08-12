@@ -97,7 +97,7 @@ pub const Zone = opaque {
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
         const alignment: std.mem.Alignment = .fromByteUnits(@alignOf(T));
         const ptr: *T = @alignCast(@ptrCast(
-            rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
+            rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(error.OutOfMemory),
         ));
         ptr.* = data;
         return ptr;

@@ -235,10 +235,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                    break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch |oe| bun.outOfMemory(oe) };
                 },
-                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch |oe| bun.outOfMemory(oe) },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch |oe| bun.outOfMemory(oe) },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },

@@ -109,7 +109,7 @@ pub const PatchTask = struct {
                 this.callback.calc_hash.result = this.calcHash();
             },
             .apply => {
-                this.apply() catch bun.outOfMemory();
+                this.apply() catch |oe| bun.outOfMemory(oe);
             },
         }
     }
@@ -165,7 +165,7 @@ pub const PatchTask = struct {
             Global.crash();
         };
 
-        var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
+        var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch |oe| bun.outOfMemory(oe);
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
         } else @panic("No entry for patched dependency, this is a bug in Bun.");
@@ -280,7 +280,7 @@ pub const PatchTask = struct {
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
-        const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch bun.outOfMemory());
+        const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |oe| bun.outOfMemory(oe));
         const system_tmpdir = this.tempdir;
 
         const pkg_name = this.callback.apply.pkgname;
@@ -293,7 +293,7 @@ pub const PatchTask = struct {
         const resolution_label, const resolution_tag = brk: {
             // TODO: fix this threadsafety issue.
             const resolution = &this.manager.lockfile.packages.items(.resolution)[patch.pkg_id];
-            break :brk .{ std.fmt.allocPrint(bun.default_allocator, "{}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)}) catch bun.outOfMemory(), resolution.tag };
+            break :brk .{ std.fmt.allocPrint(bun.default_allocator, "{}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)}) catch |oe| bun.outOfMemory(oe), resolution.tag };
         };
         defer this.manager.allocator.free(resolution_label);
 
@@ -428,7 +428,7 @@ pub const PatchTask = struct {
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
                     };
-                    log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args) catch bun.outOfMemory();
+                    log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args) catch |oe| bun.outOfMemory(oe);
                     return null;
                 }
                 log.addWarningFmt(
@@ -437,7 +437,7 @@ pub const PatchTask = struct {
                     this.manager.allocator,
                     "patchfile <b>{s}<r> is empty, please restore or delete it.",
                     .{absolute_patchfile_path},
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
                 return null;
             },
             .result => |s| s,
@@ -450,7 +450,7 @@ pub const PatchTask = struct {
                 this.manager.allocator,
                 "patchfile <b>{s}<r> is empty, please restore or delete it.",
                 .{absolute_patchfile_path},
-            ) catch bun.outOfMemory();
+            ) catch |oe| bun.outOfMemory(oe);
             return null;
         }
 
@@ -462,7 +462,7 @@ pub const PatchTask = struct {
                     this.manager.allocator,
                     "failed to open patch file: {}",
                     .{e},
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
                 return null;
             },
             .result => |fd| fd,
@@ -487,7 +487,7 @@ pub const PatchTask = struct {
                         this.manager.allocator,
                         "failed to read from patch file: {} ({s})",
                         .{ e, absolute_patchfile_path },
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                     return null;
                 },
             };
@@ -514,7 +514,7 @@ pub const PatchTask = struct {
         state: ?CalcPatchHash.EnqueueAfterState,
     ) *PatchTask {
         const patchdep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse @panic("This is a bug");
-        const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+        const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch |oe| bun.outOfMemory(oe);
 
         const pt = bun.new(PatchTask, .{
             .tempdir = manager.getTemporaryDirectory(),
@@ -551,7 +551,7 @@ pub const PatchTask = struct {
             patch_hash,
         );
 
-        const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+        const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch |oe| bun.outOfMemory(oe);
 
         const pt = bun.new(PatchTask, .{
             .tempdir = pkg_manager.getTemporaryDirectory(),
@@ -567,8 +567,8 @@ pub const PatchTask = struct {
                     // need to dupe this as it's calculated using
                     // `PackageManager.cached_package_folder_name_buf` which may be
                     // modified
-                    .cache_dir_subpath = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath) catch bun.outOfMemory(),
-                    .cache_dir_subpath_without_patch_hash = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath[0 .. std.mem.indexOf(u8, stuff.cache_dir_subpath, "_patch_hash=") orelse @panic("This is a bug in Bun.")]) catch bun.outOfMemory(),
+                    .cache_dir_subpath = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath) catch |oe| bun.outOfMemory(oe),
+                    .cache_dir_subpath_without_patch_hash = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath[0 .. std.mem.indexOf(u8, stuff.cache_dir_subpath, "_patch_hash=") orelse @panic("This is a bug in Bun.")]) catch |oe| bun.outOfMemory(oe),
                 },
             },
             .manager = pkg_manager,

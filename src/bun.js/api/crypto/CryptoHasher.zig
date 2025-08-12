@@ -365,7 +365,7 @@ pub const CryptoHasher = union(enum) {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         const copied: CryptoHasher = switch (this.*) {
-            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() },
+            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch |oe| bun.outOfMemory(oe) },
             .hmac => |inner| brk: {
                 const hmac = inner orelse {
                     return throwHmacConsumed(globalObject);

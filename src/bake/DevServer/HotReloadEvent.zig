@@ -52,12 +52,12 @@ pub fn isEmpty(ev: *const HotReloadEvent) bool {
 }
 
 pub fn appendFile(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
-    _ = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
+    _ = event.files.getOrPut(allocator, file_path) catch |oe| bun.outOfMemory(oe);
 }
 
 pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, dir_path: []const u8, maybe_sub_path: ?[]const u8) void {
     if (dir_path.len == 0) return;
-    _ = event.dirs.getOrPut(allocator, dir_path) catch bun.outOfMemory();
+    _ = event.dirs.getOrPut(allocator, dir_path) catch |oe| bun.outOfMemory(oe);
 
     const sub_path = maybe_sub_path orelse return;
     if (sub_path.len == 0) return;
@@ -67,7 +67,7 @@ pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, dir_path: []const
     const starts_with_sep = platform.isSeparator(sub_path[0]);
     const sep_offset: i32 = if (ends_with_sep and starts_with_sep) -1 else 1;
 
-    event.extra_files.ensureUnusedCapacity(allocator, @intCast(@as(i32, @intCast(dir_path.len + sub_path.len)) + sep_offset + 1)) catch bun.outOfMemory();
+    event.extra_files.ensureUnusedCapacity(allocator, @intCast(@as(i32, @intCast(dir_path.len + sub_path.len)) + sep_offset + 1)) catch |oe| bun.outOfMemory(oe);
     event.extra_files.appendSliceAssumeCapacity(if (ends_with_sep) dir_path[0 .. dir_path.len - 1] else dir_path);
     event.extra_files.appendAssumeCapacity(platform.separator());
     event.extra_files.appendSliceAssumeCapacity(sub_path);
@@ -111,7 +111,7 @@ pub fn processFileList(
                     // into BundleV2 is too complicated. the resolution is
                     // cached, anyways.
                     event.appendFile(dev.allocator, dep.source_file_path);
-                    dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
+                    dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch |oe| bun.outOfMemory(oe);
                 } else {
                     // rebuild a new linked list for unaffected files
                     dep.next = new_chain;
@@ -130,16 +130,16 @@ pub fn processFileList(
 
     var rest_extra = event.extra_files.items;
     while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
-        event.files.put(dev.allocator, rest_extra[0..str], {}) catch bun.outOfMemory();
+        event.files.put(dev.allocator, rest_extra[0..str], {}) catch |oe| bun.outOfMemory(oe);
         rest_extra = rest_extra[str + 1 ..];
     }
     if (rest_extra.len > 0) {
-        event.files.put(dev.allocator, rest_extra, {}) catch bun.outOfMemory();
+        event.files.put(dev.allocator, rest_extra, {}) catch |oe| bun.outOfMemory(oe);
     }
 
     const changed_file_paths = event.files.keys();
     inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-        g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
+        g.invalidate(changed_file_paths, entry_points, temp_alloc) catch |oe| bun.outOfMemory(oe);
     }
 
     if (entry_points.set.count() == 0) {
@@ -166,7 +166,7 @@ pub fn processFileList(
             const file = dev.client_graph.bundled_files.get(abs_path) orelse
                 continue;
             if (file.flags.kind == .css)
-                entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
+                entry_points.appendCss(temp_alloc, abs_path) catch |oe| bun.outOfMemory(oe);
         }
     }
 }
@@ -213,7 +213,7 @@ pub fn run(first: *HotReloadEvent) void {
     switch (dev.testing_batch_events) {
         .disabled => {},
         .enabled => |*ev| {
-            ev.append(dev, entry_points) catch bun.outOfMemory();
+            ev.append(dev, entry_points) catch |oe| bun.outOfMemory(oe);
             dev.publish(.testing_watch_synchronization, &.{
                 MessageId.testing_watch_synchronization.char(),
                 1,

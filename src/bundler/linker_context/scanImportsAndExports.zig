@@ -568,7 +568,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 const extra_count = @as(usize, @intFromBool(force_include_exports)) +
                     @as(usize, @intFromBool(add_wrapper));
 
-                var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator, extra_count) catch bun.outOfMemory();
+                var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator, extra_count) catch |oe| bun.outOfMemory(oe);
 
                 var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                 for (aliases) |alias| {
@@ -581,12 +581,12 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         target_source_index = import_data.data.source_index;
                         target_ref = import_data.data.import_ref;
 
-                        dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
+                        dependencies.appendSlice(import_data.re_exports.slice()) catch |oe| bun.outOfMemory(oe);
                     }
 
                     // Pull in all declarations of this symbol
                     const top_to_parts = this.topLevelSymbolsToParts(target_source_index.get(), target_ref);
-                    dependencies.ensureUnusedCapacity(top_to_parts.len) catch bun.outOfMemory();
+                    dependencies.ensureUnusedCapacity(top_to_parts.len) catch |oe| bun.outOfMemory(oe);
                     for (top_to_parts) |part_index| {
                         dependencies.appendAssumeCapacity(.{
                             .source_index = target_source_index,
@@ -595,7 +595,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                     }
                 }
 
-                dependencies.ensureUnusedCapacity(extra_count) catch bun.outOfMemory();
+                dependencies.ensureUnusedCapacity(extra_count) catch |oe| bun.outOfMemory(oe);
 
                 // Ensure "exports" is included if the current output format needs it
                 if (force_include_exports) {
@@ -621,7 +621,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         .dependencies = js_ast.Dependency.List.fromList(dependencies),
                         .can_be_removed_if_unused = false,
                     },
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
 
                 parts = parts_list[id].slice();
                 this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
@@ -959,7 +959,7 @@ const ExportStarContext = struct {
             if (i == source_index)
                 return;
         }
-        this.source_index_stack.append(source_index) catch bun.outOfMemory();
+        this.source_index_stack.append(source_index) catch |oe| bun.outOfMemory(oe);
         const stack_end_pos = this.source_index_stack.items.len;
         defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1);
 
@@ -999,7 +999,7 @@ const ExportStarContext = struct {
                     }
                 }
 
-                const gop = resolved_exports.getOrPut(this.allocator, alias) catch bun.outOfMemory();
+                const gop = resolved_exports.getOrPut(this.allocator, alias) catch |oe| bun.outOfMemory(oe);
                 if (!gop.found_existing) {
                     // Initialize the re-export
                     gop.value_ptr.* = .{
@@ -1017,7 +1017,7 @@ const ExportStarContext = struct {
                             .import_ref = name.ref,
                             .source_index = Index.source(other_source_index),
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |oe| bun.outOfMemory(oe);
                 } else if (gop.value_ptr.data.source_index.get() != other_source_index) {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr.potentially_ambiguous_export_star_refs.push(this.allocator, .{
@@ -1026,7 +1026,7 @@ const ExportStarContext = struct {
                             .import_ref = name.ref,
                             .name_loc = name.alias_loc,
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |oe| bun.outOfMemory(oe);
                 }
             }
 
@@ -1090,7 +1090,7 @@ fn validateComposesFromProperties(
         }
 
         fn addPropertyOrWarn(v: *@This(), local: Ref, property_name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
-            const entry = v.properties.getOrPut(property_name) catch bun.outOfMemory();
+            const entry = v.properties.getOrPut(property_name) catch |oe| bun.outOfMemory(oe);
 
             if (!entry.found_existing) {
                 entry.value_ptr.* = .{
@@ -1115,15 +1115,15 @@ fn validateComposesFromProperties(
                         v.allocator,
                         "<r>The value of <b>{s}<r> in the class <b>{s}<r> is undefined.",
                         .{ property_name, local_original_name },
-                    ) catch bun.outOfMemory(),
-                ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
+                    ) catch |oe| bun.outOfMemory(oe),
+                ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch |oe| bun.outOfMemory(oe),
                 .notes = v.allocator.dupe(
                     Logger.Data,
                     &.{
                         bun.logger.rangeData(
                             &v.all_sources[entry.value_ptr.source_index],
                             entry.value_ptr.range,
-                            Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name}) catch bun.outOfMemory(),
+                            Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name}) catch |oe| bun.outOfMemory(oe),
                         ),
                         .{ .text = std.fmt.allocPrint(
                             v.allocator,
@@ -1131,10 +1131,10 @@ fn validateComposesFromProperties(
                                 "The value of the {} property for {} may change unpredictably as the code is edited. " ++
                                 "Make sure that all definitions of {} for {} are in a single file.",
                             .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
-                        ) catch bun.outOfMemory() },
+                        ) catch |oe| bun.outOfMemory(oe) },
                     },
-                ) catch bun.outOfMemory(),
-            }) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe),
+            }) catch |oe| bun.outOfMemory(oe);
 
             // Don't warn more than once
             entry.value_ptr.source_index = Index.invalid.get();

@@ -2573,7 +2573,7 @@ pub const Dirname = struct {
     }
 };
 
-pub noinline fn outOfMemory() noreturn {
+pub noinline fn outOfMemory(_: error{OutOfMemory}) noreturn {
     @branchHint(.cold);
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
@@ -2584,7 +2584,7 @@ pub noinline fn outOfMemory() noreturn {
 /// * If other errors are possible, returns the same error union, but without `error.OutOfMemory`
 ///   in the error set.
 ///
-/// Prefer this method over `catch bun.outOfMemory()`, since that could mistakenly catch
+/// Prefer this method over `catch |oe| bun.outOfMemory(oe)`, since that could mistakenly catch
 /// non-OOM-related errors.
 pub fn handleOom(error_union: anytype) blk: {
     const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
@@ -2605,9 +2605,9 @@ pub fn handleOom(error_union: anytype) blk: {
     const ReturnType = @TypeOf(handleOom(error_union));
     return error_union catch |err|
         if (comptime ReturnType == Payload)
-            bun.outOfMemory()
+            bun.outOfMemory(err)
         else switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
+            error.OutOfMemory => bun.outOfMemory(err),
             else => |other_error| other_error,
         };
 }

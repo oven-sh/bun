@@ -171,14 +171,14 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(input.allocator(), in_parens.deepClone(input.allocator())) catch bun.outOfMemory();
+                        conditions.append(input.allocator(), in_parens.deepClone(input.allocator())) catch |oe| bun.outOfMemory(oe);
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
                             seen_declarations.put(
                                 .{ property_id.withPrefix(css.VendorPrefix{ .none = true }), value },
                                 0,
-                            ) catch bun.outOfMemory();
+                            ) catch |oe| bun.outOfMemory(oe);
                         }
                     }
 
@@ -195,17 +195,17 @@ pub const SupportsCondition = union(enum) {
                                 cond.declaration.property_id.addPrefix(property_id.prefix());
                             }
                         } else {
-                            seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
+                            seen_declarations.put(key, conditions.items.len) catch |oe| bun.outOfMemory(oe);
                             conditions.append(input.allocator(), SupportsCondition{ .declaration = .{
                                 .property_id = property_id,
                                 .value = value,
-                            } }) catch bun.outOfMemory();
+                            } }) catch |oe| bun.outOfMemory(oe);
                         }
                     } else {
                         conditions.append(
                             input.allocator(),
                             condition,
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     }
                 },
                 else => break,

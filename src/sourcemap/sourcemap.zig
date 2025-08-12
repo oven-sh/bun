@@ -73,7 +73,7 @@ pub fn parseUrl(
                     const base64_data = source[data_prefix.len + ";base64,".len ..];
 
                     const len = bun.base64.decodeLen(base64_data);
-                    const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
+                    const bytes = arena.alloc(u8, len) catch |oe| bun.outOfMemory(oe);
                     const decoded = bun.base64.decode(bytes, base64_data);
                     if (!decoded.isSuccessful()) {
                         return error.InvalidBase64;
@@ -153,7 +153,7 @@ pub fn parseJSON(
     var i: usize = 0;
 
     const source_paths_slice = if (hint != .source_only)
-        alloc.alloc([]const u8, sources_content.items.len) catch bun.outOfMemory()
+        alloc.alloc([]const u8, sources_content.items.len) catch |oe| bun.outOfMemory(oe)
     else
         null;
     errdefer if (hint != .source_only) {
@@ -234,7 +234,7 @@ pub fn parseJSON(
             break :content null;
         }
 
-        const str = item.data.e_string.string(arena) catch bun.outOfMemory();
+        const str = item.data.e_string.string(arena) catch |oe| bun.outOfMemory(oe);
         if (str.len == 0) {
             break :content null;
         }
@@ -821,7 +821,7 @@ pub const Mapping = struct {
                 .original = original,
                 .source_index = source_index,
                 .name_index = name_index,
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
         }
 
         if (needs_sort and options.sort) {
@@ -1030,7 +1030,7 @@ fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allo
         u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
         u16 => bun.jsc.ZigString.Slice.init(
             alloc,
-            bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
+            bun.strings.toUTF8Alloc(alloc, url) catch |oe| bun.outOfMemory(oe),
         ),
         else => @compileError("Not Supported"),
     };

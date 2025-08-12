@@ -351,7 +351,7 @@ pub const ImageSetOption = struct {
                     dependencies.append(
                         dest.allocator,
                         .{ .url = dep },
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
             } else {
                 css.serializer.serializeString(try dest.getImportRecordUrl(this.image.url.import_record_idx), dest) catch return dest.addFmtError();

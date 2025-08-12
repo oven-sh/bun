@@ -399,7 +399,7 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch |oe| bun.outOfMemory(oe);
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -433,7 +433,7 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch |oe| bun.outOfMemory(oe);
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -785,7 +785,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
+        bufferlist.ensureTotalCapacityPrecise(len) catch |oe| bun.outOfMemory(oe);
 
         while (i < len) {
             const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -799,7 +799,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
+            bufferlist.append(bun.platformIOVecCreate(buf)) catch |oe| bun.outOfMemory(oe);
             i += 1;
         }
 

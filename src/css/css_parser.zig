@@ -124,7 +124,7 @@ pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.isDebug) {
         std.debug.assert(e == std.mem.Allocator.Error.OutOfMemory);
     }
-    bun.outOfMemory();
+    bun.outOfMemory(error.OutOfMemory);
 }
 
 pub const SmallList = @import("./small_list.zig").SmallList;
@@ -1423,13 +1423,13 @@ pub const BundlerAtRuleParser = struct {
                     .loc = bun.logger.Loc{ .start = @intCast(start_position) },
                     .len = @intCast(end_position - start_position),
                 },
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
         }
 
         pub fn onLayerRule(this: *This, layers: *const bun.css.SmallList(LayerName, 1)) void {
             if (this.anon_layer_count > 0) return;
 
-            this.layer_names.ensureUnusedCapacity(this.allocator, layers.len()) catch bun.outOfMemory();
+            this.layer_names.ensureUnusedCapacity(this.allocator, layers.len()) catch |oe| bun.outOfMemory(oe);
 
             for (layers.slice()) |*layer| {
                 if (this.enclosing_layer.v.len() > 0) {
@@ -1439,9 +1439,9 @@ pub const BundlerAtRuleParser = struct {
                     cloned.v.ensureTotalCapacity(this.allocator, this.enclosing_layer.v.len() + layer.v.len());
                     cloned.v.appendSliceAssumeCapacity(this.enclosing_layer.v.slice());
                     cloned.v.appendSliceAssumeCapacity(layer.v.slice());
-                    this.layer_names.push(this.allocator, cloned) catch bun.outOfMemory();
+                    this.layer_names.push(this.allocator, cloned) catch |oe| bun.outOfMemory(oe);
                 } else {
-                    this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch bun.outOfMemory();
+                    this.layer_names.push(this.allocator, layer.deepClone(this.allocator)) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }
@@ -1828,7 +1828,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         AtRuleParserT.CustomAtRuleParser.onImportRule(this.at_rule_parser, &import_rule, @intCast(start.position), @intCast(start.position + 1));
                         this.rules.v.append(this.allocator, .{
                             .import = import_rule,
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .namespace => {
@@ -1843,7 +1843,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 .url = url,
                                 .loc = loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
 
                         return .success;
                     },
@@ -1860,7 +1860,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .layer => {
@@ -1882,7 +1882,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                             .prelude = prelude2,
                             .block = null,
                             .loc = loc,
-                        } }) catch bun.outOfMemory();
+                        } }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .custom => {
@@ -2213,7 +2213,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 properties.append(
                                     input.allocator(),
                                     decl,
-                                ) catch bun.outOfMemory();
+                                ) catch |oe| bun.outOfMemory(oe);
                             }
                         }
 
@@ -2225,7 +2225,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .font_palette_values => {
@@ -2237,7 +2237,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             input.allocator(),
                             .{ .font_palette_values = rule },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .counter_style => {
@@ -2254,7 +2254,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .media => {
@@ -2272,7 +2272,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .supports => {
@@ -2287,7 +2287,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .rules = rules,
                                 .loc = loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .container => {
@@ -2305,7 +2305,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .scope => {
@@ -2323,7 +2323,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .viewport => {
@@ -2336,7 +2336,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                                 .loc = loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .keyframes => {
@@ -2350,7 +2350,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 keyframes.append(
                                     input.allocator(),
                                     keyframe,
-                                ) catch bun.outOfMemory();
+                                ) catch |oe| bun.outOfMemory(oe);
                             }
                         }
 
@@ -2361,7 +2361,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .vendor_prefix = prelude.keyframes.prefix,
                                 .loc = loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .page => {
@@ -2373,7 +2373,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             input.allocator(),
                             .{ .page = rule },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .moz_document => {
@@ -2386,7 +2386,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .rules = rules,
                                 .loc = loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .layer => {
@@ -2414,7 +2414,7 @@ pub fn NestedRuleParser(comptime T: type) type {
 
                         this.rules.v.append(input.allocator(), .{
                             .layer_block = css_rules.layer.LayerBlockRule(T.CustomAtRuleParser.AtRule){ .name = name, .rules = rules, .loc = loc },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .property => {
@@ -2424,7 +2424,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .err => |e| return .{ .err = e },
                                 .result => |v| v,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .import, .namespace, .custom_media, .charset => {
@@ -2444,7 +2444,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .nest => {
@@ -2469,7 +2469,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .font_feature_values => bun.unreachablePanic("", .{}),
@@ -2487,7 +2487,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .custom => {
@@ -2499,7 +2499,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .result => |v| v,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                 }
@@ -2523,7 +2523,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .unknown => {
@@ -2537,7 +2537,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .loc = loc,
                                 },
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     .custom => {
@@ -2551,7 +2551,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         )) {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
                         return .success;
                     },
                     else => return .{ .err = {} },
@@ -2631,7 +2631,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     const custom_properties_slice = custom_properties.slice();
 
                     for (this.composes_refs.slice()) |ref| {
-                        const entry = this.local_properties.getOrPut(this.allocator, ref) catch bun.outOfMemory();
+                        const entry = this.local_properties.getOrPut(this.allocator, ref) catch |oe| bun.outOfMemory(oe);
                         const property_usage: *PropertyUsage = if (!entry.found_existing) brk: {
                             entry.value_ptr.* = PropertyUsage{ .range = bun.logger.Range{ .loc = bun.logger.Loc{ .start = @intCast(location) }, .len = @intCast(len) } };
                             break :brk entry.value_ptr;
@@ -2648,7 +2648,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         .rules = rules,
                         .loc = loc,
                     },
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
 
                 return .success;
             }
@@ -2684,11 +2684,11 @@ pub fn NestedRuleParser(comptime T: type) type {
         /// for the bundler so we can generate the lazy JS import object later.
         pub fn recordComposes(this: *This, allocator: Allocator, composes: *Composes) void {
             for (this.composes_refs.slice()) |ref| {
-                const entry = this.composes.getOrPut(allocator, ref) catch bun.outOfMemory();
+                const entry = this.composes.getOrPut(allocator, ref) catch |oe| bun.outOfMemory(oe);
                 if (!entry.found_existing) {
                     entry.value_ptr.* = ComposesEntry{};
                 }
-                entry.value_ptr.*.composes.push(allocator, composes.deepClone(allocator)) catch bun.outOfMemory();
+                entry.value_ptr.*.composes.push(allocator, composes.deepClone(allocator)) catch |oe| bun.outOfMemory(oe);
             }
         }
 
@@ -2727,7 +2727,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         errors.append(
                             this.allocator,
                             e,
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     } else {
                         if (iter.parser.options.error_recovery) {
                             iter.parser.options.warn(e);
@@ -3017,7 +3017,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
     for (block.declarations.items) |*prop| {
         const tag = switch (prop.*) {
             .custom => {
-                custom_properties.push(allocator, prop.custom.name.asStr()) catch bun.outOfMemory();
+                custom_properties.push(allocator, prop.custom.name.asStr()) catch |oe| bun.outOfMemory(oe);
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
@@ -3030,7 +3030,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
     for (block.important_declarations.items) |*prop| {
         const tag = switch (prop.*) {
             .custom => {
-                custom_properties.push(allocator, prop.custom.name.asStr()) catch bun.outOfMemory();
+                custom_properties.push(allocator, prop.custom.name.asStr()) catch |oe| bun.outOfMemory(oe);
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
@@ -3100,7 +3100,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
                 for (this.rules.v.items) |*rule| {
                     if (rule.* == .custom_media) {
-                        custom_media.put(allocator, rule.custom_media.name.v, rule.custom_media.deepClone(allocator)) catch bun.outOfMemory();
+                        custom_media.put(allocator, rule.custom_media.name.v, rule.custom_media.deepClone(allocator)) catch |oe| bun.outOfMemory(oe);
                     }
                 }
 
@@ -3285,7 +3285,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .whitespace => {},
                     .comment => |comment| {
                         if (bun.strings.startsWithChar(comment, '!')) {
-                            license_comments.append(allocator, comment) catch bun.outOfMemory();
+                            license_comments.append(allocator, comment) catch |oe| bun.outOfMemory(oe);
                         }
                     },
                     else => break,
@@ -3311,9 +3311,9 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
 
             var sources = ArrayList([]const u8){};
-            sources.append(allocator, options.filename) catch bun.outOfMemory();
+            sources.append(allocator, options.filename) catch |oe| bun.outOfMemory(oe);
             var source_map_urls = ArrayList(?[]const u8){};
-            source_map_urls.append(allocator, parser.currentSourceMapUrl()) catch bun.outOfMemory();
+            source_map_urls.append(allocator, parser.currentSourceMapUrl()) catch |oe| bun.outOfMemory(oe);
 
             return .{
                 .result = .{
@@ -3410,7 +3410,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             var count: u32 = 0;
             inline for (STATES[0..]) |state| {
                 if (comptime state == .exec) {
-                    out.v.ensureUnusedCapacity(allocator, count) catch bun.outOfMemory();
+                    out.v.ensureUnusedCapacity(allocator, count) catch |oe| bun.outOfMemory(oe);
                 }
                 var saw_imports = false;
                 for (this.rules.v.items) |*rule| {
@@ -3430,7 +3430,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                                         .path = bun.fs.Path.init(import_rule.url),
                                         .kind = if (import_rule.supports != null) .at_conditional else .at,
                                         .range = bun.logger.Range.None,
-                                    }) catch bun.outOfMemory();
+                                    }) catch |oe| bun.outOfMemory(oe);
                                     rule.* = .ignored;
                                 },
                             }
@@ -3469,7 +3469,7 @@ pub const StyleAttribute = struct {
             &parser_extra,
         );
         const sources = sources: {
-            var s = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
+            var s = ArrayList([]const u8).initCapacity(allocator, 1) catch |oe| bun.outOfMemory(oe);
             s.appendAssumeCapacity(options.filename);
             break :sources s;
         };
@@ -3790,7 +3790,7 @@ const ParseUntilErrorBehavior = enum {
 //         return switch (this.*) {
 //             .list => |list| {
 //                 const len = list.len;
-//                 list.push(allocator, record) catch bun.outOfMemory();
+//                 list.push(allocator, record) catch |oe| bun.outOfMemory(oe);
 //                 return len;
 //             },
 //             // .dummy => |*d| {
@@ -3826,7 +3826,7 @@ pub const Parser = struct {
 
         const extra = this.extra.?;
 
-        const entry = extra.local_scope.getOrPut(this.allocator(), name) catch bun.outOfMemory();
+        const entry = extra.local_scope.getOrPut(this.allocator(), name) catch |oe| bun.outOfMemory(oe);
         if (!entry.found_existing) {
             entry.value_ptr.* = LocalEntry{
                 .ref = CssRef{
@@ -3838,7 +3838,7 @@ pub const Parser = struct {
             extra.symbols.push(this.allocator(), bun.ast.Symbol{
                 .kind = .local_css,
                 .original_name = name,
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
         } else {
             const prev_tag = entry.value_ptr.ref.tag;
             if (!prev_tag.class and tag.class) {
@@ -3861,7 +3861,7 @@ pub const Parser = struct {
                     .loc = bun.logger.Loc{ .start = @intCast(start_position) },
                     .len = @intCast(url.len), // TODO: technically this is not correct because the url could be escaped
                 },
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
             return .{ .result = idx };
         } else {
             return .{ .err = this.newBasicUnexpectedTokenError(.{ .unquoted_url = url }) };
@@ -3992,7 +3992,7 @@ pub const Parser = struct {
                 .err => {
                     // need to clone off the stack
                     const needs_clone = values.items.len == 1;
-                    if (needs_clone) return .{ .result = values.clone(this.allocator()) catch bun.outOfMemory() };
+                    if (needs_clone) return .{ .result = values.clone(this.allocator()) catch |oe| bun.outOfMemory(oe) };
                     return .{ .result = values };
                 },
             };
@@ -6462,13 +6462,13 @@ const CopyOnWriteStr = union(enum) {
     pub fn append(this: *@This(), allocator: Allocator, slice: []const u8) void {
         switch (this.*) {
             .borrowed => {
-                var list = std.ArrayList(u8).initCapacity(allocator, this.borrowed.len + slice.len) catch bun.outOfMemory();
+                var list = std.ArrayList(u8).initCapacity(allocator, this.borrowed.len + slice.len) catch |oe| bun.outOfMemory(oe);
                 list.appendSliceAssumeCapacity(this.borrowed);
                 list.appendSliceAssumeCapacity(slice);
                 this.* = .{ .owned = list };
             },
             .owned => {
-                this.owned.appendSlice(slice) catch bun.outOfMemory();
+                this.owned.appendSlice(slice) catch |oe| bun.outOfMemory(oe);
             },
         }
     }
@@ -7115,7 +7115,7 @@ pub inline fn copysign(self: f32, sign: f32) f32 {
 }
 
 pub fn deepClone(comptime V: type, allocator: Allocator, list: *const ArrayList(V)) ArrayList(V) {
-    var newlist = ArrayList(V).initCapacity(allocator, list.items.len) catch bun.outOfMemory();
+    var newlist = ArrayList(V).initCapacity(allocator, list.items.len) catch |oe| bun.outOfMemory(oe);
 
     for (list.items) |*item| {
         newlist.appendAssumeCapacity(generic.deepClone(V, item, allocator));

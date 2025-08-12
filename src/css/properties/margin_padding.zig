@@ -680,34 +680,34 @@ pub fn NewSizeHandler(
                             .right = right.?,
                         },
                     ),
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
             } else {
                 if (top) |t| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(top_prop), t),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
 
                 if (bottom) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(bottom_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
 
                 if (left) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(left_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
 
                 if (right) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(right_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
             }
 
@@ -804,13 +804,13 @@ pub fn NewSizeHandler(
                     Property,
                     @tagName(shorthand_property),
                     value,
-                )) catch bun.outOfMemory();
+                )) catch |oe| bun.outOfMemory(oe);
             } else {
                 if (start.* != null) {
-                    dest.append(context.allocator, start.*.?) catch bun.outOfMemory();
+                    dest.append(context.allocator, start.*.?) catch |oe| bun.outOfMemory(oe);
                 }
                 if (end.* != null) {
-                    dest.append(context.allocator, end.*.?) catch bun.outOfMemory();
+                    dest.append(context.allocator, end.*.?) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }
@@ -833,14 +833,14 @@ pub fn NewSizeHandler(
                             @tagName(physical),
                             @field(v, @tagName(logical)),
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 } else if (v.* == .unparsed) {
                     dest.append(
                         context.allocator,
                         Property{
                             .unparsed = v.unparsed.withPropertyId(context.allocator, physical),
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }

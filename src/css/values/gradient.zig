@@ -396,7 +396,7 @@ pub const LinearGradient = struct {
             var flipped_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(
                 dest.allocator,
                 this.items.items.len,
-            ) catch bun.outOfMemory();
+            ) catch |oe| bun.outOfMemory(oe);
             defer flipped_items.deinit(dest.allocator);
 
             var i: usize = this.items.items.len;
@@ -405,7 +405,7 @@ pub const LinearGradient = struct {
                 const item = &this.items.items[i];
                 switch (item.*) {
                     .hint => |*h| switch (h.*) {
-                        .percentage => |p| flipped_items.append(dest.allocator, .{ .hint = .{ .percentage = .{ .v = 1.0 - p.v } } }) catch bun.outOfMemory(),
+                        .percentage => |p| flipped_items.append(dest.allocator, .{ .hint = .{ .percentage = .{ .v = 1.0 - p.v } } }) catch |oe| bun.outOfMemory(oe),
                         else => unreachable,
                     },
                     .color_stop => |*cs| flipped_items.append(dest.allocator, .{
@@ -416,7 +416,7 @@ pub const LinearGradient = struct {
                                 else => unreachable,
                             } else null,
                         },
-                    }) catch bun.outOfMemory(),
+                    }) catch |oe| bun.outOfMemory(oe),
                 }
             }
 
@@ -449,7 +449,7 @@ pub const LinearGradient = struct {
     }
 
     pub fn getFallback(this: *const @This(), allocator: std.mem.Allocator, kind: css.ColorFallbackKind) LinearGradient {
-        var fallback_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        var fallback_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch |oe| bun.outOfMemory(oe);
         fallback_items.items.len = this.items.items.len;
         for (fallback_items.items, this.items.items) |*out, *in| {
             out.* = in.getFallback(allocator, kind);
@@ -537,7 +537,7 @@ pub const RadialGradient = struct {
     }
 
     pub fn getFallback(this: *const RadialGradient, allocator: Allocator, kind: css.ColorFallbackKind) RadialGradient {
-        var items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        var items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch |oe| bun.outOfMemory(oe);
         items.items.len = this.items.items.len;
         for (items.items, this.items.items) |*out, *in| {
             out.* = in.getFallback(allocator, kind);
@@ -630,7 +630,7 @@ pub const ConicGradient = struct {
     }
 
     pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) ConicGradient {
-        var items = ArrayList(GradientItem(AnglePercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        var items = ArrayList(GradientItem(AnglePercentage)).initCapacity(allocator, this.items.items.len) catch |oe| bun.outOfMemory(oe);
         items.items.len = this.items.items.len;
         for (items.items, this.items.items) |*out, *in| {
             out.* = in.getFallback(allocator, kind);
@@ -798,7 +798,7 @@ pub const WebKitGradient = union(enum) {
         var stops: ArrayList(WebKitColorStop) = .{};
         switch (this.*) {
             .linear => |linear| {
-                stops = ArrayList(WebKitColorStop).initCapacity(allocator, linear.stops.items.len) catch bun.outOfMemory();
+                stops = ArrayList(WebKitColorStop).initCapacity(allocator, linear.stops.items.len) catch |oe| bun.outOfMemory(oe);
                 stops.items.len = linear.stops.items.len;
                 for (stops.items, linear.stops.items) |*out, *in| {
                     out.* = in.getFallback(allocator, kind);
@@ -812,7 +812,7 @@ pub const WebKitGradient = union(enum) {
                 };
             },
             .radial => |radial| {
-                stops = ArrayList(WebKitColorStop).initCapacity(allocator, radial.stops.items.len) catch bun.outOfMemory();
+                stops = ArrayList(WebKitColorStop).initCapacity(allocator, radial.stops.items.len) catch |oe| bun.outOfMemory(oe);
                 stops.items.len = radial.stops.items.len;
                 for (stops.items, radial.stops.items) |*out, *in| {
                     out.* = in.getFallback(allocator, kind);
@@ -1539,7 +1539,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                     if (closure.seen_stop.*) {
                         if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |hint| {
                             closure.seen_stop.* = false;
-                            closure.items.append(i.allocator(), .{ .hint = hint }) catch bun.outOfMemory();
+                            closure.items.append(i.allocator(), .{ .hint = hint }) catch |oe| bun.outOfMemory(oe);
                             return .success;
                         }
                     }
@@ -1551,13 +1551,13 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
 
                     if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |position| {
                         const color = stop.color.deepClone(i.allocator());
-                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch bun.outOfMemory();
+                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch |oe| bun.outOfMemory(oe);
                         closure.items.append(i.allocator(), .{ .color_stop = .{
                             .color = color,
                             .position = position,
-                        } }) catch bun.outOfMemory();
+                        } }) catch |oe| bun.outOfMemory(oe);
                     } else {
-                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch bun.outOfMemory();
+                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch |oe| bun.outOfMemory(oe);
                     }
 
                     closure.seen_stop.* = true;
@@ -1617,7 +1617,7 @@ pub fn serializeItems(
 }
 
 pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(GradientItem(LengthPercentage))) ?ArrayList(WebKitColorStop) {
-    var stops: ArrayList(WebKitColorStop) = ArrayList(WebKitColorStop).initCapacity(allocator, items.items.len) catch bun.outOfMemory();
+    var stops: ArrayList(WebKitColorStop) = ArrayList(WebKitColorStop).initCapacity(allocator, items.items.len) catch |oe| bun.outOfMemory(oe);
     for (items.items, 0..) |*item, i| {
         switch (item.*) {
             .color_stop => |*stop| {

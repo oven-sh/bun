@@ -27,7 +27,7 @@ fn install(ctx: Command.Context) !void {
             cli: *CommandLineArguments,
             pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
                 // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
-                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch |oe| bun.outOfMemory(oe);
                 positionals[0] = "install";
                 bun.copy(string, positionals[1..], result.dependencies.keys());
                 this.cli.positionals = positionals;

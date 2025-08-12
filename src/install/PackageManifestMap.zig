@@ -50,7 +50,7 @@ pub fn byNameHashAllowExpired(
         };
     }
 
-    const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
+    const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch |oe| bun.outOfMemory(oe);
     if (entry.found_existing) {
         if (entry.value_ptr.* == .manifest) {
             return &entry.value_ptr.manifest;

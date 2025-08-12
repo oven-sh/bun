@@ -881,7 +881,7 @@ pub fn loadNpmrcConfig(
 
         loadNpmrc(allocator, install, env, npmrc_path, &log, source, &configs) catch |err| {
             switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
             }
         };
         if (log.hasErrors()) {

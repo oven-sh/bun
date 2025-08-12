@@ -1003,7 +1003,7 @@ pub const Installer = struct {
             const this: *Task = @fieldParentPtr("task", task);
 
             const res = this.run() catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
             };
 
             switch (res) {

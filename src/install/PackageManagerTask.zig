@@ -78,7 +78,7 @@ pub fn callback(task: *ThreadPool.Task) void {
         if (this.status == .success) {
             if (this.apply_patch_task) |pt| {
                 defer pt.deinit();
-                pt.apply() catch bun.outOfMemory();
+                pt.apply() catch |oe| bun.outOfMemory(oe);
                 if (pt.callback.apply.logger.errors > 0) {
                     defer pt.callback.apply.logger.deinit();
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;

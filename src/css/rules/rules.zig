@@ -172,12 +172,12 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         // }
 
                         // keyframez.vendor_prefix = context.targets.prefixes(keyframez.vendor_prefix, css.prefixes.Feature.at_keyframes);
-                        // keyframe_rules.put(context.allocator, keyframez.name, rules.items.len) catch bun.outOfMemory();
+                        // keyframe_rules.put(context.allocator, keyframez.name, rules.items.len) catch |oe| bun.outOfMemory(oe);
 
                         // const fallbacks = keyframez.getFallbacks(AtRule, context.targets);
                         // moved_rule = true;
-                        // rules.append(context.allocator, rule.*) catch bun.outOfMemory();
-                        // rules.appendSlice(context.allocator, fallbacks) catch bun.outOfMemory();
+                        // rules.append(context.allocator, rule.*) catch |oe| bun.outOfMemory(oe);
+                        // rules.appendSlice(context.allocator, fallbacks) catch |oe| bun.outOfMemory(oe);
                         // continue;
                         debug("TODO: KeyframesRule", .{});
                     },
@@ -191,7 +191,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .media) {
                             var last_rule = &rules.items[rules.items.len - 1].media;
                             if (last_rule.query.eql(&med.query)) {
-                                last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch bun.outOfMemory();
+                                last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch |oe| bun.outOfMemory(oe);
                                 _ = try last_rule.minify(context, parent_is_unused);
                                 continue;
                             }
@@ -372,7 +372,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             const has_no_rules = sty.rules.v.items.len == 0;
                             const idx = rules.items.len;
 
-                            rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                            rules.append(context.allocator, rule.*) catch |oe| bun.outOfMemory(oe);
                             moved_rule = true;
 
                             // Check if this rule is a duplicate of an earlier rule, meaning it has
@@ -394,7 +394,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                                     }
                                 }
 
-                                style_rules.put(context.allocator, key, idx) catch bun.outOfMemory();
+                                style_rules.put(context.allocator, key, idx) catch |oe| bun.outOfMemory(oe);
                             }
                         }
 
@@ -404,22 +404,22 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             }
                             var log = CssRuleList(AtRule){ .v = logical };
                             try log.minify(context, parent_is_unused);
-                            rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();
+                            rules.appendSlice(context.allocator, log.v.items) catch |oe| bun.outOfMemory(oe);
                         }
-                        rules.appendSlice(context.allocator, supps.items) catch bun.outOfMemory();
+                        rules.appendSlice(context.allocator, supps.items) catch |oe| bun.outOfMemory(oe);
                         for (incompatible_rules.slice_mut()) |incompatible_entry| {
                             if (!incompatible_entry.rule.isEmpty()) {
-                                rules.append(context.allocator, .{ .style = incompatible_entry.rule }) catch bun.outOfMemory();
+                                rules.append(context.allocator, .{ .style = incompatible_entry.rule }) catch |oe| bun.outOfMemory(oe);
                             }
                             if (incompatible_entry.logical.items.len > 0) {
                                 var log = CssRuleList(AtRule){ .v = incompatible_entry.logical };
                                 try log.minify(context, parent_is_unused);
-                                rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();
+                                rules.appendSlice(context.allocator, log.v.items) catch |oe| bun.outOfMemory(oe);
                             }
-                            rules.appendSlice(context.allocator, incompatible_entry.supports.items) catch bun.outOfMemory();
+                            rules.appendSlice(context.allocator, incompatible_entry.supports.items) catch |oe| bun.outOfMemory(oe);
                         }
                         if (nested_rule) |nested| {
-                            rules.append(context.allocator, .{ .style = nested }) catch bun.outOfMemory();
+                            rules.append(context.allocator, .{ .style = nested }) catch |oe| bun.outOfMemory(oe);
                         }
 
                         continue;
@@ -451,7 +451,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     else => {},
                 }
 
-                rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                rules.append(context.allocator, rule.*) catch |oe| bun.outOfMemory(oe);
             }
 
             // MISSING SHIT HERE
@@ -614,13 +614,13 @@ fn mergeStyleRules(
         last_style_rule.declarations.declarations.appendSlice(
             context.allocator,
             sty.declarations.declarations.items,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         sty.declarations.declarations.clearRetainingCapacity();
 
         last_style_rule.declarations.important_declarations.appendSlice(
             context.allocator,
             sty.declarations.important_declarations.items,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         sty.declarations.important_declarations.clearRetainingCapacity();
 
         last_style_rule.declarations.minify(

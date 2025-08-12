@@ -596,7 +596,7 @@ pub const TokenList = struct {
 
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
         var tokens = TokenList{};
-        tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch bun.outOfMemory();
+        tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch |oe| bun.outOfMemory(oe);
         tokens.v.items.len = this.v.items.len;
         for (this.v.items, tokens.v.items[0..this.v.items.len]) |*old, *new| {
             new.* = switch (old.*) {
@@ -990,10 +990,10 @@ pub const UnresolvedColor = union(enum) {
     }
 
     pub fn lightDarkOwned(allocator: Allocator, light: UnresolvedColor, dark: UnresolvedColor) UnresolvedColor {
-        var lightlist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
-        lightlist.append(allocator, TokenOrValue{ .unresolved_color = light }) catch bun.outOfMemory();
-        var darklist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
-        darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }) catch bun.outOfMemory();
+        var lightlist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch |oe| bun.outOfMemory(oe);
+        lightlist.append(allocator, TokenOrValue{ .unresolved_color = light }) catch |oe| bun.outOfMemory(oe);
+        var darklist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch |oe| bun.outOfMemory(oe);
+        darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }) catch |oe| bun.outOfMemory(oe);
         return UnresolvedColor{
             .light_dark = .{
                 .light = css.TokenList{ .v = lightlist },
@@ -1166,7 +1166,7 @@ pub const EnvironmentVariable = struct {
     pub fn getFallback(this: *const EnvironmentVariable, allocator: Allocator, kind: ColorFallbackKind) @This() {
         return EnvironmentVariable{
             .name = this.name,
-            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .indices = this.indices.clone(allocator) catch |oe| bun.outOfMemory(oe),
             .fallback = if (this.fallback) |*fallback| fallback.getFallback(allocator, kind) else null,
         };
     }
@@ -1182,7 +1182,7 @@ pub const EnvironmentVariable = struct {
     pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
         return .{
             .name = this.name,
-            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .indices = this.indices.clone(allocator) catch |oe| bun.outOfMemory(oe),
             .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
         };
     }

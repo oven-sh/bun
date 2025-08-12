@@ -79,7 +79,7 @@ pub const AWSSignatureCache = struct {
             this.clean();
         }
         this.date = numeric_day;
-        this.cache.put(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value) catch bun.outOfMemory();
+        this.cache.put(bun.default_allocator.dupe(u8, key) catch |oe| bun.outOfMemory(oe), value) catch |oe| bun.outOfMemory(oe);
     }
     pub fn deinit(this: *@This()) void {
         this.date = 0;
@@ -94,7 +94,7 @@ pub fn awsCache(this: *RareData) *AWSSignatureCache {
 
 pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     return this.temp_pipe_read_buffer orelse {
-        this.temp_pipe_read_buffer = default_allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+        this.temp_pipe_read_buffer = default_allocator.create(PipeReadBuffer) catch |oe| bun.outOfMemory(oe);
         return this.temp_pipe_read_buffer.?;
     };
 }
@@ -136,7 +136,7 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
     if (this.mime_types == null) {
         this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
     }
 
     if (this.mime_types.?.get(str)) |entry| {
@@ -182,12 +182,12 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        const entry = this._map.getOrPut(key) catch bun.outOfMemory();
+        const entry = this._map.getOrPut(key) catch |oe| bun.outOfMemory(oe);
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
 
-        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch bun.outOfMemory();
+        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch |oe| bun.outOfMemory(oe);
         entry.value_ptr.* = Entry.init(ptr);
     }
 
@@ -301,7 +301,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    this.cleanup_hooks.append(bun.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch bun.outOfMemory();
+    this.cleanup_hooks.append(bun.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch |oe| bun.outOfMemory(oe);
 }
 
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
@@ -478,7 +478,7 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *jsc.VirtualMachine) bun.
 pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     return rare.s3_default_client.get() orelse {
         const vm = globalThis.bunVM();
-        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch bun.outOfMemory();
+        var aws_options = bun.S3.S3Credentials.getCredentialsWithOptions(vm.transpiler.env.getS3Credentials(), .{}, null, null, null, globalThis) catch |oe| bun.outOfMemory(oe);
         defer aws_options.deinit();
         const client = jsc.WebCore.S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
@@ -501,12 +501,12 @@ pub fn setTLSDefaultCiphers(this: *RareData, ciphers: []const u8) void {
     if (this.tls_default_ciphers) |old_ciphers| {
         bun.default_allocator.free(old_ciphers);
     }
-    this.tls_default_ciphers = bun.default_allocator.dupeZ(u8, ciphers) catch bun.outOfMemory();
+    this.tls_default_ciphers = bun.default_allocator.dupeZ(u8, ciphers) catch |oe| bun.outOfMemory(oe);
 }
 
 pub fn defaultCSRFSecret(this: *RareData) []const u8 {
     if (this.default_csrf_secret.len == 0) {
-        const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
+        const secret = bun.default_allocator.alloc(u8, 16) catch |oe| bun.outOfMemory(oe);
         bun.csprng(secret);
         this.default_csrf_secret = secret;
     }

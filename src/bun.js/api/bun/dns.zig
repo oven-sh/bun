@@ -61,7 +61,7 @@ const LibInfo = struct {
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
 
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch |oe| bun.outOfMemory(oe);
 
             cache.inflight.append(dns_lookup);
 
@@ -81,7 +81,7 @@ const LibInfo = struct {
             query,
             globalThis,
             "pending_host_cache_native",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const promise_value = request.head.promise.value();
 
         const hints = query.options.toLibC();
@@ -136,7 +136,7 @@ const LibC = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch |oe| bun.outOfMemory(oe);
 
             cache.inflight.append(dns_lookup);
 
@@ -152,10 +152,10 @@ const LibC = struct {
             query,
             globalThis,
             "pending_host_cache_native",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const promise_value = request.head.promise.value();
 
-        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch bun.outOfMemory();
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch |oe| bun.outOfMemory(oe);
 
         io.schedule();
         this.requestSent(globalThis.bunVM());
@@ -181,7 +181,7 @@ const LibUVBackend = struct {
             }
         };
 
-        var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        var holder = bun.default_allocator.create(Holder) catch |oe| bun.outOfMemory(oe);
         holder.* = .{
             .uv_info = uv_info,
             .task = undefined,
@@ -196,7 +196,7 @@ const LibUVBackend = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch |oe| bun.outOfMemory(oe);
 
             cache.inflight.append(dns_lookup);
 
@@ -214,7 +214,7 @@ const LibUVBackend = struct {
             query,
             globalThis,
             "pending_host_cache_native",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
 
         var hints = query.options.toLibC();
         var port_buf: [128]u8 = undefined;
@@ -780,7 +780,7 @@ pub const GetAddrInfoRequest = struct {
                     // https://github.com/ziglang/zig/pull/14242
                     defer std.c.freeaddrinfo(addrinfo.?);
 
-                    this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch bun.outOfMemory() };
+                    this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch |oe| bun.outOfMemory(oe) };
                 }
             },
 
@@ -1133,7 +1133,7 @@ pub const GlobalData = struct {
     resolver: Resolver,
 
     pub fn init(allocator: std.mem.Allocator, vm: *jsc.VirtualMachine) *GlobalData {
-        const global = allocator.create(GlobalData) catch bun.outOfMemory();
+        const global = allocator.create(GlobalData) catch |oe| bun.outOfMemory(oe);
         global.* = .{
             .resolver = Resolver.setup(allocator, vm),
         };
@@ -1194,7 +1194,7 @@ pub const internal = struct {
 
             pub fn toOwned(this: @This()) @This() {
                 if (this.host) |host| {
-                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch |oe| bun.outOfMemory(oe);
                     return .{
                         .host = host_copy,
                         .hash = this.hash,
@@ -1448,7 +1448,7 @@ pub const internal = struct {
             info_ = ai.next;
         }
 
-        var results = bun.default_allocator.alloc(ResultEntry, count) catch bun.outOfMemory();
+        var results = bun.default_allocator.alloc(ResultEntry, count) catch |oe| bun.outOfMemory(oe);
 
         // copy results
         var i: usize = 0;
@@ -1734,7 +1734,7 @@ pub const internal = struct {
 
         log("getaddrinfo({s}) = cache miss (libc)", .{host orelse ""});
         // schedule the request to be executed on the work pool
-        bun.jsc.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
+        bun.jsc.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch |oe| bun.outOfMemory(oe);
         return req;
     }
 
@@ -1797,7 +1797,7 @@ pub const internal = struct {
             return;
         }
 
-        request.notify.append(bun.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
+        request.notify.append(bun.default_allocator, .{ .socket = socket }) catch |oe| bun.outOfMemory(oe);
     }
 
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
@@ -2471,7 +2471,7 @@ pub const Resolver = struct {
                 return;
             }
 
-            const poll_entry = this.polls.getOrPut(fd) catch bun.outOfMemory();
+            const poll_entry = this.polls.getOrPut(fd) catch |oe| bun.outOfMemory(oe);
             if (!poll_entry.found_existing) {
                 const poll = UvDnsPoll.new(.{
                     .parent = this,
@@ -2689,7 +2689,7 @@ pub const Resolver = struct {
             "pending_addr_cache_cares",
         );
         if (cache == .inflight) {
-            var cares_reverse = CAresReverse.init(this, globalThis, globalThis.allocator(), ip) catch bun.outOfMemory();
+            var cares_reverse = CAresReverse.init(this, globalThis, globalThis.allocator(), ip) catch |oe| bun.outOfMemory(oe);
             cache.inflight.append(cares_reverse);
             return cares_reverse.promise.value();
         }
@@ -2700,7 +2700,7 @@ pub const Resolver = struct {
             ip,
             globalThis,
             "pending_addr_cache_cares",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
 
         const promise = request.tail.promise.value();
         channel.getHostByAddr(
@@ -3067,7 +3067,7 @@ pub const Resolver = struct {
         var cache = this.getOrPutIntoResolvePendingCache(ResolveInfoRequest(cares_type, type_name), key, cache_name);
         if (cache == .inflight) {
             // CAresLookup will have the name ownership
-            var cares_lookup = CAresLookup(cares_type, type_name).init(this, globalThis, globalThis.allocator(), name) catch bun.outOfMemory();
+            var cares_lookup = CAresLookup(cares_type, type_name).init(this, globalThis, globalThis.allocator(), name) catch |oe| bun.outOfMemory(oe);
             cache.inflight.append(cares_lookup);
             return cares_lookup.promise.value();
         }
@@ -3078,7 +3078,7 @@ pub const Resolver = struct {
             name, // CAresLookup will have the ownership
             globalThis,
             cache_name,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const promise = request.tail.promise.value();
 
         channel.resolve(
@@ -3115,7 +3115,7 @@ pub const Resolver = struct {
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_cares);
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch bun.outOfMemory();
+            var dns_lookup = DNSLookup.init(this, globalThis, globalThis.allocator()) catch |oe| bun.outOfMemory(oe);
             cache.inflight.append(dns_lookup);
             return dns_lookup.promise.value();
         }
@@ -3128,7 +3128,7 @@ pub const Resolver = struct {
             query,
             globalThis,
             "pending_host_cache_cares",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const promise = request.tail.promise.value();
 
         channel.getAddrInfo(
@@ -3247,7 +3247,7 @@ pub const Resolver = struct {
         defer str.deref();
 
         const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.default_allocator.alloc(u8, slice.len + 1) catch bun.outOfMemory();
+        var buffer = bun.default_allocator.alloc(u8, slice.len + 1) catch |oe| bun.outOfMemory(oe);
         defer bun.default_allocator.free(buffer);
         _ = strings.copy(buffer[0..], slice);
         buffer[slice.len] = 0;
@@ -3297,7 +3297,7 @@ pub const Resolver = struct {
 
         const allocator = bun.default_allocator;
 
-        const entries = allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch bun.outOfMemory();
+        const entries = allocator.alloc(c_ares.struct_ares_addr_port_node, triplesIterator.len) catch |oe| bun.outOfMemory(oe);
         defer allocator.free(entries);
 
         var i: u32 = 0;
@@ -3320,7 +3320,7 @@ pub const Resolver = struct {
             const addressSlice = try addressString.toOwnedSlice(allocator);
             defer allocator.free(addressSlice);
 
-            var addressBuffer = allocator.alloc(u8, addressSlice.len + 1) catch bun.outOfMemory();
+            var addressBuffer = allocator.alloc(u8, addressSlice.len + 1) catch |oe| bun.outOfMemory(oe);
             defer allocator.free(addressBuffer);
 
             _ = strings.copy(addressBuffer[0..], addressSlice);
@@ -3419,7 +3419,7 @@ pub const Resolver = struct {
         var channel = try resolver.getChannelOrError(globalThis);
 
         // This string will be freed in `CAresNameInfo.deinit`
-        const cache_name = std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }) catch bun.outOfMemory();
+        const cache_name = std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }) catch |oe| bun.outOfMemory(oe);
 
         const key = GetNameInfoRequest.PendingCacheKey.init(cache_name);
         var cache = resolver.getOrPutIntoResolvePendingCache(
@@ -3429,7 +3429,7 @@ pub const Resolver = struct {
         );
 
         if (cache == .inflight) {
-            var info = CAresNameInfo.init(globalThis, globalThis.allocator(), cache_name) catch bun.outOfMemory();
+            var info = CAresNameInfo.init(globalThis, globalThis.allocator(), cache_name) catch |oe| bun.outOfMemory(oe);
             cache.inflight.append(info);
             return info.promise.value();
         }
@@ -3440,7 +3440,7 @@ pub const Resolver = struct {
             cache_name, // transfer ownership here
             globalThis,
             "pending_nameinfo_cache_cares",
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(

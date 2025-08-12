@@ -175,13 +175,13 @@ pub const GlobalJS = struct {
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch |oe| bun.outOfMemory(oe) },
         };
     }
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch |oe| bun.outOfMemory(oe),
         };
     }
 
@@ -190,14 +190,14 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch |oe| bun.outOfMemory(oe);
         return .{
             .custom = str,
         };
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
+        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch |oe| bun.outOfMemory(oe);
         return .{
             .custom = str,
         };
@@ -258,18 +258,18 @@ pub const GlobalMini = struct {
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch |oe| bun.outOfMemory(oe),
         };
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch |oe| bun.outOfMemory(oe) },
         };
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch |oe| bun.outOfMemory(oe);
         return .{
             .custom = str,
         };
@@ -284,7 +284,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        var anytask = bun.default_allocator.create(jsc.AnyTaskWithExtraContext) catch bun.outOfMemory();
+        var anytask = bun.default_allocator.create(jsc.AnyTaskWithExtraContext) catch |oe| bun.outOfMemory(oe);
         _ = anytask.from(task, "runFromMainThreadMini");
         this.mini.enqueueTaskConcurrent(anytask);
     }
@@ -294,7 +294,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory();
+        const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch |oe| bun.outOfMemory(oe);
         return .{
             .custom = str,
         };
@@ -1937,7 +1937,7 @@ pub const Parser = struct {
                 }
                 break :size i;
             };
-            var buf = self.alloc.alloc(u8, size) catch bun.outOfMemory();
+            var buf = self.alloc.alloc(u8, size) catch |oe| bun.outOfMemory(oe);
             var i: usize = 0;
             for (errors) |e| {
                 @memcpy(buf[i .. i + e.msg.len], e.msg);
@@ -2123,7 +2123,7 @@ pub const LexResult = struct {
                 }
                 break :size i;
             };
-            var buf = arena.alloc(u8, size) catch bun.outOfMemory();
+            var buf = arena.alloc(u8, size) catch |oe| bun.outOfMemory(oe);
             var i: usize = 0;
             for (errors) |e| {
                 @memcpy(buf[i .. i + e.msg.len()], e.msg.slice(this.strpool));
@@ -2221,9 +2221,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         pub fn add_error(self: *@This(), msg: []const u8) void {
             const start = self.strpool.items.len;
-            self.strpool.appendSlice(msg) catch bun.outOfMemory();
+            self.strpool.appendSlice(msg) catch |oe| bun.outOfMemory(oe);
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }) catch bun.outOfMemory();
+            self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }) catch |oe| bun.outOfMemory(oe);
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -4072,7 +4072,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 return this;
             }
             var this: @This() = .{
-                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch |oe| bun.outOfMemory(oe),
             };
             this.heap.appendSliceAssumeCapacity(vals);
             return this;
@@ -4097,9 +4097,9 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             len: u32 = 0,
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch |oe| bun.outOfMemory(oe);
+                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch |oe| bun.outOfMemory(oe);
+                list.push(bun.default_allocator, new) catch |oe| bun.outOfMemory(oe);
                 return list;
             }
 
@@ -4244,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                    this.heap.push(bun.default_allocator, new) catch |oe| bun.outOfMemory(oe);
                 },
             }
         }

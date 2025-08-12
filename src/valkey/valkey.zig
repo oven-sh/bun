@@ -254,7 +254,7 @@ pub const ValkeyClient = struct {
                 this.in_flight.writeItem(.{
                     .meta = command.meta,
                     .promise = command.promise,
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
 
                 total += 1;
                 total_bytelength += command.serialized_data.len;
@@ -262,9 +262,9 @@ pub const ValkeyClient = struct {
             break :brk to_process[0..total];
         };
 
-        this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength) catch bun.outOfMemory();
+        this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength) catch |oe| bun.outOfMemory(oe);
         for (pipelineable_commands) |*command| {
-            this.write_buffer.write(this.allocator, command.serialized_data) catch bun.outOfMemory();
+            this.write_buffer.write(this.allocator, command.serialized_data) catch |oe| bun.outOfMemory(oe);
             // Free the serialized data since we've copied it to the write buffer
             this.allocator.free(command.serialized_data);
         }
@@ -388,7 +388,7 @@ pub const ValkeyClient = struct {
                 const vm = this.vm;
                 const deferred_failrue = bun.new(DeferredFailure, .{
                     // This memory is not owned by us.
-                    .message = bun.default_allocator.dupe(u8, message) catch bun.outOfMemory(),
+                    .message = bun.default_allocator.dupe(u8, message) catch |oe| bun.outOfMemory(oe),
 
                     .err = err,
                     .globalThis = vm.global,
@@ -788,7 +788,7 @@ pub const ValkeyClient = struct {
         this.in_flight.writeItem(.{
             .meta = offline_cmd.meta,
             .promise = offline_cmd.promise,
-        }) catch bun.outOfMemory();
+        }) catch |oe| bun.outOfMemory(oe);
         const data = offline_cmd.serialized_data;
 
         if (this.flags.is_authenticated and this.write_buffer.remaining().len == 0) {
@@ -800,14 +800,14 @@ pub const ValkeyClient = struct {
 
             if (unwritten.len > 0) {
                 // Handle incomplete write.
-                this.write_buffer.write(this.allocator, unwritten) catch bun.outOfMemory();
+                this.write_buffer.write(this.allocator, unwritten) catch |oe| bun.outOfMemory(oe);
             }
 
             return true;
         }
 
         // Write the pre-serialized data directly to the output buffer
-        _ = this.write(data) catch bun.outOfMemory();
+        _ = this.write(data) catch |oe| bun.outOfMemory(oe);
         bun.default_allocator.free(data);
 
         return true;

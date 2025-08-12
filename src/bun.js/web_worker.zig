@@ -156,7 +156,7 @@ fn resolveEntryPointSpecifier(
     }
 
     var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-        const out = (logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point") catch bun.outOfMemory()).toBunString(parent.global) catch {
+        const out = (logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point") catch |oe| bun.outOfMemory(oe)).toBunString(parent.global) catch {
             error_message.* = bun.String.static("unexpected exception");
             return null;
         };
@@ -202,12 +202,12 @@ pub fn create(
 
     const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-    var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
+    var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch |oe| bun.outOfMemory(oe);
     for (preload_modules) |module| {
         const utf8_slice = module.toUTF8(bun.default_allocator);
         defer utf8_slice.deinit();
         if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
-            preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
+            preloads.append(bun.default_allocator.dupe(u8, preload) catch |oe| bun.outOfMemory(oe)) catch |oe| bun.outOfMemory(oe);
         }
 
         if (!error_message.isEmpty()) {
@@ -219,7 +219,7 @@ pub fn create(
         }
     }
 
-    var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
+    var worker = bun.default_allocator.create(WebWorker) catch |oe| bun.outOfMemory(oe);
     worker.* = WebWorker{
         .cpp_worker = cpp_worker,
         .parent = parent,
@@ -227,11 +227,11 @@ pub fn create(
         .execution_context_id = this_context_id,
         .mini = mini,
         .eval_mode = eval_mode,
-        .unresolved_specifier = (spec_slice.toOwned(bun.default_allocator) catch bun.outOfMemory()).slice(),
+        .unresolved_specifier = (spec_slice.toOwned(bun.default_allocator) catch |oe| bun.outOfMemory(oe)).slice(),
         .store_fd = parent.transpiler.resolver.store_fd,
         .name = brk: {
             if (!name_str.isEmpty()) {
-                break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
+                break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch |oe| bun.outOfMemory(oe);
             }
             break :brk "";
         },
@@ -366,7 +366,7 @@ fn flushLogs(this: *WebWorker) void {
     jsc.markBinding(@src());
     var vm = this.vm orelse return;
     if (vm.log.msgs.items.len == 0) return;
-    const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch bun.outOfMemory();
+    const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch |oe| bun.outOfMemory(oe);
     const str = err.toBunString(vm.global) catch @panic("unexpected exception");
     defer str.deref();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
@@ -413,7 +413,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         error_instance = globalObject.tryTakeException().?;
     };
     buffered_writer.flush() catch {
-        bun.outOfMemory();
+        bun.outOfMemory(error.OutOfMemory);
     };
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
@@ -445,7 +445,7 @@ fn spin(this: *WebWorker) void {
         if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
             const err = resolve_error.toUTF8(bun.default_allocator);
             defer err.deinit();
-            vm.log.addError(null, .Empty, err.slice()) catch bun.outOfMemory();
+            vm.log.addError(null, .Empty, err.slice()) catch |oe| bun.outOfMemory(oe);
         }
         this.flushLogs();
         this.exitAndDeinit();

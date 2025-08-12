@@ -71,12 +71,12 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
 
                     self.name_buffer.shrinkRetainingCapacity(dirname_len);
                     if (self.name_buffer.items.len != 0) {
-                        self.name_buffer.append(path.sep) catch bun.outOfMemory();
+                        self.name_buffer.append(path.sep) catch |oe| bun.outOfMemory(oe);
                         dirname_len += 1;
                     }
-                    self.name_buffer.appendSlice(base.name.slice()) catch bun.outOfMemory();
+                    self.name_buffer.appendSlice(base.name.slice()) catch |oe| bun.outOfMemory(oe);
                     const cur_len = self.name_buffer.items.len;
-                    self.name_buffer.append(0) catch bun.outOfMemory();
+                    self.name_buffer.append(0) catch |oe| bun.outOfMemory(oe);
 
                     if (base.kind == .directory) {
                         const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
@@ -87,7 +87,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                             self.stack.append(StackItem{
                                 .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
                                 .dirname_len = cur_len,
-                            }) catch bun.outOfMemory();
+                            }) catch |oe| bun.outOfMemory(oe);
                             top = &self.stack.items[self.stack.items.len - 1];
                         }
                     }

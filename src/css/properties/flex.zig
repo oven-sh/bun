@@ -751,8 +751,8 @@ pub const FlexHandler = struct {
                 }
                 if (!prefixes_2009.isEmpty()) {
                     const orient, const newdir = dir.to2009();
-                    dest.append(context.allocator, Property{ .@"box-orient" = .{ orient, prefixes_2009 } }) catch bun.outOfMemory();
-                    dest.append(context.allocator, Property{ .@"box-direction" = .{ newdir, prefixes_2009 } }) catch bun.outOfMemory();
+                    dest.append(context.allocator, Property{ .@"box-orient" = .{ orient, prefixes_2009 } }) catch |oe| bun.outOfMemory(oe);
+                    dest.append(context.allocator, Property{ .@"box-direction" = .{ newdir, prefixes_2009 } }) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }
@@ -774,7 +774,7 @@ pub const FlexHandler = struct {
                         .wrap = wrapinner.*,
                     },
                     prefix,
-                } }) catch bun.outOfMemory();
+                } }) catch |oe| bun.outOfMemory(oe);
                 bun.bits.remove(css.VendorPrefix, dir_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, wrap_prefix, intersection);
             }
@@ -795,7 +795,7 @@ pub const FlexHandler = struct {
                     prefixes_2009.moz = true;
                 }
                 if (!prefixes_2009.isEmpty()) {
-                    dest.append(context.allocator, Property{ .@"box-flex" = .{ g, prefixes_2009 } }) catch bun.outOfMemory();
+                    dest.append(context.allocator, Property{ .@"box-flex" = .{ g, prefixes_2009 } }) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }
@@ -820,7 +820,7 @@ pub const FlexHandler = struct {
                         .basis = b,
                     },
                     prefix,
-                } }) catch bun.outOfMemory();
+                } }) catch |oe| bun.outOfMemory(oe);
                 bun.bits.remove(css.VendorPrefix, g_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, s_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, b_prefix, intersection);
@@ -870,7 +870,7 @@ pub const FlexHandler = struct {
                                     dest.append(ctx.allocator, @unionInit(Property, p2009[1], .{
                                         v,
                                         prefixes_2009,
-                                    })) catch bun.outOfMemory();
+                                    })) catch |oe| bun.outOfMemory(oe);
                                 }
                             }
                         }
@@ -883,7 +883,7 @@ pub const FlexHandler = struct {
                         dest.append(ctx.allocator, @unionInit(Property, p2012, .{
                             val,
                             css.VendorPrefix.MS,
-                        })) catch bun.outOfMemory();
+                        })) catch |oe| bun.outOfMemory(oe);
                         ms = false;
                     }
 
@@ -897,7 +897,7 @@ pub const FlexHandler = struct {
                 dest.append(ctx.allocator, @unionInit(Property, prop, .{
                     val,
                     prefix,
-                })) catch bun.outOfMemory();
+                })) catch |oe| bun.outOfMemory(oe);
             }
         }
     }
@@ -911,7 +911,7 @@ pub const FlexHandler = struct {
                 dest.append(ctx.allocator, @unionInit(Property, field_name, .{
                     val,
                     prefix,
-                })) catch bun.outOfMemory();
+                })) catch |oe| bun.outOfMemory(oe);
             } else {
                 // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
                 // css.generic.deinit(@TypeOf(val), &val, ctx.allocator);

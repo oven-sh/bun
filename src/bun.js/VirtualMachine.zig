@@ -1707,7 +1707,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,
@@ -2965,7 +2965,7 @@ fn printErrorInstance(
             if (code_value.isString()) {
                 const code_string = code_value.toBunString(this.global) catch {
                     // JSC::JSString to WTF::String can only fail on out of memory.
-                    bun.outOfMemory();
+                    bun.outOfMemory(error.OutOfMemory);
                 };
                 defer code_string.deref();
 
@@ -3440,7 +3440,7 @@ pub fn resolveSourceMapping(
             map.ref();
 
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
-                bun.outOfMemory();
+                bun.outOfMemory(error.OutOfMemory);
 
             const mapping = map.mappings.find(line, column) orelse
                 return null;

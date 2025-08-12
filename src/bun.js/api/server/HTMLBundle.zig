@@ -145,7 +145,7 @@ pub const Route = struct {
 
         if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
-                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
+                dev.respondForHTMLBundle(this, req, resp) catch |oe| bun.outOfMemory(oe);
                 return;
             }
 
@@ -163,7 +163,7 @@ pub const Route = struct {
             .pending => {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - pending", .{req.url()});
-                this.scheduleBundle(server) catch bun.outOfMemory();
+                this.scheduleBundle(server) catch |oe| bun.outOfMemory(oe);
                 continue :state this.state;
             },
             .building => {
@@ -182,7 +182,7 @@ pub const Route = struct {
                     .route = this,
                 });
 
-                this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                this.pending_responses.append(bun.default_allocator, pending) catch |oe| bun.outOfMemory(oe);
 
                 this.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
@@ -274,13 +274,13 @@ pub const Route = struct {
             config.define.map.unmanaged.entries.len = define.keys.len;
             @memcpy(config.define.map.keys(), define.keys);
             for (config.define.map.values(), define.values) |*to, from| {
-                to.* = config.define.map.allocator.dupe(u8, from) catch bun.outOfMemory();
+                to.* = config.define.map.allocator.dupe(u8, from) catch |oe| bun.outOfMemory(oe);
             }
             try config.define.map.reIndex();
         }
 
         if (!is_development) {
-            config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
+            config.define.put("process.env.NODE_ENV", "\"production\"") catch |oe| bun.outOfMemory(oe);
             config.jsx.development = false;
         } else {
             config.force_node_env = .development;
@@ -318,7 +318,7 @@ pub const Route = struct {
                 if (bun.Environment.enable_logs)
                     debug("onComplete: err - {s}", .{@errorName(err)});
                 this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-                completion_task.log.cloneToWithRecycled(&this.state.err, true) catch bun.outOfMemory();
+                completion_task.log.cloneToWithRecycled(&this.state.err, true) catch |oe| bun.outOfMemory(oe);
 
                 if (this.server) |server| {
                     if (server.config().isDevelopment()) {
@@ -360,20 +360,20 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = jsc.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    const blob = jsc.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch |oe| bun.outOfMemory(oe) };
                     var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
                         bun.debugAssert(false); // should be populated by `output_file.toBlob`
                         break :brk output_file.loader.toMimeType(&.{}).value;
                     };
-                    headers.append("Content-Type", content_type) catch bun.outOfMemory();
+                    headers.append("Content-Type", content_type) catch |oe| bun.outOfMemory(oe);
                     // Do not apply etags to html.
                     if (output_file.loader != .html and output_file.value == .buffer) {
                         var hashbuf: [64]u8 = undefined;
-                        const etag_str = std.fmt.bufPrint(&hashbuf, "{}", .{bun.fmt.hexIntLower(output_file.hash)}) catch bun.outOfMemory();
-                        headers.append("ETag", etag_str) catch bun.outOfMemory();
+                        const etag_str = std.fmt.bufPrint(&hashbuf, "{}", .{bun.fmt.hexIntLower(output_file.hash)}) catch |oe| bun.outOfMemory(oe);
+                        headers.append("ETag", etag_str) catch |oe| bun.outOfMemory(oe);
                         if (!server.config().isDevelopment() and (output_file.output_kind == .chunk))
-                            headers.append("Cache-Control", "public, max-age=31536000") catch bun.outOfMemory();
+                            headers.append("Cache-Control", "public, max-age=31536000") catch |oe| bun.outOfMemory(oe);
                     }
 
                     // Add a SourceMap header if we have a source map index
@@ -384,7 +384,7 @@ pub const Route = struct {
                             if (strings.hasPrefixComptime(route_path, "./") or strings.hasPrefixComptime(route_path, ".\\")) {
                                 route_path = route_path[1..];
                             }
-                            headers.append("SourceMap", route_path) catch bun.outOfMemory();
+                            headers.append("SourceMap", route_path) catch |oe| bun.outOfMemory(oe);
                         }
                     }
 
@@ -410,14 +410,14 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch |oe| bun.outOfMemory(oe);
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
-                const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
+                const html_route_clone = html_route.clone(globalThis) catch |oe| bun.outOfMemory(oe);
                 this.state = .{ .html = html_route_clone };
 
-                if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
+                if (!(server.reloadStaticRoutes() catch |oe| bun.outOfMemory(oe))) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
                 }

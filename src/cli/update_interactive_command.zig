@@ -370,14 +370,14 @@ pub const UpdateInteractiveCommand = struct {
                 original_cwd,
                 manager,
                 filters,
-            ) catch bun.outOfMemory();
+            ) catch |oe| bun.outOfMemory(oe);
         } else if (manager.options.do.recursive) blk: {
-            break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+            break :blk getAllWorkspaces(bun.default_allocator, manager) catch |oe| bun.outOfMemory(oe);
         } else blk: {
             const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
             if (root_pkg_id == invalid_package_id) return;
 
-            const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
+            const ids = bun.default_allocator.alloc(PackageID, 1) catch |oe| bun.outOfMemory(oe);
             ids[0] = root_pkg_id;
             break :blk ids;
         };

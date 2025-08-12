@@ -35,7 +35,7 @@ pub fn lastModifiedDate(this: *const FileRoute) bun.JSError!?u64 {
 }
 
 pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
-    const headers = Headers.from(opts.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+    const headers = Headers.from(opts.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch |oe| bun.outOfMemory(oe);
     return bun.new(FileRoute, .{
         .ref_count = .init(),
         .server = opts.server,
@@ -70,7 +70,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             blob.globalThis = globalThis;
             blob.allocator = null;
             response.body.value = .{ .Blob = blob.dupe() };
-            const headers = Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+            const headers = Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch |oe| bun.outOfMemory(oe);
 
             return bun.new(FileRoute, .{
                 .ref_count = .init(),
@@ -92,7 +92,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .ref_count = .init(),
                 .server = null,
                 .blob = b,
-                .headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = b } }) catch bun.outOfMemory(),
+                .headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = b } }) catch |oe| bun.outOfMemory(oe),
                 .has_content_length_header = false,
                 .has_last_modified_header = false,
                 .status_code = 200,

@@ -86,7 +86,7 @@ fn do(this: *@This()) Yield {
     defer arena.deinit();
 
     while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
-        const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
+        const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch |oe| bun.outOfMemory(oe);
         defer _ = arena.reset(.retain_capacity);
         _ = this.print(str);
         _ = this.print(this.separator);
@@ -102,7 +102,7 @@ fn do(this: *@This()) Yield {
 
 fn print(this: *@This(), msg: []const u8) void {
     if (this.bltn().stdout.needsIO() != null) {
-        this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+        this.buf.appendSlice(bun.default_allocator, msg) catch |oe| bun.outOfMemory(oe);
         return;
     }
     _ = this.bltn().writeNoIO(.stdout, msg);

@@ -65,7 +65,7 @@ pub const Store = struct {
             if (parent_id == maybe_parent_id) {
                 return true;
             }
-            parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+            parent_dedupe.put(parent_id, {}) catch |oe| bun.outOfMemory(oe);
         }
 
         len = parent_dedupe.count();
@@ -77,7 +77,7 @@ pub const Store = struct {
                 if (parent_id == maybe_parent_id) {
                     return true;
                 }
-                parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+                parent_dedupe.put(parent_id, {}) catch |oe| bun.outOfMemory(oe);
                 len = parent_dedupe.count();
             }
             i += 1;
@@ -184,7 +184,7 @@ pub const Store = struct {
                 if (parent_id == .invalid) {
                     continue;
                 }
-                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                parents.put(bun.default_allocator, parent_id, {}) catch |oe| bun.outOfMemory(oe);
             }
 
             len = parents.count();
@@ -193,7 +193,7 @@ pub const Store = struct {
                     if (parent_id == .invalid) {
                         continue;
                     }
-                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    parents.put(bun.default_allocator, parent_id, {}) catch |oe| bun.outOfMemory(oe);
                     len = parents.count();
                 }
                 i += 1;

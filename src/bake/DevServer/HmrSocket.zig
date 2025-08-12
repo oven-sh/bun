@@ -55,7 +55,7 @@ pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.O
             const source_map_id = SourceMapStore.Key.init(@as(u64, generation) << 32);
             if (s.dev.source_maps.removeOrUpgradeWeakRef(source_map_id, .upgrade)) {
                 s.referenced_source_maps.put(s.dev.allocator, source_map_id, {}) catch
-                    bun.outOfMemory();
+                    bun.outOfMemory(error.OutOfMemory);
             }
         },
         .subscribe => {
@@ -164,7 +164,7 @@ pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.O
                     event.entry_points,
                     true,
                     std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
 
                 event.entry_points.deinit(s.dev.allocator);
             },

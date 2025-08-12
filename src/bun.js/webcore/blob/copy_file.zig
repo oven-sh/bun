@@ -44,7 +44,7 @@ pub const CopyFile = struct {
         });
         store.ref();
         source_store.ref();
-        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file) catch bun.outOfMemory();
+        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file) catch |oe| bun.outOfMemory(oe);
     }
 
     const linux = std.os.linux;
@@ -593,7 +593,7 @@ pub const CopyFileWindows = struct {
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
         pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
-            read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();
+            read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch |oe| bun.outOfMemory(oe);
 
             return read(read_write_loop, this);
         }

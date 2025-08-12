@@ -1505,7 +1505,7 @@ pub const NetworkSink = struct {
         this.ended = true;
         // flush everything and send EOF
         if (this.task) |task| {
-            _ = task.writeBytes("", true) catch bun.outOfMemory();
+            _ = task.writeBytes("", true) catch |oe| bun.outOfMemory(oe);
         }
 
         this.signal.close(err);
@@ -1524,7 +1524,7 @@ pub const NetworkSink = struct {
             if (!this.ended) {
                 this.ended = true;
                 // we need to send EOF
-                _ = task.writeBytes("", true) catch bun.outOfMemory();
+                _ = task.writeBytes("", true) catch |oe| bun.outOfMemory(oe);
                 this.signal.close(null);
             }
             return .{ .result = value };

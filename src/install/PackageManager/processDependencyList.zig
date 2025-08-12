@@ -121,7 +121,7 @@ pub fn processExtractedTarballPackage(
                     builder.count(new_name);
                     resolver.count(*Lockfile.StringBuilder, &builder, undefined);
 
-                    builder.allocate() catch bun.outOfMemory();
+                    builder.allocate() catch |oe| bun.outOfMemory(oe);
 
                     const name = builder.append(ExternalString, new_name);
                     pkg.name = name.value;
@@ -137,7 +137,7 @@ pub fn processExtractedTarballPackage(
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch bun.outOfMemory();
+                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch |oe| bun.outOfMemory(oe);
             }
 
             return package;
@@ -192,7 +192,7 @@ pub fn processExtractedTarballPackage(
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch bun.outOfMemory();
+                manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch |oe| bun.outOfMemory(oe);
             }
 
             return package;

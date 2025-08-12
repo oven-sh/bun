@@ -165,7 +165,7 @@ pub const BoxShadowHandler = struct {
 
                     var unparsed = unp.deepClone(context.allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    dest.append(context.allocator, .{ .unparsed = unparsed }) catch bun.outOfMemory();
+                    dest.append(context.allocator, .{ .unparsed = unparsed }) catch |oe| bun.outOfMemory(oe);
                     this.flushed = true;
                 } else return false;
             },
@@ -208,7 +208,7 @@ pub const BoxShadowHandler = struct {
                     }
                 }
 
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }) catch bun.outOfMemory();
+                dest.append(context.allocator, .{ .@"box-shadow" = .{ rgb, prefixes } }) catch |oe| bun.outOfMemory(oe);
                 if (prefixes.none) {
                     prefixes = VendorPrefix.NONE;
                 } else {
@@ -228,7 +228,7 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                dest.append(context.allocator, .{ .@"box-shadow" = .{ p3, VendorPrefix.NONE } }) catch |oe| bun.outOfMemory(oe);
             }
 
             if (fallbacks.lab) {
@@ -242,12 +242,12 @@ pub const BoxShadowHandler = struct {
                         @field(output, field.name) = css.generic.deepClone(field.type, &@field(input, field.name), context.allocator);
                     }
                 }
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }) catch bun.outOfMemory();
+                dest.append(context.allocator, .{ .@"box-shadow" = .{ lab, VendorPrefix.NONE } }) catch |oe| bun.outOfMemory(oe);
             } else {
-                dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }) catch bun.outOfMemory();
+                dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes } }) catch |oe| bun.outOfMemory(oe);
             }
         } else {
-            dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }) catch bun.outOfMemory();
+            dest.append(context.allocator, .{ .@"box-shadow" = .{ box_shadows, prefixes2 } }) catch |oe| bun.outOfMemory(oe);
         }
 
         this.flushed = true;

@@ -49,12 +49,12 @@ pub fn getWithPath(
         break :brk buf[0..abs_package_json_path.len];
     };
 
-    const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+    const entry = this.map.getOrPut(allocator, path) catch |oe| bun.outOfMemory(oe);
     if (entry.found_existing) {
         return .{ .entry = entry.value_ptr };
     }
 
-    const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+    const key = allocator.dupeZ(u8, path) catch |oe| bun.outOfMemory(oe);
     entry.key_ptr.* = key;
 
     const source = &(bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
@@ -85,7 +85,7 @@ pub fn getWithPath(
     };
 
     entry.value_ptr.* = .{
-        .root = json.root.deepClone(bun.default_allocator) catch bun.outOfMemory(),
+        .root = json.root.deepClone(bun.default_allocator) catch |oe| bun.outOfMemory(oe),
         .source = source.*,
         .indentation = json.indentation,
     };
@@ -112,7 +112,7 @@ pub fn getWithSource(
         break :brk buf[0..source.path.text.len];
     };
 
-    const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+    const entry = this.map.getOrPut(allocator, path) catch |oe| bun.outOfMemory(oe);
     if (entry.found_existing) {
         return .{ .entry = entry.value_ptr };
     }
@@ -138,12 +138,12 @@ pub fn getWithSource(
     };
 
     entry.value_ptr.* = .{
-        .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
+        .root = json.root.deepClone(allocator) catch |oe| bun.outOfMemory(oe),
         .source = source.*,
         .indentation = json.indentation,
     };
 
-    entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
+    entry.key_ptr.* = allocator.dupe(u8, path) catch |oe| bun.outOfMemory(oe);
 
     return .{ .entry = entry.value_ptr };
 }

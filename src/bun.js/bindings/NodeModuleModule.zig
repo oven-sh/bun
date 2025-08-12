@@ -168,7 +168,7 @@ fn onRequireExtensionModifyBinding(
     const str_slice = str.toUTF8(alloc);
     defer str_slice.deinit();
     onRequireExtensionModify(global, str_slice.slice(), kind, value) catch |err| switch (err) {
-        error.OutOfMemory => bun.outOfMemory(),
+        error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
     };
 }
 

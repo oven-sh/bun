@@ -1040,14 +1040,14 @@ pub const Package = extern struct {
                     if (at > 0) {
                         workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch |err| {
                             switch (err) {
-                                error.OutOfMemory => bun.outOfMemory(),
+                                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                             }
                         };
                         break :brk String.Builder.stringHash(input[0..at]);
                     }
                     workspace_range = Semver.Query.parse(allocator, input, sliced) catch |err| {
                         switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
+                            error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                         }
                     };
                 }
@@ -1786,7 +1786,7 @@ pub const Package = extern struct {
                             for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
                                 if (note_path.ptr == path.ptr) continue;
                                 if (strings.eqlLong(value.name, entry.name, true)) {
-                                    const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
+                                    const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch |oe| bun.outOfMemory(oe);
 
                                     const note_src = bun.sys.File.toSource(note_abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 

@@ -276,7 +276,7 @@ pub fn loadFromDir(
 
         TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
             switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 else => {
                     return .{
                         .err = .{
@@ -319,7 +319,7 @@ pub fn loadFromDir(
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                buffered_writer.flush() catch bun.outOfMemory();
+                buffered_writer.flush() catch |oe| bun.outOfMemory(oe);
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
@@ -617,7 +617,7 @@ pub fn cleanWithLogger(
     // preinstall state before linking stage.
     manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
-    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    var old_preinstall_state = preinstall_state.clone(old.allocator) catch |oe| bun.outOfMemory(oe);
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 
@@ -1102,11 +1102,11 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             const writer = buffered_writer.writer();
 
             TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
             };
 
             buffered_writer.flush() catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
             };
 
             break :bytes writer_buf.list.items;

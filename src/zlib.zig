@@ -297,10 +297,10 @@ const ZlibAllocator = struct {
     pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("zlib");
-            return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
+            return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory(error.OutOfMemory);
         }
 
-        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
+        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory(error.OutOfMemory);
     }
 
     pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {

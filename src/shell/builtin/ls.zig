@@ -61,7 +61,7 @@ fn next(this: *Ls) Yield {
                 if (paths) |p| {
                     const print_directory = p.len > 1;
                     for (p) |path_raw| {
-                        const path = this.alloc_scope.allocator().dupeZ(u8, path_raw[0..std.mem.len(path_raw) :0]) catch bun.outOfMemory();
+                        const path = this.alloc_scope.allocator().dupeZ(u8, path_raw[0..std.mem.len(path_raw) :0]) catch |oe| bun.outOfMemory(oe);
                         var task = ShellLsTask.create(
                             this,
                             this.opts,
@@ -249,7 +249,7 @@ pub const ShellLsTask = struct {
         // scope and NOT a string literal or other string we don't own.
         if (owned_string) ls.alloc_scope.assertInScope(path);
 
-        const task = ls.alloc_scope.allocator().create(@This()) catch bun.outOfMemory();
+        const task = ls.alloc_scope.allocator().create(@This()) catch |oe| bun.outOfMemory(oe);
         task.* = @This(){
             .ls = ls,
             .opts = opts,
@@ -286,10 +286,10 @@ pub const ShellLsTask = struct {
         if (!is_absolute) {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path
-            return std.fs.path.joinZ(alloc, subdir_parts) catch bun.outOfMemory();
+            return std.fs.path.joinZ(alloc, subdir_parts) catch |oe| bun.outOfMemory(oe);
         }
 
-        const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch bun.outOfMemory();
+        const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch |oe| bun.outOfMemory(oe);
 
         return out;
     }
@@ -322,7 +322,7 @@ pub const ShellLsTask = struct {
         if (!this.opts.list_directories) {
             if (this.print_directory) {
                 const writer = this.output.writer();
-                std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
+                std.fmt.format(writer, "{s}:\n", .{this.path}) catch |oe| bun.outOfMemory(oe);
             }
 
             var iterator = DirIterator.iterate(fd, .u8);
@@ -350,7 +350,7 @@ pub const ShellLsTask = struct {
         }
 
         const writer = this.output.writer();
-        std.fmt.format(writer, "{s}\n", .{this.path}) catch bun.outOfMemory();
+        std.fmt.format(writer, "{s}\n", .{this.path}) catch |oe| bun.outOfMemory(oe);
         return;
     }
 
@@ -373,9 +373,9 @@ pub const ShellLsTask = struct {
         const skip = this.shouldSkipEntry(name);
         debug("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
         if (skip) return;
-        this.output.ensureUnusedCapacity(name.len + 1) catch bun.outOfMemory();
-        this.output.appendSlice(name) catch bun.outOfMemory();
-        this.output.append('\n') catch bun.outOfMemory();
+        this.output.ensureUnusedCapacity(name.len + 1) catch |oe| bun.outOfMemory(oe);
+        this.output.appendSlice(name) catch |oe| bun.outOfMemory(oe);
+        this.output.append('\n') catch |oe| bun.outOfMemory(oe);
     }
 
     fn addDotEntriesIfNeeded(this: *@This()) void {
@@ -387,7 +387,7 @@ pub const ShellLsTask = struct {
 
     fn errorWithPath(this: *@This(), err: Syscall.Error, path: [:0]const u8) Syscall.Error {
         debug("Ls(0x{x}).errorWithPath({s})", .{ @intFromPtr(this), path });
-        return err.withPath(this.ls.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+        return err.withPath(this.ls.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch |oe| bun.outOfMemory(oe));
     }
 
     pub fn workPoolCallback(task: *jsc.WorkPoolTask) void {

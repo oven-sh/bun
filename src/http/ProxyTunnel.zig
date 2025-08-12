@@ -201,7 +201,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         const pending = encoded_data[@intCast(written)..];
         if (pending.len > 0) {
             // lets flush when we are truly writable
-            proxy.write_buffer.write(pending) catch bun.outOfMemory();
+            proxy.write_buffer.write(pending) catch |oe| bun.outOfMemory(oe);
         }
     }
 }
@@ -244,7 +244,7 @@ pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
         .ctx = this,
     }) catch |err| {
         if (err == error.OutOfMemory) {
-            bun.outOfMemory();
+            bun.outOfMemory(error.OutOfMemory);
         }
 
         // invalid TLS Options

@@ -241,7 +241,7 @@ pub inline fn lenI(self: *MutableString) i32 {
 }
 
 pub fn toOwnedSlice(self: *MutableString) []u8 {
-    return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
+    return self.list.toOwnedSlice(self.allocator) catch |oe| bun.outOfMemory(oe); // TODO
 }
 
 pub fn slice(self: *MutableString) []u8 {
@@ -269,7 +269,7 @@ pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
 
 pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
     self.list.items.len = length;
-    return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
+    return self.list.toOwnedSlice(self.allocator) catch |oe| bun.outOfMemory(oe); // TODO
 }
 
 pub fn containsChar(self: *const MutableString, char: u8) bool {

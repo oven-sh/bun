@@ -346,7 +346,7 @@ fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
             );
         }
 
-        const entry = duped_route_names.getOrPut(route_name) catch bun.outOfMemory();
+        const entry = duped_route_names.getOrPut(route_name) catch |oe| bun.outOfMemory(oe);
         if (entry.found_existing) {
             return global.throwTODO(
                 \\Support for duplicate route parameter names is not yet implemented.
@@ -533,7 +533,7 @@ pub fn fromJS(
             }
 
             while (try iter.next()) |key| {
-                const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch |oe| bun.outOfMemory(oe);
                 errdefer bun.default_allocator.free(path);
 
                 const value: jsc.JSValue = iter.value;
@@ -551,9 +551,9 @@ pub fn fromJS(
                 }
 
                 if (value == .false) {
-                    const duped = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const duped = bun.default_allocator.dupeZ(u8, path) catch |oe| bun.outOfMemory(oe);
                     defer bun.default_allocator.free(path);
-                    args.negative_routes.append(duped) catch bun.outOfMemory();
+                    args.negative_routes.append(duped) catch |oe| bun.outOfMemory(oe);
                     continue;
                 }
 
@@ -561,11 +561,11 @@ pub fn fromJS(
                     try validateRouteName(global, path);
                     args.user_routes_to_build.append(.{
                         .route = .{
-                            .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                            .path = bun.default_allocator.dupeZ(u8, path) catch |oe| bun.outOfMemory(oe),
                             .method = .any,
                         },
                         .callback = .create(value.withAsyncContextIfNeeded(global), global),
-                    }) catch bun.outOfMemory();
+                    }) catch |oe| bun.outOfMemory(oe);
                     bun.default_allocator.free(path);
                     continue;
                 } else if (value.isObject()) {
@@ -591,20 +591,20 @@ pub fn fromJS(
                             if (function.isCallable()) {
                                 args.user_routes_to_build.append(.{
                                     .route = .{
-                                        .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                                        .path = bun.default_allocator.dupeZ(u8, path) catch |oe| bun.outOfMemory(oe),
                                         .method = .{ .specific = method },
                                     },
                                     .callback = .create(function.withAsyncContextIfNeeded(global), global),
-                                }) catch bun.outOfMemory();
+                                }) catch |oe| bun.outOfMemory(oe);
                             } else if (try AnyRoute.fromJS(global, path, function, init_ctx)) |html_route| {
                                 var method_set = bun.http.Method.Set.initEmpty();
                                 method_set.insert(method);
 
                                 args.static_routes.append(.{
-                                    .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+                                    .path = bun.default_allocator.dupe(u8, path) catch |oe| bun.outOfMemory(oe),
                                     .route = html_route,
                                     .method = .{ .method = method_set },
-                                }) catch bun.outOfMemory();
+                                }) catch |oe| bun.outOfMemory(oe);
                             }
                         }
                     }
@@ -659,7 +659,7 @@ pub fn fromJS(
                 args.static_routes.append(.{
                     .path = path,
                     .route = route,
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
             }
 
             // When HTML bundles are provided, ensure DevServer options are ready
@@ -936,10 +936,10 @@ pub fn fromJS(
                             return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
                         }
                         if (args.sni == null) {
-                            args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
+                            args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch |oe| bun.outOfMemory(oe);
                         }
 
-                        args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                        args.sni.?.push(bun.default_allocator, ssl_config) catch |oe| bun.outOfMemory(oe);
                     }
                 }
             } else {

@@ -100,7 +100,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch bun.outOfMemory();
+                return self.allocator.create(T) catch |oe| bun.outOfMemory(oe);
             }
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
@@ -111,7 +111,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch bun.outOfMemory();
+                return self.allocator.create(T) catch |oe| bun.outOfMemory(oe);
             }
 
             pub fn tryGet(self: *This) OOM!*T {

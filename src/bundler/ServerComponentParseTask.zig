@@ -31,7 +31,7 @@ fn taskCallbackWrap(thread_pool_task: *ThreadPoolLib.Task) void {
     defer worker.unget();
     var log = Logger.Log.init(worker.allocator);
 
-    const result = bun.default_allocator.create(ParseTask.Result) catch bun.outOfMemory();
+    const result = bun.default_allocator.create(ParseTask.Result) catch |oe| bun.outOfMemory(oe);
     result.* = .{
         .ctx = task.ctx,
         .task = undefined,
@@ -43,7 +43,7 @@ fn taskCallbackWrap(thread_pool_task: *ThreadPoolLib.Task) void {
         )) |success|
             .{ .success = success }
         else |err| switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
+            error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
         },
 
         .watcher_data = .none,

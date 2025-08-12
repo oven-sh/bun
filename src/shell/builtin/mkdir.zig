@@ -201,7 +201,7 @@ pub const ShellMkdirTask = struct {
         filepath: [:0]const u8,
         cwd_path: [:0]const u8,
     ) *ShellMkdirTask {
-        const task = bun.default_allocator.create(ShellMkdirTask) catch bun.outOfMemory();
+        const task = bun.default_allocator.create(ShellMkdirTask) catch |oe| bun.outOfMemory(oe);
         const evtloop = mkdir.bltn().parentCmd().base.eventLoop();
         task.* = ShellMkdirTask{
             .mkdir = mkdir,
@@ -258,7 +258,7 @@ pub const ShellMkdirTask = struct {
             switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                 .result => {},
                 .err => |e| {
-                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch |oe| bun.outOfMemory(oe)).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -271,12 +271,12 @@ pub const ShellMkdirTask = struct {
             switch (node_fs.mkdirNonRecursive(args)) {
                 .result => {
                     if (this.opts.verbose) {
-                        this.created_directories.appendSlice(filepath[0..filepath.len]) catch bun.outOfMemory();
-                        this.created_directories.append('\n') catch bun.outOfMemory();
+                        this.created_directories.appendSlice(filepath[0..filepath.len]) catch |oe| bun.outOfMemory(oe);
+                        this.created_directories.append('\n') catch |oe| bun.outOfMemory(oe);
                     }
                 },
                 .err => |e| {
-                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                    this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch |oe| bun.outOfMemory(oe)).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -298,11 +298,11 @@ pub const ShellMkdirTask = struct {
             if (bun.Environment.isWindows) {
                 var buf: bun.PathBuffer = undefined;
                 const str = bun.strings.fromWPath(&buf, dirpath[0..dirpath.len]);
-                vtable.inner.created_directories.appendSlice(str) catch bun.outOfMemory();
-                vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
+                vtable.inner.created_directories.appendSlice(str) catch |oe| bun.outOfMemory(oe);
+                vtable.inner.created_directories.append('\n') catch |oe| bun.outOfMemory(oe);
             } else {
-                vtable.inner.created_directories.appendSlice(dirpath) catch bun.outOfMemory();
-                vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
+                vtable.inner.created_directories.appendSlice(dirpath) catch |oe| bun.outOfMemory(oe);
+                vtable.inner.created_directories.append('\n') catch |oe| bun.outOfMemory(oe);
             }
             return;
         }

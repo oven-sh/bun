@@ -24,8 +24,8 @@ dest: []const u8 = "",
 
 pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
     var copy = this.*;
-    copy.path = allocator.dupe(u8, copy.path) catch bun.outOfMemory();
-    copy.dest = allocator.dupe(u8, copy.dest) catch bun.outOfMemory();
+    copy.path = allocator.dupe(u8, copy.path) catch |oe| bun.outOfMemory(oe);
+    copy.dest = allocator.dupe(u8, copy.dest) catch |oe| bun.outOfMemory(oe);
     return copy;
 }
 

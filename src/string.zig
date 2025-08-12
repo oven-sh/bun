@@ -826,7 +826,7 @@ pub const String = extern struct {
         jsc.markBinding(@src());
         var builder = std.ArrayList(u8).init(bun.default_allocator);
         defer builder.deinit();
-        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        builder.writer().print(fmt, args) catch |oe| bun.outOfMemory(oe);
         return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
     }
 

@@ -58,8 +58,8 @@ pub const ProcessHandle = struct {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             const original_path = this.state.env.map.get("PATH") orelse "";
-            this.state.env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
-            defer this.state.env.map.put("PATH", original_path) catch bun.outOfMemory();
+            this.state.env.map.put("PATH", this.config.PATH) catch |oe| bun.outOfMemory(oe);
+            defer this.state.env.map.put("PATH", original_path) catch |oe| bun.outOfMemory(oe);
             const envp = try this.state.env.map.createNullDelimitedEnvMap(arena.allocator());
 
             break :brk try (try bun.spawn.spawnProcess(&this.options, argv[0..], envp)).unwrap();
@@ -161,7 +161,7 @@ const State = struct {
 
     fn readChunk(this: *This, handle: *ProcessHandle, chunk: []const u8) !void {
         if (this.pretty_output) {
-            handle.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            handle.buffer.appendSlice(chunk) catch |oe| bun.outOfMemory(oe);
             this.redraw(false) catch {};
         } else {
             var content = chunk;

@@ -84,11 +84,11 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             if (comptime !bun.Environment.isWindows) {
                 var buffer = std.mem.zeroes([bun.c.IF_NAMESIZE:0]u8);
                 if (bun.c.if_indextoname(id, &buffer) != null) {
-                    break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch bun.outOfMemory();
+                    break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch |oe| bun.outOfMemory(oe);
                 }
             }
 
-            break :blk bun.String.createFormat("{s}%{d}", .{ span, id }) catch bun.outOfMemory();
+            break :blk bun.String.createFormat("{s}%{d}", .{ span, id }) catch |oe| bun.outOfMemory(oe);
         } else bun.String.init(span);
 
         _ = callback.call(globalThis, udpSocket.thisValue, &.{
@@ -136,9 +136,9 @@ pub const UDPSocketConfig = struct {
                 }
                 const str = value.toBunString(globalThis) catch @panic("unreachable");
                 defer str.deref();
-                break :brk str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+                break :brk str.toOwnedSliceZ(default_allocator) catch |oe| bun.outOfMemory(oe);
             } else {
-                break :brk default_allocator.dupeZ(u8, "0.0.0.0") catch bun.outOfMemory();
+                break :brk default_allocator.dupeZ(u8, "0.0.0.0") catch |oe| bun.outOfMemory(oe);
             }
         };
         defer if (globalThis.hasException()) default_allocator.free(hostname);
@@ -219,7 +219,7 @@ pub const UDPSocketConfig = struct {
 
             const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
-            const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+            const connect_host = str.toOwnedSliceZ(default_allocator) catch |oe| bun.outOfMemory(oe);
 
             config.connect = .{
                 .port = if (connect_port < 1 or connect_port > 0xffff) 0 else @as(u16, @intCast(connect_port)),
@@ -323,7 +323,7 @@ pub const UDPSocket = struct {
                 const sys_err = jsc.SystemError{
                     .errno = err,
                     .code = bun.String.static(code),
-                    .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
+                    .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch |oe| bun.outOfMemory(oe),
                 };
                 const error_value = sys_err.toErrorInstance(globalThis);
                 error_value.put(globalThis, "address", try bun.String.createUTF8ForJS(globalThis, config.hostname));
@@ -606,10 +606,10 @@ pub const UDPSocket = struct {
         defer arena.deinit();
         const alloc = arena.allocator();
 
-        var payloads = alloc.alloc([*]const u8, len) catch bun.outOfMemory();
-        var lens = alloc.alloc(usize, len) catch bun.outOfMemory();
-        var addr_ptrs = alloc.alloc(?*const anyopaque, len) catch bun.outOfMemory();
-        var addrs = alloc.alloc(std.posix.sockaddr.storage, len) catch bun.outOfMemory();
+        var payloads = alloc.alloc([*]const u8, len) catch |oe| bun.outOfMemory(oe);
+        var lens = alloc.alloc(usize, len) catch |oe| bun.outOfMemory(oe);
+        var addr_ptrs = alloc.alloc(?*const anyopaque, len) catch |oe| bun.outOfMemory(oe);
+        var addrs = alloc.alloc(std.posix.sockaddr.storage, len) catch |oe| bun.outOfMemory(oe);
 
         var iter = try arg.arrayIterator(globalThis);
 
@@ -907,7 +907,7 @@ pub const UDPSocket = struct {
 
         const str = try args.ptr[0].toBunString(globalThis);
         defer str.deref();
-        const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+        const connect_host = str.toOwnedSliceZ(default_allocator) catch |oe| bun.outOfMemory(oe);
         defer default_allocator.free(connect_host);
 
         const connect_port_js = args.ptr[1];

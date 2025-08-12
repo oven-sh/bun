@@ -95,9 +95,9 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch |oe| bun.outOfMemory(oe) else null;
     if (this.cmds == null) return null;
-    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch |oe| bun.outOfMemory(oe);
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;

@@ -860,11 +860,11 @@ pub fn Visit(
                                         // Merge the two identifiers back into a single one
                                         p.symbols.items[hoisted_ref.innerIndex()].link = name_ref;
                                     }
-                                    non_fn_stmts.append(stmt) catch bun.outOfMemory();
+                                    non_fn_stmts.append(stmt) catch |oe| bun.outOfMemory(oe);
                                     continue;
                                 }
 
-                                const gpe = fn_stmts.getOrPut(name_ref) catch bun.outOfMemory();
+                                const gpe = fn_stmts.getOrPut(name_ref) catch |oe| bun.outOfMemory(oe);
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
                                     index = @as(u32, @intCast(let_decls.items.len));
@@ -889,7 +889,7 @@ pub fn Visit(
                                                 },
                                                 data.func.name.?.loc,
                                             ),
-                                        }) catch bun.outOfMemory();
+                                        }) catch |oe| bun.outOfMemory(oe);
                                     }
                                 }
 

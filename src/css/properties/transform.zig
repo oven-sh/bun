@@ -23,14 +23,14 @@ pub const TransformList = struct {
         input.skipWhitespace();
         var results = ArrayList(Transform){};
         switch (Transform.parse(input)) {
-            .result => |first| results.append(input.allocator(), first) catch bun.outOfMemory(),
+            .result => |first| results.append(input.allocator(), first) catch |oe| bun.outOfMemory(oe),
             .err => |e| return .{ .err = e },
         }
 
         while (true) {
             input.skipWhitespace();
             if (input.tryParse(Transform.parse, .{}).asValue()) |item| {
-                results.append(input.allocator(), item) catch bun.outOfMemory();
+                results.append(input.allocator(), item) catch |oe| bun.outOfMemory(oe);
             } else {
                 return .{ .result = .{ .v = results } };
             }
@@ -1203,7 +1203,7 @@ pub const TransformHandler = struct {
         const individualProperty = struct {
             fn individualProperty(self: *TransformHandler, allocator: std.mem.Allocator, comptime field: []const u8, val: anytype) void {
                 if (self.transform) |*transform| {
-                    transform.*[0].v.append(allocator, val.toTransform(allocator)) catch bun.outOfMemory();
+                    transform.*[0].v.append(allocator, val.toTransform(allocator)) catch |oe| bun.outOfMemory(oe);
                 } else {
                     @field(self, field) = val.deepClone(allocator);
                     self.has_any = true;
@@ -1251,7 +1251,7 @@ pub const TransformHandler = struct {
                         Property{ .unparsed = unparsed.getPrefixed(allocator, context.targets, css.prefixes.Feature.transform) }
                     else
                         property.deepClone(allocator);
-                    dest.append(allocator, prop) catch bun.outOfMemory();
+                    dest.append(allocator, prop) catch |oe| bun.outOfMemory(oe);
                 } else return false;
             },
             else => return false,
@@ -1276,19 +1276,19 @@ pub const TransformHandler = struct {
 
         if (transform) |t| {
             const prefix = context.targets.prefixes(t[1], css.prefixes.Feature.transform);
-            dest.append(allocator, Property{ .transform = .{ t[0], prefix } }) catch bun.outOfMemory();
+            dest.append(allocator, Property{ .transform = .{ t[0], prefix } }) catch |oe| bun.outOfMemory(oe);
         }
 
         if (translate) |t| {
-            dest.append(allocator, Property{ .translate = t }) catch bun.outOfMemory();
+            dest.append(allocator, Property{ .translate = t }) catch |oe| bun.outOfMemory(oe);
         }
 
         if (rotate) |r| {
-            dest.append(allocator, Property{ .rotate = r }) catch bun.outOfMemory();
+            dest.append(allocator, Property{ .rotate = r }) catch |oe| bun.outOfMemory(oe);
         }
 
         if (scale) |s| {
-            dest.append(allocator, Property{ .scale = s }) catch bun.outOfMemory();
+            dest.append(allocator, Property{ .scale = s }) catch |oe| bun.outOfMemory(oe);
         }
     }
 };

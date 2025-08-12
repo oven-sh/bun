@@ -1190,7 +1190,7 @@ pub const AlignHandler = struct {
             .unparsed => |*val| {
                 if (isAlignProperty(val.property_id)) {
                     this.flush(dest, context);
-                    dest.append(context.allocator, property.*) catch bun.outOfMemory();
+                    dest.append(context.allocator, property.*) catch |oe| bun.outOfMemory(oe);
                 } else {
                     return false;
                 }
@@ -1271,14 +1271,14 @@ pub const AlignHandler = struct {
             dest.append(context.allocator, Property{ .gap = Gap{
                 .row = row_gap.?,
                 .column = column_gap.?,
-            } }) catch bun.outOfMemory();
+            } }) catch |oe| bun.outOfMemory(oe);
         } else {
             if (row_gap != null) {
-                dest.append(context.allocator, Property{ .@"row-gap" = row_gap.? }) catch bun.outOfMemory();
+                dest.append(context.allocator, Property{ .@"row-gap" = row_gap.? }) catch |oe| bun.outOfMemory(oe);
             }
 
             if (column_gap != null) {
-                dest.append(context.allocator, Property{ .@"column-gap" = column_gap.? }) catch bun.outOfMemory();
+                dest.append(context.allocator, Property{ .@"column-gap" = column_gap.? }) catch |oe| bun.outOfMemory(oe);
             }
         }
     }
@@ -1321,7 +1321,7 @@ pub const AlignHandler = struct {
             var prefix = v[1];
             // If we have an unprefixed property, override necessary prefixes.
             prefix = if (prefix.none) flushPrefixesHelper(this, context, feature) else prefix;
-            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch |oe| bun.outOfMemory(oe);
         }
     }
 
@@ -1362,7 +1362,7 @@ pub const AlignHandler = struct {
                                 dest.append(context.allocator, @unionInit(Property, p2009[1], .{
                                     a,
                                     prefixes_2009,
-                                })) catch bun.outOfMemory();
+                                })) catch |oe| bun.outOfMemory(oe);
                             }
                         }
                     }
@@ -1381,7 +1381,7 @@ pub const AlignHandler = struct {
                         dest.append(context.allocator, @unionInit(Property, p2012[1], .{
                             q,
                             VendorPrefix.MS,
-                        })) catch bun.outOfMemory();
+                        })) catch |oe| bun.outOfMemory(oe);
                     }
                 }
             }
@@ -1397,7 +1397,7 @@ pub const AlignHandler = struct {
         if (key) |v| {
             const val = v[0];
             const prefix = v[1];
-            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch |oe| bun.outOfMemory(oe);
         }
     }
 
@@ -1405,7 +1405,7 @@ pub const AlignHandler = struct {
         _ = this; // autofix
         if (key) |v| {
             const val = v;
-            dest.append(context.allocator, @unionInit(Property, prop, val)) catch bun.outOfMemory();
+            dest.append(context.allocator, @unionInit(Property, prop, val)) catch |oe| bun.outOfMemory(oe);
         }
     }
 
@@ -1442,7 +1442,7 @@ pub const AlignHandler = struct {
                         dest.append(
                             context.allocator,
                             @unionInit(Property, align_prop.prop, .{ css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator), align_prefix.* }),
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     }
 
                     if (comptime justify_prop != null) {
@@ -1455,7 +1455,7 @@ pub const AlignHandler = struct {
                             dest.append(
                                 context.allocator,
                                 @unionInit(Property, justify_prop.?.prop, .{ css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator), justify_prefix.* }),
-                            ) catch bun.outOfMemory();
+                            ) catch |oe| bun.outOfMemory(oe);
                         }
 
                         // Add shorthand.
@@ -1465,7 +1465,7 @@ pub const AlignHandler = struct {
                                 .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
                                 .justify = css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator),
                             }),
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     } else {
 
                         // Add shorthand.
@@ -1475,7 +1475,7 @@ pub const AlignHandler = struct {
                                 .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
                                 .justify = css.generic.deepClone(@TypeOf(justify.*), justify, context.allocator),
                             }),
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     }
 
                     align_val.* = null;

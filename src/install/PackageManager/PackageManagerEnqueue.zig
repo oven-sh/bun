@@ -1412,7 +1412,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .{
                         .pkg_id = package.meta.id,
                         .dependency_id = dependency_id,
-                        .url = this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url)) catch bun.outOfMemory(),
+                        .url = this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url)) catch |oe| bun.outOfMemory(oe),
                     },
                 ),
             },
@@ -1662,7 +1662,7 @@ fn getOrPutResolvedPackage(
                     builder.count(name_slice);
                     builder.count(folder_path);
 
-                    builder.allocate() catch bun.outOfMemory();
+                    builder.allocate() catch |oe| bun.outOfMemory(oe);
 
                     name_slice = this.lockfile.str(&name);
                     folder_path = this.lockfile.str(&version.value.folder);
@@ -1681,7 +1681,7 @@ fn getOrPutResolvedPackage(
                 }
 
                 // these are always new
-                package = this.lockfile.appendPackage(package) catch bun.outOfMemory();
+                package = this.lockfile.appendPackage(package) catch |oe| bun.outOfMemory(oe);
 
                 break :res .{
                     .new_package_id = package.meta.id,

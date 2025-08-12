@@ -474,7 +474,7 @@ pub inline fn isString(expr: *const Expr) bool {
 
 pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
     switch (expr.data) {
-        .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
+        .e_string => |str| return str.string(allocator) catch |oe| bun.outOfMemory(oe),
         else => return null,
     }
 }

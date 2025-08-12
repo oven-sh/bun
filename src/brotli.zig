@@ -6,10 +6,10 @@ pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
-            return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
+            return zone.malloc_zone_malloc(len) orelse bun.outOfMemory(error.OutOfMemory);
         }
 
-        return mimalloc.mi_malloc(len) orelse bun.outOfMemory();
+        return mimalloc.mi_malloc(len) orelse bun.outOfMemory(error.OutOfMemory);
     }
 
     pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.C) void {

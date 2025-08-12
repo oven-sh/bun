@@ -287,7 +287,7 @@ pub fn VisitStmt(
                         if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                             try stmts.ensureUnusedCapacity(2);
 
-                            const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                            const decls = p.allocator.alloc(G.Decl, 1) catch |oe| bun.outOfMemory(oe);
                             decls[0] = .{
                                 .binding = p.b(B.Identifier{ .ref = data.default_name.ref.? }, data.default_name.loc),
                                 .value = data.value.expr,
@@ -295,7 +295,7 @@ pub fn VisitStmt(
                             stmts.appendAssumeCapacity(p.s(S.Local{
                                 .decls = G.Decl.List.init(decls),
                             }, stmt.loc));
-                            const items = p.allocator.alloc(js_ast.ClauseItem, 1) catch bun.outOfMemory();
+                            const items = p.allocator.alloc(js_ast.ClauseItem, 1) catch |oe| bun.outOfMemory(oe);
                             items[0] = js_ast.ClauseItem{
                                 .alias = "default",
                                 .alias_loc = data.default_name.loc,
@@ -343,7 +343,7 @@ pub fn VisitStmt(
                             }
 
                             if (react_hook_data) |*hook| {
-                                stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+                                stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch |oe| bun.outOfMemory(oe);
 
                                 data.value = .{
                                     .expr = p.getReactRefreshHookSignalInit(hook, p.newExpr(
@@ -402,7 +402,7 @@ pub fn VisitStmt(
                                                 .value = data.value.expr,
                                             },
                                         }),
-                                    }, stmt.loc)) catch bun.outOfMemory();
+                                    }, stmt.loc)) catch |oe| bun.outOfMemory(oe);
 
                                     data.value = .{ .expr = .initIdentifier(ref_to_use, stmt.loc) };
 
@@ -514,8 +514,8 @@ pub fn VisitStmt(
                 if (data.func.flags.contains(.is_export) and p.enclosing_namespace_arg_ref != null) {
                     data.func.flags.remove(.is_export);
 
-                    const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse bun.outOfMemory();
-                    stmts.ensureUnusedCapacity(3) catch bun.outOfMemory();
+                    const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse bun.outOfMemory(error.OutOfMemory);
+                    stmts.ensureUnusedCapacity(3) catch |oe| bun.outOfMemory(oe);
                     stmts.appendAssumeCapacity(stmt.*);
                     stmts.appendAssumeCapacity(Stmt.assign(
                         p.newExpr(E.Dot{
@@ -547,7 +547,7 @@ pub fn VisitStmt(
                             }}),
                         }, stmt.loc));
                     } else {
-                        stmts.append(stmt.*) catch bun.outOfMemory();
+                        stmts.append(stmt.*) catch |oe| bun.outOfMemory(oe);
                     }
                 } else if (mark_as_dead) {
                     if (p.options.features.replace_exports.getPtr(original_name)) |replacement| {
@@ -1200,7 +1200,7 @@ pub fn VisitStmt(
                         const first = p.s(S.Local{
                             .kind = init2.kind,
                             .decls = bindings: {
-                                const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                                const decls = p.allocator.alloc(G.Decl, 1) catch |oe| bun.outOfMemory(oe);
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = id.ref }, loc),
                                     .value = p.newExpr(E.Identifier{ .ref = temp_ref }, loc),
@@ -1210,7 +1210,7 @@ pub fn VisitStmt(
                         }, loc);
 
                         const length = if (data.body.data == .s_block) data.body.data.s_block.stmts.len else 1;
-                        const statements = p.allocator.alloc(Stmt, 1 + length) catch bun.outOfMemory();
+                        const statements = p.allocator.alloc(Stmt, 1 + length) catch |oe| bun.outOfMemory(oe);
                         statements[0] = first;
                         if (data.body.data == .s_block) {
                             @memcpy(statements[1..], data.body.data.s_block.stmts);
@@ -1315,10 +1315,10 @@ pub fn VisitStmt(
                     try p.top_level_enums.append(p.allocator, data.name.ref.?);
                 }
 
-                p.recordDeclaredSymbol(data.name.ref.?) catch bun.outOfMemory();
-                p.pushScopeForVisitPass(.entry, stmt.loc) catch bun.outOfMemory();
+                p.recordDeclaredSymbol(data.name.ref.?) catch |oe| bun.outOfMemory(oe);
+                p.pushScopeForVisitPass(.entry, stmt.loc) catch |oe| bun.outOfMemory(oe);
                 defer p.popScope();
-                p.recordDeclaredSymbol(data.arg) catch bun.outOfMemory();
+                p.recordDeclaredSymbol(data.arg) catch |oe| bun.outOfMemory(oe);
 
                 const allocator = p.allocator;
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -1327,7 +1327,7 @@ pub fn VisitStmt(
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.values) |value| {
                     if (value.ref.isValid()) {
-                        p.is_exported_inside_namespace.put(allocator, value.ref, data.arg) catch bun.outOfMemory();
+                        p.is_exported_inside_namespace.put(allocator, value.ref, data.arg) catch |oe| bun.outOfMemory(oe);
                     }
                 }
 
@@ -1336,7 +1336,7 @@ pub fn VisitStmt(
                 // without initializers are initialized to undefined.
                 var next_numeric_value: ?f64 = 0.0;
 
-                var value_exprs = ListManaged(Expr).initCapacity(allocator, data.values.len) catch bun.outOfMemory();
+                var value_exprs = ListManaged(Expr).initCapacity(allocator, data.values.len) catch |oe| bun.outOfMemory(oe);
 
                 var all_values_are_pure = true;
 
@@ -1373,7 +1373,7 @@ pub fn VisitStmt(
                                     p.allocator,
                                     value.ref,
                                     .{ .enum_number = num.value },
-                                ) catch bun.outOfMemory();
+                                ) catch |oe| bun.outOfMemory(oe);
 
                                 next_numeric_value = num.value + 1.0;
                             },
@@ -1386,7 +1386,7 @@ pub fn VisitStmt(
                                     p.allocator,
                                     value.ref,
                                     .{ .enum_string = str },
-                                ) catch bun.outOfMemory();
+                                ) catch |oe| bun.outOfMemory(oe);
                             },
                             else => {
                                 if (visited.knownPrimitive() == .string) {
@@ -1409,7 +1409,7 @@ pub fn VisitStmt(
                             p.allocator,
                             value.ref,
                             .{ .enum_number = num },
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                     } else {
                         value.value = p.newExpr(E.Undefined{}, value.loc);
                     }
@@ -1451,7 +1451,7 @@ pub fn VisitStmt(
 
                     // String-valued enums do not form a two-way map
                     if (has_string_value) {
-                        value_exprs.append(assign_target) catch bun.outOfMemory();
+                        value_exprs.append(assign_target) catch |oe| bun.outOfMemory(oe);
                     } else {
                         // "Enum[assignTarget] = 'Name'"
                         value_exprs.append(
@@ -1465,7 +1465,7 @@ pub fn VisitStmt(
                                 }, value.loc),
                                 name_as_e_string.?,
                             ),
-                        ) catch bun.outOfMemory();
+                        ) catch |oe| bun.outOfMemory(oe);
                         p.recordUsage(data.arg);
                     }
                 }

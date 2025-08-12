@@ -193,7 +193,7 @@ pub fn addUrlForCss(
             const encode_len = bun.base64.encodeLen(contents);
             const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
             const total_buffer_len = data_url_prefix_len + encode_len;
-            var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
+            var encoded = allocator.alloc(u8, total_buffer_len) catch |oe| bun.outOfMemory(oe);
             _ = std.fmt.bufPrint(encoded[0..data_url_prefix_len], "data:{s};base64,", .{mime_type}) catch unreachable;
             const len = bun.base64.encode(encoded[data_url_prefix_len..], contents);
             break :url_for_css encoded[0 .. data_url_prefix_len + len];

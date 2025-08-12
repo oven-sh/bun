@@ -209,7 +209,7 @@ pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_add
     if (comptime !enabled) return;
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
-    scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch bun.outOfMemory();
+    scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch |oe| bun.outOfMemory(oe);
     trackAllocationAssumeCapacity(scope, ptr, ptr.len, ret_addr orelse @returnAddress(), extra);
 }
 

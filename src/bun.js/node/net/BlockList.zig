@@ -156,7 +156,7 @@ pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 pub fn rules(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
-    var list = std.ArrayList(jsc.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();
+    var list = std.ArrayList(jsc.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch |oe| bun.outOfMemory(oe);
     defer list.deinit();
     for (this.da_rules.items) |rule| {
         switch (rule) {

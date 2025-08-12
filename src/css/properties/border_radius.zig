@@ -144,7 +144,7 @@ pub const BorderRadiusHandler = struct {
                         .@"border-end-start-radius" => logicalPropertyHelper(this, dest, context, "end_start", property),
                         else => {
                             this.flush(dest, context);
-                            dest.append(context.allocator, Property{ .unparsed = unparsed.getPrefixed(context.allocator, context.targets, css.prefixes.Feature.border_radius) }) catch bun.outOfMemory();
+                            dest.append(context.allocator, Property{ .unparsed = unparsed.getPrefixed(context.allocator, context.targets, css.prefixes.Feature.border_radius) }) catch |oe| bun.outOfMemory(oe);
                         },
                     }
                 } else return false;
@@ -185,7 +185,7 @@ pub const BorderRadiusHandler = struct {
                         .bottom_left = bottom_left.?[0].deepClone(context.allocator),
                     },
                     prefix,
-                } }) catch bun.outOfMemory();
+                } }) catch |oe| bun.outOfMemory(oe);
                 bun.bits.remove(VendorPrefix, &top_left.?[1], intersection);
                 bun.bits.remove(VendorPrefix, &top_right.?[1], intersection);
                 bun.bits.remove(VendorPrefix, &bottom_right.?[1], intersection);
@@ -210,7 +210,7 @@ pub const BorderRadiusHandler = struct {
         if (val) |v| {
             if (!v[1].isEmpty()) {
                 const prefix = ctx.targets.prefixes(v[1], css.prefixes.Feature.border_radius);
-                d.append(ctx.allocator, @unionInit(css.Property, prop, .{ v[0], prefix })) catch bun.outOfMemory();
+                d.append(ctx.allocator, @unionInit(css.Property, prop, .{ v[0], prefix })) catch |oe| bun.outOfMemory(oe);
             }
         }
     }
@@ -218,7 +218,7 @@ pub const BorderRadiusHandler = struct {
     fn logicalProperty(d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: ?css.Property, comptime ltr: []const u8, comptime rtl: []const u8, logical_supported: bool) void {
         if (val) |v| {
             if (logical_supported) {
-                d.append(ctx.allocator, v) catch bun.outOfMemory();
+                d.append(ctx.allocator, v) catch |oe| bun.outOfMemory(oe);
             } else {
                 const prefix = ctx.targets.prefixes(css.VendorPrefix{}, css.prefixes.Feature.border_radius);
                 switch (v) {

@@ -307,7 +307,7 @@ pub const PublishCommand = struct {
         if (cli.positionals.len > 1) {
             const context = Context(false).fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
                 switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
+                    error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                     error.MissingPackageName => {
                         Output.errGeneric("missing `name` string in package.json", .{});
                     },
@@ -336,7 +336,7 @@ pub const PublishCommand = struct {
 
             publish(false, &context) catch |err| {
                 switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
+                    error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                     error.NeedAuth => {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                         Global.crash();
@@ -355,7 +355,7 @@ pub const PublishCommand = struct {
 
         const context = Context(true).fromWorkspace(ctx, manager) catch |err| {
             switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 error.MissingPackageName => {
                     Output.errGeneric("missing `name` string in package.json", .{});
                 },
@@ -383,7 +383,7 @@ pub const PublishCommand = struct {
 
         publish(true, &context) catch |err| {
             switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 error.NeedAuth => {
                     Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                     Global.crash();

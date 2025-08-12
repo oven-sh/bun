@@ -72,7 +72,7 @@ pub const PropertyHandlerContext = struct {
     }
 
     pub fn addDarkRule(this: *@This(), allocator: Allocator, property: css.Property) void {
-        this.dark.append(allocator, property) catch bun.outOfMemory();
+        this.dark.append(allocator, property) catch |oe| bun.outOfMemory(oe);
     }
 
     pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
@@ -100,7 +100,7 @@ pub const PropertyHandlerContext = struct {
         var dest = ArrayList(css.CssRule(T)).initCapacity(
             this.allocator,
             this.supports.items.len,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
 
         for (this.supports.items) |*entry| {
             dest.appendAssumeCapacity(css.CssRule(T){
@@ -108,7 +108,7 @@ pub const PropertyHandlerContext = struct {
                     .condition = entry.condition.deepClone(this.allocator),
                     .rules = css.CssRuleList(T){
                         .v = v: {
-                            var v = ArrayList(css.CssRule(T)).initCapacity(this.allocator, 1) catch bun.outOfMemory();
+                            var v = ArrayList(css.CssRule(T)).initCapacity(this.allocator, 1) catch |oe| bun.outOfMemory(oe);
 
                             v.appendAssumeCapacity(.{ .style = css.StyleRule(T){
                                 .selectors = style_rule.selectors.deepClone(this.allocator),
@@ -156,7 +156,7 @@ pub const PropertyHandlerContext = struct {
                             var list = ArrayList(MediaQuery).initCapacity(
                                 this.allocator,
                                 1,
-                            ) catch bun.outOfMemory();
+                            ) catch |oe| bun.outOfMemory(oe);
 
                             list.appendAssumeCapacity(MediaQuery{
                                 .qualifier = null,
@@ -188,13 +188,13 @@ pub const PropertyHandlerContext = struct {
                                 .rules = .{},
                                 .loc = style_rule.loc,
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |oe| bun.outOfMemory(oe);
 
                         break :brk list;
                     },
                     .loc = style_rule.loc,
                 },
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
         }
 
         return dest;
@@ -227,7 +227,7 @@ pub const PropertyHandlerContext = struct {
             .loc = sty.loc,
         };
 
-        dest.append(this.allocator, .{ .style = rule }) catch bun.outOfMemory();
+        dest.append(this.allocator, .{ .style = rule }) catch |oe| bun.outOfMemory(oe);
     }
 
     pub fn reset(this: *@This()) void {
@@ -262,23 +262,23 @@ pub const PropertyHandlerContext = struct {
             break :brk null;
         }) |entry| {
             if (this.is_important) {
-                entry.important_declarations.append(this.allocator, property) catch bun.outOfMemory();
+                entry.important_declarations.append(this.allocator, property) catch |oe| bun.outOfMemory(oe);
             } else {
-                entry.declarations.append(this.allocator, property) catch bun.outOfMemory();
+                entry.declarations.append(this.allocator, property) catch |oe| bun.outOfMemory(oe);
             }
         } else {
             var important_declarations = ArrayList(css.Property){};
             var declarations = ArrayList(css.Property){};
             if (this.is_important) {
-                important_declarations.append(this.allocator, property) catch bun.outOfMemory();
+                important_declarations.append(this.allocator, property) catch |oe| bun.outOfMemory(oe);
             } else {
-                declarations.append(this.allocator, property) catch bun.outOfMemory();
+                declarations.append(this.allocator, property) catch |oe| bun.outOfMemory(oe);
             }
             this.supports.append(this.allocator, SupportsEntry{
                 .condition = condition,
                 .declarations = declarations,
                 .important_declarations = important_declarations,
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
         }
     }
 

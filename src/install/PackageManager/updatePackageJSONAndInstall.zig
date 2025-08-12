@@ -3,7 +3,7 @@ pub fn updatePackageJSONAndInstallWithManager(
     ctx: Command.Context,
     original_cwd: string,
 ) !void {
-    var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch bun.outOfMemory();
+    var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch |oe| bun.outOfMemory(oe);
     defer update_requests.deinit(manager.allocator);
 
     if (manager.options.positionals.len <= 1) {
@@ -688,7 +688,7 @@ pub fn updatePackageJSONAndInstall(
                 result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
             ) anyerror!void {
                 // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch |oe| bun.outOfMemory(oe);
                 positionals[0] = "add";
                 bun.copy(string, positionals[1..], result.dependencies.keys());
                 this.cli.positionals = positionals;

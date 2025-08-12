@@ -364,7 +364,7 @@ pub const JunitReporter = struct {
             this.getHostname() orelse "",
         });
 
-        this.contents.insertSlice(bun.default_allocator, suite_info.offset_of_attributes, summary) catch bun.outOfMemory();
+        this.contents.insertSlice(bun.default_allocator, suite_info.offset_of_attributes, summary) catch |oe| bun.outOfMemory(oe);
 
         const indent = getIndent(this.current_depth);
         try this.contents.appendSlice(bun.default_allocator, indent);
@@ -548,8 +548,8 @@ pub const JunitReporter = struct {
                 metrics.skipped,
                 elapsed_time,
             });
-            this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary) catch bun.outOfMemory();
-            this.contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+            this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary) catch |oe| bun.outOfMemory(oe);
+            this.contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch |oe| bun.outOfMemory(oe);
         }
 
         var junit_path_buf: bun.PathBuffer = undefined;
@@ -686,14 +686,14 @@ pub const CommandLineReporter = struct {
 
                     if (!strings.eql(junit.current_file, filename)) {
                         while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                            junit.endTestSuite() catch bun.outOfMemory();
+                            junit.endTestSuite() catch |oe| bun.outOfMemory(oe);
                         }
 
                         if (junit.current_file.len > 0) {
-                            junit.endTestSuite() catch bun.outOfMemory();
+                            junit.endTestSuite() catch |oe| bun.outOfMemory(oe);
                         }
 
-                        junit.beginTestSuite(filename) catch bun.outOfMemory();
+                        junit.beginTestSuite(filename) catch |oe| bun.outOfMemory(oe);
                     }
 
                     // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
@@ -705,7 +705,7 @@ pub const CommandLineReporter = struct {
                         const index = (scopes.len - 1) - i;
                         const scope = scopes[index];
                         if (scope.label.len > 0) {
-                            needed_suites.append(scope) catch bun.outOfMemory();
+                            needed_suites.append(scope) catch |oe| bun.outOfMemory(oe);
                         }
                     }
 
@@ -720,7 +720,7 @@ pub const CommandLineReporter = struct {
 
                     while (current_suite_depth > needed_suites.items.len) {
                         if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                            junit.endTestSuite() catch bun.outOfMemory();
+                            junit.endTestSuite() catch |oe| bun.outOfMemory(oe);
                             current_suite_depth -= 1;
                         } else {
                             break;
@@ -747,7 +747,7 @@ pub const CommandLineReporter = struct {
 
                     while (suites_to_close > 0) {
                         if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                            junit.endTestSuite() catch bun.outOfMemory();
+                            junit.endTestSuite() catch |oe| bun.outOfMemory(oe);
                             current_suite_depth -= 1;
                             suites_to_close -= 1;
                         } else {
@@ -764,7 +764,7 @@ pub const CommandLineReporter = struct {
 
                     while (describe_suite_index < needed_suites.items.len) {
                         const scope = needed_suites.items[describe_suite_index];
-                        junit.beginTestSuiteWithLine(scope.label, scope.line_number, false) catch bun.outOfMemory();
+                        junit.beginTestSuiteWithLine(scope.label, scope.line_number, false) catch |oe| bun.outOfMemory(oe);
                         describe_suite_index += 1;
                     }
 
@@ -779,15 +779,15 @@ pub const CommandLineReporter = struct {
                         for (scopes) |scope| {
                             if (scope.label.len > 0) {
                                 if (initial_length != concatenated_describe_scopes.items.len) {
-                                    concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+                                    concatenated_describe_scopes.appendSlice(" &gt; ") catch |oe| bun.outOfMemory(oe);
                                 }
 
-                                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+                                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch |oe| bun.outOfMemory(oe);
                             }
                         }
                     }
 
-                    junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number) catch bun.outOfMemory();
+                    junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number) catch |oe| bun.outOfMemory(oe);
                 },
             }
         }
@@ -1424,7 +1424,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
+        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch |oe| bun.outOfMemory(oe);
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
@@ -1439,7 +1439,7 @@ pub const TestCommand = struct {
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
                 scanner.scan(arg) catch |err| switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
+                    error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                     // don't error if multiple are passed; one might fail
                     // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
@@ -1479,7 +1479,7 @@ pub const TestCommand = struct {
             };
 
             scanner.scan(dir_to_scan) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 error.DoesNotExist => {
                     Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
                     Global.exit(1);
@@ -1487,7 +1487,7 @@ pub const TestCommand = struct {
             };
         }
 
-        const test_files = scanner.takeFoundTestFiles() catch bun.outOfMemory();
+        const test_files = scanner.takeFoundTestFiles() catch |oe| bun.outOfMemory(oe);
         defer ctx.allocator.free(test_files);
         const search_count = scanner.search_count;
 

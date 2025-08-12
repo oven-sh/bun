@@ -210,7 +210,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     var prev_filename_comment: Index.Int = 0;
 
     var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
-    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch |oe| bun.outOfMemory(oe);
 
     const show_comments = c.options.mode == .bundle and
         !c.options.minify_whitespace;
@@ -355,7 +355,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             {
                 const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
                 var buf = MutableString.initEmpty(worker.allocator);
-                js_printer.quoteForJSON(input.pretty, &buf, true) catch bun.outOfMemory();
+                js_printer.quoteForJSON(input.pretty, &buf, true) catch |oe| bun.outOfMemory(oe);
                 const str = buf.slice(); // worker.allocator is an arena
                 j.pushStatic(str);
                 line_offset.advance(str);

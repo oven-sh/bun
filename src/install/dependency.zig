@@ -939,7 +939,7 @@ pub fn parseWithTag(
                 sliced.sub(input),
             ) catch |err| {
                 switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
+                    error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 }
             };
 
@@ -1291,7 +1291,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     var buf = alias;
 
     if (name_value.isString()) {
-        var builder = bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len) catch bun.outOfMemory();
+        var builder = bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len) catch |oe| bun.outOfMemory(oe);
         name = builder.append(name_slice.slice());
         alias = builder.append(alias_slice.slice());
         buf = builder.allocatedSlice();

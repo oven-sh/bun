@@ -84,13 +84,13 @@ pub const UpgradeCTX = struct {
             const sec_websocket_extensions = request.header("sec-websocket-extensions") orelse "";
 
             if (sec_websocket_key.len > 0) {
-                this.sec_websocket_key = bun.default_allocator.dupe(u8, sec_websocket_key) catch bun.outOfMemory();
+                this.sec_websocket_key = bun.default_allocator.dupe(u8, sec_websocket_key) catch |oe| bun.outOfMemory(oe);
             }
             if (sec_websocket_protocol.len > 0) {
-                this.sec_websocket_protocol = bun.default_allocator.dupe(u8, sec_websocket_protocol) catch bun.outOfMemory();
+                this.sec_websocket_protocol = bun.default_allocator.dupe(u8, sec_websocket_protocol) catch |oe| bun.outOfMemory(oe);
             }
             if (sec_websocket_extensions.len > 0) {
-                this.sec_websocket_extensions = bun.default_allocator.dupe(u8, sec_websocket_extensions) catch bun.outOfMemory();
+                this.sec_websocket_extensions = bun.default_allocator.dupe(u8, sec_websocket_extensions) catch |oe| bun.outOfMemory(oe);
             }
         }
     }
@@ -496,7 +496,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         }
 
         const message = if (status_message_slice.len > 0) status_message_slice.slice() else "HM";
-        const status_message = std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }) catch bun.outOfMemory();
+        const status_message = std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }) catch |oe| bun.outOfMemory(oe);
         defer allocator.free(status_message);
         writeHeadInternal(this.raw_response, globalObject, status_message, headers_object_value);
         break :do_it;
@@ -711,7 +711,7 @@ pub fn abort(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame)
 
 fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     log("onBufferRequestBodyWhilePaused({d}, {})", .{ chunk.len, last });
-    this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk) catch bun.outOfMemory();
+    this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk) catch |oe| bun.outOfMemory(oe);
     if (last) {
         this.flags.is_data_buffered_during_pause_last = true;
         if (this.body_read_ref.has) {

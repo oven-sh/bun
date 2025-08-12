@@ -84,7 +84,7 @@ pub const Url = struct {
             try dest.writeChar(')');
 
             if (dest.dependencies) |*dependencies| {
-                dependencies.append(dest.allocator, css.Dependency{ .url = d }) catch bun.outOfMemory();
+                dependencies.append(dest.allocator, css.Dependency{ .url = d }) catch |oe| bun.outOfMemory(oe);
             }
 
             return;

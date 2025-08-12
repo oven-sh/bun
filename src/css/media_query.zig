@@ -47,7 +47,7 @@ pub const MediaList = struct {
                     return .{ .err = e };
                 },
             };
-            media_queries.append(input.allocator(), mq) catch bun.outOfMemory();
+            media_queries.append(input.allocator(), mq) catch |oe| bun.outOfMemory(oe);
 
             if (input.next().asValue()) |tok| {
                 if (tok.* != .comma) {
@@ -1491,7 +1491,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             const final_name = if (is_webkit) name: {
                 // PERF: stack buffer here?
                 free_str = true;
-                break :name std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}) catch bun.outOfMemory();
+                break :name std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}) catch |oe| bun.outOfMemory(oe);
             } else name;
 
             defer if (is_webkit) {

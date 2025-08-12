@@ -839,7 +839,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             arena.allocator(),
             source_id.kind,
             dev.allocator,
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator, json_bytes), .{
             .server = dev.server,
             .mime_type = &.json,
@@ -1033,7 +1033,7 @@ fn ensureRouteIsBundled(
                     entry_points,
                     false,
                     std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch bun.outOfMemory();
+                ) catch |oe| bun.outOfMemory(oe);
             }
 
             dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
@@ -1167,7 +1167,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             const file = dev.client_graph.bundled_files.get(abs_path) orelse
                 continue;
             if (file.flags.kind == .css)
-                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+                entry_points.appendCss(alloc, abs_path) catch |oe| bun.outOfMemory(oe);
         }
     }
 }
@@ -1297,7 +1297,7 @@ fn onFrameworkRequestWithBundle(
                 const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
                     std.fmt.fmtSliceHexLower(std.mem.asBytes(&bundle_index)),
                     std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation)),
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
                 bundle.cached_client_bundle_url = .create(js, dev.vm.global);
@@ -1305,7 +1305,7 @@ fn onFrameworkRequestWithBundle(
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
-                const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
+                const js = dev.generateCssJSArray(route_bundle) catch |oe| bun.outOfMemory(oe);
                 bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
@@ -1321,7 +1321,7 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     const html = &route_bundle.data.html;
 
     const blob = html.cached_response orelse generate: {
-        const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
+        const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch |oe| bun.outOfMemory(oe);
         errdefer dev.allocator.free(payload);
 
         html.cached_response = StaticRoute.initFromAnyBlob(
@@ -1435,7 +1435,7 @@ fn generateJavaScriptCodeForHTMLFile(
 ) bun.OOM![]const u8 {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
+    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch |oe| bun.outOfMemory(oe);
     defer array.deinit(sfa);
     const w = array.writer(sfa);
 
@@ -1477,7 +1477,7 @@ fn generateJavaScriptCodeForHTMLFile(
 pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
     const blob = route_bundle.client_bundle orelse generate: {
-        const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
+        const payload = dev.generateClientBundle(route_bundle) catch |oe| bun.outOfMemory(oe);
         errdefer dev.allocator.free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
             &.fromOwnedSlice(dev.allocator, payload),
@@ -2492,7 +2492,7 @@ pub fn finalizeBundle(
                 while (it.next()) |socket_ptr_ptr| {
                     const socket: *HmrSocket = socket_ptr_ptr.*;
                     if (socket.subscriptions.hot_update) {
-                        const entry = socket.referenced_source_maps.getOrPut(dev.allocator, script_id) catch bun.outOfMemory();
+                        const entry = socket.referenced_source_maps.getOrPut(dev.allocator, script_id) catch |oe| bun.outOfMemory(oe);
                         if (!entry.found_existing) {
                             sockets += 1;
                         } else {
@@ -2692,11 +2692,11 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
         for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
             const rb = dev.routeBundlePtr(route_bundle_index);
             rb.server_state = .bundling;
-            dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
+            dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch |oe| bun.outOfMemory(oe);
         }
 
         if (entry_points.set.count() > 0) {
-            dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
+            dev.startAsyncBundle(entry_points, is_reload, timer) catch |oe| bun.outOfMemory(oe);
         }
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
@@ -2817,11 +2817,11 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         dev.ensureRouteIsBundled(
-            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
+            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch |oe| bun.outOfMemory(oe),
             .server_handler,
             req,
             AnyResponse.init(resp),
-        ) catch bun.outOfMemory();
+        ) catch |oe| bun.outOfMemory(oe);
         return;
     }
 
@@ -3375,7 +3375,7 @@ pub fn onWebSocketUpgrade(
     assert(id == 0);
 
     const dw = HmrSocket.new(dev, res);
-    dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
+    dev.active_websocket_connections.put(dev.allocator, dw, {}) catch |oe| bun.outOfMemory(oe);
     _ = res.upgrade(
         *HmrSocket,
         dw,
@@ -3578,10 +3578,10 @@ pub const HmrSocket = @import("./DevServer/HmrSocket.zig");
 pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle.Index {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(pattern, &params)) |route_index| {
-        return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
+        return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch |oe| bun.outOfMemory(oe);
     }
     if (dev.html_router.get(pattern)) |html| {
-        return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
+        return dev.getOrPutRouteBundle(.{ .html = html }) catch |oe| bun.outOfMemory(oe);
     }
     return null;
 }

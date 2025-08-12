@@ -790,7 +790,7 @@ pub const Value = union(Tag) {
                     );
                 } else {
                     new_blob = Blob.init(
-                        bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
+                        bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch |oe| bun.outOfMemory(oe),
                         bun.default_allocator,
                         jsc.VirtualMachine.get().global,
                     );
@@ -930,7 +930,7 @@ pub const Value = union(Tag) {
         return this.toErrorInstance(.{ .Message = bun.String.createFormat(
             "Error reading file {s}",
             .{@errorName(err)},
-        ) catch bun.outOfMemory() }, global);
+        ) catch |oe| bun.outOfMemory(oe) }, global);
     }
 
     pub fn deinit(this: *Value) void {
@@ -1450,7 +1450,7 @@ pub const ValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
+        _ = sink.stream_buffer.write(chunk) catch |oe| bun.outOfMemory(oe);
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1607,7 +1607,7 @@ pub const ValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
+                    _ = sink.stream_buffer.write(bytes) catch |oe| bun.outOfMemory(oe);
                     return;
                 },
             }

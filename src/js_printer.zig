@@ -2735,12 +2735,12 @@ fn NewPrinter(
 
                             if (inlined_value) |value| {
                                 if (replaced.items.len == 0) {
-                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                    replaced.appendSlice(e.parts[0..i]) catch |oe| bun.outOfMemory(oe);
                                 }
                                 part.value = value;
-                                replaced.append(part) catch bun.outOfMemory();
+                                replaced.append(part) catch |oe| bun.outOfMemory(oe);
                             } else if (replaced.items.len > 0) {
-                                replaced.append(part) catch bun.outOfMemory();
+                                replaced.append(part) catch |oe| bun.outOfMemory(oe);
                             }
                         }
 
@@ -3044,7 +3044,7 @@ fn NewPrinter(
                         }
 
                         // Only allocate heap memory on the stack for nested binary expressions
-                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        p.binary_expression_stack.append(v) catch |oe| bun.outOfMemory(oe);
                         v = BinaryExpressionVisitor{
                             .e = left_binary.?,
                             .level = v.left_level,

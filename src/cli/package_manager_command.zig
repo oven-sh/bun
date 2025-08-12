@@ -163,7 +163,7 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "whoami")) {
             const username = Npm.whoami(ctx.allocator, pm) catch |err| {
                 switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
+                    error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                     error.NeedAuth => {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                     },

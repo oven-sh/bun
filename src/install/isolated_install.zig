@@ -853,7 +853,7 @@ pub fn installIsolatedPackages(
                                 ctx,
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
-                                error.OutOfMemory => bun.outOfMemory(),
+                                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                                 error.InvalidURL => {
                                     Output.err(err, "failed to enqueue github package for download: {s}@{}", .{
                                         pkg_name.slice(string_buf),
@@ -887,7 +887,7 @@ pub fn installIsolatedPackages(
                                 ctx,
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
-                                error.OutOfMemory => bun.outOfMemory(),
+                                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                                 error.InvalidURL => {
                                     Output.err(err, "failed to enqueue tarball for download: {s}@{}", .{
                                         pkg_name.slice(string_buf),

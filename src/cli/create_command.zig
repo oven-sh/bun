@@ -1701,7 +1701,7 @@ pub const CreateCommand = struct {
                         const extension = std.fs.path.extension(positional);
                         if (Example.Tag.fromFileExtension(extension)) |tag| {
                             example_tag = tag;
-                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch |oe| bun.outOfMemory(oe);
                         }
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.

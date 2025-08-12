@@ -93,7 +93,7 @@ pub const Yield = union(enum) {
         // there can be nested pipelines, so we need a stack.
         var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
         const alloc = sfb.get();
-        var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
+        var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch |oe| bun.outOfMemory(oe);
         defer pipeline_stack.deinit();
 
         // Note that we're using labelled switch statements but _not_
@@ -108,7 +108,7 @@ pub const Yield = union(enum) {
                     }
                     continue :state x.next();
                 }
-                pipeline_stack.append(x) catch bun.outOfMemory();
+                pipeline_stack.append(x) catch |oe| bun.outOfMemory(oe);
                 continue :state x.next();
             },
             .cmd => |x| continue :state x.next(),

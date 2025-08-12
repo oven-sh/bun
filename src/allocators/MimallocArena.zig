@@ -51,7 +51,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn init() Self {
-    return .{ .heap = mimalloc.mi_heap_new() orelse bun.outOfMemory() };
+    return .{ .heap = mimalloc.mi_heap_new() orelse bun.outOfMemory(error.OutOfMemory) };
 }
 
 pub fn gc(self: Self) void {

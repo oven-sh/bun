@@ -2816,7 +2816,7 @@ pub const api = struct {
         token: []const u8,
 
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch |oe| bun.outOfMemory(oe);
 
             var out: NpmRegistry = .{
                 .url = "",

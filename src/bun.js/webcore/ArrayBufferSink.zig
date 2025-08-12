@@ -156,7 +156,7 @@ pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) bun.sys.Maybe(Array
     this.done = true;
     this.signal.close(null);
     return .{ .result = ArrayBuffer.fromBytes(
-        list.toOwnedSlice() catch bun.outOfMemory(),
+        list.toOwnedSlice() catch |oe| bun.outOfMemory(oe),
         if (this.as_uint8array)
             .Uint8Array
         else

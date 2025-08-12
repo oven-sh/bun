@@ -862,7 +862,7 @@ pub const BorderHandler = struct {
 
         inline fn push(f: *FlushContext, comptime p: []const u8, val: anytype) void {
             bun.bits.insert(BorderProperty, &f.self.flushed_properties, @field(BorderProperty, p));
-            f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))) catch bun.outOfMemory();
+            f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))) catch |oe| bun.outOfMemory(oe);
         }
 
         inline fn fallbacks(f: *FlushContext, comptime p: []const u8, _val: anytype) void {
@@ -870,7 +870,7 @@ pub const BorderHandler = struct {
             if (!bun.bits.contains(BorderProperty, f.self.flushed_properties, @field(BorderProperty, p))) {
                 const fbs = val.getFallbacks(f.ctx.allocator, f.ctx.targets);
                 for (css.generic.slice(@TypeOf(fbs), &fbs)) |fallback| {
-                    f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)) catch bun.outOfMemory();
+                    f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)) catch |oe| bun.outOfMemory(oe);
                 }
             }
             push(f, p, val);
@@ -1407,7 +1407,7 @@ pub const BorderHandler = struct {
             var up = unparsed.deepClone(context.allocator);
             context.addUnparsedFallbacks(&up);
             bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
-            dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
+            dest.append(context.allocator, .{ .unparsed = up }) catch |oe| bun.outOfMemory(oe);
             return;
         }
 
@@ -1466,7 +1466,7 @@ pub const BorderHandler = struct {
                 var up = unparsed.deepClone(context.allocator);
                 context.addUnparsedFallbacks(&up);
                 bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
-                dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
+                dest.append(context.allocator, .{ .unparsed = up }) catch |oe| bun.outOfMemory(oe);
             },
         }
     }

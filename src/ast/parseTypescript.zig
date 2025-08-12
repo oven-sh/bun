@@ -210,7 +210,7 @@ pub fn ParseTypescript(
             p.popScope();
 
             if (!opts.is_typescript_declare) {
-                name.ref = p.declareSymbol(.ts_namespace, name_loc, name_text) catch bun.outOfMemory();
+                name.ref = p.declareSymbol(.ts_namespace, name_loc, name_text) catch |oe| bun.outOfMemory(oe);
                 try p.ref_to_ts_namespace_member.put(p.allocator, name.ref.?, ns_member_data);
             }
 
@@ -288,7 +288,7 @@ pub fn ParseTypescript(
                 name.ref = try p.declareSymbol(.ts_enum, name_loc, name_text);
                 _ = try p.pushScopeForParsePass(.entry, loc);
                 p.current_scope.ts_namespace = ts_namespace;
-                p.ref_to_ts_namespace_member.putNoClobber(p.allocator, name.ref.?, enum_member_data) catch bun.outOfMemory();
+                p.ref_to_ts_namespace_member.putNoClobber(p.allocator, name.ref.?, enum_member_data) catch |oe| bun.outOfMemory(oe);
             }
 
             try p.lexer.expect(.t_open_brace);
@@ -329,7 +329,7 @@ pub fn ParseTypescript(
                 exported_members.put(p.allocator, value.name, .{
                     .loc = value.loc,
                     .data = .enum_property,
-                }) catch bun.outOfMemory();
+                }) catch |oe| bun.outOfMemory(oe);
 
                 if (p.lexer.token != .t_comma and p.lexer.token != .t_semicolon) {
                     break;
@@ -376,7 +376,7 @@ pub fn ParseTypescript(
                 } else {
                     arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
                 }
-                p.ref_to_ts_namespace_member.put(p.allocator, arg_ref, enum_member_data) catch bun.outOfMemory();
+                p.ref_to_ts_namespace_member.put(p.allocator, arg_ref, enum_member_data) catch |oe| bun.outOfMemory(oe);
                 ts_namespace.arg_ref = arg_ref;
 
                 p.popScope();
@@ -406,7 +406,7 @@ pub fn ParseTypescript(
                         if (i != null) count += 1;
                     }
 
-                    const items = p.allocator.alloc(ScopeOrder, count) catch bun.outOfMemory();
+                    const items = p.allocator.alloc(ScopeOrder, count) catch |oe| bun.outOfMemory(oe);
                     var i: usize = 0;
                     for (p.scopes_in_order.items[scope_index..]) |item| {
                         items[i] = item orelse continue;
@@ -414,7 +414,7 @@ pub fn ParseTypescript(
                     }
                     break :scope_order_clone items;
                 },
-            ) catch bun.outOfMemory();
+            ) catch |oe| bun.outOfMemory(oe);
 
             return p.s(S.Enum{
                 .name = name,

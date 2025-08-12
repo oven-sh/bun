@@ -120,7 +120,7 @@ pub const ShellMvBatchedTask = struct {
                     ResolvePath.basename(src),
                 }, .auto);
 
-                this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
+                this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch |oe| bun.outOfMemory(oe));
                 return false;
             },
             else => {},
@@ -257,7 +257,7 @@ pub fn next(this: *Mv) Yield {
 
                 this.args.target_fd = maybe_fd;
                 const cwd_fd = this.bltn().parentCmd().base.shell.cwd_fd;
-                const tasks = this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
+                const tasks = this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count) catch |oe| bun.outOfMemory(oe);
                 // Initialize tasks
                 {
                     var i: usize = 0;

@@ -15,7 +15,7 @@ pub fn notifyServerStarted(this: *HTTPServerAgent, instance: jsc.API.AnyServer) 
     if (this.agent) |agent| {
         this.next_server_id = .init(this.next_server_id.get() + 1);
         instance.setInspectorServerID(this.next_server_id);
-        var url = instance.getURLAsString() catch bun.outOfMemory();
+        var url = instance.getURLAsString() catch |oe| bun.outOfMemory(oe);
         defer url.deref();
 
         agent.notifyServerStarted(

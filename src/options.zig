@@ -142,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = patterns.toOwnedSlice() catch |oe| bun.outOfMemory(oe);
 
         return result;
     }

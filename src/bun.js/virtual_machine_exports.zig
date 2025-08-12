@@ -125,7 +125,7 @@ pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *jsc.J
     jsc.markBinding(@src());
     const promise_js = promise.toJS();
     promise_js.protect();
-    const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+    const context = bun.default_allocator.create(Context) catch |oe| bun.outOfMemory(oe);
     context.* = .{ .globalThis = global, .promise = promise_js };
     global.bunVM().eventLoop().enqueueTask(jsc.ManagedTask.New(Context, Context.callback).init(context));
 }

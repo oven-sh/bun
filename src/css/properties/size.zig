@@ -469,14 +469,14 @@ pub const SizeHandler = struct {
     inline fn logicalUnparsedHelper(this: *@This(), property: *const Property, unparsed: *const UnparsedProperty, comptime physical: PropertyIdTag, logical_supported: bool, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         if (logical_supported) {
             bun.bits.insert(SizeProperty, &this.flushed_properties, SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
-            dest.append(context.allocator, property.deepClone(context.allocator)) catch bun.outOfMemory();
+            dest.append(context.allocator, property.deepClone(context.allocator)) catch |oe| bun.outOfMemory(oe);
         } else {
             dest.append(context.allocator, Property{
                 .unparsed = unparsed.withPropertyId(
                     context.allocator,
                     @unionInit(PropertyId, @tagName(physical), {}),
                 ),
-            }) catch bun.outOfMemory();
+            }) catch |oe| bun.outOfMemory(oe);
             @field(this.flushed_properties, @tagName(physical)) = true;
         }
     }
@@ -549,7 +549,7 @@ pub const SizeHandler = struct {
                             @tagName(property),
                             @unionInit(SizeType, @tagName(feature), prefix),
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |oe| bun.outOfMemory(oe);
                 }
             }
         }
@@ -579,7 +579,7 @@ pub const SizeHandler = struct {
                 },
                 else => {},
             }
-            dest.append(context.allocator, @unionInit(Property, @tagName(property), val.deepClone(context.allocator))) catch bun.outOfMemory();
+            dest.append(context.allocator, @unionInit(Property, @tagName(property), val.deepClone(context.allocator))) catch |oe| bun.outOfMemory(oe);
             @field(this.flushed_properties, @tagName(property)) = true;
         }
     }

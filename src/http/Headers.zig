@@ -99,9 +99,9 @@ pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.
     for (headers) |header| {
         buf_len += header.name.len + header.value.len;
     }
-    result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+    result.entries.ensureTotalCapacity(allocator, header_count) catch |oe| bun.outOfMemory(oe);
     result.entries.len = headers.len;
-    result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+    result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch |oe| bun.outOfMemory(oe);
     result.buf.items.len = buf_len;
     var offset: u32 = 0;
     for (headers, 0..headers.len) |header, i| {
@@ -147,9 +147,9 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
         }
         break :brk false;
     };
-    headers.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+    headers.entries.ensureTotalCapacity(allocator, header_count) catch |oe| bun.outOfMemory(oe);
     headers.entries.len = header_count;
-    headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+    headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch |oe| bun.outOfMemory(oe);
     headers.buf.items.len = buf_len;
     var sliced = headers.entries.slice();
     var names = sliced.items(.name);

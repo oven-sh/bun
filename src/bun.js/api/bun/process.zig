@@ -1813,7 +1813,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch |oe| bun.outOfMemory(oe),
                     },
                 };
             }
@@ -1863,11 +1863,11 @@ pub const sync = struct {
         pub const new = bun.TrivialNew(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
-            return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
+            return bun.default_allocator.alloc(u8, suggested_size) catch |oe| bun.outOfMemory(oe);
         }
 
         fn onRead(this: *SyncWindowsPipeReader, data: []const u8) void {
-            this.chunks.append(@constCast(data)) catch bun.outOfMemory();
+            this.chunks.append(@constCast(data)) catch |oe| bun.outOfMemory(oe);
         }
 
         fn onError(this: *SyncWindowsPipeReader, err: bun.sys.E) void {
@@ -2019,11 +2019,11 @@ pub const sync = struct {
             .status = this.status orelse @panic("Expected Process to have exited when waiting_count == 0"),
             .stdout = std.ArrayList(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout) catch bun.outOfMemory(),
+                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout) catch |oe| bun.outOfMemory(oe),
             ),
             .stderr = std.ArrayList(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr) catch bun.outOfMemory(),
+                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr) catch |oe| bun.outOfMemory(oe),
             ),
         };
         this.stdout = &.{};
@@ -2063,7 +2063,7 @@ pub const sync = struct {
 
         try string_builder.allocate(bun.default_allocator);
 
-        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1) catch bun.outOfMemory();
+        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1) catch |oe| bun.outOfMemory(oe);
         defer args.deinit();
 
         for (argv) |arg| {

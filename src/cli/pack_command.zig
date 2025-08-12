@@ -119,7 +119,7 @@ pub const PackCommand = struct {
         // just pack the current workspace
         pack(&pack_ctx, manager.original_package_json_path, false) catch |err| {
             switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+                error.OutOfMemory => bun.outOfMemory(error.OutOfMemory),
                 error.MissingPackageName, error.MissingPackageVersion => {
                     Output.errGeneric("package.json must have `name` and `version` fields", .{});
                     Global.crash();
@@ -2518,7 +2518,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch |oe| bun.outOfMemory(oe);
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();
@@ -2591,7 +2591,7 @@ pub const bindings = struct {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
                         const pathname_w = archive_entry.pathnameW();
                         const list = std.ArrayList(u8).init(bun.default_allocator);
-                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch bun.outOfMemory();
+                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch |oe| bun.outOfMemory(oe);
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);
                     } else String.cloneUTF8(archive_entry.pathname());
@@ -2607,7 +2607,7 @@ pub const bindings = struct {
 
                     if (kind == .file) {
                         const size: usize = @intCast(archive_entry.size());
-                        read_buf.resize(size) catch bun.outOfMemory();
+                        read_buf.resize(size) catch |oe| bun.outOfMemory(oe);
                         defer read_buf.clearRetainingCapacity();
 
                         const read = archive.readData(read_buf.items);
@@ -2623,7 +2623,7 @@ pub const bindings = struct {
                         entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
-                    entries_info.append(entry_info) catch bun.outOfMemory();
+                    entries_info.append(entry_info) catch |oe| bun.outOfMemory(oe);
                 },
             }
         }

@@ -598,11 +598,11 @@ pub const Bin = extern struct {
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-                const entry = seen.getOrPut(abs_dest) catch bun.outOfMemory();
+                const entry = seen.getOrPut(abs_dest) catch |oe| bun.outOfMemory(oe);
                 if (entry.found_existing) {
                     return;
                 }
-                entry.key_ptr.* = seen.allocator.dupe(u8, abs_dest) catch bun.outOfMemory();
+                entry.key_ptr.* = seen.allocator.dupe(u8, abs_dest) catch |oe| bun.outOfMemory(oe);
             }
 
             // Skip if the target does not exist. This is important because placing a dangling

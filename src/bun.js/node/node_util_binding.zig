@@ -94,7 +94,7 @@ pub fn internalErrorName(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     if (err_int == -bun.sys.UV_E.UNATCH) return bun.String.static("EUNATCH").toJS(globalThis);
     if (err_int == -bun.sys.UV_E.NOEXEC) return bun.String.static("ENOEXEC").toJS(globalThis);
 
-    var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
+    var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch |oe| bun.outOfMemory(oe);
     return fmtstring.transferToJS(globalThis);
 }
 

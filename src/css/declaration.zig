@@ -168,7 +168,7 @@ pub const DeclarationBlock = struct {
                     const handled = hndlr.handleProperty(prop, ctx);
 
                     if (!handled) {
-                        hndlr.decls.append(ctx.allocator, prop.*) catch bun.outOfMemory();
+                        hndlr.decls.append(ctx.allocator, prop.*) catch |oe| bun.outOfMemory(oe);
                         // replacing with a property which does not require allocation
                         // to "delete"
                         prop.* = css.Property{ .all = .@"revert-layer" };
@@ -359,20 +359,20 @@ pub fn parse_declaration_impl(
                             bun.logger.Data,
                             &[_]bun.logger.Data{
                                 bun.logger.Data{
-                                    .text = options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:") catch bun.outOfMemory(),
+                                    .text = options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:") catch |oe| bun.outOfMemory(oe),
                                     .location = info.toLoggerLocation(options.filename),
                                 },
                             },
-                        ) catch bun.outOfMemory(),
+                        ) catch |oe| bun.outOfMemory(oe),
                     );
                 },
             }
         }
     }
     if (important) {
-        important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
+        important_declarations.append(input.allocator(), property) catch |oe| bun.outOfMemory(oe);
     } else {
-        declarations.append(input.allocator(), property) catch bun.outOfMemory();
+        declarations.append(input.allocator(), property) catch |oe| bun.outOfMemory(oe);
     }
 
     return .success;
@@ -402,11 +402,11 @@ pub const DeclarationHandler = struct {
         _ = allocator; // autofix
         if (this.direction) |direction| {
             this.direction = null;
-            this.decls.append(context.allocator, css.Property{ .direction = direction }) catch bun.outOfMemory();
+            this.decls.append(context.allocator, css.Property{ .direction = direction }) catch |oe| bun.outOfMemory(oe);
         }
         // if (this.unicode_bidi) |unicode_bidi| {
         //     this.unicode_bidi = null;
-        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch bun.outOfMemory();
+        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch |oe| bun.outOfMemory(oe);
         // }
 
         this.background.finalize(&this.decls, context);

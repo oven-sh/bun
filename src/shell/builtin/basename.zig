@@ -36,7 +36,7 @@ fn fail(this: *@This(), msg: []const u8) Yield {
 
 fn print(this: *@This(), msg: []const u8) void {
     if (this.bltn().stdout.needsIO() != null) {
-        this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+        this.buf.appendSlice(bun.default_allocator, msg) catch |oe| bun.outOfMemory(oe);
         return;
     }
     _ = this.bltn().writeNoIO(.stdout, msg);

@@ -183,8 +183,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
-            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch |oe| bun.outOfMemory(oe) };
+            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch |oe| bun.outOfMemory(oe) };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)

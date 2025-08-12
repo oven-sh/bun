@@ -43,14 +43,14 @@ pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
     if (globalInitialized) return global;
     const loop = MiniEventLoop.init(bun.default_allocator);
-    global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
+    global = bun.default_allocator.create(MiniEventLoop) catch |oe| bun.outOfMemory(oe);
     global.* = loop;
     global.loop.internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(global));
     global.env = env orelse bun.DotEnv.instance orelse env_loader: {
-        const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
+        const map = bun.default_allocator.create(bun.DotEnv.Map) catch |oe| bun.outOfMemory(oe);
         map.* = bun.DotEnv.Map.init(bun.default_allocator);
 
-        const loader = bun.default_allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
+        const loader = bun.default_allocator.create(bun.DotEnv.Loader) catch |oe| bun.outOfMemory(oe);
         loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
         break :env_loader loader;
     };
@@ -73,7 +73,7 @@ pub fn throwError(_: *MiniEventLoop, err: bun.sys.Error) void {
 
 pub fn pipeReadBuffer(this: *MiniEventLoop) []u8 {
     return this.pipe_read_buffer orelse {
-        this.pipe_read_buffer = this.allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+        this.pipe_read_buffer = this.allocator.create(PipeReadBuffer) catch |oe| bun.outOfMemory(oe);
         return this.pipe_read_buffer.?;
     };
 }
@@ -89,7 +89,7 @@ pub fn onAfterEventLoop(this: *MiniEventLoop) void {
 
 pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
+        this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch |oe| bun.outOfMemory(oe);
         this.file_polls_.?.* = Async.FilePoll.Store.init();
         return this.file_polls_.?;
     };

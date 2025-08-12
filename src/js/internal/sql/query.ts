@@ -51,7 +51,8 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
 
     if (!handle) {
       try {
-        this[_handle] = handle = this[_adapter].createQueryHandle(this[_strings], this[_values], this[_flags]);
+        const [sql, values] = this[_adapter].normalizeQuery(this[_strings], this[_values]);
+        this[_handle] = handle = this[_adapter].createQueryHandle(sql, values, this[_flags]);
       } catch (err) {
         this[_queryStatus] |= SQLQueryStatus.error | SQLQueryStatus.invalidHandle;
         this.reject(err as Error);

@@ -17,11 +17,7 @@ const defineProperties = Object.defineProperties;
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
-const {
-  createConnection: createPostgresConnection,
-  createQuery: createPostgresQuery,
-  init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+const { init: initPostgres } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
 
 initPostgres(
   function onResolvePostgresQuery(
@@ -96,7 +92,8 @@ initPostgres(
       query.resolve(result);
     } catch {}
   },
-  function onRejectPostgresQuery(query, reject, queries) {
+
+  function onRejectPostgresQuery(query: Query<any, any>, reject: Error, queries: Query<any, any>[]) {
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -185,8 +182,10 @@ const SQL: typeof Bun.SQL = function SQL(
       // fail to create query
       return query.reject(err);
     }
+
     // query is cancelled
     if (!handle || query.cancelled) {
+      return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
@@ -201,9 +200,8 @@ const SQL: typeof Bun.SQL = function SQL(
         strings,
         values,
         connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
-        connectionInfo.max,
         queryFromPoolHandler,
-        doCreateQuery,
+        pool,
       );
     } catch (err) {
       return Promise.reject(err);
@@ -219,7 +217,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler, doCreateQuery);
+      return new Query(strings, values, flags, queryFromPoolHandler, pool);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -258,9 +256,8 @@ const SQL: typeof Bun.SQL = function SQL(
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        doCreateQuery,
+        pool,
       );
 
       transactionQueries.add(query);
@@ -288,9 +285,8 @@ const SQL: typeof Bun.SQL = function SQL(
         strings,
         values,
         flags,
-        connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        doCreateQuery,
+        pool,
       );
       transactionQueries.add(query);
       return query;

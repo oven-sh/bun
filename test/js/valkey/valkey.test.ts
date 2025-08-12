@@ -348,10 +348,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       // Should only receive the message once (last subscription wins)
       expect(callCount).toBe(1);
     });
-  });
-
-  describe("PUB/SUB Edge Cases", () => {
-    const flushTimeoutMs = 100;
 
     test("empty string messages", async () => {
       const redis = ctx.redis;

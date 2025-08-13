@@ -43,6 +43,7 @@ pub const DiffFormatter = struct {
                 .add_newline = false,
                 .flush = false,
                 .quote_strings = true,
+                .escape_ansi = true,
             };
             JestPrettyFormat.format(
                 .Debug,

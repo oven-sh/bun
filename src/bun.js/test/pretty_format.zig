@@ -65,6 +65,7 @@ pub const JestPrettyFormat = struct {
         add_newline: bool,
         flush: bool,
         quote_strings: bool = false,
+        escape_ansi: bool = false,
     };
 
     pub fn format(
@@ -91,6 +92,7 @@ pub const JestPrettyFormat = struct {
                 .remaining_values = &[_]JSValue{},
                 .globalThis = global,
                 .quote_strings = options.quote_strings,
+                .escape_ansi = options.escape_ansi,
             };
             const tag = try JestPrettyFormat.Formatter.Tag.get(vals[0], global);
 
@@ -168,6 +170,7 @@ pub const JestPrettyFormat = struct {
             .remaining_values = vals[0..len][1..],
             .globalThis = global,
             .quote_strings = options.quote_strings,
+            .escape_ansi = options.escape_ansi,
         };
         var tag: JestPrettyFormat.Formatter.Tag.Result = undefined;
 
@@ -229,6 +232,7 @@ pub const JestPrettyFormat = struct {
         globalThis: *JSGlobalObject,
         indent: u32 = 0,
         quote_strings: bool = false,
+        escape_ansi: bool = false,
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
@@ -970,22 +974,47 @@ pub const JestPrettyFormat = struct {
 
                         writer.writeAll("\"");
                         var remaining = str;
-                        while (remaining.indexOfAny("\\\r")) |i| {
-                            switch (remaining.charAt(i)) {
-                                '\\' => {
-                                    writer.print("{}\\", .{remaining.substringWithLen(0, i)});
-                                    remaining = remaining.substring(i + 1);
-                                },
-                                '\r' => {
-                                    if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
-                                        writer.print("{}", .{remaining.substringWithLen(0, i)});
-                                    } else {
-                                        writer.print("{}\n", .{remaining.substringWithLen(0, i)});
-                                    }
+                        if (this.escape_ansi) {
+                            while (remaining.indexOfAny("\\\r\x1b")) |i| {
+                                switch (remaining.charAt(i)) {
+                                    '\\' => {
+                                        writer.print("{}\\", .{remaining.substringWithLen(0, i)});
+                                        remaining = remaining.substring(i + 1);
+                                    },
+                                    '\r' => {
+                                        if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
+                                            writer.print("{}", .{remaining.substringWithLen(0, i)});
+                                        } else {
+                                            writer.print("{}\n", .{remaining.substringWithLen(0, i)});
+                                        }
 
-                                    remaining = remaining.substring(i + 1);
-                                },
-                                else => unreachable,
+                                        remaining = remaining.substring(i + 1);
+                                    },
+                                    '\x1b' => {
+                                        writer.print("{}\\x1b", .{remaining.substringWithLen(0, i)});
+                                        remaining = remaining.substring(i + 1);
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+                        } else {
+                            while (remaining.indexOfAny("\\\r")) |i| {
+                                switch (remaining.charAt(i)) {
+                                    '\\' => {
+                                        writer.print("{}\\", .{remaining.substringWithLen(0, i)});
+                                        remaining = remaining.substring(i + 1);
+                                    },
+                                    '\r' => {
+                                        if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
+                                            writer.print("{}", .{remaining.substringWithLen(0, i)});
+                                        } else {
+                                            writer.print("{}\n", .{remaining.substringWithLen(0, i)});
+                                        }
+
+                                        remaining = remaining.substring(i + 1);
+                                    },
+                                    else => unreachable,
+                                }
                             }
                         }
 
@@ -1001,16 +1030,43 @@ pub const JestPrettyFormat = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{}", .{str});
+                        if (this.escape_ansi) {
+                            // TODO: Handle 16-bit strings with escape character escaping
+                            writer.print("{}", .{str});
+                        } else {
+                            writer.print("{}", .{str});
+                        }
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
-                        writer.writeAll(str.slice());
+                        if (this.escape_ansi and std.mem.indexOfScalar(u8, str.slice(), '\x1b') != null) {
+                            // Need to escape the escape character
+                            var remaining = str.slice();
+                            while (std.mem.indexOfScalar(u8, remaining, '\x1b')) |i| {
+                                writer.writeAll(remaining[0..i]);
+                                writer.writeAll("\\x1b");
+                                remaining = remaining[i + 1..];
+                            }
+                            writer.writeAll(remaining);
+                        } else {
+                            writer.writeAll(str.slice());
+                        }
                     } else if (str.len > 0) {
                         // slow path
                         const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
-                            writer.writeAll(buf);
+                            if (this.escape_ansi and std.mem.indexOfScalar(u8, buf, '\x1b') != null) {
+                                // Need to escape the escape character
+                                var remaining = buf;
+                                while (std.mem.indexOfScalar(u8, remaining, '\x1b')) |i| {
+                                    writer.writeAll(remaining[0..i]);
+                                    writer.writeAll("\\x1b");
+                                    remaining = remaining[i + 1..];
+                                }
+                                writer.writeAll(remaining);
+                            } else {
+                                writer.writeAll(buf);
+                            }
                         }
                     }
 

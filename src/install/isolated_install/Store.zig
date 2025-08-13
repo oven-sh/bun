@@ -1103,9 +1103,9 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const Environment = bun.Environment;
 
 const Semver = bun.Semver;
 const String = Semver.String;
@@ -1114,15 +1114,15 @@ const install = bun.install;
 const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
-const invalid_package_id = install.invalid_package_id;
-const invalid_dependency_id = install.invalid_dependency_id;
-
-const Lockfile = install.Lockfile;
-const Package = Lockfile.Package;
-const PackageManager = install.PackageManager;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const Tree = Lockfile.Tree;
-const DependencySlice = Lockfile.DependencySlice;
 const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
-const PackageIDList = Lockfile.PackageIDList;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const DependencySlice = Lockfile.DependencySlice;
+const Package = Lockfile.Package;
+const Tree = Lockfile.Tree;
+
+const PackageManager = install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

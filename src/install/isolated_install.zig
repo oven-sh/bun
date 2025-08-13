@@ -531,16 +531,10 @@ const sys = bun.sys;
 const Command = bun.cli.Command;
 
 const install = bun.install;
-const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const Resolution = install.Resolution;
 const Store = install.Store;
-const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
-
-const Lockfile = install.Lockfile;
-const Tree = Lockfile.Tree;
 
 const PackageManager = install.PackageManager;
 const ProgressStrings = PackageManager.ProgressStrings;

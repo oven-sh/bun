@@ -47,7 +47,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
     try this.import_records.push(this.allocator, record);
 }
 
-const debug = bun.Output.scoped(.HTMLScanner, true);
+const debug = bun.Output.scoped(.HTMLScanner, .hidden);
 
 pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
     _ = bytes; // bytes are not written in scan phase

@@ -57,6 +57,11 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
+/// Prevents crash reports from being uploaded to any server. Reports will still be printed and
+/// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
+/// things that affect crash reporting. See suppressReporting() for intended usage.
+var suppress_reporting: bool = false;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -898,6 +903,12 @@ extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 export var Bun__reported_memory_size: usize = 0;
 
 pub fn printMetadata(writer: anytype) !void {
+    if (comptime bun.Environment.isDebug) {
+        if (Output.isAIAgent()) {
+            return;
+        }
+    }
+
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
@@ -1350,6 +1361,8 @@ fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
 }
 
 fn isReportingEnabled() bool {
+    if (suppress_reporting) return false;
+
     // If trying to test the crash handler backend, implicitly enable reporting
     if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
         return value.len > 0;
@@ -1622,10 +1635,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             return;
         },
         .linux => {
-            // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperclover): see if zig 0.14 fixes this
-            WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
-            return;
+            if (!bun.Environment.isDebug) {
+                // Linux doesnt seem to be able to decode it's own debug info.
+                // TODO(@paperclover): see if zig 0.14 fixes this
+                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+                return;
+            }
         },
         else => {
             // Assume debug symbol tooling is reliable.
@@ -1675,25 +1690,31 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
     }
 
-    // std.process is used here because bun.spawnSync with libuv does not work within
-    // the crash handler.
-    const proc = std.process.Child.run(.{
-        .allocator = alloc,
-        .argv = argv.items,
-    }) catch {
+    var child = std.process.Child.init(argv.items, alloc);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    child.expand_arg0 = .expand;
+    child.progress_node = std.Progress.Node.none;
+
+    child.spawn() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
         if (bun.Environment.isWindows) {
             stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch return;
         }
         return;
     };
-    if (proc.term != .Exited or proc.term.Exited != 0) {
+
+    const result = child.spawnAndWait() catch {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
+    };
+
+    if (result != .Exited or result.Exited != 0) {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
     }
-    defer alloc.free(proc.stderr);
-    defer alloc.free(proc.stdout);
-    stderr.writeAll(proc.stdout) catch return;
-    stderr.writeAll(proc.stderr) catch return;
 }
 
 pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimits) void {
@@ -1701,6 +1722,29 @@ pub fn dumpCurrentStackTrace(first_address: ?usize, limits: WriteStackTraceLimit
     var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
     std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
     dumpStackTrace(stack, limits);
+}
+
+/// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
+/// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
+/// with core dumps.
+fn suppressCoreDumpsIfNecessary() void {
+    if (bun.Environment.isPosix) {
+        var existing_limit = std.posix.getrlimit(.CORE) catch return;
+        if (existing_limit.cur > 0 or existing_limit.cur == std.posix.RLIM.INFINITY) {
+            existing_limit.cur = 0;
+            std.posix.setrlimit(.CORE, existing_limit) catch {};
+        }
+    }
+}
+
+/// From now on, prevent crashes from being reported to bun.report or the URL overridden in
+/// BUN_CRASH_REPORT_URL. Should only be used for tests that are going to intentionally crash,
+/// so that they do not fail CI due to having a crash reported. And those cases should guard behind
+/// a feature flag and call right before the crash, in order to make sure that crashes other than
+/// the expected one are not suppressed.
+pub fn suppressReporting() void {
+    suppressCoreDumpsIfNecessary();
+    suppress_reporting = true;
 }
 
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
@@ -1787,6 +1831,7 @@ pub const js_bindings = struct {
 
     pub fn jsSegfault(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         @setRuntimeSafety(false);
+        suppressCoreDumpsIfNecessary();
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
@@ -1794,6 +1839,7 @@ pub const js_bindings = struct {
     }
 
     pub fn jsPanic(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
@@ -1802,10 +1848,12 @@ pub const js_bindings = struct {
     }
 
     pub fn jsOutOfMemory(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.outOfMemory();
     }
 
     pub fn jsRaiseIgnoringPanicHandler(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        suppressCoreDumpsIfNecessary();
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
@@ -2166,6 +2214,9 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+        suppressReporting();
+    }
     std.debug.panic("unsupported uv function: {s}", .{name.?});
 }
 

@@ -298,7 +298,7 @@ fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
     this.flush();
 }
 
-pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) jsc.Maybe(void) {
+pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -344,9 +344,9 @@ pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*Borin
             this.onOpen();
         }
     }
-    return .{ .result = {} };
+    return .success;
 }
-pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) jsc.Maybe(void) {
+pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -379,10 +379,10 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.A
     }
 
     onConnect(this, uv.ReturnCode.zero);
-    return .{ .result = {} };
+    return .success;
 }
 
-pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig) jsc.Maybe(void) {
+pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
     // ref because we are connecting
@@ -573,7 +573,7 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
-const log = bun.Output.scoped(.WindowsNamedPipe, false);
+const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
 
 const std = @import("std");
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

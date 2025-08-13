@@ -170,7 +170,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
     }
 }
 
-const log = Output.scoped(.Subprocess, false);
+const log = Output.scoped(.Subprocess, .visible);
 pub const StdioKind = enum {
     stdin,
     stdout,
@@ -671,9 +671,9 @@ pub fn hasKilled(this: *const Subprocess) bool {
     return this.process.hasKilled();
 }
 
-pub fn tryKill(this: *Subprocess, sig: SignalCode) jsc.Maybe(void) {
+pub fn tryKill(this: *Subprocess, sig: SignalCode) bun.sys.Maybe(void) {
     if (this.hasExited()) {
-        return .{ .result = {} };
+        return .success;
     }
     return this.process.kill(@intFromEnum(sig));
 }
@@ -829,7 +829,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         pub const ref = WriterRefCount.ref;
         pub const deref = WriterRefCount.deref;
 
-        const print = bun.Output.scoped(.StaticPipeWriter, false);
+        const print = bun.Output.scoped(.StaticPipeWriter, .visible);
 
         pub const IOWriter = bun.io.BufferedWriter(@This(), struct {
             pub const onWritable = null;
@@ -873,7 +873,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             return this;
         }
 
-        pub fn start(this: *This) jsc.Maybe(void) {
+        pub fn start(this: *This) bun.sys.Maybe(void) {
             log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
             this.ref();
             this.buffer = this.source.slice();
@@ -890,7 +890,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
                         poll.flags.insert(.socket);
                     }
 
-                    return .{ .result = {} };
+                    return .success;
                 },
             }
         }
@@ -996,7 +996,7 @@ pub const PipeReader = struct {
             this.reader.read();
     }
 
-    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop) jsc.Maybe(void) {
+    pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop) bun.sys.Maybe(void) {
         this.ref();
         this.process = process;
         this.event_loop = event_loop;
@@ -1018,7 +1018,7 @@ pub const PipeReader = struct {
                     poll.flags.insert(.nonblocking);
                 }
 
-                return .{ .result = {} };
+                return .success;
             },
         }
     }
@@ -1402,7 +1402,7 @@ const Writable = union(enum) {
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
                     pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
-                        bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
+                        bun.debugAssert(subprocess.ref_count.get() == debug_ref_count.get());
                     }
                     return pipe.toJS(globalThis);
                 } else {
@@ -2715,7 +2715,7 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
     return this.globalThis;
 }
 
-const IPClog = Output.scoped(.IPC, false);
+const IPClog = Output.scoped(.IPC, .visible);
 
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

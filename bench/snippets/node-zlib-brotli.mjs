@@ -28,10 +28,4 @@ bench("brotli compress stream", async () => {
   await pipeline(source, compress);
 });
 
-bench("brotli decompress stream", async () => {
-  const source = Readable.from([compressed]);
-  const decompress = createBrotliDecompress();
-  await pipeline(source, decompress);
-});
-
 await run();

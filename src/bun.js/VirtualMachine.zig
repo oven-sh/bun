@@ -34,6 +34,9 @@ main: []const u8 = "",
 main_is_html_entrypoint: bool = false,
 main_resolved_path: bun.String = bun.String.empty,
 main_hash: u32 = 0,
+/// Set if code overrides Bun.main to a custom value, and then reset when the VM loads a new file
+/// (e.g. when bun:test starts testing a new file)
+overridden_main: jsc.Strong.Optional = .empty,
 entry_point: ServerEntryPoint = undefined,
 origin: URL = URL{},
 node_fs: ?*bun.api.node.fs.NodeFS = null,
@@ -190,6 +193,8 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// An example is mutating `require.extensions['.js']` to intercept all '.js' files.
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
+
+initial_script_execution_context_identifier: i32,
 
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
@@ -364,7 +369,7 @@ const SourceMapHandlerGetter = struct {
     pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
-        temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
+        try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
         const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
         const source_url_len = source.path.text.len;
@@ -981,6 +986,7 @@ pub fn initWithModuleGraph(
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1013,7 +1019,7 @@ pub fn initWithModuleGraph(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         false,
         false,
         null,
@@ -1102,6 +1108,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1131,7 +1138,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         opts.smol,
         opts.eval,
         null,
@@ -1261,6 +1268,7 @@ pub fn initWorker(
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         // This option is irrelevant for Workers
         .destruct_main_thread_on_exit = false,
+        .initial_script_execution_context_identifier = @as(i32, @intCast(worker.execution_context_id)),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1294,7 +1302,7 @@ pub fn initWorker(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        @as(i32, @intCast(worker.execution_context_id)),
+        vm.initial_script_execution_context_identifier,
         worker.mini,
         opts.eval,
         worker.cpp_worker,
@@ -1352,6 +1360,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1555,11 +1564,11 @@ fn _resolve(
         return;
     } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, node_fallbacks.import_path)) {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (jsc.ModuleLoader.HardcodedModule.Alias.get(specifier, .bun)) |result| {
         ret.result = null;
@@ -1570,12 +1579,12 @@ fn _resolve(
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
     {
         ret.result = null;
-        ret.path = specifier;
+        ret.path = try bun.default_allocator.dupe(u8, specifier);
         return;
     } else if (strings.hasPrefixComptime(specifier, "blob:")) {
         ret.result = null;
         if (jsc.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
-            ret.path = specifier;
+            ret.path = try bun.default_allocator.dupe(u8, specifier);
             return;
         } else {
             return error.ModuleNotFound;
@@ -1906,6 +1915,7 @@ pub fn deinit(this: *VirtualMachine) void {
     if (this.rare_data) |rare_data| {
         rare_data.deinit();
     }
+    this.overridden_main.deinit();
     this.has_terminated = true;
 }
 
@@ -2084,7 +2094,10 @@ extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
 pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     try this.ensureDebugger(true);
 
@@ -2152,7 +2165,10 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachi
 pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
+    this.overridden_main.deinit();
 
     this.eventLoop().ensureWaker();
 
@@ -2589,8 +2605,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFr
                 frame.source_url = source_url;
             }
             const mapping = lookup.mapping;
-            frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-            frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+            frame.position.line = mapping.original.lines;
+            frame.position.column = mapping.original.columns;
             frame.remapped = true;
         } else {
             // we don't want it to be remapped again
@@ -2706,8 +2722,8 @@ pub fn remapZigException(
             .mapping = .{
                 .generated = .{},
                 .original = .{
-                    .lines = @max(top.position.line.zeroBased(), 0),
-                    .columns = @max(top.position.column.zeroBased(), 0),
+                    .lines = bun.Ordinal.fromZeroBased(@max(top.position.line.zeroBased(), 0)),
+                    .columns = bun.Ordinal.fromZeroBased(@max(top.position.column.zeroBased(), 0)),
                 },
                 .source_index = 0,
             },
@@ -2765,8 +2781,8 @@ pub fn remapZigException(
         if (code.len > 0)
             source_code_slice.* = code;
 
-        top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-        top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+        top.position.line = mapping.original.lines;
+        top.position.column = mapping.original.columns;
 
         exception.remapped = true;
         top.remapped = true;
@@ -2817,8 +2833,8 @@ pub fn remapZigException(
                 }
                 const mapping = lookup.mapping;
                 frame.remapped = true;
-                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+                frame.position.line = mapping.original.lines;
+                frame.position.column = mapping.original.columns;
             }
         }
     }

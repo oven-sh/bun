@@ -57,7 +57,7 @@ manifests: PackageManifestMap = .{},
 folders: FolderResolution.Map = .{},
 git_repositories: RepositoryMap = .{},
 
-network_dedupe_map: NetworkTask.DedupeMap = NetworkTask.DedupeMap.init(bun.default_allocator),
+network_dedupe_map: NetworkTask.DedupeMap = .init(bun.default_allocator),
 async_network_task_queue: AsyncNetworkTaskQueue = .{},
 network_tarball_batch: ThreadPool.Batch = .{},
 network_resolve_batch: ThreadPool.Batch = .{},
@@ -68,8 +68,10 @@ patch_task_fifo: PatchTaskFifo = PatchTaskFifo.init(),
 patch_task_queue: PatchTaskQueue = .{},
 /// We actually need to calculate the patch file hashes
 /// every single time, because someone could edit the patchfile at anytime
-pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+///
+/// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
+pending_pre_calc_hashes: std.atomic.Value(u32) = .init(0),
+pending_tasks: std.atomic.Value(u32) = .init(0),
 total_tasks: u32 = 0,
 preallocated_network_tasks: PreallocatedNetworkTasks,
 preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -77,8 +79,8 @@ preallocated_resolve_tasks: PreallocatedTaskStore,
 /// items are only inserted into this if they took more than 500ms
 lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
 
-pending_lifecycle_script_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-finished_installing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+pending_lifecycle_script_tasks: std.atomic.Value(u32) = .init(0),
+finished_installing: std.atomic.Value(bool) = .init(false),
 total_scripts: usize = 0,
 
 root_lifecycle_scripts: ?Package.Scripts.List = null,
@@ -99,7 +101,7 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
+peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
@@ -176,6 +178,7 @@ pub const Subcommand = enum {
         return switch (this) {
             .outdated => true,
             .install => true,
+            .update => true,
             // .pack => true,
             // .add => true,
             else => false,
@@ -442,7 +445,7 @@ pub fn get() *PackageManager {
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
-pub const debug = Output.scoped(.PackageManager, true);
+pub const debug = Output.scoped(.PackageManager, .hidden);
 
 pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
     return ensureTempNodeGypScriptOnce.call(.{this});
@@ -781,7 +784,7 @@ pub fn init(
         break :brk loader;
     };
 
-    env.loadProcess();
+    try env.loadProcess();
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();

@@ -1,7 +1,7 @@
 pub const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 
-const debuglog = Output.scoped(.Resolver, true);
+const debuglog = Output.scoped(.Resolver, .hidden);
 
 pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
@@ -1602,7 +1602,7 @@ pub const Resolver = struct {
         }
     }
 
-    const dev = Output.scoped(.Resolver, false);
+    const dev = Output.scoped(.Resolver, .visible);
 
     /// Directory cache keys must follow the following rules. If the rules are broken,
     /// then there will be conflicting cache entries, and trying to bust the cache may not work.
@@ -1885,7 +1885,6 @@ pub const Resolver = struct {
 
         // this is the magic!
         if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
-            if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
@@ -3755,7 +3754,6 @@ pub const Resolver = struct {
         }
 
         const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
-        bun.strings.assertIsValidWindowsPath(u8, dir_path);
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
@@ -4224,7 +4222,6 @@ pub const Dirname = struct {
         const root = brk: {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
-                assert(root.len > 0);
 
                 // Preserve the trailing slash for UNC paths.
                 // Going from `\\server\share\folder` should end up

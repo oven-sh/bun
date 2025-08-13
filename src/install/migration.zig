@@ -1,4 +1,4 @@
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
@@ -46,6 +46,38 @@ pub fn detectAndLoadOtherLockfile(
             Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
             Output.prettyError(" ", .{});
             Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
+    yarn: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
+        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            if (Environment.isDebug) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
+                log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("Invalid yarn.lock\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
+                Global.exit(1);
+            }
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "yarn.lock",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>yarn.lock<r>", .{});
             Output.flush();
         }
 

@@ -240,7 +240,7 @@ pub inline fn lenI(self: *MutableString) i32 {
     return @as(i32, @intCast(self.list.items.len));
 }
 
-pub fn toOwnedSlice(self: *MutableString) string {
+pub fn toOwnedSlice(self: *MutableString) []u8 {
     return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
 }
 

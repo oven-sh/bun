@@ -3,7 +3,7 @@
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
-const log = Output.scoped(.IPC, false);
+const log = Output.scoped(.IPC, .visible);
 
 extern fn Bun__Process__queueNextTick1(*jsc.JSGlobalObject, jsc.JSValue, jsc.JSValue) void;
 extern fn Process__emitErrorEvent(global: *jsc.JSGlobalObject, value: jsc.JSValue) void;

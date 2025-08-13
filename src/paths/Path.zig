@@ -240,7 +240,7 @@ pub fn Path(comptime opts: Options) type {
     //     @compileError("utf16 not supported");
     // }
 
-    // const log = Output.scoped(.Path, false);
+    // const log = Output.scoped(.Path, .visible);
 
     return struct {
         _buf: opts.Buf(),

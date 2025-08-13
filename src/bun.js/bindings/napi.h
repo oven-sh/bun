@@ -17,10 +17,11 @@
 #include "napi_macros.h"
 
 #include <list>
+#include <optional>
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_crash_in_gc(napi_env);
+extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Napi {
@@ -47,7 +48,11 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
-#define NAPI_ABORT(message) Bun__crashHandler(message "", sizeof(message "") - 1)
+#define NAPI_ABORT(message)                                    \
+    do {                                                       \
+        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__crashHandler(message "", sizeof(message "") - 1); \
+    } while (0)
 
 #define NAPI_PERISH(...)                                                      \
     do {                                                                      \
@@ -207,12 +212,51 @@ public:
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
+            throwPendingException();
         }
+    }
+
+    void scheduleException(JSC::JSValue exception)
+    {
+        if (exception.isEmpty()) {
+            m_pendingException.clear();
+        }
+
+        m_pendingException.set(m_vm, exception);
+    }
+
+    bool throwPendingException()
+    {
+        if (!m_pendingException) {
+            return false;
+        }
+
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        JSC::throwException(globalObject(), scope, m_pendingException.get());
+        m_pendingException.clear();
+        return true;
+    }
+
+    void clearPendingException()
+    {
+        m_pendingException.clear();
+    }
+
+    bool hasPendingException() const
+    {
+        return static_cast<bool>(m_pendingException);
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
     inline JSC::VM& vm() const { return m_vm; }
+    inline std::optional<JSC::JSValue> pendingException() const
+    {
+        if (!m_pendingException) {
+            return std::nullopt;
+        }
+        return m_pendingException.get();
+    }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
@@ -305,6 +349,7 @@ private:
     JSC::VM& m_vm;
     std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
     std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
+    JSC::Strong<JSC::Unknown> m_pendingException;
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
@@ -316,6 +361,7 @@ class JSSourceCode;
 }
 
 namespace Napi {
+
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
@@ -341,6 +387,11 @@ public:
         return jscWeakValueHandleOwner;
     }
 };
+
+// If a module registered itself by calling napi_module_register in a static constructor, run this
+// to run the module's entrypoint.
+void executePendingNapiModule(Zig::GlobalObject* globalObject);
+
 }
 
 namespace Zig {

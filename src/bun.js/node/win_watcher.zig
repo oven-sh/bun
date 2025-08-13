@@ -4,7 +4,7 @@ var default_manager: ?*PathWatcherManager = null;
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    const log = Output.scoped(.PathWatcherManager, false);
+    const log = Output.scoped(.PathWatcherManager, .visible);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
     vm: *jsc.VirtualMachine,
@@ -71,7 +71,7 @@ pub const PathWatcher = struct {
 
     pub const new = bun.TrivialNew(PathWatcher);
 
-    const log = Output.scoped(.@"fs.watch", false);
+    const log = Output.scoped(.@"fs.watch", .visible);
 
     pub const ChangeEvent = struct {
         hash: Watcher.HashType = 0,
@@ -160,7 +160,7 @@ pub const PathWatcher = struct {
         this.maybeDeinit();
     }
 
-    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.jsc.Maybe(*PathWatcher) {
+    pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.sys.Maybe(*PathWatcher) {
         var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
@@ -262,7 +262,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: *anyopaque,
-) bun.jsc.Maybe(*PathWatcher) {
+) bun.sys.Maybe(*PathWatcher) {
     comptime {
         if (callback != onPathUpdateFn) {
             @compileError("callback must be onPathUpdateFn");

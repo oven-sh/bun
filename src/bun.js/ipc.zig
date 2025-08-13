@@ -1,4 +1,4 @@
-pub const log = Output.scoped(.IPC, false);
+pub const log = Output.scoped(.IPC, .visible);
 
 const IsInternal = enum { internal, external };
 const SerializeAndSendResult = enum {
@@ -859,7 +859,7 @@ pub const SendQueue = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn windowsConfigureServer(this: *SendQueue, ipc_pipe: *uv.Pipe) jsc.Maybe(void) {
+    pub fn windowsConfigureServer(this: *SendQueue, ipc_pipe: *uv.Pipe) bun.sys.Maybe(void) {
         log("configureServer", .{});
         ipc_pipe.data = this;
         ipc_pipe.unref();
@@ -875,7 +875,7 @@ pub const SendQueue = struct {
             this.closeSocket(.failure, .user);
             return readStartResult;
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {

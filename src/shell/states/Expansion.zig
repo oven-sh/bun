@@ -223,9 +223,13 @@ pub fn next(this: *Expansion) Yield {
                 defer arena.deinit();
                 const arena_allocator = arena.allocator();
                 const brace_str = this.current_out.items[0..];
-                // FIXME some of these errors aren't alloc errors for example lexer parser errors
-                var lexer_output = Braces.Lexer.tokenize(arena_allocator, brace_str) catch |e| OOM(e);
-                const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |e| OOM(e);
+                var lexer_output = if (bun.strings.isAllASCII(brace_str)) lexer_output: {
+                    @branchHint(.likely);
+                    break :lexer_output Braces.Lexer.tokenize(arena_allocator, brace_str) catch bun.outOfMemory();
+                } else lexer_output: {
+                    break :lexer_output Braces.NewLexer(.wtf8).tokenize(arena_allocator, brace_str) catch bun.outOfMemory();
+                };
+                const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
                 const stack_max = comptime 16;
                 comptime {
@@ -733,7 +737,7 @@ fn outEnsureUnusedCapacity(this: *Expansion, additional: usize) void {
 }
 
 pub const ShellGlobTask = struct {
-    const debug = bun.Output.scoped(.ShellGlobTask, true);
+    const debug = bun.Output.scoped(.ShellGlobTask, .hidden);
 
     task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 
@@ -811,7 +815,7 @@ pub const ShellGlobTask = struct {
             this.result.append(path) catch bun.outOfMemory();
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn runFromMainThread(this: *This) void {
@@ -852,11 +856,11 @@ const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const assert = bun.assert;
+const Maybe = bun.sys.Maybe;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const Maybe = jsc.Maybe;
 
 const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;

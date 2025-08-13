@@ -42,7 +42,7 @@
 //     make mimalloc-debug
 //
 
-pub const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
+pub const logPartDependencyTree = Output.scoped(.part_dep_tree, .visible);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 pub const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
@@ -140,7 +140,7 @@ pub const BundleV2 = struct {
     /// You can find which callbacks are run by looking at the
     /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
-    thread_lock: bun.DebugThreadLock,
+    thread_lock: bun.safety.ThreadLock,
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -149,7 +149,7 @@ pub const BundleV2 = struct {
         plugins: ?*jsc.API.JSBundler.Plugin,
     };
 
-    const debug = Output.scoped(.Bundle, false);
+    const debug = Output.scoped(.Bundle, .visible);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
         return &this.linker.loop;
@@ -187,7 +187,12 @@ pub const BundleV2 = struct {
 
         client_transpiler.options.target = .browser;
         client_transpiler.options.main_fields = options.Target.DefaultMainFields.get(options.Target.browser);
-        client_transpiler.options.conditions = try options.ESMConditions.init(allocator, options.Target.browser.defaultConditions());
+        client_transpiler.options.conditions = try options.ESMConditions.init(
+            allocator,
+            options.Target.browser.defaultConditions(),
+            false,
+            &.{},
+        );
 
         // We need to make sure it has [hash] in the names so we don't get conflicts.
         if (this_transpiler.options.compile) {
@@ -410,7 +415,7 @@ pub const BundleV2 = struct {
             },
         }
 
-        const DebugLog = bun.Output.Scoped(.ReachableFiles, false);
+        const DebugLog = bun.Output.Scoped(.ReachableFiles, .visible);
         if (DebugLog.isVisible()) {
             DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
             const sources: []Logger.Source = this.graph.input_files.items(.source);
@@ -669,9 +674,9 @@ pub const BundleV2 = struct {
         path = this.pathWithPrettyInitialized(path, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch bun.outOfMemory();
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch bun.outOfMemory();
 
-        try this.graph.input_files.append(bun.default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = .{
                 .path = path,
                 .contents = "",
@@ -730,9 +735,9 @@ pub const BundleV2 = struct {
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch bun.outOfMemory();
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch bun.outOfMemory();
 
-        try this.graph.input_files.append(bun.default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = .{
                 .path = path.*,
                 .contents = "",
@@ -812,7 +817,7 @@ pub const BundleV2 = struct {
             .plugins = null,
             .completion = null,
             .source_code_length = 0,
-            .thread_lock = bun.DebugThreadLock.initLocked(),
+            .thread_lock = .initLocked(),
         };
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
@@ -878,7 +883,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    const logScanCounter = bun.Output.scoped(.scan_counter, false);
+    const logScanCounter = bun.Output.scoped(.scan_counter, .visible);
 
     pub fn incrementScanCounter(this: *BundleV2) void {
         this.thread_lock.assertLocked();
@@ -916,14 +921,14 @@ pub const BundleV2 = struct {
         {
             // Add the runtime
             const rt = ParseTask.getRuntimeSource(this.transpiler.options.target);
-            try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
+            try this.graph.input_files.append(this.graph.allocator, Graph.InputFile{
                 .source = rt.source,
                 .loader = .js,
                 .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
-            try this.graph.ast.append(bun.default_allocator, JSAst.empty);
+            try this.graph.ast.append(this.graph.allocator, JSAst.empty);
             try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
@@ -1194,9 +1199,9 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
-        this.graph.input_files.append(bun.default_allocator, .{
+        this.graph.input_files.append(this.graph.allocator, .{
             .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
@@ -1234,9 +1239,9 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
-        this.graph.input_files.append(bun.default_allocator, .{
+        this.graph.input_files.append(this.graph.allocator, .{
             .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
@@ -1290,12 +1295,12 @@ pub const BundleV2 = struct {
         var new_source: Logger.Source = source_without_index;
         const source_index = this.graph.input_files.len;
         new_source.index = Index.init(source_index);
-        try this.graph.input_files.append(default_allocator, .{
+        try this.graph.input_files.append(this.graph.allocator, .{
             .source = new_source,
             .loader = .js,
             .side_effects = .has_side_effects,
         });
-        try this.graph.ast.append(default_allocator, JSAst.empty);
+        try this.graph.ast.append(this.graph.allocator, JSAst.empty);
 
         const task = bun.new(ServerComponentParseTask, .{
             .data = data,
@@ -1379,7 +1384,7 @@ pub const BundleV2 = struct {
             event_loop,
             enable_reloading,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1443,7 +1448,7 @@ pub const BundleV2 = struct {
             event_loop,
             false,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -2113,10 +2118,10 @@ pub const BundleV2 = struct {
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
-                        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+                        this.graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
                         const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
-                        this.graph.input_files.append(bun.default_allocator, .{
+                        this.graph.input_files.append(this.graph.allocator, .{
                             .source = .{
                                 .path = path,
                                 .contents = "",
@@ -2212,8 +2217,8 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
-        defer this.graph.ast.deinit(bun.default_allocator);
-        defer this.graph.input_files.deinit(bun.default_allocator);
+        defer this.graph.ast.deinit(this.graph.allocator);
+        defer this.graph.input_files.deinit(this.graph.allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();
@@ -2856,7 +2861,7 @@ pub const BundleV2 = struct {
                 if (err == error.ModuleNotFound) {
                     if (this.bun_watcher != null) {
                         if (!had_busted_dir_cache) {
-                            bun.Output.scoped(.watcher, false)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
+                            bun.Output.scoped(.watcher, .visible)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
                             // Only re-query if we previously had something cached.
                             if (transpiler.resolver.bustDirCacheFromSpecifier(
                                 source.path.text,
@@ -3344,8 +3349,8 @@ pub const BundleV2 = struct {
 
                         diff += 1;
 
-                        graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
-                        graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+                        graph.input_files.append(this.graph.allocator, new_input_file) catch unreachable;
+                        graph.ast.append(this.graph.allocator, JSAst.empty) catch unreachable;
 
                         if (is_html_entrypoint) {
                             this.ensureClientTranspiler();
@@ -3879,6 +3884,21 @@ pub const CompileResult = union(enum) {
     javascript: struct {
         source_index: Index.Int,
         result: js_printer.PrintResult,
+
+        pub fn code(this: @This()) []const u8 {
+            return switch (this.result) {
+                .result => |result| result.code,
+                else => "",
+            };
+        }
+
+        pub fn allocator(this: @This()) std.mem.Allocator {
+            return switch (this.result) {
+                .result => |result| result.code_allocator,
+                // empty slice can be freed by any allocator
+                else => bun.default_allocator,
+            };
+        }
     },
     css: struct {
         result: bun.Maybe([]const u8, anyerror),
@@ -3898,6 +3918,7 @@ pub const CompileResult = union(enum) {
             .result = js_printer.PrintResult{
                 .result = .{
                     .code = "",
+                    .code_allocator = bun.default_allocator,
                 },
             },
         },
@@ -3905,15 +3926,19 @@ pub const CompileResult = union(enum) {
 
     pub fn code(this: *const CompileResult) []const u8 {
         return switch (this.*) {
-            .javascript => |r| switch (r.result) {
-                .result => |r2| r2.code,
-                else => "",
-            },
+            .javascript => |r| r.code(),
             .css => |*c| switch (c.result) {
                 .result => |v| v,
                 .err => "",
             },
             .html => |*c| c.code,
+        };
+    }
+
+    pub fn allocator(this: *const CompileResult) ?std.mem.Allocator {
+        return switch (this.*) {
+            .javascript => |js| js.allocator(),
+            else => null,
         };
     }
 
@@ -3947,7 +3972,7 @@ pub const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: Hash = .init(0),
 
-    const log = bun.Output.scoped(.ContentHasher, true);
+    const log = bun.Output.scoped(.ContentHasher, .hidden);
 
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
         log("HASH_UPDATE {d}:\n{s}\n----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
@@ -4108,6 +4133,16 @@ const ExternalFreeFunctionAllocator = struct {
     }
 };
 
+/// Returns true if `allocator` definitely has a valid `.ptr`.
+/// May return false even if `.ptr` is valid.
+///
+/// This function should check whether `allocator` matches any internal allocator types known to
+/// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
+/// don't need to be checked.
+pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
+    return allocator.vtable == &ExternalFreeFunctionAllocator.vtable;
+}
+
 pub const std = @import("std");
 pub const lex = @import("../js_lexer.zig");
 pub const Logger = @import("../logger.zig");
@@ -4159,8 +4194,8 @@ pub const StableSymbolCount = renamer.StableSymbolCount;
 pub const MinifyRenamer = renamer.MinifyRenamer;
 pub const Scope = js_ast.Scope;
 pub const jsc = bun.jsc;
-pub const debugTreeShake = Output.scoped(.TreeShake, true);
-pub const debugPartRanges = Output.scoped(.PartRanges, true);
+pub const debugTreeShake = Output.scoped(.TreeShake, .hidden);
+pub const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 pub const Async = bun.Async;
 pub const Loc = Logger.Loc;

@@ -71,7 +71,7 @@ pub fn generateChunksInParallel(
     }
 
     {
-        const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
+        const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch bun.outOfMemory();
         defer c.allocator.free(chunk_contexts);
 
         {
@@ -102,7 +102,7 @@ pub fn generateChunksInParallel(
 
             debug(" START {d} compiling part ranges", .{total_count});
             defer debug("  DONE {d} compiling part ranges", .{total_count});
-            const combined_part_ranges = c.allocator.alloc(PendingPartRange, total_count) catch unreachable;
+            const combined_part_ranges = c.allocator.alloc(PendingPartRange, total_count) catch bun.outOfMemory();
             defer c.allocator.free(combined_part_ranges);
             var remaining_part_ranges = combined_part_ranges;
             var batch = ThreadPoolLib.Batch{};
@@ -315,7 +315,7 @@ pub fn generateChunksInParallel(
     }
 
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
-    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch unreachable };
+    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch bun.outOfMemory() };
     defer static_route_visitor.deinit();
 
     if (root_path.len > 0) {
@@ -354,7 +354,7 @@ pub fn generateChunksInParallel(
             switch (chunk.content.sourcemap(c.options.source_maps)) {
                 .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
-                    var source_map_final_rel_path = bun.default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
+                    var source_map_final_rel_path = bun.default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch bun.outOfMemory();
                     bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                     bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
@@ -443,8 +443,8 @@ pub fn generateChunksInParallel(
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
                             break :brk options.OutputFile.init(.{
-                                .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch bun.outOfMemory(),
+                                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch bun.outOfMemory(),
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                                 .output_kind = .bytecode,
@@ -462,7 +462,7 @@ pub fn generateChunksInParallel(
                             // an error
                             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
                                 chunk.final_rel_path,
-                            }) catch unreachable;
+                            }) catch bun.outOfMemory();
                         }
                     }
                 }
@@ -547,7 +547,7 @@ pub fn generateChunksInParallel(
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const debugPartRanges = Output.scoped(.PartRanges, true);
+const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
 const std = @import("std");
 

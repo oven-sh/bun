@@ -70,7 +70,7 @@ pub const Package = extern struct {
         }
     };
 
-    const debug = Output.scoped(.Lockfile, true);
+    const debug = Output.scoped(.Lockfile, .hidden);
 
     pub fn clone(
         this: *const Package,

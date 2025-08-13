@@ -7,7 +7,12 @@ interval: u31 = 0,
 strong_this: jsc.Strong.Optional = .empty,
 flags: Flags = .{},
 
-const Flags = packed struct(u32) {
+/// Used by:
+/// - setTimeout
+/// - setInterval
+/// - setImmediate
+/// - AbortSignal.Timeout
+pub const Flags = packed struct(u32) {
     /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
     /// epoch is incremented and the new epoch is set on the timer. For timers created by
     /// JavaScript, the epoch is used to break ties between timers scheduled for the same
@@ -16,6 +21,7 @@ const Flags = packed struct(u32) {
     /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
     epoch: u25 = 0,
 
+    /// Kind does not include AbortSignal's timeout since it has no corresponding ID callback.
     kind: Kind = .setTimeout,
 
     // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
@@ -286,8 +292,8 @@ pub fn init(
     } else {
         TimeoutObject.js.argumentsSetCached(timer, global, arguments);
         TimeoutObject.js.callbackSetCached(timer, global, callback);
-        TimeoutObject.js.idleTimeoutSetCached(timer, global, jsc.jsNumber(interval));
-        TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) jsc.jsNumber(interval) else .null);
+        TimeoutObject.js.idleTimeoutSetCached(timer, global, .jsNumber(interval));
+        TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) .jsNumber(interval) else .null);
 
         // this increments the refcount
         this.reschedule(timer, vm);

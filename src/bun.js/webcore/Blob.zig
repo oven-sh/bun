@@ -6,7 +6,7 @@
 
 const Blob = @This();
 
-const debug = Output.scoped(.Blob, false);
+const debug = Output.scoped(.Blob, .visible);
 
 pub const Store = @import("./blob/Store.zig");
 pub const read_file = @import("./blob/read_file.zig");
@@ -590,7 +590,7 @@ export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
     if (this.store) |store| {
         if (store.data == .bytes) {
             if (store.data.bytes.stored_name.len == 0) {
-                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable;
+                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch unreachable;
                 store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
             }
         }
@@ -913,7 +913,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
                     const this: *@This() = @ptrCast(@alignCast(opaque_this));
                     switch (result) {
-                        .success => this.promise.resolve(this.global, jsc.jsNumber(0)),
+                        .success => this.promise.resolve(this.global, .jsNumber(0)),
                         .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                     }
                     this.deinit();
@@ -1102,7 +1102,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
                             const this: *@This() = @ptrCast(@alignCast(opaque_self));
                             switch (result) {
-                                .success => this.promise.resolve(this.global, jsc.jsNumber(this.store.data.bytes.len)),
+                                .success => this.promise.resolve(this.global, .jsNumber(this.store.data.bytes.len)),
                                 .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                             }
                             this.deinit();
@@ -1464,6 +1464,15 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
 }
 
+fn validateWritableBlob(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSError!void {
+    const store = blob.store orelse {
+        return globalThis.throw("Cannot write to a detached Blob", .{});
+    };
+    if (store.data == .bytes) {
+        return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
+    }
+}
+
 /// `Bun.write(destination, input, options?)`
 pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
@@ -1479,12 +1488,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        const store = path_or_blob.blob.store orelse {
-            return globalThis.throw("Cannot write to a detached Blob", .{});
-        };
-        if (store.data == .bytes) {
-            return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
-        }
+        try validateWritableBlob(globalThis, &path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -1713,7 +1717,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
                     );
                 },
                 .s3, .file => {
@@ -1726,7 +1730,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
                         bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
                         ),
                         allocator,
                     ),
@@ -2224,6 +2228,8 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
+    try validateWritableBlob(globalThis, this);
+
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
@@ -2275,13 +2281,14 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    const store = this.store orelse {
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
-    };
+
+    try validateWritableBlob(globalThis, this);
+
+    const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
         .file => |file| file.unlink(globalThis),
-        else => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
+        else => unreachable, // validateWritableBlob should have caught this
     };
 }
 
@@ -2459,7 +2466,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{
                     .path = ZigString.Slice.fromUTF8NeverFree(
                         store.data.file.pathlike.path.slice(),
-                    ).clone(
+                    ).cloneIfNeeded(
                         bun.default_allocator,
                     ) catch bun.outOfMemory(),
                 };
@@ -2569,9 +2576,9 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
-    var store = this.store orelse {
-        return globalThis.throwInvalidArguments("Blob is detached", .{});
-    };
+    try validateWritableBlob(globalThis, this);
+
+    var store = this.store.?;
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
@@ -2624,9 +2631,6 @@ pub fn getWriter(
             proxy_url,
             null,
         );
-    }
-    if (store.data != .file) {
-        return globalThis.throwInvalidArguments("Blob is read-only", .{});
     }
 
     if (Environment.isWindows) {
@@ -2702,7 +2706,7 @@ pub fn getWriter(
             break :brk .{
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
-                ).clone(
+                ).cloneIfNeeded(
                     globalThis.allocator(),
                 ) catch bun.outOfMemory(),
             };
@@ -3010,6 +3014,33 @@ export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
     return this.getSizeForBindings();
 }
 
+export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.C) ?*anyopaque {
+    const blob = Blob.fromJS(value) orelse return null;
+    const data = blob.sharedView();
+    if (data.len == 0) return null;
+    return @constCast(data.ptr);
+}
+
+export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
+    const blob = Blob.fromJS(value) orelse return 0;
+    const data = blob.sharedView();
+    return data.len;
+}
+
+export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.C) *Blob {
+    if (ptr == null or len == 0) {
+        const blob = new(initEmpty(globalThis));
+        blob.allocator = bun.default_allocator;
+        return blob;
+    }
+
+    const bytes = bun.default_allocator.dupe(u8, ptr.?[0..len]) catch bun.outOfMemory();
+    const store = Store.init(bytes, bun.default_allocator);
+    var blob = initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
+    return new(blob);
+}
+
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const store = this.store orelse return .js_undefined;
     // TODO: make this async for files
@@ -3041,13 +3072,13 @@ pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
         }
         this.resolveSize();
         if (this.size == Blob.max_size and this.store != null) {
-            return jsc.jsNumber(std.math.inf(f64));
+            return .jsNumber(std.math.inf(f64));
         } else if (this.size == 0 and this.store != null) {
             if (this.store.?.data == .file and
                 (this.store.?.data.file.seekable orelse true) == false and
                 this.store.?.data.file.max_size == Blob.max_size)
             {
-                return jsc.jsNumber(std.math.inf(f64));
+                return .jsNumber(std.math.inf(f64));
             }
         }
     }

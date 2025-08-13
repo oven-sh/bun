@@ -127,6 +127,7 @@
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
+#include "JSWasmStreamingCompiler.h"
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
@@ -186,7 +187,7 @@
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
-
+#include <exception>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -1242,8 +1243,8 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -1272,8 +1273,8 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         nullptr, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
+        &compileStreaming,
+        &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
@@ -3077,6 +3078,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });
 
+    m_wasmStreamingConsumeStreamFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
@@ -3885,21 +3891,39 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
 
 // ====================== end conditional builtin globals ======================
 
-void GlobalObject::drainMicrotasks()
+uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    scope.assertNoExceptionExceptTermination();
+
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
         queue->drain(vm, this);
-        return;
+        if (auto* exception = scope.exception()) {
+            if (vm.isTerminationException(exception)) {
+                return 1;
+            }
+            scope.clearException();
+            this->reportUncaughtExceptionAtEventLoop(this, exception);
+            return 0;
+        }
+    }
+    vm.drainMicrotasks();
+    if (auto* exception = scope.exception()) {
+        if (vm.isTerminationException(exception)) {
+            return 1;
+        }
+        scope.clearException();
+        this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
 
-    vm.drainMicrotasks();
+    return 0;
 }
 
-extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
+extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
-    globalObject->drainMicrotasks();
+    return globalObject->drainMicrotasks();
 }
 
 extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
@@ -3992,7 +4016,6 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 }
 
 extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__queueTaskWithTimeout(JSC::JSGlobalObject*, WebCore::EventLoopTask* task, int timeout);
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
@@ -4014,11 +4037,6 @@ RefPtr<Performance> GlobalObject::performance()
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)
 {
     Bun__queueTask(this, task);
-}
-
-void GlobalObject::queueTaskOnTimeout(WebCore::EventLoopTask* task, int timeout)
-{
-    Bun__queueTaskWithTimeout(this, task, timeout);
 }
 
 void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
@@ -4441,6 +4459,62 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     }
 
     return result;
+}
+
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
+
+extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
+{
+    compiler->addBytes(std::span(spanPtr, spanSize));
+}
+
+static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
+{
+    auto globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSLockHolder locker(vm);
+
+    auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, sourceCode);
+
+    // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
+    // executed in a .then(...) callback, throwing is perfectly fine.
+
+    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+        globalObject, JSC::JSValue::encode(source), compiler.ptr()));
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    // We were able to get the slice synchronously.
+    if (readableStreamMaybe.isNull()) {
+        compiler->finalize(globalObject);
+
+        // Apparently rejecting a Promise (done in JSC::Wasm::StreamingCompiler#fail) can throw
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return promise;
+    }
+
+    auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(compiler));
+    auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
+    auto callData = JSC::getCallData(builtin);
+    MarkedArgumentBuffer arguments;
+
+    arguments.append(readableStreamMaybe);
+    JSC::call(globalObject, builtin, callData, wrapper, arguments);
+    scope.assertNoException();
+    return promise;
+}
+
+JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source)
+{
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+}
+
+JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
+{
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)

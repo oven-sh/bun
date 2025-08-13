@@ -686,7 +686,7 @@ def add(debugger, *, category, regex=False, type, identifier=None, synth=False, 
     if summary: debugger.HandleCommand('type summary add --category %s%s%s "%s"' % (category, ' --inline-children' if inline_children else ''.join((' --expand' if expand else '', ' --python-function %s_SummaryProvider' % prefix if summary == True else ' --summary-string "%s"' % summary)), ' --regex' if regex else '', type))
     if synth: debugger.HandleCommand('type synthetic add --category %s%s --python-class %s_SynthProvider "%s"' % (category, ' --regex' if regex else '', prefix, type))
 
-def MultiArrayList_Entry(type): return '^multi_array_list\\.MultiArrayList\\(%s\\)\\.Entry__struct_[1-9][0-9]*$' % type
+def MultiArrayList_Entry(type): return 'multi_array_list\\.MultiArrayList\\(%s\\)\\.Entry__struct_[1-9][0-9]*$' % type
 
 def __lldb_init_module(debugger, _=None):
     # Initialize Zig Categories
@@ -701,8 +701,8 @@ def __lldb_init_module(debugger, _=None):
     # Initialize Zig Standard Library
     add(debugger, category='zig.std', type='mem.Allocator', summary='${var.ptr}')
     add(debugger, category='zig.std', regex=True, type='^segmented_list\\.SegmentedList\\(.*\\)$', identifier='std_SegmentedList', synth=True, expand=True, summary='len=${var.len}')
-    add(debugger, category='zig.std', regex=True, type='^multi_array_list\\.MultiArrayList\\(.*\\)$', identifier='std_MultiArrayList', synth=True, expand=True, summary='len=${var.len} capacity=${var.capacity}')
-    add(debugger, category='zig.std', regex=True, type='^multi_array_list\\.MultiArrayList\\(.*\\)\\.Slice$', identifier='std_MultiArrayList_Slice', synth=True, expand=True, summary='len=${var.len} capacity=${var.capacity}')
+    add(debugger, category='zig.std', regex=True, type='multi_array_list\\.MultiArrayList\\(.*\\)$', identifier='std_MultiArrayList', synth=True, expand=True, summary='len=${var.len} capacity=${var.capacity}')
+    add(debugger, category='zig.std', regex=True, type='multi_array_list\\.MultiArrayList\\(.*\\)\\.Slice$', identifier='std_MultiArrayList_Slice', synth=True, expand=True, summary='len=${var.len} capacity=${var.capacity}')
     add(debugger, category='zig.std', regex=True, type=MultiArrayList_Entry('.*'), identifier='std_Entry', synth=True, inline_children=True, summary=True)
     add(debugger, category='zig.std', regex=True, type='^hash_map\\.HashMapUnmanaged\\(.*\\)$', identifier='std_HashMapUnmanaged', synth=True, expand=True, summary=True)
     add(debugger, category='zig.std', regex=True, type='^hash_map\\.HashMapUnmanaged\\(.*\\)\\.Entry$', identifier = 'std_Entry', synth=True, inline_children=True, summary=True)

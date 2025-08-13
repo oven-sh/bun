@@ -20,7 +20,7 @@ using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
 using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ConsoleObject);
 
 public:
     ~ConsoleObject() final {}

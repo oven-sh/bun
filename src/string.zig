@@ -89,7 +89,7 @@ pub const String = extern struct {
                     }
                 }
 
-                return .{ @constCast((try utf8_slice.clone(allocator)).slice()), true };
+                return .{ @constCast((try utf8_slice.cloneIfNeeded(allocator)).slice()), true };
             },
             .StaticZigString => return .{ try this.value.StaticZigString.toOwnedSlice(allocator), false },
             else => return .{ &[_]u8{}, false },
@@ -754,17 +754,16 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
 
                 if (slice.allocator.isNull()) {
-                    // this was a WTF-allocated string
-                    // We're going to need to clone it across the threads
-                    // so let's just do that now instead of creating another copy.
+                    // This is an ASCII latin1 string with the same reference as the original.
                     return .{
-                        .utf8 = ZigString.Slice.init(allocator, allocator.dupe(u8, slice.slice()) catch bun.outOfMemory()),
+                        .utf8 = ZigString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
+                        .underlying = empty,
                     };
                 }
 
@@ -1069,18 +1068,18 @@ pub const String = extern struct {
         const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
-            return jsc.jsNumber(@as(i32, 0));
+            return .jsNumber(@as(i32, 0));
         }
 
         const str = try args[0].toBunString(globalObject);
         defer str.deref();
 
         if (str.isEmpty()) {
-            return jsc.jsNumber(@as(i32, 0));
+            return .jsNumber(@as(i32, 0));
         }
 
         const width = str.visibleWidth(false);
-        return jsc.jsNumber(width);
+        return .jsNumber(width);
     }
 
     /// Reports owned allocation size, not the actual size of the string.

@@ -1,6 +1,6 @@
 const NodeHTTPResponse = @This();
 
-const log = bun.Output.scoped(.NodeHTTPResponse, false);
+const log = bun.Output.scoped(.NodeHTTPResponse, .visible);
 
 pub const js = jsc.Codegen.JSNodeHTTPResponse;
 pub const toJS = js.toJS;
@@ -43,6 +43,15 @@ pub const Flags = packed struct(u8) {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
+
+    /// Did the user end the request?
+    pub fn isRequestedCompletedOrEnded(this: *const Flags) bool {
+        return this.request_has_completed or this.ended;
+    }
+
+    pub fn isDone(this: *const Flags) bool {
+        return this.isRequestedCompletedOrEnded() or this.socket_closed;
+    }
 };
 
 pub const UpgradeCTX = struct {
@@ -334,6 +343,14 @@ pub fn create(
     return js_this;
 }
 
+fn isDone(this: *const NodeHTTPResponse) bool {
+    return this.flags.isDone();
+}
+
+fn isRequestedCompletedOrEnded(this: *const NodeHTTPResponse) bool {
+    return this.flags.isRequestedCompletedOrEnded();
+}
+
 pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
     if (this.flags.socket_closed) {
         return;
@@ -344,10 +361,6 @@ pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
     }
     // detach and
     this.upgrade_context.preserveWebSocketHeadersIfNeeded();
-}
-
-fn isDone(this: *const NodeHTTPResponse) bool {
-    return this.flags.request_has_completed or this.flags.ended or this.flags.socket_closed;
 }
 
 pub fn getEnded(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -430,8 +443,13 @@ extern "C" fn NodeHTTPServer__writeHead_https(
 pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsUndef(3).slice();
 
-    if (this.isDone()) {
+    if (this.isRequestedCompletedOrEnded()) {
         return globalObject.ERR(.STREAM_ALREADY_FINISHED, "Stream is already ended", .{}).throw();
+    }
+
+    if (this.flags.socket_closed) {
+        // We haven't emitted the "close" event yet.
+        return .js_undefined;
     }
 
     const state = this.raw_response.state();
@@ -773,6 +791,7 @@ fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool
         // return false means we don't have anything to drain
         return false;
     }
+
     const thisValue = this.getThisValue();
     const on_writable = js.onWritableGetCached(thisValue) orelse return false;
     const globalThis = jsc.VirtualMachine.get().global;
@@ -791,8 +810,20 @@ fn writeOrEnd(
     this_value: jsc.JSValue,
     comptime is_end: bool,
 ) bun.JSError!jsc.JSValue {
-    if (this.isDone()) {
+    if (this.isRequestedCompletedOrEnded()) {
         return globalObject.ERR(.STREAM_WRITE_AFTER_END, "Stream already ended", .{}).throw();
+    }
+
+    // Loosely mimicking this code:
+    //      function _writeRaw(data, encoding, callback, size) {
+    //        const conn = this[kSocket];
+    //        if (conn?.destroyed) {
+    //          // The socket was destroyed. If we're still trying to write to it,
+    //          // then we haven't gotten the 'close' event yet.
+    //          return false;
+    //        }
+    if (this.flags.socket_closed) {
+        return if (is_end) .js_undefined else jsc.JSValue.jsNumber(0);
     }
 
     const state = this.raw_response.state();
@@ -943,7 +974,7 @@ pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject:
         return;
     }
 
-    if (this.isDone() or value.isUndefined()) {
+    if (this.isRequestedCompletedOrEnded() or value.isUndefined()) {
         js.onAbortedSetCached(thisValue, globalObject, .zero);
     } else {
         js.onAbortedSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
@@ -955,11 +986,11 @@ pub fn getOnData(_: *NodeHTTPResponse, thisValue: jsc.JSValue, _: *jsc.JSGlobalO
 }
 
 pub fn getHasCustomOnData(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.jsBoolean(this.flags.hasCustomOnData);
+    return .jsBoolean(this.flags.hasCustomOnData);
 }
 
 pub fn getUpgraded(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject) jsc.JSValue {
-    return jsc.jsBoolean(this.flags.upgraded);
+    return .jsBoolean(this.flags.upgraded);
 }
 
 pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, value: JSValue) void {
@@ -1017,7 +1048,9 @@ pub fn write(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, callfra
 }
 
 pub fn flushHeaders(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    this.raw_response.flushHeaders();
+    if (!this.flags.socket_closed)
+        this.raw_response.flushHeaders();
+
     return .js_undefined;
 }
 

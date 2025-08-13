@@ -1,4 +1,4 @@
-const log = Output.scoped(.@"fs.watch", true);
+const log = Output.scoped(.@"fs.watch", .hidden);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 
 // TODO: make this a top-level struct

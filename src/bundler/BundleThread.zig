@@ -102,7 +102,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
         /// This is called from `Bun.build` in JavaScript.
         fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
-            var heap = try ThreadLocalArena.init();
+            var heap = ThreadLocalArena.init();
             defer heap.deinit();
 
             const allocator = heap.allocator();

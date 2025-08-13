@@ -17,7 +17,7 @@ pub fn write(data: []const u8) void {
     file.writeAll(data) catch {};
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const bun = @import("bun");
 const std = @import("std");

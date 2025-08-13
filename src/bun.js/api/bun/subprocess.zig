@@ -170,7 +170,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
     }
 }
 
-const log = Output.scoped(.Subprocess, false);
+const log = Output.scoped(.Subprocess, .visible);
 pub const StdioKind = enum {
     stdin,
     stdout,
@@ -829,7 +829,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         pub const ref = WriterRefCount.ref;
         pub const deref = WriterRefCount.deref;
 
-        const print = bun.Output.scoped(.StaticPipeWriter, false);
+        const print = bun.Output.scoped(.StaticPipeWriter, .visible);
 
         pub const IOWriter = bun.io.BufferedWriter(@This(), struct {
             pub const onWritable = null;
@@ -1402,7 +1402,7 @@ const Writable = union(enum) {
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
                     pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
-                        bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
+                        bun.debugAssert(subprocess.ref_count.get() == debug_ref_count.get());
                     }
                     return pipe.toJS(globalThis);
                 } else {
@@ -2715,7 +2715,7 @@ pub fn getGlobalThis(this: *Subprocess) ?*jsc.JSGlobalObject {
     return this.globalThis;
 }
 
-const IPClog = Output.scoped(.IPC, false);
+const IPClog = Output.scoped(.IPC, .visible);
 
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

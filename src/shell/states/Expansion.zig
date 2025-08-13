@@ -737,7 +737,7 @@ fn outEnsureUnusedCapacity(this: *Expansion, additional: usize) void {
 }
 
 pub const ShellGlobTask = struct {
-    const debug = bun.Output.scoped(.ShellGlobTask, true);
+    const debug = bun.Output.scoped(.ShellGlobTask, .hidden);
 
     task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 

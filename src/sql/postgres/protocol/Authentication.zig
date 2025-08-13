@@ -171,7 +171,7 @@ pub const Authentication = union(enum) {
     pub const decode = DecoderWrap(Authentication, decodeInternal).decode;
 };
 
-const debug = bun.Output.scoped(.Postgres, true);
+const debug = bun.Output.scoped(.Postgres, .hidden);
 
 const bun = @import("bun");
 const std = @import("std");

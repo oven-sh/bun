@@ -378,7 +378,7 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
 const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
 
 const string = []const u8;
-const debug = Output.scoped(.Lockfile, true);
+const debug = Output.scoped(.Lockfile, .hidden);
 const stringZ = [:0]const u8;
 
 const std = @import("std");

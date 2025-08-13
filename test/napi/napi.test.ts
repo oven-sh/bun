@@ -527,8 +527,14 @@ describe("napi", () => {
     await checkSameOutput("test_constructor_order", []);
   });
 
-  it("works when creating an empty object with an exception pending", async () => {
+  it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
+  });
+
+  describe("napi_ref deletion", () => {
+    it("works", async () => {
+      await checkSameOutput("test_ref_deletion", []);
+    });
   });
 });
 

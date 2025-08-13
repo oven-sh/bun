@@ -324,7 +324,7 @@ pub fn onData(
 
 pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");

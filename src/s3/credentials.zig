@@ -275,7 +275,7 @@ pub const S3Credentials = struct {
         bun.destroy(this);
     }
 
-    const log = bun.Output.scoped(.AWS, false);
+    const log = bun.Output.scoped(.AWS, .visible);
 
     const DateResult = struct {
         // numeric representation of year, month and day (excluding time components)

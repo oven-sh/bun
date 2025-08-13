@@ -504,7 +504,7 @@ pub const Route = struct {
     };
 };
 
-const debug = bun.Output.scoped(.HTMLBundle, true);
+const debug = bun.Output.scoped(.HTMLBundle, .hidden);
 
 const StaticRoute = @import("./StaticRoute.zig");
 const std = @import("std");

@@ -219,14 +219,10 @@ public:
     void scheduleException(JSC::JSValue exception)
     {
         if (exception.isEmpty()) {
-            m_pendingException.reset();
+            m_pendingException.clear();
         }
 
-        if (!m_pendingException) {
-            m_pendingException.emplace(m_vm, exception);
-        } else {
-            m_pendingException->set(m_vm, exception);
-        }
+        m_pendingException.set(m_vm, exception);
     }
 
     bool throwPendingException()
@@ -236,19 +232,19 @@ public:
         }
 
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        JSC::throwException(globalObject(), scope, m_pendingException->get());
-        m_pendingException.reset();
+        JSC::throwException(globalObject(), scope, m_pendingException.get());
+        m_pendingException.clear();
         return true;
     }
 
     void clearPendingException()
     {
-        m_pendingException.reset();
+        m_pendingException.clear();
     }
 
     bool hasPendingException() const
     {
-        return m_pendingException.has_value();
+        return static_cast<bool>(m_pendingException);
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
@@ -259,7 +255,7 @@ public:
         if (!m_pendingException) {
             return std::nullopt;
         }
-        return m_pendingException->get();
+        return m_pendingException.get();
     }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
@@ -353,7 +349,7 @@ private:
     JSC::VM& m_vm;
     std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
     std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
-    std::optional<JSC::Strong<JSC::Unknown>> m_pendingException;
+    JSC::Strong<JSC::Unknown> m_pendingException;
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);

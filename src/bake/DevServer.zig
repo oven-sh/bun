@@ -10,9 +10,9 @@
 
 const DevServer = @This();
 
-pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
+pub const debug = bun.Output.Scoped(.DevServer, .visible);
+pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
+pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -63,10 +63,10 @@ server: ?bun.jsc.API.AnyServer,
 router: FrameworkRouter,
 /// Every navigatable route has bundling state here.
 route_bundles: ArrayListUnmanaged(RouteBundle),
-/// All access into IncrementalGraph is guarded by a DebugThreadLock. This is
+/// All access into IncrementalGraph is guarded by a ThreadLock. This is
 /// only a debug assertion as contention to this is always a bug; If a bundle is
 /// active and a file is changed, that change is placed into the next bundle.
-graph_safety_lock: bun.DebugThreadLock,
+graph_safety_lock: bun.safety.ThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
 /// State populated during bundling and hot updates. Often cleared
@@ -282,7 +282,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .server_fetch_function_callback = .empty,
         .server_register_update_callback = .empty,
         .generation = 0,
-        .graph_safety_lock = .unlocked,
+        .graph_safety_lock = .initUnlocked(),
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundler_options = options.bundler_options,
@@ -1584,7 +1584,7 @@ pub const DeferredRequest = struct {
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
     fn deinitImpl(this: *DeferredRequest) void {
-        bun.assert(this.ref_count.active_counts == 0);
+        this.ref_count.assertNoRefs();
 
         defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
         switch (this.handler) {
@@ -1646,7 +1646,7 @@ pub fn startAsyncBundle(
     // Ref server to keep it from closing.
     if (dev.server) |server| server.onPendingRequest();
 
-    var heap = try ThreadLocalArena.init();
+    var heap = ThreadLocalArena.init();
     errdefer heap.deinit();
     const allocator = heap.allocator();
     const ast_memory_allocator = try allocator.create(bun.ast.ASTMemoryAllocator);

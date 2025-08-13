@@ -1,6 +1,6 @@
 const TODO_EXCEPTION: jsc.C.ExceptionRef = null;
 
-const log = bun.Output.scoped(.napi, false);
+const log = bun.Output.scoped(.napi, .visible);
 
 /// This is `struct napi_env__` from napi.h
 pub const NapiEnv = opaque {

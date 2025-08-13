@@ -25,7 +25,7 @@ pub const ShellIO = struct {
 /// TODO Set this to interpreter
 const ShellCmd = bun.shell.Interpreter.Cmd;
 
-const log = Output.scoped(.SHELL_SUBPROC, false);
+const log = Output.scoped(.SHELL_SUBPROC, .visible);
 
 pub const ShellSubprocess = struct {
     const Subprocess = @This();

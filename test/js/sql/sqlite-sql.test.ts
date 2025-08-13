@@ -20,7 +20,6 @@ describe("Connection & Initialization", () => {
       expect(myapp2.options.adapter).toBe("sqlite");
       expect(myapp2.options.filename).toBe("myapp.db");
 
-      // Too ambiguous
       expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
         `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
       );
@@ -251,15 +250,12 @@ describe("Query Execution", () => {
         (3, 'Charlie', 95, 'Red'),
         (4, 'Diana', 110, 'Blue')`;
 
-    // ORDER BY
     const ordered = await sql`SELECT * FROM scores ORDER BY score DESC`;
     expect(ordered[0].player).toBe("Diana");
 
-    // WHERE
     const filtered = await sql`SELECT * FROM scores WHERE score > ${90}`;
     expect(filtered).toHaveLength(3);
 
-    // GROUP BY with aggregate
     const grouped = await sql`
         SELECT team, COUNT(*) as count, AVG(score) as avg_score
         FROM scores
@@ -267,14 +263,12 @@ describe("Query Execution", () => {
       `;
     expect(grouped).toHaveLength(2);
 
-    // LIMIT and OFFSET
     const limited = await sql`SELECT * FROM scores ORDER BY score DESC LIMIT 2 OFFSET 1`;
     expect(limited).toHaveLength(2);
     expect(limited[0].player).toBe("Alice");
   });
 
   test("handles multiple statements with unsafe", async () => {
-    // Execute multiple statements
     await sql.unsafe(`
         CREATE TABLE multi1 (id INTEGER);
         CREATE TABLE multi2 (id INTEGER);
@@ -282,7 +276,6 @@ describe("Query Execution", () => {
         INSERT INTO multi2 VALUES (2);
       `);
 
-    // Query separately to verify
     const result1 = await sql`SELECT * FROM multi1`;
     const result2 = await sql`SELECT * FROM multi2`;
 
@@ -306,7 +299,6 @@ describe("Parameterized Queries", () => {
   });
 
   test("converts PostgreSQL $N style to SQLite ? style", async () => {
-    // The SQL template tag internally uses $N style, should be converted to ?
     await sql`INSERT INTO params_test VALUES (${1}, ${"test"}, ${3.14})`;
 
     const result = await sql`SELECT * FROM params_test WHERE id = ${1}`;
@@ -399,15 +391,13 @@ describe("Transactions", () => {
           await sp`UPDATE accounts SET balance = balance - 200 WHERE id = 1`;
           throw new Error("Inner transaction failed");
         });
-      } catch (err) {
-        // Inner transaction rolled back, outer continues
-      }
+      } catch (err) {}
 
       await tx`UPDATE accounts SET balance = balance + 100 WHERE id = 2`;
     });
 
     const accounts = await sql`SELECT * FROM accounts ORDER BY id`;
-    expect(accounts[0].balance).toBe(900); // Only first update applied
+    expect(accounts[0].balance).toBe(900);
     expect(accounts[1].balance).toBe(600);
   });
 
@@ -417,7 +407,7 @@ describe("Transactions", () => {
 
       try {
         await tx`UPDATE accounts SET balance = 0`;
-        expect().fail("Update should have failed"); // Should not reach here
+        expect().fail("Update should have failed");
       } catch (err) {
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).message).toContain("readonly");
@@ -430,14 +420,12 @@ describe("Transactions", () => {
   });
 
   test("deferred vs immediate transactions", async () => {
-    // SQLite supports DEFERRED, IMMEDIATE, and EXCLUSIVE transaction modes
     await sql.begin("deferred", async tx => {
-      await tx`SELECT * FROM accounts`; // Acquires shared lock
-      await tx`UPDATE accounts SET balance = balance + 1`; // Upgrades to exclusive lock
+      await tx`SELECT * FROM accounts`;
+      await tx`UPDATE accounts SET balance = balance + 1`;
     });
 
     await sql.begin("immediate", async tx => {
-      // Acquires reserved lock immediately
       await tx`UPDATE accounts SET balance = balance + 1`;
     });
 
@@ -458,15 +446,12 @@ describe("SQLite-specific features", () => {
   });
 
   test("PRAGMA statements", async () => {
-    // Get SQLite version
     const version = await sql`PRAGMA compile_options`;
     expect(version.length).toBeGreaterThan(0);
 
-    // Check journal mode
     const journalMode = await sql`PRAGMA journal_mode`;
     expect(journalMode[0].journal_mode).toBeDefined();
 
-    // Set and check synchronous mode
     await sql`PRAGMA synchronous = NORMAL`;
     const syncMode = await sql`PRAGMA synchronous`;
     expect(syncMode[0].synchronous).toBe(1);
@@ -485,7 +470,7 @@ describe("SQLite-specific features", () => {
 
     const results = await sql`SELECT * FROM auto_test ORDER BY id`;
     expect(results[0].id).toBe(1);
-    expect(results[1].id).toBe(3); // AUTOINCREMENT doesn't reuse IDs
+    expect(results[1].id).toBe(3);
   });
 
   test("last_insert_rowid()", async () => {
@@ -562,13 +547,11 @@ describe("SQLite-specific features", () => {
   });
 
   test("JSON functions", async () => {
-    // SQLite JSON1 extension functions
     await sql`CREATE TABLE json_test (id INTEGER, data TEXT)`;
 
     const jsonData = { name: "Test", values: [1, 2, 3] };
     await sql`INSERT INTO json_test VALUES (1, ${JSON.stringify(jsonData)})`;
 
-    // Extract JSON values
     const name = await sql`SELECT json_extract(data, '$.name') as name FROM json_test`;
     expect(name[0].name).toBe("Test");
 
@@ -672,7 +655,6 @@ describe("Error handling", () => {
         unique_val TEXT UNIQUE
       )`;
 
-    // NOT NULL violation
     try {
       await sql`INSERT INTO constraints (id, value) VALUES (1, ${null})`;
       expect(true).toBe(false);
@@ -681,7 +663,6 @@ describe("Error handling", () => {
       expect((err as Error).message).toContain("NOT NULL");
     }
 
-    // UNIQUE violation
     await sql`INSERT INTO constraints VALUES (1, 'test', 'unique')`;
     try {
       await sql`INSERT INTO constraints VALUES (2, 'test2', 'unique')`;
@@ -703,10 +684,10 @@ describe("Error handling", () => {
       )`;
 
     await sql`INSERT INTO parent VALUES (1)`;
-    await sql`INSERT INTO child VALUES (1, 1)`; // Should work
+    await sql`INSERT INTO child VALUES (1, 1)`;
 
     try {
-      await sql`INSERT INTO child VALUES (2, 999)`; // Non-existent parent
+      await sql`INSERT INTO child VALUES (2, 999)`;
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
@@ -733,8 +714,6 @@ describe("Connection management", () => {
   test.todo("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    // TODO: Decide if SQLite should support reserve() or throw
-    // Currently it returns a connection wrapper for transaction support
     await expect(sql.reserve()).rejects.toThrow("SQLite doesn't support connection reservation (no connection pool)");
 
     await sql.close();
@@ -757,8 +736,6 @@ describe("Connection management", () => {
   test.todo("flush throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    // TODO: SQLite flush() currently doesn't throw, it's a no-op
-    // Decide if it should throw or remain a no-op
     expect(() => sql.flush()).toThrow("SQLite doesn't support flush() - queries are executed synchronously");
 
     await sql.close();
@@ -771,9 +748,8 @@ describe("Performance & Edge Cases", () => {
 
     await sql`CREATE TABLE large (id INTEGER PRIMARY KEY, data TEXT)`;
 
-    // Insert many rows
     const rowCount = 1000;
-    const data = Buffer.alloc(100, "x").toString(); // 100 character string
+    const data = Buffer.alloc(100, "x").toString();
 
     await sql.begin(async tx => {
       for (let i = 0; i < rowCount; i++) {
@@ -811,7 +787,6 @@ describe("Performance & Edge Cases", () => {
 
     await sql`CREATE TABLE concurrent (id INTEGER PRIMARY KEY, value INTEGER)`;
 
-    // SQLite serializes queries, but they should all complete
     const promises = Array.from({ length: 10 }, (_, i) => sql`INSERT INTO concurrent VALUES (${i}, ${i * 10})`);
 
     await Promise.all(promises);
@@ -838,14 +813,7 @@ describe("Performance & Edge Cases", () => {
   test("handles special table names", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    // Table names that need quoting
-    const specialNames = [
-      "table-with-dash",
-      "table.with.dots",
-      "table with spaces",
-      "123numeric",
-      "SELECT", // Reserved keyword
-    ];
+    const specialNames = ["table-with-dash", "table.with.dots", "table with spaces", "123numeric", "SELECT"];
 
     for (const name of specialNames) {
       await sql.unsafe(`CREATE TABLE "${name}" (id INTEGER)`);
@@ -869,7 +837,6 @@ describe("WAL mode and concurrency", () => {
     const mode = await sql`PRAGMA journal_mode`;
     expect(mode[0].journal_mode).toBe("wal");
 
-    // WAL mode creates additional files
     await sql`CREATE TABLE wal_test (id INTEGER)`;
     await sql`INSERT INTO wal_test VALUES (1)`;
 
@@ -895,14 +862,12 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE resource_test (id INTEGER, data TEXT)`;
 
-    // Insert some data
     for (let i = 0; i < 100; i++) {
       await sql`INSERT INTO resource_test VALUES (${i}, ${"x".repeat(1000)})`;
     }
 
     await sql.close();
 
-    // Further operations should fail
     try {
       await sql`SELECT * FROM resource_test`;
       expect(true).toBe(false);
@@ -917,29 +882,23 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    // Run many queries to ensure statements are finalized properly
-    // If statements weren't finalized, we'd eventually run out of resources
     const iterations = 10000;
 
     for (let i = 0; i < iterations; i++) {
-      // Test single statements
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
 
-      // Test SELECT statements
       if (i % 100 === 0) {
         const result = await sql`SELECT COUNT(*) as count FROM stmt_test`;
         expect(result[0].count).toBe(i + 1);
       }
     }
 
-    // Test multi-statement queries with unsafe
     await sql.unsafe(`
       DELETE FROM stmt_test WHERE id < 100;
       DELETE FROM stmt_test WHERE id < 200;
       DELETE FROM stmt_test WHERE id < 300;
     `);
 
-    // Verify the database is still functional
     const finalCount = await sql`SELECT COUNT(*) as count FROM stmt_test`;
     expect(finalCount[0].count).toBe(iterations - 300);
 
@@ -951,20 +910,16 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE concurrent_test (id INTEGER, value TEXT)`;
 
-    // Create many queries in parallel
     const promises = [];
     for (let i = 0; i < 1000; i++) {
       promises.push(sql`INSERT INTO concurrent_test VALUES (${i}, ${"value" + i})`);
     }
 
-    // Wait for all to complete
     await Promise.all(promises);
 
-    // Verify all were inserted
     const result = await sql`SELECT COUNT(*) as count FROM concurrent_test`;
     expect(result[0].count).toBe(1000);
 
-    // Run many SELECT queries in parallel
     const selectPromises = [];
     for (let i = 0; i < 100; i++) {
       selectPromises.push(sql`SELECT * FROM concurrent_test WHERE id = ${i}`);
@@ -984,7 +939,6 @@ describe("Connection URL Edge Cases", () => {
   test("handles various file:// URL formats", async () => {
     const dir = tempDirWithFiles("sqlite-url-test", {});
 
-    // file:// with three slashes (local file)
     const dbPath1 = path.join(dir, "test1.db");
     const sql1 = new SQL(`file://${dbPath1}`);
     await sql1`CREATE TABLE test (id INTEGER)`;
@@ -993,7 +947,6 @@ describe("Connection URL Edge Cases", () => {
     expect(result1).toHaveLength(1);
     await sql1.close();
 
-    // file: with just path
     const dbPath2 = path.join(dir, "test2.db");
     const sql2 = new SQL(`file:${dbPath2}`);
     await sql2`CREATE TABLE test (id INTEGER)`;
@@ -1041,14 +994,12 @@ describe("Connection URL Edge Cases", () => {
     try {
       process.chdir(dir);
 
-      // Relative path
       const sql1 = new SQL("sqlite://./relative.db");
       await sql1`CREATE TABLE test (id INTEGER)`;
       await sql1.close();
 
       expect(existsSync(path.join(dir, "relative.db"))).toBe(true);
 
-      // Absolute path
       const absPath = path.join(dir, "absolute.db");
       const sql2 = new SQL(`sqlite://${absPath}`);
       await sql2`CREATE TABLE test (id INTEGER)`;
@@ -1065,13 +1016,11 @@ describe("Connection URL Edge Cases", () => {
     const dir = tempDirWithFiles("sqlite-readonly-test", {});
     const dbPath = path.join(dir, "readonly.db");
 
-    // First create the database
     const sql1 = new SQL(`sqlite://${dbPath}`);
     await sql1`CREATE TABLE test (id INTEGER)`;
     await sql1`INSERT INTO test VALUES (1)`;
     await sql1.close();
 
-    // Open in readonly mode
     const sql2 = new SQL(`sqlite://${dbPath}?mode=ro`);
 
     const result = await sql2`SELECT * FROM test`;
@@ -1093,7 +1042,6 @@ describe("Connection URL Edge Cases", () => {
     const dir = tempDirWithFiles("sqlite-uri-test", {});
     const dbPath = path.join(dir, "uri.db");
 
-    // Test various URI parameters
     const sql = new SQL(`sqlite://${dbPath}?cache=shared&mode=rwc`);
 
     await sql`CREATE TABLE test (id INTEGER)`;
@@ -1131,12 +1079,11 @@ describe("BLOB Edge Cases and Binary Data", () => {
   test("handles large BLOBs", async () => {
     await sql`CREATE TABLE large_blob (id INTEGER, data BLOB)`;
 
-    // Test with 1MB, 10MB binary data
     const sizes = [1024 * 1024, 10 * 1024 * 1024];
 
     for (const size of sizes) {
       const largeBuffer = Buffer.alloc(size);
-      // Fill with pattern to verify integrity
+
       for (let i = 0; i < size; i++) {
         largeBuffer[i] = i % 256;
       }
@@ -1147,7 +1094,7 @@ describe("BLOB Edge Cases and Binary Data", () => {
       const retrieved = Buffer.from(result[0].data);
 
       expect(retrieved.length).toBe(size);
-      // Verify pattern integrity
+
       for (let i = 0; i < Math.min(100, size); i++) {
         expect(retrieved[i]).toBe(i % 256);
       }
@@ -1157,7 +1104,6 @@ describe("BLOB Edge Cases and Binary Data", () => {
   test("handles binary data with all byte values", async () => {
     await sql`CREATE TABLE binary_test (id INTEGER, data BLOB)`;
 
-    // Create buffer with all possible byte values
     const allBytes = Buffer.alloc(256);
     for (let i = 0; i < 256; i++) {
       allBytes[i] = i;
@@ -1177,11 +1123,9 @@ describe("BLOB Edge Cases and Binary Data", () => {
   test("handles Uint8Array and ArrayBuffer", async () => {
     await sql`CREATE TABLE array_test (id INTEGER, data BLOB)`;
 
-    // Test Uint8Array
     const uint8 = new Uint8Array([1, 2, 3, 4, 5]);
     await sql`INSERT INTO array_test VALUES (1, ${uint8})`;
 
-    // Test ArrayBuffer
     const arrayBuffer = new ArrayBuffer(8);
     const view = new DataView(arrayBuffer);
     view.setInt32(0, 0x12345678);
@@ -1227,14 +1171,7 @@ describe("Special Characters and Escape Sequences", () => {
   });
 
   test("handles control characters and escape sequences", async () => {
-    const controls = [
-      "\n\r\t", // Newline, carriage return, tab
-      "\x00\x01\x02", // NULL and control chars
-      "\b\f\v", // Backspace, form feed, vertical tab
-      "\\n\\r\\t", // Escaped sequences
-      "\u0000\u001F", // Unicode control characters
-      "\x1B[31mANSI\x1B[0m", // ANSI escape codes
-    ];
+    const controls = ["\n\r\t", "\x00\x01\x02", "\b\f\v", "\\n\\r\\t", "\u0000\u001F", "\x1B[31mANSI\x1B[0m"];
 
     await sql`CREATE TABLE control_chars (id INTEGER, val TEXT)`;
 
@@ -1247,15 +1184,15 @@ describe("Special Characters and Escape Sequences", () => {
 
   test("handles Unicode and emoji", async () => {
     const unicode = [
-      "Hello 世界", // Chinese
-      "مرحبا بالعالم", // Arabic
-      "שלום עולם", // Hebrew
-      "Здравствуй мир", // Russian
-      "🚀🎉🌟", // Emojis
-      "👨‍👩‍👧‍👦", // Family emoji with ZWJ
-      "𝓗𝓮𝓵𝓵𝓸", // Mathematical bold script
-      "A\u0301", // Combining diacritical marks
-      "🏴󠁧󠁢󠁥󠁮󠁧󠁿", // Flag emoji with tags
+      "Hello 世界",
+      "مرحبا بالعالم",
+      "שלום עולם",
+      "Здравствуй мир",
+      "🚀🎉🌟",
+      "👨‍👩‍👧‍👦",
+      "𝓗𝓮𝓵𝓵𝓸",
+      "A\u0301",
+      "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
     ];
 
     await sql`CREATE TABLE unicode_test (id INTEGER, val TEXT)`;
@@ -1270,7 +1207,6 @@ describe("Special Characters and Escape Sequences", () => {
   test("handles very long strings", async () => {
     await sql`CREATE TABLE long_strings (id INTEGER, val TEXT)`;
 
-    // Test various long string scenarios
     const lengths = [1000, 10000, 100000, 1000000];
 
     for (const len of lengths) {
@@ -1390,10 +1326,9 @@ describe("Triggers and Views", () => {
     expect(alerts[0].product).toBe("Widget");
     expect(alerts[0].quantity).toBe(5);
 
-    // Update that shouldn't trigger
     await sql`UPDATE inventory SET quantity = 15 WHERE id = 1`;
     const alerts2 = await sql`SELECT * FROM reorder_alerts`;
-    expect(alerts2).toHaveLength(1); // Still just one alert
+    expect(alerts2).toHaveLength(1);
   });
 });
 
@@ -1418,22 +1353,16 @@ describe("Indexes and Query Optimization", () => {
       description TEXT
     )`;
 
-    // Simple index
     await sql`CREATE INDEX idx_category ON products(category)`;
 
-    // Composite index
     await sql`CREATE INDEX idx_category_price ON products(category, price DESC)`;
 
-    // Unique index
     await sql`CREATE UNIQUE INDEX idx_sku ON products(sku)`;
 
-    // Partial index
     await sql`CREATE INDEX idx_expensive ON products(price) WHERE price > 100`;
 
-    // Expression index
     await sql`CREATE INDEX idx_name_lower ON products(LOWER(name))`;
 
-    // Insert test data
     for (let i = 1; i <= 100; i++) {
       await sql`INSERT INTO products VALUES (
         ${i}, 
@@ -1445,7 +1374,6 @@ describe("Indexes and Query Optimization", () => {
       )`;
     }
 
-    // Verify unique constraint works
     try {
       await sql`INSERT INTO products VALUES (101, 'Test', 'Test', 10, 'SKU-00001', 'Duplicate SKU')`;
       expect(true).toBe(false);
@@ -1454,7 +1382,6 @@ describe("Indexes and Query Optimization", () => {
       expect((err as Error).message).toContain("UNIQUE");
     }
 
-    // Query using indexes
     const results = await sql`SELECT * FROM products WHERE category = 'Category 5'`;
     expect(results.length).toBeGreaterThan(0);
 
@@ -1471,16 +1398,13 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
-    // Insert skewed data
     for (let i = 1; i <= 1000; i++) {
       const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
       await sql`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
     }
 
-    // Update statistics
     await sql`ANALYZE`;
 
-    // Check that statistics were gathered
     const stats = await sql`SELECT * FROM sqlite_stat1`;
     expect(stats.length).toBeGreaterThan(0);
   });
@@ -1493,7 +1417,6 @@ describe("Indexes and Query Optimization", () => {
       created_at TEXT
     )`;
 
-    // Create a covering index for common query
     await sql`CREATE INDEX idx_email_username ON users(email, username)`;
 
     for (let i = 1; i <= 100; i++) {
@@ -1505,7 +1428,6 @@ describe("Indexes and Query Optimization", () => {
       )`;
     }
 
-    // Query that can be satisfied entirely from the index
     const result = await sql`SELECT email, username FROM users WHERE email LIKE 'user1%'`;
     expect(result.length).toBeGreaterThan(0);
   });
@@ -1517,10 +1439,8 @@ describe("VACUUM and Database Maintenance", () => {
     const dbPath = path.join(dir, "vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
-    // Create and populate table
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
-    // Insert and delete lots of data to create fragmentation
     for (let i = 0; i < 1000; i++) {
       await sql`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
     }
@@ -1530,13 +1450,11 @@ describe("VACUUM and Database Maintenance", () => {
     const statsBefore = await stat(dbPath);
     const sizeBefore = statsBefore.size;
 
-    // Run VACUUM
     await sql`VACUUM`;
 
     const statsAfter = await stat(dbPath);
     const sizeAfter = statsAfter.size;
 
-    // Database should be smaller after VACUUM
     expect(sizeAfter).toBeLessThanOrEqual(sizeBefore);
 
     await sql.close();
@@ -1548,7 +1466,6 @@ describe("VACUUM and Database Maintenance", () => {
     const dbPath = path.join(dir, "auto_vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
-    // Enable incremental auto-vacuum
     await sql`PRAGMA auto_vacuum = 2`;
 
     await sql`CREATE TABLE test (id INTEGER, data TEXT)`;
@@ -1559,7 +1476,6 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`DELETE FROM test WHERE id < 50`;
 
-    // Incremental vacuum - free up some pages
     await sql`PRAGMA incremental_vacuum(10)`;
 
     const pageCount = await sql`PRAGMA page_count`;
@@ -1578,18 +1494,15 @@ describe("Backup and Restore Operations", () => {
 
     const source = new SQL(`sqlite://${sourcePath}`);
 
-    // Create and populate source database
     await source`CREATE TABLE backup_test (id INTEGER PRIMARY KEY, data TEXT)`;
     for (let i = 1; i <= 10; i++) {
       await source`INSERT INTO backup_test VALUES (${i}, ${"Data " + i})`;
     }
 
-    // Use VACUUM INTO for backup (SQLite 3.27.0+)
     await source.unsafe(`VACUUM INTO '${backupPath}'`);
 
     await source.close();
 
-    // Verify backup
     const backup = new SQL(`sqlite://${backupPath}`);
     const data = await backup`SELECT * FROM backup_test`;
     expect(data).toHaveLength(10);
@@ -1623,11 +1536,9 @@ describe("Custom Collations and Functions", () => {
       (3, 'ALICE'),
       (4, 'Bob')`;
 
-    // NOCASE collation makes comparison case-insensitive
     const result = await sql`SELECT * FROM collation_test WHERE name = 'alice'`;
     expect(result).toHaveLength(3);
 
-    // But preserves original case in storage
     expect(result.map(r => r.name).sort()).toEqual(["ALICE", "Alice", "alice"]);
   });
 
@@ -1643,7 +1554,6 @@ describe("Custom Collations and Functions", () => {
       (3, 'B'),
       (4, 'b')`;
 
-    // BINARY collation is case-sensitive
     const result = await sql`SELECT * FROM binary_collation ORDER BY data`;
     expect(result.map(r => r.data)).toEqual(["A", "B", "a", "b"]);
   });
@@ -1709,7 +1619,6 @@ describe("Window Functions", () => {
       ORDER BY department, employee
     `;
 
-    // Verify department totals
     const marketingRows = result.filter(r => r.department === "Marketing");
     expect(marketingRows[0].dept_total).toBe(2000);
 
@@ -1758,10 +1667,8 @@ describe("Check Constraints and Complex Validations", () => {
       percentage REAL CHECK (percentage >= 0 AND percentage <= 100)
     )`;
 
-    // Valid insert
     await sql`INSERT INTO validated VALUES (1, 25, 'test@example.com', 'active', 50.5)`;
 
-    // Invalid age
     try {
       await sql`INSERT INTO validated VALUES (2, -1, 'test@example.com', 'active', 50)`;
       expect(true).toBe(false);
@@ -1769,7 +1676,6 @@ describe("Check Constraints and Complex Validations", () => {
       expect((err as Error).message).toContain("CHECK");
     }
 
-    // Invalid email
     try {
       await sql`INSERT INTO validated VALUES (3, 25, 'notanemail', 'active', 50)`;
       expect(true).toBe(false);
@@ -1777,7 +1683,6 @@ describe("Check Constraints and Complex Validations", () => {
       expect((err as Error).message).toContain("CHECK");
     }
 
-    // Invalid status
     try {
       await sql`INSERT INTO validated VALUES (4, 25, 'test@example.com', 'invalid', 50)`;
       expect(true).toBe(false);
@@ -1785,7 +1690,6 @@ describe("Check Constraints and Complex Validations", () => {
       expect((err as Error).message).toContain("CHECK");
     }
 
-    // Invalid percentage
     try {
       await sql`INSERT INTO validated VALUES (5, 25, 'test@example.com', 'active', 101)`;
       expect(true).toBe(false);
@@ -1805,10 +1709,8 @@ describe("Check Constraints and Complex Validations", () => {
       CHECK (quantity * price >= 0)
     )`;
 
-    // Valid insert
     await sql`INSERT INTO orders VALUES (1, '2024-01-01', '2024-01-31', 10, 9.99)`;
 
-    // Invalid date range
     try {
       await sql`INSERT INTO orders VALUES (2, '2024-02-01', '2024-01-01', 10, 9.99)`;
       expect(true).toBe(false);
@@ -1882,7 +1784,6 @@ describe("Generated Columns", () => {
     expect(results[1].area).toBeCloseTo(17.6, 2);
     expect(results[1].perimeter).toBeCloseTo(17.4, 2);
 
-    // Update and verify generated columns update
     await sql`UPDATE rectangles SET width = 15 WHERE id = 1`;
     const updated = await sql`SELECT * FROM rectangles WHERE id = 1`;
     expect(updated[0].area).toBe(300);
@@ -1910,12 +1811,10 @@ describe("Partial Indexes", () => {
       due_date TEXT
     )`;
 
-    // Index only incomplete high-priority tasks
     await sql`CREATE INDEX idx_urgent_tasks 
               ON tasks(due_date, priority) 
               WHERE status != 'completed' AND priority > 3`;
 
-    // Insert test data
     const tasks = [
       ["Task 1", "pending", 5, "2024-01-01"],
       ["Task 2", "completed", 5, "2024-01-01"],
@@ -1928,7 +1827,6 @@ describe("Partial Indexes", () => {
       await sql`INSERT INTO tasks VALUES (${i + 1}, ${title}, ${status}, ${priority}, ${due_date})`;
     }
 
-    // Query that uses the partial index
     const urgent = await sql`
       SELECT * FROM tasks 
       WHERE status != 'completed' AND priority > 3
@@ -1962,7 +1860,6 @@ describe("UPSERT Operations", () => {
 
     await sql`INSERT INTO users VALUES (1, 'alice@example.com', 'Alice', 1)`;
 
-    // This will replace the entire row
     await sql`INSERT OR REPLACE INTO users VALUES (1, 'alice@example.com', 'Alice Updated', 5)`;
 
     const result = await sql`SELECT * FROM users WHERE id = 1`;
@@ -1980,7 +1877,6 @@ describe("UPSERT Operations", () => {
 
     await sql`INSERT INTO inventory VALUES (1, 'Widget', 100, '2024-01-01')`;
 
-    // UPSERT - update quantity if exists
     await sql`
       INSERT INTO inventory VALUES (1, 'Widget', 50, '2024-01-02')
       ON CONFLICT(product_id) DO UPDATE SET
@@ -1992,7 +1888,6 @@ describe("UPSERT Operations", () => {
     expect(result[0].quantity).toBe(150);
     expect(result[0].last_updated).toBe("2024-01-02");
 
-    // Insert new product
     await sql`
       INSERT INTO inventory VALUES (2, 'Gadget', 75, '2024-01-02')
       ON CONFLICT(product_id) DO UPDATE SET
@@ -2011,7 +1906,6 @@ describe("UPSERT Operations", () => {
 
     await sql`INSERT INTO settings VALUES ('theme', 'dark')`;
 
-    // This should do nothing
     const result = await sql`
       INSERT INTO settings VALUES ('theme', 'light')
       ON CONFLICT(key) DO NOTHING
@@ -2020,7 +1914,6 @@ describe("UPSERT Operations", () => {
 
     expect(result).toHaveLength(0);
 
-    // Verify original value is unchanged
     const setting = await sql`SELECT * FROM settings WHERE key = 'theme'`;
     expect(setting[0].value).toBe("dark");
   });
@@ -2054,7 +1947,6 @@ describe("WITHOUT ROWID Tables", () => {
     const results = await sql`SELECT * FROM sessions WHERE user_id = 1`;
     expect(results).toHaveLength(2);
 
-    // Verify composite key uniqueness
     try {
       await sql`INSERT INTO sessions VALUES (1, 'phone', 'token4', '2024-01-02')`;
       expect(true).toBe(false);
@@ -2076,11 +1968,9 @@ describe("Concurrency and Locking", () => {
       await sql1`INSERT INTO test VALUES (${i}, ${"value" + i})`;
     }
 
-    // Open multiple connections for reading
     const sql2 = new SQL(`sqlite://${dbPath}`);
     const sql3 = new SQL(`sqlite://${dbPath}`);
 
-    // Concurrent reads should all succeed
     const [result1, result2, result3] = await Promise.all([
       sql1`SELECT COUNT(*) as count FROM test`,
       sql2`SELECT COUNT(*) as count FROM test`,
@@ -2105,24 +1995,21 @@ describe("Concurrency and Locking", () => {
     await sql`CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)`;
     await sql`INSERT INTO counter VALUES (1, 0)`;
 
-    // Start a transaction that will hold a write lock
     const updatePromise = sql.begin(async tx => {
       await tx`UPDATE counter SET value = value + 1 WHERE id = 1`;
-      // Simulate some work
+
       await new Promise(resolve => setTimeout(resolve, 50));
       await tx`UPDATE counter SET value = value + 1 WHERE id = 1`;
       return "done";
     });
 
-    // Try to write from another connection while transaction is active
     const sql2 = new SQL(`sqlite://${dbPath}`);
 
-    // This should complete after the transaction
     const startTime = Date.now();
     await updatePromise;
     const duration = Date.now() - startTime;
 
-    expect(duration).toBeGreaterThanOrEqual(40); // Should have waited
+    expect(duration).toBeGreaterThanOrEqual(40);
 
     const final = await sql`SELECT value FROM counter WHERE id = 1`;
     expect(final[0].value).toBe(2);
@@ -2139,26 +2026,22 @@ describe("Concurrency and Locking", () => {
     const sql1 = new SQL(`sqlite://${dbPath}`);
     await sql1`CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    // Set a short busy timeout
     await sql1`PRAGMA busy_timeout = 100`;
 
     const sql2 = new SQL(`sqlite://${dbPath}`);
     await sql2`PRAGMA busy_timeout = 100`;
 
-    // Start a long transaction in sql1
     const longTransaction = sql1.begin(async tx => {
       await tx`INSERT INTO test VALUES (1, 'test')`;
       await new Promise(resolve => setTimeout(resolve, 200));
       return "done";
     });
 
-    // Try to write from sql2 - should timeout
     try {
       await sql2`INSERT INTO test VALUES (2, 'test2')`;
-      expect(true).toBe(false); // Should not reach here
+      expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
-      // SQLite busy error
     }
 
     await longTransaction;
@@ -2223,7 +2106,7 @@ describe("Date and Time Functions", () => {
 
     expect(results[0].date_only).toBe("2024-01-15");
     expect(results[0].time_only).toBe("14:30:45");
-    expect(results[0].day_of_week).toBe("1"); // Monday
+    expect(results[0].day_of_week).toBe("1");
     expect(results[0].day_of_year).toBe("015");
     expect(parseInt(results[0].unix_timestamp)).toBeGreaterThan(0);
   });
@@ -2314,7 +2197,6 @@ describe("Aggregate Functions and Grouping", () => {
       ORDER BY region NULLS LAST, product NULLS LAST
     `;
 
-    // Should include subtotals and grand total
     const grandTotal = result.find(r => r.region === null && r.product === null);
     expect(grandTotal).toBeDefined();
     expect(grandTotal.total_quantity).toBe(91);
@@ -2342,10 +2224,8 @@ describe("STRICT Tables", () => {
       any_col ANY
     ) STRICT`;
 
-    // Valid inserts
     await sql`INSERT INTO strict_test VALUES (1, 42, 3.14, 'text', X'0102', 'anything')`;
 
-    // Type violations should fail
     try {
       await sql`INSERT INTO strict_test VALUES (2, 'not an int', 3.14, 'text', X'0102', 'anything')`;
       expect(true).toBe(false);
@@ -2360,7 +2240,6 @@ describe("STRICT Tables", () => {
       expect(err).toBeInstanceOf(Error);
     }
 
-    // ANY column accepts anything
     await sql`INSERT INTO strict_test VALUES (4, 42, 3.14, 'text', X'0102', 123)`;
     await sql`INSERT INTO strict_test VALUES (5, 42, 3.14, 'text', X'0102', X'ABCD')`;
 
@@ -2448,7 +2327,7 @@ describe("Recursive Queries and Complex CTEs", () => {
 
     expect(result).toHaveLength(10);
     expect(result[0].fact).toBe(1);
-    expect(result[9].fact).toBe(3628800); // 10!
+    expect(result[9].fact).toBe(3628800);
   });
 
   test("Fibonacci sequence", async () => {
@@ -2587,12 +2466,11 @@ describe("Mathematical and String Functions", () => {
       (4, 'hELLo'),
       (5, 'world')`;
 
-    // GLOB is case-sensitive unlike LIKE
     const globResult = await sql`SELECT * FROM patterns WHERE text GLOB 'h*'`;
-    expect(globResult).toHaveLength(2); // 'hello' and 'hELLo'
+    expect(globResult).toHaveLength(2);
 
     const likeResult = await sql`SELECT * FROM patterns WHERE text LIKE 'h%'`;
-    expect(likeResult).toHaveLength(4); // All variants of hello
+    expect(likeResult).toHaveLength(4);
   });
 });
 
@@ -2632,7 +2510,6 @@ describe("Edge Cases for NULL handling", () => {
     await sql`CREATE TABLE null_test (id INTEGER, value INTEGER)`;
     await sql`INSERT INTO null_test VALUES (1, 10), (2, NULL), (3, 20)`;
 
-    // NULL comparisons
     const eq = await sql`SELECT * FROM null_test WHERE value = NULL`;
     expect(eq).toHaveLength(0);
 
@@ -2642,7 +2519,6 @@ describe("Edge Cases for NULL handling", () => {
     const notNull = await sql`SELECT * FROM null_test WHERE value IS NOT NULL`;
     expect(notNull).toHaveLength(2);
 
-    // NULL in ORDER BY (NULLs come first in ASC, last in DESC)
     const asc = await sql`SELECT * FROM null_test ORDER BY value ASC`;
     expect(asc[0].value).toBeNull();
 
@@ -2666,7 +2542,7 @@ describe("Edge Cases for NULL handling", () => {
     `;
 
     expect(result[0].count_all).toBe(5);
-    expect(result[0].count_values).toBe(3); // NULLs not counted
+    expect(result[0].count_values).toBe(3);
     expect(result[0].sum_values).toBe(60);
     expect(result[0].avg_values).toBe(20);
     expect(result[0].max_value).toBe(30);
@@ -2754,7 +2630,6 @@ describe("Error Recovery and Database Integrity", () => {
     await sql`CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)`;
     await sql`INSERT INTO test VALUES (1, 'test')`;
 
-    // Run integrity check
     const integrityCheck = await sql`PRAGMA integrity_check`;
     expect(integrityCheck[0].integrity_check).toBe("ok");
 
@@ -2785,7 +2660,6 @@ describe("Error Recovery and Database Integrity", () => {
       (2, 'Book 2', 1),
       (3, 'Book 3', 2)`;
 
-    // Delete author 1 - should cascade delete books 1 and 2
     await sql`DELETE FROM authors WHERE id = 1`;
 
     const remainingBooks = await sql`SELECT * FROM books`;
@@ -2808,9 +2682,8 @@ describe("Error Recovery and Database Integrity", () => {
     )`;
 
     await sql.begin(async tx => {
-      // Insert child before parent - normally would fail
       await tx`INSERT INTO child VALUES (1, 1)`;
-      // Insert parent before commit
+
       await tx`INSERT INTO parent VALUES (1)`;
     });
 
@@ -2831,7 +2704,6 @@ describe("Temp Tables and Attached Databases", () => {
     const result = await sql`SELECT * FROM temp_data`;
     expect(result).toHaveLength(1);
 
-    // Temp tables should be in temp_master, not sqlite_master
     const tempTables = await sql`SELECT name FROM sqlite_temp_master WHERE type = 'table'`;
     expect(tempTables.some(t => t.name === "temp_data")).toBe(true);
 
@@ -2846,21 +2718,17 @@ describe("Temp Tables and Attached Databases", () => {
     const mainPath = path.join(dir, "main.db");
     const attachPath = path.join(dir, "attached.db");
 
-    // Create main database
     const mainSql = new SQL(`sqlite://${mainPath}`);
     await mainSql`CREATE TABLE main_table (id INTEGER, data TEXT)`;
     await mainSql`INSERT INTO main_table VALUES (1, 'main data')`;
 
-    // Create attached database separately first
     const attachSql = new SQL(`sqlite://${attachPath}`);
     await attachSql`CREATE TABLE attached_table (id INTEGER, data TEXT)`;
     await attachSql`INSERT INTO attached_table VALUES (2, 'attached data')`;
     await attachSql.close();
 
-    // Attach the second database to main
     await mainSql`ATTACH DATABASE ${attachPath} AS attached_db`;
 
-    // Cross-database query
     const crossQuery = await mainSql`
       SELECT m.data as main_data, a.data as attached_data
       FROM main_table m, attached_db.attached_table a
@@ -2891,7 +2759,6 @@ describe("Query Explain and Optimization", () => {
       description TEXT
     )`;
 
-    // Insert test data
     for (let i = 1; i <= 1000; i++) {
       await sql`INSERT INTO large_table VALUES (
         ${i},
@@ -2907,7 +2774,6 @@ describe("Query Explain and Optimization", () => {
   });
 
   test("EXPLAIN QUERY PLAN", async () => {
-    // Without index
     const planWithoutIndex = await sql`
       EXPLAIN QUERY PLAN
       SELECT * FROM large_table WHERE category = 'category5'
@@ -2916,17 +2782,15 @@ describe("Query Explain and Optimization", () => {
     expect(planWithoutIndex.length).toBeGreaterThan(0);
     expect(planWithoutIndex[0].detail).toContain("SCAN");
 
-    // Add index
     await sql`CREATE INDEX idx_category ON large_table(category)`;
 
-    // With index
     const planWithIndex = await sql`
       EXPLAIN QUERY PLAN
       SELECT * FROM large_table WHERE category = 'category5'
     `;
 
     expect(planWithIndex.length).toBeGreaterThan(0);
-    // Should use index now
+
     expect(planWithIndex[0].detail.toLowerCase()).toContain("index");
   });
 });
@@ -2937,7 +2801,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   beforeAll(async () => {
     sql = new SQL("sqlite://:memory:");
 
-    // Create test tables for fuzzing
     await sql`CREATE TABLE test_table (id INTEGER, name TEXT, value REAL)`;
     await sql`CREATE TABLE "weird-table" (col1 TEXT, "col-2" INTEGER)`;
     await sql`CREATE TABLE [bracket table] ([col 1] TEXT, [col 2] INTEGER)`;
@@ -2949,14 +2812,12 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles CTEs with various syntax styles", async () => {
-    // Basic CTE
     const cte1 = await sql.unsafe(`
       WITH cte AS (SELECT 1 as n)
       SELECT * FROM cte
     `);
     expect(cte1[0].n).toBe(1);
 
-    // Multiple CTEs
     const cte2 = await sql.unsafe(`
       WITH 
         cte1 AS (SELECT 1 as n),
@@ -2966,7 +2827,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(cte2[0].doubled).toBe(2);
 
-    // Recursive CTE
     const cte3 = await sql.unsafe(`
       WITH RECURSIVE cnt(x) AS (
         SELECT 1
@@ -2977,7 +2837,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(cte3).toHaveLength(5);
 
-    // CTE with weird spacing and comments
     const cte4 = await sql.unsafe(`
       WITH /* comment */ cte AS (
         SELECT 
@@ -2990,7 +2849,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   test("handles window functions with complex syntax", async () => {
     await sql`INSERT INTO test_table VALUES (1, 'a', 10.5), (2, 'b', 20.5), (3, 'a', 30.5)`;
 
-    // Basic window function
     const win1 = await sql.unsafe(`
       SELECT 
         name,
@@ -3000,7 +2858,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(win1).toHaveLength(3);
 
-    // Multiple window functions with named windows
     const win2 = await sql.unsafe(`
       SELECT 
         name,
@@ -3020,7 +2877,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(win2).toHaveLength(3);
 
-    // Complex frame specifications
     const win3 = await sql.unsafe(`
       SELECT 
         value,
@@ -3040,17 +2896,14 @@ describe("Query Normalization Fuzzing Tests", () => {
   test("handles UPSERT with various conflict resolution strategies", async () => {
     await sql`CREATE TABLE upsert_test (id INTEGER PRIMARY KEY, value TEXT UNIQUE, count INTEGER DEFAULT 0)`;
 
-    // INSERT OR REPLACE
     await sql.unsafe(`
       INSERT OR REPLACE INTO upsert_test (id, value) VALUES (1, 'test')
     `);
 
-    // INSERT OR IGNORE
     await sql.unsafe(`
       INSERT OR IGNORE INTO upsert_test (id, value) VALUES (1, 'ignored')
     `);
 
-    // INSERT ... ON CONFLICT DO UPDATE
     await sql.unsafe(`
       INSERT INTO upsert_test (id, value, count) VALUES (1, 'test', 1)
       ON CONFLICT(id) DO UPDATE SET 
@@ -3058,7 +2911,6 @@ describe("Query Normalization Fuzzing Tests", () => {
         value = excluded.value || ' updated'
     `);
 
-    // Multiple conflict targets
     await sql.unsafe(`
       INSERT INTO upsert_test (id, value, count) VALUES (2, 'test', 5)
       ON CONFLICT(value) DO UPDATE SET 
@@ -3066,7 +2918,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       WHERE excluded.count > upsert_test.count
     `);
 
-    // INSERT OR ABORT/FAIL/ROLLBACK
     try {
       await sql.unsafe(`INSERT OR ABORT INTO upsert_test (id) VALUES (1)`);
     } catch {}
@@ -3077,19 +2928,16 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles complex JOIN syntax variations", async () => {
-    // Natural joins
     const join1 = await sql.unsafe(`
       SELECT * FROM test_table 
       NATURAL JOIN test_table t2
     `);
 
-    // USING clause
     const join2 = await sql.unsafe(`
       SELECT * FROM test_table t1
       JOIN test_table t2 USING (id)
     `);
 
-    // Multiple joins with different types
     const join3 = await sql.unsafe(`
       SELECT * FROM test_table t1
       LEFT JOIN test_table t2 ON t1.id = t2.id
@@ -3099,7 +2947,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       INNER JOIN test_table t6 ON 1=1
     `);
 
-    // Complex join conditions
     const join4 = await sql.unsafe(`
       SELECT * FROM test_table t1
       JOIN test_table t2 ON (
@@ -3112,7 +2959,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles weird but valid identifier quoting", async () => {
-    // Mixed quoting styles
     await sql.unsafe(`
       SELECT 
         [bracket table].[col 1],
@@ -3122,78 +2968,60 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM [bracket table], "weird-table", \`backtick\`, test_table
     `);
 
-    // Escaped quotes in identifiers
     await sql`CREATE TABLE "table""with""quotes" ("col""umn" TEXT)`;
     await sql.unsafe(`SELECT "col""umn" FROM "table""with""quotes"`);
 
-    // Unicode identifiers
     await sql`CREATE TABLE "测试表" ("列名" TEXT)`;
     await sql.unsafe(`SELECT "列名" FROM "测试表"`);
 
-    // Identifiers that look like keywords
     await sql`CREATE TABLE "SELECT" ("FROM" TEXT, "WHERE" INTEGER)`;
     await sql.unsafe(`SELECT "FROM", "WHERE" FROM "SELECT"`);
   });
 
   test("handles complex string literals and escaping", async () => {
-    // Single quotes with escaping
     await sql.unsafe(`SELECT 'It''s a test' as str`);
 
-    // Multiple string concatenation
     await sql.unsafe(`SELECT 'Hello' || ' ' || 'World' as greeting`);
 
-    // Hex literals
     await sql.unsafe(`SELECT X'48656C6C6F' as hex_string`);
 
-    // Blob literals
     await sql.unsafe(`SELECT x'0123456789ABCDEF' as blob_data`);
 
-    // C-style escape sequences (if supported)
     try {
       await sql.unsafe(`SELECT 'Line 1\nLine 2\tTabbed' as escaped`);
     } catch {}
 
-    // Unicode escape sequences
     await sql.unsafe(`SELECT '测试' as unicode_str`);
   });
 
   test("handles PRAGMA statements with various formats", async () => {
-    // Simple pragma
     await sql.unsafe(`PRAGMA table_info(test_table)`);
 
-    // Pragma with assignment
     await sql.unsafe(`PRAGMA cache_size = 2000`);
 
-    // Pragma function call style
     await sql.unsafe(`PRAGMA table_info('test_table')`);
 
-    // Multiple pragmas
     await sql.unsafe(`
       PRAGMA foreign_keys = ON;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
     `);
 
-    // Schema-qualified pragma
     await sql.unsafe(`PRAGMA main.table_info('test_table')`);
   });
 
   test("handles VACUUM and other maintenance commands", async () => {
-    // Basic VACUUM
     await sql.unsafe(`VACUUM`);
 
-    // VACUUM with INTO
     const tempDb = `/tmp/test_vacuum_${Date.now()}.db`;
     try {
       await sql.unsafe(`VACUUM INTO '${tempDb}'`);
     } catch {}
 
-    // ANALYZE
     await sql.unsafe(`ANALYZE`);
     await sql.unsafe(`ANALYZE test_table`);
     await sql.unsafe(`ANALYZE main.test_table`);
 
-    // REINDEX
     try {
       await sql.unsafe(`REINDEX`);
       await sql.unsafe(`REINDEX test_table`);
@@ -3201,7 +3029,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles triggers with complex syntax", async () => {
-    // Basic trigger
     await sql.unsafe(`
       CREATE TRIGGER IF NOT EXISTS my_trigger
       AFTER INSERT ON test_table
@@ -3210,7 +3037,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       END
     `);
 
-    // Trigger with WHEN clause and multiple statements
     await sql.unsafe(`
       CREATE TRIGGER complex_trigger
       BEFORE UPDATE OF name, value ON test_table
@@ -3223,7 +3049,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       END
     `);
 
-    // INSTEAD OF trigger on view
     await sql.unsafe(`CREATE VIEW test_view AS SELECT * FROM test_table`);
     await sql.unsafe(`
       CREATE TRIGGER view_trigger
@@ -3235,21 +3060,18 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles RETURNING clause variations", async () => {
-    // INSERT with RETURNING
     const res1 = await sql.unsafe(`
       INSERT INTO test_table (name, value) VALUES ('test', 100)
       RETURNING *
     `);
     expect(res1).toHaveLength(1);
 
-    // UPDATE with RETURNING specific columns
     const res2 = await sql.unsafe(`
       UPDATE test_table SET value = value * 2
       WHERE name = 'test'
       RETURNING id, value as new_value, value/2 as old_value
     `);
 
-    // DELETE with RETURNING
     const res3 = await sql.unsafe(`
       DELETE FROM test_table 
       WHERE value > 1000
@@ -3258,10 +3080,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles VALUES clause as table constructor", async () => {
-    // SQLite doesn't support VALUES clause directly in all contexts
-    // Use alternative approaches
-
-    // Multiple rows with UNION ALL
     const vals1 = await sql.unsafe(`
       SELECT 1 as a, 'a' as b
       UNION ALL SELECT 2, 'b'
@@ -3269,7 +3087,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(vals1).toHaveLength(3);
 
-    // CTE with multiple SELECTs
     const vals2 = await sql.unsafe(`
       WITH t(num, letter) AS (
         SELECT 1, 'x'
@@ -3280,7 +3097,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     `);
     expect(vals2).toHaveLength(3);
 
-    // Complex expressions in multi-row result
     const vals3 = await sql.unsafe(`
       SELECT 1 + 1 as col1, UPPER('hello') as col2
       UNION ALL
@@ -3292,7 +3108,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles complex CASE expressions", async () => {
-    // Simple CASE
     await sql.unsafe(`
       SELECT 
         CASE name
@@ -3303,7 +3118,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table
     `);
 
-    // Searched CASE with complex conditions
     await sql.unsafe(`
       SELECT
         CASE 
@@ -3316,7 +3130,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table
     `);
 
-    // Nested CASE expressions
     await sql.unsafe(`
       SELECT
         CASE 
@@ -3332,7 +3145,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles complex subqueries and correlated subqueries", async () => {
-    // Scalar subquery in SELECT
     await sql.unsafe(`
       SELECT 
         name,
@@ -3341,7 +3153,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table t1
     `);
 
-    // Subquery in FROM with correlation
     await sql.unsafe(`
       SELECT * FROM (
         SELECT * FROM test_table t1
@@ -3349,7 +3160,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       ) subq
     `);
 
-    // EXISTS/NOT EXISTS with correlation
     await sql.unsafe(`
       SELECT * FROM test_table t1
       WHERE EXISTS (
@@ -3364,14 +3174,12 @@ describe("Query Normalization Fuzzing Tests", () => {
       )
     `);
 
-    // IN/NOT IN with subqueries
     await sql.unsafe(`
       SELECT * FROM test_table
       WHERE id IN (SELECT id FROM test_table WHERE value > 10)
       AND name NOT IN (SELECT DISTINCT name FROM test_table WHERE value < 5)
     `);
 
-    // Correlated subquery in UPDATE
     await sql.unsafe(`
       UPDATE test_table SET value = (
         SELECT AVG(value) FROM test_table t2 
@@ -3382,10 +3190,8 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles weird spacing, comments and formatting", async () => {
-    // Minimal spacing
     await sql.unsafe(`SELECT*FROM test_table WHERE id=1 AND name='a'OR value>10`);
 
-    // Excessive spacing and newlines
     await sql.unsafe(`
       SELECT     
           
@@ -3404,7 +3210,6 @@ describe("Query Normalization Fuzzing Tests", () => {
           id    =     1   
     `);
 
-    // Comments everywhere
     await sql.unsafe(`
       /* start */ SELECT /* mid */ * /* comment */ FROM /* another */ test_table
       -- line comment
@@ -3414,7 +3219,6 @@ describe("Query Normalization Fuzzing Tests", () => {
          comment */ AND name = 'test'
     `);
 
-    // Mixed comment styles
     await sql.unsafe(`
       SELECT 
         id, -- comment 1
@@ -3428,7 +3232,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles special SQLite syntax features", async () => {
-    // INDEXED BY / NOT INDEXED
     try {
       await sql.unsafe(`
         SELECT * FROM test_table INDEXED BY sqlite_autoindex_test_table_1
@@ -3441,13 +3244,11 @@ describe("Query Normalization Fuzzing Tests", () => {
       WHERE id = 1
     `);
 
-    // GLOB and REGEXP operators
     await sql.unsafe(`
       SELECT * FROM test_table 
       WHERE name GLOB 'a*'
     `);
 
-    // MATCH operator (for FTS)
     try {
       await sql.unsafe(`
         SELECT * FROM test_table
@@ -3455,13 +3256,11 @@ describe("Query Normalization Fuzzing Tests", () => {
       `);
     } catch {}
 
-    // Row value comparisons
     await sql.unsafe(`
       SELECT * FROM test_table
       WHERE (id, name) IN ((1, 'a'), (2, 'b'))
     `);
 
-    // IS and IS NOT with expressions
     await sql.unsafe(`
       SELECT * FROM test_table
       WHERE value IS NOT NULL
@@ -3470,24 +3269,20 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles table-valued functions", async () => {
-    // json_each
     await sql.unsafe(`
       SELECT * FROM json_each('["a", "b", "c"]')
     `);
 
-    // json_tree
     await sql.unsafe(`
       SELECT * FROM json_tree('{"a": [1, 2], "b": {"c": 3}}')
     `);
 
-    // generate_series (requires extension in SQLite)
     try {
       await sql.unsafe(`
         SELECT value FROM generate_series(1, 10, 2)
       `);
     } catch {}
 
-    // Table-valued function in JOIN
     await sql.unsafe(`
       SELECT * FROM test_table
       JOIN json_each('["a", "b"]') ON test_table.name = json_each.value
@@ -3495,22 +3290,18 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles COLLATE clauses", async () => {
-    // Column definition with COLLATE
     await sql`CREATE TABLE collate_test (name TEXT COLLATE NOCASE)`;
 
-    // COLLATE in WHERE clause
     await sql.unsafe(`
       SELECT * FROM test_table 
       WHERE name = 'A' COLLATE NOCASE
     `);
 
-    // COLLATE in ORDER BY
     await sql.unsafe(`
       SELECT * FROM test_table
       ORDER BY name COLLATE NOCASE DESC
     `);
 
-    // Multiple COLLATE clauses
     await sql.unsafe(`
       SELECT * FROM test_table
       WHERE name COLLATE BINARY = 'a'
@@ -3519,7 +3310,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles date/time functions with complex formatting", async () => {
-    // Various date/time functions
     await sql.unsafe(`
       SELECT 
         datetime('now'),
@@ -3532,7 +3322,6 @@ describe("Query Normalization Fuzzing Tests", () => {
         unixepoch('now')
     `);
 
-    // Date/time in WHERE clauses
     await sql.unsafe(`
       SELECT * FROM test_table
       WHERE datetime('now') > datetime('2023-01-01')
@@ -3540,7 +3329,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles savepoints and nested transactions", async () => {
-    // Savepoint operations
     await sql.unsafe(`SAVEPOINT sp1`);
     await sql.unsafe(`INSERT INTO test_table VALUES (999, 'savepoint', 999)`);
     await sql.unsafe(`SAVEPOINT sp2`);
@@ -3548,7 +3336,6 @@ describe("Query Normalization Fuzzing Tests", () => {
     await sql.unsafe(`ROLLBACK TO sp2`);
     await sql.unsafe(`RELEASE sp1`);
 
-    // Nested savepoints
     await sql.unsafe(`
       SAVEPOINT outer;
       SAVEPOINT inner;
@@ -3558,7 +3345,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles extremely nested queries", async () => {
-    // Deeply nested subqueries
     await sql.unsafe(`
       SELECT * FROM (
         SELECT * FROM (
@@ -3571,7 +3357,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       ) l1
     `);
 
-    // Deeply nested expressions
     await sql.unsafe(`
       SELECT 
         CASE 
@@ -3582,7 +3367,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table
     `);
 
-    // Nested CASE statements
     await sql.unsafe(`
       SELECT
         CASE
@@ -3602,7 +3386,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles FILTER clauses on aggregate functions", async () => {
-    // Basic FILTER
     await sql.unsafe(`
       SELECT 
         COUNT(*) FILTER (WHERE value > 10) as high_count,
@@ -3611,14 +3394,12 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table
     `);
 
-    // FILTER with window functions
     await sql.unsafe(`
       SELECT
         SUM(value) FILTER (WHERE name = 'a') OVER (ORDER BY id) as filtered_sum
       FROM test_table
     `);
 
-    // Multiple filters
     await sql.unsafe(`
       SELECT
         COUNT(*) FILTER (WHERE value > 10 AND name = 'a') as complex_filter,
@@ -3629,16 +3410,12 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles special numeric literals", async () => {
-    // Scientific notation
     await sql.unsafe(`SELECT 1.23e10, 4.56E-7, .5e2, 9.`);
 
-    // Hex integers
     await sql.unsafe(`SELECT 0x1234, 0xDEADBEEF, 0xffffffff`);
 
-    // Infinity and NaN
     await sql.unsafe(`SELECT 1e308 * 10, 0.0 / 0.0`);
 
-    // Very large and very small numbers
     await sql.unsafe(`
       SELECT 
         999999999999999999999999999999999999999,
@@ -3647,7 +3424,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles compound SELECT statements", async () => {
-    // UNION variations
     await sql.unsafe(`
       SELECT id, name FROM test_table
       UNION
@@ -3660,21 +3436,18 @@ describe("Query Normalization Fuzzing Tests", () => {
       SELECT * FROM test_table
     `);
 
-    // INTERSECT
     await sql.unsafe(`
       SELECT name FROM test_table WHERE value > 10
       INTERSECT
       SELECT name FROM test_table WHERE id < 5
     `);
 
-    // EXCEPT
     await sql.unsafe(`
       SELECT * FROM test_table
       EXCEPT
       SELECT * FROM test_table WHERE name = 'excluded'
     `);
 
-    // Multiple compound operations
     await sql.unsafe(`
       SELECT id FROM test_table WHERE value > 20
       UNION
@@ -3685,7 +3458,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       SELECT id FROM test_table WHERE value < 50
     `);
 
-    // Compound with ORDER BY and LIMIT
     await sql.unsafe(`
       SELECT * FROM test_table WHERE value > 10
       UNION ALL
@@ -3696,7 +3468,6 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles CREATE TABLE with all constraint types", async () => {
-    // Complex table with all constraint types
     await sql.unsafe(`
       CREATE TABLE IF NOT EXISTS complex_constraints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3712,7 +3483,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       )
     `);
 
-    // STRICT tables
     await sql.unsafe(`
       CREATE TABLE strict_table (
         id INTEGER PRIMARY KEY,
@@ -3724,7 +3494,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       ) STRICT
     `);
 
-    // WITHOUT ROWID tables
     await sql.unsafe(`
       CREATE TABLE without_rowid_table (
         id INTEGER PRIMARY KEY,
@@ -3732,7 +3501,6 @@ describe("Query Normalization Fuzzing Tests", () => {
       ) WITHOUT ROWID
     `);
 
-    // Generated columns
     await sql.unsafe(`
       CREATE TABLE generated_cols (
         radius REAL,
@@ -3743,10 +3511,8 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles exotic but valid SQL patterns", async () => {
-    // Semicolon in string literals
     await sql.unsafe(`SELECT 'text with; semicolon' as str`);
 
-    // Keywords as column aliases
     await sql.unsafe(`
       SELECT 
         id as "SELECT",
@@ -3755,36 +3521,30 @@ describe("Query Normalization Fuzzing Tests", () => {
       FROM test_table
     `);
 
-    // Empty WHERE clause
     await sql.unsafe(`SELECT * FROM test_table WHERE 1`);
     await sql.unsafe(`SELECT * FROM test_table WHERE 0`);
     await sql.unsafe(`SELECT * FROM test_table WHERE NULL`);
 
-    // Double negatives
     await sql.unsafe(`
       SELECT * FROM test_table 
       WHERE NOT NOT (value > 10)
     `);
 
-    // Redundant parentheses
     await sql.unsafe(`
       SELECT (((id))), ((name)), (((((value)))))
       FROM (((test_table)))
       WHERE ((((id = 1))))
     `);
 
-    // Mix of single and multi-statement with different terminators
     await sql.unsafe(`SELECT 1`);
     await sql.unsafe(`SELECT 2;`);
     await sql.unsafe(`SELECT 3;;`);
     await sql.unsafe(`;SELECT 4`);
     await sql.unsafe(`;;SELECT 5;;`);
 
-    // Column names that are just numbers or special chars
     await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
     await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
 
-    // Maximum identifier length (SQLite supports up to 64KB identifiers)
     const longName = "a".repeat(1000);
     await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
     await sql.unsafe(`SELECT * FROM "${longName}"`);

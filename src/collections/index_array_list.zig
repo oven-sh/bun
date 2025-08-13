@@ -84,7 +84,7 @@ pub const IndexArrayList = union(Size) {
                 switch (to) {
                     inline else => |to_size| {
                         const Type = Size.Type(to_size);
-                        const new_list = try bun.BabyList(Type).initCapacity(allocator, current.len + 1);
+                        var new_list = try bun.BabyList(Type).initCapacity(allocator, current.len + 1);
                         new_list.len = current.len;
                         copyTIntoT2(current_size.Type(), current.sliceConst(), Type, new_list.slice());
                         self.deinit(allocator);

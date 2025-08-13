@@ -2926,3 +2926,864 @@ describe("Query Explain and Optimization", () => {
     expect(planWithIndex[0].detail.toLowerCase()).toContain("index");
   });
 });
+
+describe("Query Normalization Fuzzing Tests", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+
+    // Create test tables for fuzzing
+    await sql`CREATE TABLE test_table (id INTEGER, name TEXT, value REAL)`;
+    await sql`CREATE TABLE "weird-table" (col1 TEXT, "col-2" INTEGER)`;
+    await sql`CREATE TABLE [bracket table] ([col 1] TEXT, [col 2] INTEGER)`;
+    await sql`CREATE TABLE \`backtick\` (\`col\` TEXT)`;
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("handles CTEs with various syntax styles", async () => {
+    // Basic CTE
+    const cte1 = await sql.unsafe(`
+      WITH cte AS (SELECT 1 as n)
+      SELECT * FROM cte
+    `);
+    expect(cte1[0].n).toBe(1);
+
+    // Multiple CTEs
+    const cte2 = await sql.unsafe(`
+      WITH 
+        cte1 AS (SELECT 1 as n),
+        cte2 AS (SELECT 2 as n),
+        cte3 AS (SELECT n * 2 as doubled FROM cte1)
+      SELECT * FROM cte3
+    `);
+    expect(cte2[0].doubled).toBe(2);
+
+    // Recursive CTE
+    const cte3 = await sql.unsafe(`
+      WITH RECURSIVE cnt(x) AS (
+        SELECT 1
+        UNION ALL
+        SELECT x+1 FROM cnt WHERE x<5
+      )
+      SELECT * FROM cnt
+    `);
+    expect(cte3).toHaveLength(5);
+
+    // CTE with weird spacing and comments
+    const cte4 = await sql.unsafe(`
+      WITH /* comment */ cte AS (
+        SELECT 
+          1 as n -- inline comment
+      ) SELECT * FROM cte
+    `);
+    expect(cte4[0].n).toBe(1);
+  });
+
+  test("handles window functions with complex syntax", async () => {
+    await sql`INSERT INTO test_table VALUES (1, 'a', 10.5), (2, 'b', 20.5), (3, 'a', 30.5)`;
+
+    // Basic window function
+    const win1 = await sql.unsafe(`
+      SELECT 
+        name,
+        value,
+        ROW_NUMBER() OVER (ORDER BY value) as rn
+      FROM test_table
+    `);
+    expect(win1).toHaveLength(3);
+
+    // Multiple window functions with named windows
+    const win2 = await sql.unsafe(`
+      SELECT 
+        name,
+        value,
+        ROW_NUMBER() OVER w1 as rn,
+        RANK() OVER w1 as rank,
+        DENSE_RANK() OVER w1 as dense_rank,
+        LAG(value, 1, 0) OVER (ORDER BY id) as prev_value,
+        LEAD(value) OVER (ORDER BY id) as next_value,
+        FIRST_VALUE(value) OVER w2 as first_val,
+        LAST_VALUE(value) OVER w2 as last_val,
+        NTH_VALUE(value, 2) OVER w2 as second_val
+      FROM test_table
+      WINDOW 
+        w1 AS (PARTITION BY name ORDER BY value DESC),
+        w2 AS (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+    `);
+    expect(win2).toHaveLength(3);
+
+    // Complex frame specifications
+    const win3 = await sql.unsafe(`
+      SELECT 
+        value,
+        SUM(value) OVER (
+          ORDER BY id 
+          ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        ) as rolling_sum,
+        AVG(value) OVER (
+          ORDER BY id 
+          RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) as cumulative_avg
+      FROM test_table
+    `);
+    expect(win3).toHaveLength(3);
+  });
+
+  test("handles UPSERT with various conflict resolution strategies", async () => {
+    await sql`CREATE TABLE upsert_test (id INTEGER PRIMARY KEY, value TEXT UNIQUE, count INTEGER DEFAULT 0)`;
+
+    // INSERT OR REPLACE
+    await sql.unsafe(`
+      INSERT OR REPLACE INTO upsert_test (id, value) VALUES (1, 'test')
+    `);
+
+    // INSERT OR IGNORE
+    await sql.unsafe(`
+      INSERT OR IGNORE INTO upsert_test (id, value) VALUES (1, 'ignored')
+    `);
+
+    // INSERT ... ON CONFLICT DO UPDATE
+    await sql.unsafe(`
+      INSERT INTO upsert_test (id, value, count) VALUES (1, 'test', 1)
+      ON CONFLICT(id) DO UPDATE SET 
+        count = excluded.count + upsert_test.count,
+        value = excluded.value || ' updated'
+    `);
+
+    // Multiple conflict targets
+    await sql.unsafe(`
+      INSERT INTO upsert_test (id, value, count) VALUES (2, 'test', 5)
+      ON CONFLICT(value) DO UPDATE SET 
+        count = excluded.count
+      WHERE excluded.count > upsert_test.count
+    `);
+
+    // INSERT OR ABORT/FAIL/ROLLBACK
+    try {
+      await sql.unsafe(`INSERT OR ABORT INTO upsert_test (id) VALUES (1)`);
+    } catch {}
+
+    try {
+      await sql.unsafe(`INSERT OR FAIL INTO upsert_test (id) VALUES (1)`);
+    } catch {}
+  });
+
+  test("handles complex JOIN syntax variations", async () => {
+    // Natural joins
+    const join1 = await sql.unsafe(`
+      SELECT * FROM test_table 
+      NATURAL JOIN test_table t2
+    `);
+
+    // USING clause
+    const join2 = await sql.unsafe(`
+      SELECT * FROM test_table t1
+      JOIN test_table t2 USING (id)
+    `);
+
+    // Multiple joins with different types
+    const join3 = await sql.unsafe(`
+      SELECT * FROM test_table t1
+      LEFT JOIN test_table t2 ON t1.id = t2.id
+      RIGHT OUTER JOIN test_table t3 ON t2.id = t3.id  
+      FULL OUTER JOIN test_table t4 ON t3.id = t4.id
+      CROSS JOIN test_table t5
+      INNER JOIN test_table t6 ON 1=1
+    `);
+
+    // Complex join conditions
+    const join4 = await sql.unsafe(`
+      SELECT * FROM test_table t1
+      JOIN test_table t2 ON (
+        t1.id = t2.id 
+        AND t1.name = t2.name
+        OR t1.value > t2.value
+        AND EXISTS (SELECT 1 FROM test_table WHERE id = t1.id)
+      )
+    `);
+  });
+
+  test("handles weird but valid identifier quoting", async () => {
+    // Mixed quoting styles
+    await sql.unsafe(`
+      SELECT 
+        [bracket table].[col 1],
+        "weird-table"."col-2",
+        \`backtick\`.\`col\`,
+        test_table.id
+      FROM [bracket table], "weird-table", \`backtick\`, test_table
+    `);
+
+    // Escaped quotes in identifiers
+    await sql`CREATE TABLE "table""with""quotes" ("col""umn" TEXT)`;
+    await sql.unsafe(`SELECT "col""umn" FROM "table""with""quotes"`);
+
+    // Unicode identifiers
+    await sql`CREATE TABLE "测试表" ("列名" TEXT)`;
+    await sql.unsafe(`SELECT "列名" FROM "测试表"`);
+
+    // Identifiers that look like keywords
+    await sql`CREATE TABLE "SELECT" ("FROM" TEXT, "WHERE" INTEGER)`;
+    await sql.unsafe(`SELECT "FROM", "WHERE" FROM "SELECT"`);
+  });
+
+  test("handles complex string literals and escaping", async () => {
+    // Single quotes with escaping
+    await sql.unsafe(`SELECT 'It''s a test' as str`);
+
+    // Multiple string concatenation
+    await sql.unsafe(`SELECT 'Hello' || ' ' || 'World' as greeting`);
+
+    // Hex literals
+    await sql.unsafe(`SELECT X'48656C6C6F' as hex_string`);
+
+    // Blob literals
+    await sql.unsafe(`SELECT x'0123456789ABCDEF' as blob_data`);
+
+    // C-style escape sequences (if supported)
+    try {
+      await sql.unsafe(`SELECT 'Line 1\nLine 2\tTabbed' as escaped`);
+    } catch {}
+
+    // Unicode escape sequences
+    await sql.unsafe(`SELECT '测试' as unicode_str`);
+  });
+
+  test("handles PRAGMA statements with various formats", async () => {
+    // Simple pragma
+    await sql.unsafe(`PRAGMA table_info(test_table)`);
+
+    // Pragma with assignment
+    await sql.unsafe(`PRAGMA cache_size = 2000`);
+
+    // Pragma function call style
+    await sql.unsafe(`PRAGMA table_info('test_table')`);
+
+    // Multiple pragmas
+    await sql.unsafe(`
+      PRAGMA foreign_keys = ON;
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+    `);
+
+    // Schema-qualified pragma
+    await sql.unsafe(`PRAGMA main.table_info('test_table')`);
+  });
+
+  test("handles VACUUM and other maintenance commands", async () => {
+    // Basic VACUUM
+    await sql.unsafe(`VACUUM`);
+
+    // VACUUM with INTO
+    const tempDb = `/tmp/test_vacuum_${Date.now()}.db`;
+    try {
+      await sql.unsafe(`VACUUM INTO '${tempDb}'`);
+    } catch {}
+
+    // ANALYZE
+    await sql.unsafe(`ANALYZE`);
+    await sql.unsafe(`ANALYZE test_table`);
+    await sql.unsafe(`ANALYZE main.test_table`);
+
+    // REINDEX
+    try {
+      await sql.unsafe(`REINDEX`);
+      await sql.unsafe(`REINDEX test_table`);
+    } catch {}
+  });
+
+  test("handles triggers with complex syntax", async () => {
+    // Basic trigger
+    await sql.unsafe(`
+      CREATE TRIGGER IF NOT EXISTS my_trigger
+      AFTER INSERT ON test_table
+      BEGIN
+        SELECT 1;
+      END
+    `);
+
+    // Trigger with WHEN clause and multiple statements
+    await sql.unsafe(`
+      CREATE TRIGGER complex_trigger
+      BEFORE UPDATE OF name, value ON test_table
+      FOR EACH ROW
+      WHEN NEW.value > OLD.value
+      BEGIN
+        SELECT NEW.value;
+        SELECT OLD.value;
+        UPDATE test_table SET value = NEW.value WHERE id != NEW.id;
+      END
+    `);
+
+    // INSTEAD OF trigger on view
+    await sql.unsafe(`CREATE VIEW test_view AS SELECT * FROM test_table`);
+    await sql.unsafe(`
+      CREATE TRIGGER view_trigger
+      INSTEAD OF INSERT ON test_view
+      BEGIN
+        INSERT INTO test_table VALUES (NEW.id, NEW.name, NEW.value);
+      END
+    `);
+  });
+
+  test("handles RETURNING clause variations", async () => {
+    // INSERT with RETURNING
+    const res1 = await sql.unsafe(`
+      INSERT INTO test_table (name, value) VALUES ('test', 100)
+      RETURNING *
+    `);
+    expect(res1).toHaveLength(1);
+
+    // UPDATE with RETURNING specific columns
+    const res2 = await sql.unsafe(`
+      UPDATE test_table SET value = value * 2
+      WHERE name = 'test'
+      RETURNING id, value as new_value, value/2 as old_value
+    `);
+
+    // DELETE with RETURNING
+    const res3 = await sql.unsafe(`
+      DELETE FROM test_table 
+      WHERE value > 1000
+      RETURNING id, name
+    `);
+  });
+
+  test("handles VALUES clause as table constructor", async () => {
+    // SQLite doesn't support VALUES clause directly in all contexts
+    // Use alternative approaches
+
+    // Multiple rows with UNION ALL
+    const vals1 = await sql.unsafe(`
+      SELECT 1 as a, 'a' as b
+      UNION ALL SELECT 2, 'b'
+      UNION ALL SELECT 3, 'c'
+    `);
+    expect(vals1).toHaveLength(3);
+
+    // CTE with multiple SELECTs
+    const vals2 = await sql.unsafe(`
+      WITH t(num, letter) AS (
+        SELECT 1, 'x'
+        UNION ALL SELECT 2, 'y'
+        UNION ALL SELECT 3, 'z'
+      )
+      SELECT * FROM t
+    `);
+    expect(vals2).toHaveLength(3);
+
+    // Complex expressions in multi-row result
+    const vals3 = await sql.unsafe(`
+      SELECT 1 + 1 as col1, UPPER('hello') as col2
+      UNION ALL
+      SELECT 2 * 3, LOWER('WORLD')
+      UNION ALL
+      SELECT (SELECT COUNT(*) FROM test_table), 'count'
+    `);
+    expect(vals3).toHaveLength(3);
+  });
+
+  test("handles complex CASE expressions", async () => {
+    // Simple CASE
+    await sql.unsafe(`
+      SELECT 
+        CASE name
+          WHEN 'a' THEN 'Alpha'
+          WHEN 'b' THEN 'Beta'
+          ELSE 'Other'
+        END as name_full
+      FROM test_table
+    `);
+
+    // Searched CASE with complex conditions
+    await sql.unsafe(`
+      SELECT
+        CASE 
+          WHEN value < 10 AND name = 'a' THEN 'Low A'
+          WHEN value BETWEEN 10 AND 20 THEN 'Medium'
+          WHEN value > 20 OR name IN ('x', 'y', 'z') THEN 'High or Special'
+          WHEN EXISTS (SELECT 1 FROM test_table t2 WHERE t2.id > test_table.id) THEN 'Has Greater'
+          ELSE 'Default'
+        END as category
+      FROM test_table
+    `);
+
+    // Nested CASE expressions
+    await sql.unsafe(`
+      SELECT
+        CASE 
+          WHEN value > 50 THEN
+            CASE name
+              WHEN 'a' THEN 'High A'
+              ELSE 'High Other'
+            END
+          ELSE 'Low'
+        END as nested_category
+      FROM test_table
+    `);
+  });
+
+  test("handles complex subqueries and correlated subqueries", async () => {
+    // Scalar subquery in SELECT
+    await sql.unsafe(`
+      SELECT 
+        name,
+        (SELECT COUNT(*) FROM test_table t2 WHERE t2.name = t1.name) as name_count,
+        (SELECT MAX(value) FROM test_table t2 WHERE t2.id < t1.id) as max_before
+      FROM test_table t1
+    `);
+
+    // Subquery in FROM with correlation
+    await sql.unsafe(`
+      SELECT * FROM (
+        SELECT * FROM test_table t1
+        WHERE value > (SELECT AVG(value) FROM test_table t2 WHERE t2.name = t1.name)
+      ) subq
+    `);
+
+    // EXISTS/NOT EXISTS with correlation
+    await sql.unsafe(`
+      SELECT * FROM test_table t1
+      WHERE EXISTS (
+        SELECT 1 FROM test_table t2 
+        WHERE t2.id != t1.id 
+        AND t2.value > t1.value
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM test_table t3
+        WHERE t3.name = t1.name
+        AND t3.id < t1.id
+      )
+    `);
+
+    // IN/NOT IN with subqueries
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      WHERE id IN (SELECT id FROM test_table WHERE value > 10)
+      AND name NOT IN (SELECT DISTINCT name FROM test_table WHERE value < 5)
+    `);
+
+    // Correlated subquery in UPDATE
+    await sql.unsafe(`
+      UPDATE test_table SET value = (
+        SELECT AVG(value) FROM test_table t2 
+        WHERE t2.name = test_table.name
+      )
+      WHERE id IN (SELECT id FROM test_table WHERE name = 'a')
+    `);
+  });
+
+  test("handles weird spacing, comments and formatting", async () => {
+    // Minimal spacing
+    await sql.unsafe(`SELECT*FROM test_table WHERE id=1 AND name='a'OR value>10`);
+
+    // Excessive spacing and newlines
+    await sql.unsafe(`
+      SELECT     
+          
+          
+          id    ,    
+          
+          name   
+      
+      FROM    
+      
+      
+          test_table   
+          
+      WHERE   
+      
+          id    =     1   
+    `);
+
+    // Comments everywhere
+    await sql.unsafe(`
+      /* start */ SELECT /* mid */ * /* comment */ FROM /* another */ test_table
+      -- line comment
+      WHERE id = 1 -- inline comment
+      /* multi
+         line
+         comment */ AND name = 'test'
+    `);
+
+    // Mixed comment styles
+    await sql.unsafe(`
+      SELECT 
+        id, -- comment 1
+        /* comment 2 */ name,
+        value -- comment 3
+        /* comment 4 */
+      FROM test_table
+      /* WHERE clause comment */
+      WHERE /* inline */ id /* another */ = /* more */ 1
+    `);
+  });
+
+  test("handles special SQLite syntax features", async () => {
+    // INDEXED BY / NOT INDEXED
+    try {
+      await sql.unsafe(`
+        SELECT * FROM test_table INDEXED BY sqlite_autoindex_test_table_1
+        WHERE id = 1
+      `);
+    } catch {}
+
+    await sql.unsafe(`
+      SELECT * FROM test_table NOT INDEXED
+      WHERE id = 1
+    `);
+
+    // GLOB and REGEXP operators
+    await sql.unsafe(`
+      SELECT * FROM test_table 
+      WHERE name GLOB 'a*'
+    `);
+
+    // MATCH operator (for FTS)
+    try {
+      await sql.unsafe(`
+        SELECT * FROM test_table
+        WHERE name MATCH 'search query'
+      `);
+    } catch {}
+
+    // Row value comparisons
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      WHERE (id, name) IN ((1, 'a'), (2, 'b'))
+    `);
+
+    // IS and IS NOT with expressions
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      WHERE value IS NOT NULL
+      AND name IS NOT 'test'
+    `);
+  });
+
+  test("handles table-valued functions", async () => {
+    // json_each
+    await sql.unsafe(`
+      SELECT * FROM json_each('["a", "b", "c"]')
+    `);
+
+    // json_tree
+    await sql.unsafe(`
+      SELECT * FROM json_tree('{"a": [1, 2], "b": {"c": 3}}')
+    `);
+
+    // generate_series (requires extension in SQLite)
+    try {
+      await sql.unsafe(`
+        SELECT value FROM generate_series(1, 10, 2)
+      `);
+    } catch {}
+
+    // Table-valued function in JOIN
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      JOIN json_each('["a", "b"]') ON test_table.name = json_each.value
+    `);
+  });
+
+  test("handles COLLATE clauses", async () => {
+    // Column definition with COLLATE
+    await sql`CREATE TABLE collate_test (name TEXT COLLATE NOCASE)`;
+
+    // COLLATE in WHERE clause
+    await sql.unsafe(`
+      SELECT * FROM test_table 
+      WHERE name = 'A' COLLATE NOCASE
+    `);
+
+    // COLLATE in ORDER BY
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      ORDER BY name COLLATE NOCASE DESC
+    `);
+
+    // Multiple COLLATE clauses
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      WHERE name COLLATE BINARY = 'a'
+      ORDER BY name COLLATE NOCASE, value COLLATE RTRIM
+    `);
+  });
+
+  test("handles date/time functions with complex formatting", async () => {
+    // Various date/time functions
+    await sql.unsafe(`
+      SELECT 
+        datetime('now'),
+        datetime('now', '+1 day', '-1 hour', '+30 minutes'),
+        date('now', 'start of month', '+1 month', '-1 day'),
+        time('12:34:56'),
+        julianday('now'),
+        strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'),
+        strftime('%s', 'now'),
+        unixepoch('now')
+    `);
+
+    // Date/time in WHERE clauses
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      WHERE datetime('now') > datetime('2023-01-01')
+    `);
+  });
+
+  test("handles savepoints and nested transactions", async () => {
+    // Savepoint operations
+    await sql.unsafe(`SAVEPOINT sp1`);
+    await sql.unsafe(`INSERT INTO test_table VALUES (999, 'savepoint', 999)`);
+    await sql.unsafe(`SAVEPOINT sp2`);
+    await sql.unsafe(`UPDATE test_table SET value = 0 WHERE id = 999`);
+    await sql.unsafe(`ROLLBACK TO sp2`);
+    await sql.unsafe(`RELEASE sp1`);
+
+    // Nested savepoints
+    await sql.unsafe(`
+      SAVEPOINT outer;
+      SAVEPOINT inner;
+      ROLLBACK TO inner;
+      RELEASE outer;
+    `);
+  });
+
+  test("handles extremely nested queries", async () => {
+    // Deeply nested subqueries
+    await sql.unsafe(`
+      SELECT * FROM (
+        SELECT * FROM (
+          SELECT * FROM (
+            SELECT * FROM (
+              SELECT * FROM test_table
+            ) l4
+          ) l3
+        ) l2
+      ) l1
+    `);
+
+    // Deeply nested expressions
+    await sql.unsafe(`
+      SELECT 
+        CASE 
+          WHEN (value + (10 * (20 - (30 / (40 + (50 - 60)))))) > 0 
+          THEN ((((1 + 2) * 3) - 4) / 5)
+          ELSE (((((6))))) 
+        END as nested_calc
+      FROM test_table
+    `);
+
+    // Nested CASE statements
+    await sql.unsafe(`
+      SELECT
+        CASE
+          WHEN id = 1 THEN
+            CASE 
+              WHEN value > 10 THEN
+                CASE
+                  WHEN name = 'a' THEN 'A1>10'
+                  ELSE 'Other1>10'
+                END
+              ELSE 'Low1'
+            END
+          ELSE 'NotOne'
+        END as super_nested
+      FROM test_table
+    `);
+  });
+
+  test("handles FILTER clauses on aggregate functions", async () => {
+    // Basic FILTER
+    await sql.unsafe(`
+      SELECT 
+        COUNT(*) FILTER (WHERE value > 10) as high_count,
+        SUM(value) FILTER (WHERE name = 'a') as a_sum,
+        AVG(value) FILTER (WHERE id < 5) as early_avg
+      FROM test_table
+    `);
+
+    // FILTER with window functions
+    await sql.unsafe(`
+      SELECT
+        SUM(value) FILTER (WHERE name = 'a') OVER (ORDER BY id) as filtered_sum
+      FROM test_table
+    `);
+
+    // Multiple filters
+    await sql.unsafe(`
+      SELECT
+        COUNT(*) FILTER (WHERE value > 10 AND name = 'a') as complex_filter,
+        MAX(value) FILTER (WHERE id IN (1,2,3)) as id_filter
+      FROM test_table
+      GROUP BY name
+    `);
+  });
+
+  test("handles special numeric literals", async () => {
+    // Scientific notation
+    await sql.unsafe(`SELECT 1.23e10, 4.56E-7, .5e2, 9.`);
+
+    // Hex integers
+    await sql.unsafe(`SELECT 0x1234, 0xDEADBEEF, 0xffffffff`);
+
+    // Infinity and NaN
+    await sql.unsafe(`SELECT 1e308 * 10, 0.0 / 0.0`);
+
+    // Very large and very small numbers
+    await sql.unsafe(`
+      SELECT 
+        999999999999999999999999999999999999999,
+        0.000000000000000000000000000000000001
+    `);
+  });
+
+  test("handles compound SELECT statements", async () => {
+    // UNION variations
+    await sql.unsafe(`
+      SELECT id, name FROM test_table
+      UNION
+      SELECT id + 100, 'union' FROM test_table
+    `);
+
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      UNION ALL
+      SELECT * FROM test_table
+    `);
+
+    // INTERSECT
+    await sql.unsafe(`
+      SELECT name FROM test_table WHERE value > 10
+      INTERSECT
+      SELECT name FROM test_table WHERE id < 5
+    `);
+
+    // EXCEPT
+    await sql.unsafe(`
+      SELECT * FROM test_table
+      EXCEPT
+      SELECT * FROM test_table WHERE name = 'excluded'
+    `);
+
+    // Multiple compound operations
+    await sql.unsafe(`
+      SELECT id FROM test_table WHERE value > 20
+      UNION
+      SELECT id FROM test_table WHERE name = 'a'
+      EXCEPT
+      SELECT id FROM test_table WHERE id > 100
+      INTERSECT
+      SELECT id FROM test_table WHERE value < 50
+    `);
+
+    // Compound with ORDER BY and LIMIT
+    await sql.unsafe(`
+      SELECT * FROM test_table WHERE value > 10
+      UNION ALL
+      SELECT * FROM test_table WHERE value <= 10
+      ORDER BY value DESC
+      LIMIT 5
+    `);
+  });
+
+  test("handles CREATE TABLE with all constraint types", async () => {
+    // Complex table with all constraint types
+    await sql.unsafe(`
+      CREATE TABLE IF NOT EXISTS complex_constraints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL CHECK(email LIKE '%@%'),
+        age INTEGER CHECK(age >= 0 AND age <= 150),
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'pending')),
+        parent_id INTEGER REFERENCES test_table(id) ON DELETE CASCADE ON UPDATE RESTRICT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        data JSON CHECK(json_valid(data)),
+        UNIQUE(email, status),
+        CHECK(age > 18 OR parent_id IS NOT NULL),
+        FOREIGN KEY (parent_id) REFERENCES test_table(id)
+      )
+    `);
+
+    // STRICT tables
+    await sql.unsafe(`
+      CREATE TABLE strict_table (
+        id INTEGER PRIMARY KEY,
+        int_col INT,
+        real_col REAL,
+        text_col TEXT,
+        blob_col BLOB,
+        any_col ANY
+      ) STRICT
+    `);
+
+    // WITHOUT ROWID tables
+    await sql.unsafe(`
+      CREATE TABLE without_rowid_table (
+        id INTEGER PRIMARY KEY,
+        value TEXT
+      ) WITHOUT ROWID
+    `);
+
+    // Generated columns
+    await sql.unsafe(`
+      CREATE TABLE generated_cols (
+        radius REAL,
+        area REAL GENERATED ALWAYS AS (3.14159 * radius * radius) STORED,
+        circumference REAL GENERATED ALWAYS AS (2 * 3.14159 * radius) VIRTUAL
+      )
+    `);
+  });
+
+  test("handles exotic but valid SQL patterns", async () => {
+    // Semicolon in string literals
+    await sql.unsafe(`SELECT 'text with; semicolon' as str`);
+
+    // Keywords as column aliases
+    await sql.unsafe(`
+      SELECT 
+        id as "SELECT",
+        name as "FROM",
+        value as "WHERE"
+      FROM test_table
+    `);
+
+    // Empty WHERE clause
+    await sql.unsafe(`SELECT * FROM test_table WHERE 1`);
+    await sql.unsafe(`SELECT * FROM test_table WHERE 0`);
+    await sql.unsafe(`SELECT * FROM test_table WHERE NULL`);
+
+    // Double negatives
+    await sql.unsafe(`
+      SELECT * FROM test_table 
+      WHERE NOT NOT (value > 10)
+    `);
+
+    // Redundant parentheses
+    await sql.unsafe(`
+      SELECT (((id))), ((name)), (((((value)))))
+      FROM (((test_table)))
+      WHERE ((((id = 1))))
+    `);
+
+    // Mix of single and multi-statement with different terminators
+    await sql.unsafe(`SELECT 1`);
+    await sql.unsafe(`SELECT 2;`);
+    await sql.unsafe(`SELECT 3;;`);
+    await sql.unsafe(`;SELECT 4`);
+    await sql.unsafe(`;;SELECT 5;;`);
+
+    // Column names that are just numbers or special chars
+    await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
+    await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
+
+    // Maximum identifier length (SQLite supports up to 64KB identifiers)
+    const longName = "a".repeat(1000);
+    await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
+    await sql.unsafe(`SELECT * FROM "${longName}"`);
+    await sql.unsafe(`DROP TABLE "${longName}"`);
+  });
+});

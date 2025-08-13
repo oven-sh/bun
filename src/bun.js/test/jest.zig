@@ -2491,6 +2491,7 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
 
 const string = []const u8;
 
+const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -2501,7 +2502,6 @@ const Expect = expect.Expect;
 const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
-const ci_info = @import("../../ci_info.zig");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
 const Fs = bun.fs;

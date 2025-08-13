@@ -6367,11 +6367,11 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 const string = []const u8;
 
+const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
 const bun = @import("bun");
-const ci_info = @import("../../ci_info.zig");
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;

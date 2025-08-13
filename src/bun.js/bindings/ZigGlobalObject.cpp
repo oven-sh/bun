@@ -2644,22 +2644,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
         throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);
         return {};
     }
-
     if (!callSites) {
-        // If callSites is not an array, return the error message without stack trace
-        // This matches the behavior when there are no stack frames
-        auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (errorMessage) {
-            auto* str = errorMessage.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (str->length() > 0) {
-                auto view = str->view(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return JSC::JSValue::encode(jsString(vm, makeString("Error: "_s, view.data)));
-            }
-        }
-        return JSC::JSValue::encode(jsString(vm, String("Error"_s)));
+        callSites = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
     }
 
     JSValue result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, jsUndefined());

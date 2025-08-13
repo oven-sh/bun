@@ -23,12 +23,10 @@ afterEach(dummyAfterEach);
 it("should not download tarballs with --lockfile-only", async () => {
   const urls: string[] = [];
   const registry = {
-    "0.0.1": {
-      // use a tarball that doesn't exist so if it tries to fetch it would fail
-      as: "0.0.1",
-    },
+    "0.0.1": { as: "0.0.1" },
     latest: "0.0.1",
   };
+
   setHandler(dummyRegistry(urls, registry));
 
   await writeFile(
@@ -36,13 +34,11 @@ it("should not download tarballs with --lockfile-only", async () => {
     JSON.stringify({
       name: "foo",
       dependencies: {
-        // Use absolute version (not semver range) to ensure we hit the code path
         baz: "0.0.1",
       },
     }),
   );
 
-  // Override the test setup's bunfig.toml to use default lockfile behavior (text lockfiles)
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
@@ -53,7 +49,7 @@ registry = "${root_url}/"
   );
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--lockfile-only"], // bun.lock is saved by default
+    cmd: [bunExe(), "install", "--lockfile-only"],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -70,7 +66,7 @@ registry = "${root_url}/"
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    expect.stringContaining("Saved bun.lock"), // lockfile should be saved but no packages installed
+    expect.stringContaining("Saved bun.lock"),
   ]);
 
   console.log(out);

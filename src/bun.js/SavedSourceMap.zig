@@ -84,22 +84,23 @@ pub const SavedMappingsCompact = struct {
     compact_table: *SourceMap.LineOffsetTable.Compact,
     sources_count: usize,
 
-    pub fn init(allocator: Allocator, vlq_mappings: []const u8) !SavedMappingsCompact {
-        return SavedMappingsCompact{
+    pub fn init(allocator: Allocator, vlq_mappings: []const u8) !*SavedMappingsCompact {
+        return bun.new(SavedMappingsCompact, .{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
             .sources_count = 1, // Default to 1 source
-        };
+        });
     }
 
     pub fn initWithSourcesCount(allocator: Allocator, vlq_mappings: []const u8, sources_count: usize) !SavedMappingsCompact {
-        return SavedMappingsCompact{
+        return bun.new(SavedMappingsCompact, .{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
             .sources_count = sources_count,
-        };
+        });
     }
 
     pub fn deinit(this: *SavedMappingsCompact) void {
         this.compact_table.deref();
+        bun.destroy(this);
     }
 
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
@@ -270,8 +271,7 @@ pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings
         else
             mappings.list.items;
 
-        const compact = try bun.default_allocator.create(SavedMappingsCompact);
-        compact.* = try SavedMappingsCompact.init(bun.default_allocator, try bun.default_allocator.dupe(u8, vlq_data) catch bun.outOfMemory());
+        const compact = try SavedMappingsCompact.init(bun.default_allocator, vlq_data);
         try this.putValue(source.path.text, Value.init(compact));
     }
 }
@@ -292,7 +292,6 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
         } else if (old_value.get(SavedMappingsCompact)) |saved_compact| {
             var compact: *SavedMappingsCompact = saved_compact;
             compact.deinit();
-            bun.default_allocator.destroy(compact);
         } else if (old_value.get(SourceProviderMap)) |provider| {
             _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
         }

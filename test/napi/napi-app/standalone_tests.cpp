@@ -784,9 +784,25 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
     return napi_set_named_property(env, object, "bar", result);
   });
 
-  puts("ok");
+  clear();
 
-  info.Env().GetAndClearPendingException();
+  status = napi_wrap(
+      env, object, nullptr,
+      +[](napi_env env, void *data, void *finalize_hint) {
+        puts("finalizer start");
+        printf("napi_throw status: %d\n", napi_throw(env, ok(env)));
+        puts("finalizer end");
+      },
+      nullptr, nullptr);
+
+  if (status != napi_ok) {
+    printf("napi_wrap failed: %d\n", status);
+    return nullptr;
+  }
+
+  clear();
+
+  puts("ok");
   return ok(env);
 }
 

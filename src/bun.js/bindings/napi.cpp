@@ -1303,12 +1303,15 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
 
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    NAPI_CHECK_ARG(env, error);
-    if (!env->hasPendingException()) {
-        env->scheduleException(toJS(error));
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    if (env->isFinishingFinalizers()) {
+        return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
     }
-    return napi_set_last_error(env, napi_ok);
+    NAPI_CHECK_ARG(env, error);
+    env->scheduleException(toJS(error));
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status node_api_symbol_for(napi_env env,

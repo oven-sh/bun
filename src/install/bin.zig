@@ -687,9 +687,15 @@ pub const Bin = extern struct {
             defer bunx_file.close();
 
             const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
 
-            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+            // For Windows shims, we need a path relative to node_modules, not relative to .bin
+            // Most cases will start with "..\" to go up from .bin, but global installs may have different structure
+            const rel_target_for_shim = if (strings.hasPrefixComptime(rel_target, "..\\"))
+                rel_target["..\\".len..]
+            else
+                rel_target;
+
+            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target_for_shim);
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {

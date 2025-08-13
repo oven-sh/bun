@@ -14,7 +14,7 @@ export interface SQLResultArrayProperties {
 }
 
 export type { SQLResultArray };
-class SQLResultArray extends PublicArray implements SQLResultArrayProperties {
+class SQLResultArray<T> extends PublicArray<T> implements SQLResultArrayProperties {
   public count!: SQLResultArrayProperties["count"];
   public command!: SQLResultArrayProperties["command"];
   public lastInsertRowid!: SQLResultArrayProperties["lastInsertRowid"];
@@ -30,6 +30,7 @@ class SQLResultArray extends PublicArray implements SQLResultArrayProperties {
       lastInsertRowid: { value: properties.lastInsertRowid ?? null, writable: true },
     });
   }
+
   static get [Symbol.species]() {
     return Array;
   }
@@ -132,31 +133,18 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
 
   if (str.startsWith("sqlite://")) {
-    try {
-      if (value instanceof URL) {
-        if (value.protocol !== "sqlite:" && value.protocol !== "file:") {
-          return null;
-        }
+    // For SQLite URLs, the path is everything after sqlite://
+    // We need to be careful not to parse it as a URL since # and % are valid filename characters
+    const pathWithQuery = str.slice(9); // "sqlite://".length
 
-        // If pathname is empty but hostname exists, use hostname as filename
-        // This handles cases like sqlite://myapp.db
-        return value.pathname || value.hostname;
-      }
-
-      const url = new URL(str);
-
-      // same as above for parsing hostname
-      return url.pathname || url.hostname;
-    } catch {
-      // If it's not a valid URL, just strip the prefix
-      // But preserve query params if they exist
-      const pathWithQuery = str.slice(9); // "sqlite://".length
-      const queryIndex = pathWithQuery.indexOf("?");
-      if (queryIndex !== -1) {
-        return pathWithQuery.slice(0, queryIndex);
-      }
-      return pathWithQuery;
+    // Only look for ? to separate query parameters
+    // Don't treat # as a fragment - it's a valid filename character in SQLite
+    const queryIndex = pathWithQuery.indexOf("?");
+    if (queryIndex !== -1) {
+      // Remove query parameters but keep everything else including #
+      return pathWithQuery.slice(0, queryIndex);
     }
+    return pathWithQuery;
   }
   if (str.startsWith("sqlite:")) return str.slice(7); // "sqlite:".length
 

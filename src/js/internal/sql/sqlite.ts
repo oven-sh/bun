@@ -184,7 +184,7 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     }
   }
 
-  createQueryHandle(sql: string, values: any[]) {
+  createQueryHandle(sql: string, values: any[] | undefined | null) {
     return {
       run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
         try {
@@ -206,16 +206,21 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
           ) {
             // SELECT queries must use prepared statements for results
             const stmt = db.prepare(sql);
-            const result = stmt.all(...values);
+            const result = stmt.all(...(values ?? []));
             const sqlResult = new SQLResultArray();
-            sqlResult.push(...result);
+
+            if (Array.isArray(result)) {
+              sqlResult.push(...result);
+            } else if (result) {
+              sqlResult.push(result);
+            }
             sqlResult.command = command;
             sqlResult.count = result.length;
             stmt.finalize();
             query.resolve(sqlResult);
           } else {
             // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-            const changes = db.run(sql, ...values);
+            const changes = db.run(sql, ...(values ?? []));
             const sqlResult = new SQLResultArray();
             sqlResult.command = command;
             sqlResult.count = changes.changes;

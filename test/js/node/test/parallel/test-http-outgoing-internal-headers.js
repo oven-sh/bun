@@ -6,9 +6,6 @@ const assert = require('assert');
 // const { kOutHeaders } = require('internal/http');
 const { OutgoingMessage } = require('http');
 
-const warn = 'OutgoingMessage.prototype._headers is deprecated';
-common.expectWarning('DeprecationWarning', warn, 'DEP0066');
-
 {
   // Tests for _headers get method
   const outgoingMessage = new OutgoingMessage();

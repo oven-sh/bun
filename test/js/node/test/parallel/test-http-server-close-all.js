@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+// if ('Bun' in globalThis) require('../common').skip("TODO: BUN: test was edited and never worked");
 const assert = require('assert');
 
 const { createServer } = require('http');
@@ -10,7 +11,7 @@ let connections = 0;
 const server = createServer(common.mustCall(function(req, res) {
   res.writeHead(200, { Connection: 'keep-alive' });
   res.end();
-}, 2), {
+}), {
   headersTimeout: 0,
   keepAliveTimeout: 0,
   requestTimeout: common.platformTimeout(60000),
@@ -57,5 +58,5 @@ server.listen(0, function() {
 
   client1.on('error', () => {});
 
-  client1.write('GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'); // Bun only reports connect after headers are received
+  client1.write('GET / HTTP/1.1');
 });

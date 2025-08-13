@@ -187,6 +187,8 @@ declare module "bun:sqlite" {
 
     /**
      * This is an alias of {@link Database.run}
+     *
+     * @deprecated Prefer {@link Database.run}
      */
     exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 

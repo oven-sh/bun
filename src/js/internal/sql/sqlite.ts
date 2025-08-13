@@ -1,5 +1,5 @@
 import type * as BunSQLiteModule from "bun:sqlite";
-import type { Query } from "./query";
+import type { BaseQueryHandle, Query } from "./query";
 import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray } from "./shared";
 
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
@@ -141,7 +141,9 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, any> {
+export interface SQLiteQueryHandle extends BaseQueryHandle {}
+
+export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
@@ -190,97 +192,39 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
             throw new Error("SQLite database not initialized");
           }
 
-          const stmt = db.prepare(sql);
-          const hasMultipleStatements = stmt.hasMultipleStatements;
+          const commandMatch = sql.trim().match(/^(\w+)/i);
+          const command = commandMatch ? commandMatch[1].toUpperCase() : "";
 
-          if (hasMultipleStatements) {
-            // finalize because we split it up(maybe change this?)
+          // For SELECT queries, we need to use a prepared statement
+          // For other queries, we can check if there are multiple statements and use db.run() if so
+          if (
+            command === "SELECT" ||
+            sql.trim().toUpperCase().includes("RETURNING") ||
+            command === "PRAGMA" ||
+            command === "WITH" ||
+            command === "EXPLAIN"
+          ) {
+            // SELECT queries must use prepared statements for results
+            const stmt = db.prepare(sql);
+            const result = stmt.all(...values);
+            const sqlResult = new SQLResultArray();
+            sqlResult.push(...result);
+            sqlResult.command = command;
+            sqlResult.count = result.length;
             stmt.finalize();
-
-            const statements = sql.split(";").filter(s => s.trim());
-            let lastResult = new SQLResultArray();
-
-            for (let i = 0; i < statements.length; i++) {
-              const stmtSql = statements[i].trim();
-              if (!stmtSql) continue;
-
-              const stmt = db.prepare(stmtSql);
-              const commandMatch = stmtSql.match(/^(\w+)/i);
-              const command = commandMatch ? commandMatch[1].toUpperCase() : "";
-
-              if (
-                command === "SELECT" ||
-                stmtSql.toUpperCase().includes("RETURNING") ||
-                command === "PRAGMA" ||
-                command === "WITH"
-              ) {
-                // For SELECT/PRAGMA queries, use all()
-                const result = stmt.all(...(i === 0 ? values : []));
-                lastResult = new SQLResultArray();
-                lastResult.push(...result);
-                lastResult.command = command;
-                lastResult.count = result.length;
-              } else {
-                // For INSERT/UPDATE/DELETE, use run()
-                const changes = stmt.run(...(i === 0 ? values : []));
-                lastResult = new SQLResultArray();
-                lastResult.command = command;
-                lastResult.count = changes.changes;
-                // @ts-ignore - lastInsertRowid exists on the changes object
-                if (changes.lastInsertRowid !== undefined) {
-                  // @ts-ignore
-                  lastResult.lastInsertRowid = changes.lastInsertRowid;
-                }
-              }
-            }
-
-            query.resolve(lastResult);
+            query.resolve(sqlResult);
           } else {
-            let result: any;
-
-            const commandMatch = sql.trim().match(/^(\w+)/i);
-            const command = commandMatch ? commandMatch[1].toUpperCase() : "";
-
-            if (
-              command === "SELECT" ||
-              sql.trim().toUpperCase().includes("RETURNING") ||
-              command === "PRAGMA" ||
-              command === "WITH" ||
-              command === "EXPLAIN"
-            ) {
-              // For SELECT queries, use all()
-              result = stmt.all(...values);
-              const sqlResult = new SQLResultArray();
-              sqlResult.push(...result);
-              sqlResult.command = command;
-              sqlResult.count = result.length;
-              query.resolve(sqlResult);
-            } else {
-              // For INSERT/UPDATE/DELETE, use run()
-              const changes = stmt.run(...values);
-              const sqlResult = new SQLResultArray();
-              sqlResult.command = command;
-              sqlResult.count = changes.changes;
-              // @ts-ignore - lastInsertRowid exists on the changes object
-              if (changes.lastInsertRowid !== undefined) {
-                // @ts-ignore
-                sqlResult.lastInsertRowid = changes.lastInsertRowid;
-              }
-              query.resolve(sqlResult);
-            }
-
-            stmt.finalize();
+            // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
+            const changes = db.run(sql, ...values);
+            const sqlResult = new SQLResultArray();
+            sqlResult.command = command;
+            sqlResult.count = changes.changes;
+            sqlResult.lastInsertRowid = changes.lastInsertRowid;
+            query.resolve(sqlResult);
           }
         } catch (err) {
           query.reject(err as Error);
         }
-      },
-      done: () => {
-        // Statement is prepared and finalized within run()
-        // No cleanup needed here
-      },
-      cancel: () => {
-        throw new Error("SQLite does not support cancellation");
       },
       setMode: () => {
         throw new Error("SQLite does not support result modes");

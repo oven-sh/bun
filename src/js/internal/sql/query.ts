@@ -16,8 +16,8 @@ const _adapter = Symbol("adapter");
 const PublicPromise = Promise;
 
 export interface BaseQueryHandle {
-  done(): void;
-  cancel(): void;
+  done?(): void;
+  cancel?(): void;
   setMode(mode: SQLQueryResultMode): void;
 }
 
@@ -162,7 +162,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
       return this;
     }
 
-    handle.done();
+    handle.done?.();
 
     return this[_resolve](x);
   }
@@ -178,7 +178,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
         return this[_reject](x);
       }
 
-      handle.done();
+      handle.done?.();
     }
 
     return this[_reject](x);
@@ -196,7 +196,7 @@ class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
       const handle = this.getQueryHandle();
 
       if (handle) {
-        handle.cancel();
+        handle.cancel?.();
       }
     }
 

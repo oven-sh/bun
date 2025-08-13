@@ -280,6 +280,9 @@ src/bun.js/test/diff/diff_match_patch.zig
 src/bun.js/test/diff/printDiff.zig
 src/bun.js/test/expect.zig
 src/bun.js/test/expect/toBe.zig
+src/bun.js/test/expect/toBeOneOf.zig
+src/bun.js/test/expect/toContain.zig
+src/bun.js/test/expect/toHaveLength.zig
 src/bun.js/test/jest.zig
 src/bun.js/test/pretty_format.zig
 src/bun.js/test/snapshot.zig

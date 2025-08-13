@@ -28,12 +28,12 @@ test("AggregateError displays with proper formatting", async () => {
   // Should display the AggregateError name and message
   expect(stderr).toContain("AggregateError: qux!");
 
-  // Should show it's an AggregateError with grouped errors
-  expect(stderr).toContain("[errors]:");
+  // Should show it's an AggregateError with tree-structured errors
+  expect(stderr).toContain("├─ Error:");
 
-  // Should still show the individual error messages
-  expect(stderr).toContain("error: foo!");
-  expect(stderr).toContain("error: bar!");
+  // Should still show the individual error messages in tree format
+  expect(stderr).toContain("Error: foo!");
+  expect(stderr).toContain("Error: bar!");
 });
 
 test("AggregateError with empty errors array", async () => {
@@ -66,8 +66,8 @@ test("AggregateError with single error", async () => {
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("AggregateError: wrapper");
-  expect(stderr).toContain("[errors]:");
-  expect(stderr).toContain("error: single");
+  expect(stderr).toContain("└─ Error:");
+  expect(stderr).toContain("Error: single");
 });
 
 test("AggregateError with non-Error objects", async () => {
@@ -84,11 +84,11 @@ test("AggregateError with non-Error objects", async () => {
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("AggregateError: mixed");
-  expect(stderr).toContain("[errors]:");
-  expect(stderr).toContain("error: real error");
-  // Non-Error values should still be displayed somehow
-  expect(stderr).toContain("string error");
-  expect(stderr).toContain("42");
+  expect(stderr).toContain("├─ Error:");
+  expect(stderr).toContain("Error: real error");
+  // Non-Error values should still be displayed in tree format
+  expect(stderr).toContain("├─ string error");
+  expect(stderr).toContain("└─ 42");
 });
 
 test("Nested AggregateError", async () => {
@@ -108,7 +108,7 @@ test("Nested AggregateError", async () => {
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("AggregateError: outer aggregate");
-  expect(stderr).toContain("[errors]:");
+  expect(stderr).toContain("├─ AggregateError:");
   // The nested AggregateError should also be properly displayed
   expect(stderr).toContain("AggregateError: inner aggregate");
 });

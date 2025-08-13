@@ -2388,12 +2388,14 @@ pub fn printErrorlikeObject(
 
         const errors_array = value.getErrorsProperty(this.global);
         if (!errors_array.isEmptyOrUndefinedOrNull()) {
-            writer.writeAll(" {\n  [errors]: [\n") catch return;
+            writer.writeAll("\n\n") catch return;
 
             const AggregateErrorIterator = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
                 formatter: *ConsoleObject.Formatter,
+                total_errors: u32,
+                current_index: u32,
 
                 pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(vm, globalObject, nextValue, ctx.?, true);
@@ -2401,19 +2403,80 @@ pub fn printErrorlikeObject(
                 pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(vm, globalObject, nextValue, ctx.?, false);
                 }
-                fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime _: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
+
+                    // Determine if this is the last error for tree formatting
+                    const is_last = this_.current_index + 1 >= this_.total_errors;
+                    const tree_prefix = if (is_last) "└─ " else "├─ ";
+
+                    // Try to get error name and message
+                    var error_name = bun.String.empty;
+                    var error_message = bun.String.empty;
+                    defer {
+                        error_name.deref();
+                        error_message.deref();
+                    }
+
+                    if (nextValue.isObject()) {
+                        // Get name property
+                        if (nextValue.fastGet(globalObject, .name) catch null) |name_val| {
+                            if (name_val.isString()) {
+                                error_name = name_val.toBunString(globalObject) catch bun.String.empty;
+                            }
+                        }
+
+                        // Get message property
+                        if (nextValue.fastGet(globalObject, .message) catch null) |message_val| {
+                            if (message_val.isString()) {
+                                error_message = message_val.toBunString(globalObject) catch bun.String.empty;
+                            }
+                        }
+                    }
+
+                    // Format the error line
+                    this_.writer.writeAll(tree_prefix) catch return;
+
+                    if (!error_name.isEmpty()) {
+                        this_.writer.writeAll(error_name.byteSlice()) catch return;
+                        if (!error_message.isEmpty()) {
+                            this_.writer.writeAll(": ") catch return;
+                            this_.writer.writeAll(error_message.byteSlice()) catch return;
+                        }
+                    } else if (!error_message.isEmpty()) {
+                        this_.writer.writeAll("Error: ") catch return;
+                        this_.writer.writeAll(error_message.byteSlice()) catch return;
+                    } else {
+                        // Fallback for non-Error objects
+                        var str = bun.String.empty;
+                        defer str.deref();
+                        str = nextValue.toBunString(globalObject) catch bun.String.empty;
+                        if (!str.isEmpty()) {
+                            this_.writer.writeAll(str.byteSlice()) catch return;
+                        } else {
+                            this_.writer.writeAll("[object Object]") catch return;
+                        }
+                    }
+
+                    this_.writer.writeAll("\n") catch return;
+                    this_.current_index += 1;
                 }
             };
-            var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
+
+            // Get the total count of errors for tree formatting
+            const total_errors = @as(u32, @intCast(errors_array.getLength(this.global) catch 0));
+            var iter = AggregateErrorIterator{
+                .writer = writer,
+                .current_exception_list = exception_list,
+                .formatter = formatter,
+                .total_errors = total_errors,
+                .current_index = 0,
+            };
             if (comptime allow_ansi_color) {
                 errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return;
             } else {
                 errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return;
             }
-
-            writer.writeAll("  ]\n}\n") catch return;
         }
         return;
     }

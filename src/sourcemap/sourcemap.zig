@@ -183,7 +183,7 @@ pub fn parseJSON(
             .fail => |fail| return fail.err,
         };
 
-        if (hint == .all and hint.all.include_names and map_data.mappings.impl == .with_names) {
+        if (hint == .all and hint.all.include_names and map_data.mappings.list.impl == .with_names) {
             if (json.get("names")) |names| {
                 if (names.data == .e_array) {
                     var names_list = try std.ArrayListUnmanaged(bun.Semver.String).initCapacity(alloc, names.data.e_array.items.len);
@@ -202,8 +202,8 @@ pub fn parseJSON(
                         names_list.appendAssumeCapacity(try bun.Semver.String.initAppendIfNeeded(alloc, &names_buffer, str));
                     }
 
-                    map_data.mappings.names = names_list.items;
-                    map_data.mappings.names_buffer = .fromList(names_buffer);
+                    map_data.mappings.list.names = names_list.items;
+                    map_data.mappings.list.names_buffer = .fromList(names_buffer);
                 }
             }
         }
@@ -830,7 +830,7 @@ pub const Mapping = struct {
 
         return .{ .success = .{
             .ref_count = .init(),
-            .mappings = mapping,
+            .mappings = .{ .list = mapping },
             .input_line_count = input_line_count,
         } };
     }
@@ -859,6 +859,55 @@ pub const ParseResult = union(enum) {
     success: ParsedSourceMap,
 };
 
+pub const MappingsData = union(enum) {
+    list: Mapping.List,
+    compact: *LineOffsetTable.Compact,
+
+    pub fn find(self: *const MappingsData, line: i32, column: i32) ?Mapping {
+        switch (self.*) {
+            .list => |*list| return list.find(line, column),
+            .compact => |compact| {
+                if (compact.findMapping(line, column)) |sm| {
+                    return Mapping{
+                        .generated = .{
+                            .lines = bun.Ordinal.start.addScalar(sm.generated_line),
+                            .columns = bun.Ordinal.start.addScalar(sm.generated_column),
+                        },
+                        .original = .{
+                            .lines = bun.Ordinal.start.addScalar(sm.original_line),
+                            .columns = bun.Ordinal.start.addScalar(sm.original_column),
+                        },
+                        .source_index = sm.source_index,
+                        .name_index = -1, // Compact format doesn't support names yet
+                    };
+                }
+                return null;
+            },
+        }
+    }
+
+    pub fn memoryCost(self: *const MappingsData) usize {
+        switch (self.*) {
+            .list => |*list| return list.memoryCost(),
+            .compact => return @sizeOf(*LineOffsetTable.Compact),
+        }
+    }
+
+    pub fn deinit(self: *MappingsData, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .list => |*list| list.deinit(allocator),
+            .compact => |compact| compact.deref(),
+        }
+    }
+
+    pub fn getName(self: *MappingsData, index: i32) ?[]const u8 {
+        switch (self.*) {
+            .list => |*list| return list.getName(index),
+            .compact => |compact| return compact.getName(index),
+        }
+    }
+};
+
 pub const ParsedSourceMap = struct {
     const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -869,7 +918,7 @@ pub const ParsedSourceMap = struct {
     ref_count: RefCount,
 
     input_line_count: usize = 0,
-    mappings: Mapping.List = .{},
+    mappings: MappingsData = .{ .list = .{} },
 
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
@@ -964,34 +1013,42 @@ pub const ParsedSourceMap = struct {
     }
 
     pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
-        var last_col: i32 = 0;
-        var last_src: i32 = 0;
-        var last_ol: i32 = 0;
-        var last_oc: i32 = 0;
-        var current_line: i32 = 0;
-        for (
-            map.mappings.generated(),
-            map.mappings.original(),
-            map.mappings.sourceIndex(),
-            0..,
-        ) |gen, orig, source_index, i| {
-            if (current_line != gen.lines.zeroBased()) {
-                assert(gen.lines.zeroBased() > current_line);
-                const inc = gen.lines.zeroBased() - current_line;
-                try writer.writeByteNTimes(';', @intCast(inc));
-                current_line = gen.lines.zeroBased();
-                last_col = 0;
-            } else if (i != 0) {
-                try writer.writeByte(',');
-            }
-            try VLQ.encode(gen.columns.zeroBased() - last_col).writeTo(writer);
-            last_col = gen.columns.zeroBased();
-            try VLQ.encode(source_index - last_src).writeTo(writer);
-            last_src = source_index;
-            try VLQ.encode(orig.lines.zeroBased() - last_ol).writeTo(writer);
-            last_ol = orig.lines.zeroBased();
-            try VLQ.encode(orig.columns.zeroBased() - last_oc).writeTo(writer);
-            last_oc = orig.columns.zeroBased();
+        switch (map.mappings) {
+            .list => |*list| {
+                var last_col: i32 = 0;
+                var last_src: i32 = 0;
+                var last_ol: i32 = 0;
+                var last_oc: i32 = 0;
+                var current_line: i32 = 0;
+                for (
+                    list.generated(),
+                    list.original(),
+                    list.sourceIndex(),
+                    0..,
+                ) |gen, orig, source_index, i| {
+                    if (current_line != gen.lines.zeroBased()) {
+                        assert(gen.lines.zeroBased() > current_line);
+                        const inc = gen.lines.zeroBased() - current_line;
+                        try writer.writeByteNTimes(';', @intCast(inc));
+                        current_line = gen.lines.zeroBased();
+                        last_col = 0;
+                    } else if (i != 0) {
+                        try writer.writeByte(',');
+                    }
+                    try VLQ.encode(gen.columns.zeroBased() - last_col).writeTo(writer);
+                    last_col = gen.columns.zeroBased();
+                    try VLQ.encode(source_index - last_src).writeTo(writer);
+                    last_src = source_index;
+                    try VLQ.encode(orig.lines.zeroBased() - last_ol).writeTo(writer);
+                    last_ol = orig.lines.zeroBased();
+                    try VLQ.encode(orig.columns.zeroBased() - last_oc).writeTo(writer);
+                    last_oc = orig.columns.zeroBased();
+                }
+            },
+            .compact => |compact| {
+                // For compact format, just write the raw VLQ mappings
+                try writer.writeAll(compact.vlq_mappings);
+            },
         }
     }
 

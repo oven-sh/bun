@@ -20,13 +20,22 @@ pub const List = bun.MultiArrayList(LineOffsetTable);
 /// Compact variant that keeps VLQ-encoded mappings and line index
 /// for reduced memory usage vs unpacked MultiArrayList
 pub const Compact = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    /// Thread-safe reference counting for shared access
+    ref_count: RefCount,
     /// VLQ-encoded sourcemap mappings string
     vlq_mappings: []const u8,
     /// Index of positions where ';' (line separators) occur in vlq_mappings
     line_offsets: []const u32,
+    /// Names array for sourcemap symbols
+    names: []const bun.Semver.String,
+    names_buffer: bun.ByteList,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, vlq_mappings: []const u8) !Compact {
+    pub fn init(allocator: std.mem.Allocator, vlq_mappings: []const u8) !*Compact {
         // Find all line separator positions
         var line_positions = std.ArrayList(u32).init(allocator);
         defer line_positions.deinit();
@@ -43,16 +52,22 @@ pub const Compact = struct {
         const owned_mappings = try allocator.dupe(u8, vlq_mappings);
         const owned_offsets = try allocator.dupe(u32, line_positions.items);
 
-        return Compact{
+        return bun.new(Compact, .{
+            .ref_count = .init(),
             .vlq_mappings = owned_mappings,
             .line_offsets = owned_offsets,
+            .names = &[_]bun.Semver.String{},
+            .names_buffer = .{},
             .allocator = allocator,
-        };
+        });
     }
 
-    pub fn deinit(self: *Compact) void {
+    fn deinit(self: *Compact) void {
         self.allocator.free(self.vlq_mappings);
         self.allocator.free(self.line_offsets);
+        self.names_buffer.deinitWithAllocator(self.allocator);
+        self.allocator.free(self.names);
+        bun.destroy(self);
     }
 
     /// Find mapping for a given line/column by decoding VLQ on demand
@@ -148,6 +163,17 @@ pub const Compact = struct {
         }
 
         return best_mapping;
+    }
+
+    /// Get name by index, similar to Mapping.List.getName
+    pub fn getName(self: *const Compact, index: i32) ?[]const u8 {
+        if (index < 0) return null;
+        const i: usize = @intCast(index);
+
+        if (i >= self.names.len) return null;
+
+        const str: *const bun.Semver.String = &self.names[i];
+        return str.slice(self.names_buffer.slice());
     }
 
     /// Compatible API with regular LineOffsetTable for findLine

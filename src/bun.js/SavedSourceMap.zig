@@ -81,8 +81,9 @@ pub const SavedMappings = struct {
 
 /// Compact variant that uses LineOffsetTable.Compact for reduced memory usage
 pub const SavedMappingsCompact = struct {
-    compact_table: SourceMap.LineOffsetTable.Compact,
+    compact_table: *SourceMap.LineOffsetTable.Compact,
     sources_count: usize,
+    
     pub fn init(allocator: Allocator, vlq_mappings: []const u8) !SavedMappingsCompact {
         return SavedMappingsCompact{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
@@ -98,48 +99,30 @@ pub const SavedMappingsCompact = struct {
     }
 
     pub fn deinit(this: *SavedMappingsCompact) void {
-        this.compact_table.deinit();
+        this.compact_table.deref();
     }
 
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
-        // Parse the VLQ mappings using the existing parser but keep the compact table
+        _ = allocator; // not used in compact version
+        _ = path; // not used in compact version
+        
+        // Instead of parsing the mappings, just increment ref count and return compact data
+        this.compact_table.ref();
+        
         // Calculate proper input line count - use the last line index as the total
         const input_line_count = if (this.compact_table.line_offsets.len > 1)
             this.compact_table.line_offsets.len - 1
         else
             1;
 
-        const result = SourceMap.Mapping.parse(
-            allocator,
-            this.compact_table.vlq_mappings,
-            null, // estimated mapping count
-            @intCast(this.sources_count), // use stored sources count
-            input_line_count, // input line count - use proper calculation
-            .{ .allow_names = true, .sort = true }, // Enable names support like original implementation
-        );
-        switch (result) {
-            .fail => |fail| {
-                if (Output.enable_ansi_colors_stderr) {
-                    try fail.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
-                        false,
-                        true,
-                    );
-                } else {
-                    try fail.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
-                        false,
-                        false,
-                    );
-                }
-                return fail.err;
-            },
-            .success => |success| {
-                return success;
-            },
-        }
+        return ParsedSourceMap{
+            .ref_count = .init(),
+            .input_line_count = input_line_count,
+            .mappings = .{ .compact = this.compact_table },
+            .external_source_names = &.{},
+            .underlying_provider = .none,
+            .is_standalone_module_graph = false,
+        };
     }
 };
 
@@ -235,17 +218,18 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    // Temporarily use original format for all cases to ensure coverage compatibility
-    // TODO: Implement proper coverage detection to use compact format when coverage is disabled
-    const data = try bun.default_allocator.dupe(u8, mappings.list.items);
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, data.ptr)));
+    // Check if coverage is enabled - if so, use full format for easier unpacking
+    // Otherwise use compact format for memory savings
+    if (bun.cli.Command.get().test_options.coverage.enabled) {
+        const data = try bun.default_allocator.dupe(u8, mappings.list.items);
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, data.ptr)));
+    } else {
+        const compact = try bun.default_allocator.create(SavedMappingsCompact);
+        compact.* = try SavedMappingsCompact.init(bun.default_allocator, mappings.list.items);
+        try this.putValue(source.path.text, Value.init(compact));
+    }
 }
 
-pub fn putMappingsCompact(this: *SavedSourceMap, source: *const logger.Source, vlq_mappings: []const u8) !void {
-    const compact = try bun.default_allocator.create(SavedMappingsCompact);
-    compact.* = try SavedMappingsCompact.init(bun.default_allocator, vlq_mappings);
-    try this.putValue(source.path.text, Value.init(compact));
-}
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
     this.lock();

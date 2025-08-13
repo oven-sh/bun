@@ -494,7 +494,7 @@ pub fn getParsedSourceMap(store: *SourceMapStore, script_id: Key, arena: Allocat
         .success => |psm| {
             return .{
                 .index = .init(@intCast(index)),
-                .mappings = psm.mappings,
+                .mappings = psm.mappings.list,
                 .file_paths = entry.paths,
                 .entry_files = &entry.files,
             };

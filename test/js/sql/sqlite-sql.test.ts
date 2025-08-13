@@ -3549,17 +3549,19 @@ describe("Query Normalization Fuzzing Tests", () => {
 
     await sql`SELECT 1`;
     await sql`SELECT 2;`;
-    await sql`SELECT 3;;`;
-    await sql`;SELECT 4`;
-    await sql`;;SELECT 5;;`;
+
+    await sql.unsafe(`SELECT 3;;`);
+    await sql.unsafe(`;SELECT 4`);
+    await sql.unsafe(`;;SELECT 5;;`);
 
     await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
-    await sql`SELECT "123", "!", "@#$" FROM weird_cols`;
+    await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
 
     const longName = "a".repeat(1000);
-    await sql`CREATE TABLE "${longName}" (col TEXT)`;
-    await sql`SELECT * FROM "${longName}"`;
-    await sql`DROP TABLE "${longName}"`;
+    // Dynamic table names require unsafe
+    await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
+    await sql.unsafe(`SELECT * FROM "${longName}"`);
+    await sql.unsafe(`DROP TABLE "${longName}"`);
   });
 
   describe("Result Modes", () => {

@@ -1358,6 +1358,12 @@ pub const TestCommand = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
+        
+        // Set the global autokill flag if enabled
+        if (ctx.runtime_options.autokill) {
+            Global.autokill_enabled = true;
+        }
+        
         var vm = try jsc.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,

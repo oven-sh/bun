@@ -3570,14 +3570,12 @@ describe("Query Normalization Fuzzing Tests", () => {
       await sql`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)`;
       await sql`INSERT INTO users (name, age) VALUES ('Alice', 30), ('Bob', 25), ('Charlie', 35)`;
 
-      // Test objects mode (default)
       const objectResults = await sql`SELECT id, name, age FROM users ORDER BY id`;
       expect(objectResults).toHaveLength(3);
       expect(objectResults[0]).toEqual({ id: 1, name: "Alice", age: 30 });
       expect(objectResults[1]).toEqual({ id: 2, name: "Bob", age: 25 });
       expect(objectResults[2]).toEqual({ id: 3, name: "Charlie", age: 35 });
 
-      // Test values mode
       const valuesResults = await sql`SELECT id, name, age FROM users ORDER BY id`.values();
       expect(valuesResults).toHaveLength(3);
       expect(valuesResults[0]).toEqual([1, "Alice", 30]);
@@ -3595,9 +3593,8 @@ describe("Query Normalization Fuzzing Tests", () => {
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;
 
-      // Test that raw mode throws an error
       const rawPromise = sql`SELECT * FROM test`.raw();
-      await expect(rawPromise).rejects.toThrow("SQLite does not support raw mode");
+      expect(rawPromise).rejects.toThrowErrorMatchingInlineSnapshot();
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -3607,13 +3604,14 @@ describe("Query Normalization Fuzzing Tests", () => {
       const dir = tempDirWithFiles("sqlite-values-pragma", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
-      // Test PRAGMA with values mode
       const pragmaValues = await sql`PRAGMA table_info('sqlite_master')`.values();
       expect(Array.isArray(pragmaValues)).toBe(true);
-      // Each row should be an array, not an object
+
       if (pragmaValues.length > 0) {
         expect(Array.isArray(pragmaValues[0])).toBe(true);
       }
+
+      expect(pragmaValues).toMatchInlineSnapshot();
 
       await sql.close();
       await rm(dir, { recursive: true });

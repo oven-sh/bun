@@ -1,3 +1,7 @@
+order: []*TestScope,
+index: usize,
+extra_queue: std.ArrayList(*TestScope), // for if test() is called inside a test
+
 pub fn init(_: std.mem.Allocator) Execution {
     return .{};
 }
@@ -9,10 +13,20 @@ fn bunTest(this: *Execution) *BunTest {
     return @fieldParentPtr("execution", this);
 }
 
-pub fn runLoop() bun.JSError!void {
-    while (true) {
-        // run the next test or hook
+pub fn runLoop(this: *Execution) bun.JSError!void {
+    while (this.index < this.order.len) |current| {
+        switch (this.runOne(current)) {
+            .async_ => return,
+            .sync => {
+                this.index += 1;
+            },
+        }
     }
+}
+
+pub fn runOne(this: *Execution, current: *DescribeScope) bun.JSError!enum { sync, async_ } {
+    _ = this;
+    _ = current;
 }
 
 const std = @import("std");
@@ -23,6 +37,7 @@ const Collection = describe2.Collection;
 const Execution = describe2.Execution;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.group;
+const TestScope = describe2.TestScope;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -1,0 +1,46 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Query Normalization Fuzzing Tests Result Modes values() mode works with PRAGMA commands 1`] = `
+[
+  [
+    0,
+    "type",
+    "TEXT",
+    0,
+    null,
+    0,
+  ],
+  [
+    1,
+    "name",
+    "TEXT",
+    0,
+    null,
+    0,
+  ],
+  [
+    2,
+    "tbl_name",
+    "TEXT",
+    0,
+    null,
+    0,
+  ],
+  [
+    3,
+    "rootpage",
+    "INT",
+    0,
+    null,
+    0,
+  ],
+  [
+    4,
+    "sql",
+    "TEXT",
+    0,
+    null,
+    0,
+  ],
+]
+`;

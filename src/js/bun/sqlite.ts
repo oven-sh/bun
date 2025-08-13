@@ -102,6 +102,7 @@ interface CppSQLStatement {
   iterate: (...args: TODO[]) => TODO;
   as: (...args: TODO[]) => TODO;
   values: (...args: TODO[]) => TODO;
+  raw: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
   toString: (...args: TODO[]) => TODO;
   columns: string[];
@@ -137,6 +138,7 @@ class Statement {
         this.all = this.#allNoArgs;
         this.iterate = this.#iterateNoArgs;
         this.values = this.#valuesNoArgs;
+        this.raw = this.#rawNoArgs;
         this.run = this.#runNoArgs;
         break;
       }
@@ -145,6 +147,7 @@ class Statement {
         this.all = this.#all;
         this.iterate = this.#iterate;
         this.values = this.#values;
+        this.raw = this.#rawValues;
         this.run = this.#run;
         break;
       }
@@ -157,6 +160,7 @@ class Statement {
   all: SqliteTypes.Statement["all"];
   iterate: SqliteTypes.Statement["iterate"];
   values: SqliteTypes.Statement["values"];
+  raw: SqliteTypes.Statement["raw"];
   run: SqliteTypes.Statement["run"];
   isFinalized = false;
 
@@ -199,6 +203,10 @@ class Statement {
     return this.#raw.values();
   }
 
+  #rawNoArgs() {
+    return this.#raw.raw();
+  }
+
   #runNoArgs() {
     this.#raw.run(internalFieldTuple);
 
@@ -220,7 +228,6 @@ class Statement {
     return this;
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #get(...args) {
     if (args.length === 0) return this.#getNoArgs();
     var arg0 = args[0];
@@ -233,7 +240,6 @@ class Statement {
       : this.#raw.get(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #all(...args) {
     if (args.length === 0) return this.#allNoArgs();
     var arg0 = args[0];
@@ -246,7 +252,6 @@ class Statement {
       : this.#raw.all(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   *#iterate(...args) {
     if (args.length === 0) return yield* this.#iterateNoArgs();
     var arg0 = args[0];
@@ -263,7 +268,6 @@ class Statement {
     }
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #values(...args) {
     if (args.length === 0) return this.#valuesNoArgs();
     var arg0 = args[0];
@@ -276,7 +280,18 @@ class Statement {
       : this.#raw.values(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
+  #rawValues(...args) {
+    if (args.length === 0) return this.#rawNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.raw(args)
+      : this.#raw.raw(...args);
+  }
+
   #run(...args) {
     if (args.length === 0) {
       this.#runNoArgs();

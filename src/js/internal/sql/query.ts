@@ -19,7 +19,7 @@ export interface BaseQueryHandle<Connection> {
   done?(): void;
   cancel?(): void;
   setMode(mode: SQLQueryResultMode): void;
-  run(connection: Connection, query: Query<any, any>): void;
+  run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
 
 export type { Query };

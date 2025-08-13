@@ -271,11 +271,11 @@ describe("Query Execution", () => {
 
   test("handles multiple statements with unsafe", async () => {
     await sql.unsafe(`
-        CREATE TABLE multi1 (id INTEGER);
-        CREATE TABLE multi2 (id INTEGER);
-        INSERT INTO multi1 VALUES (1);
-        INSERT INTO multi2 VALUES (2);
-      `);
+      CREATE TABLE multi1 (id INTEGER);
+      CREATE TABLE multi2 (id INTEGER);
+      INSERT INTO multi1 VALUES (1);
+      INSERT INTO multi2 VALUES (2);
+    `);
 
     const result1 = await sql`SELECT * FROM multi1`;
     const result2 = await sql`SELECT * FROM multi2`;
@@ -3586,15 +3586,48 @@ describe("Query Normalization Fuzzing Tests", () => {
       await rm(dir, { recursive: true });
     });
 
-    test("raw() mode throws error for SQLite", async () => {
+    test("raw() mode returns buffers for SQLite", async () => {
       const dir = tempDirWithFiles("sqlite-raw-mode", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
-      await sql`CREATE TABLE test (id INTEGER)`;
-      await sql`INSERT INTO test VALUES (1)`;
+      await sql`CREATE TABLE test (id INTEGER, name TEXT, data BLOB, score REAL)`;
+      await sql`INSERT INTO test VALUES (42, 'hello', ${Buffer.from([1, 2, 3])}, 3.14)`;
 
-      const rawPromise = sql`SELECT * FROM test`.raw();
-      expect(rawPromise).rejects.toThrowErrorMatchingInlineSnapshot();
+      const result = await sql`SELECT * FROM test`.raw();
+      expect(result).toBeArray();
+      expect(result).toHaveLength(1);
+
+      const row = result[0];
+      expect(row).toBeArray();
+      expect(row).toHaveLength(4);
+
+      expect(row[0]).toBeInstanceOf(Uint8Array);
+      expect(row[1]).toBeInstanceOf(Uint8Array);
+      expect(row[2]).toBeInstanceOf(Uint8Array);
+      expect(row[3]).toBeInstanceOf(Uint8Array);
+
+      const idBuf = row[0] as Uint8Array;
+      const idView = new DataView(idBuf.buffer, idBuf.byteOffset, idBuf.byteLength);
+      expect(idView.getBigInt64(0, true)).toBe(42n);
+
+      const nameBuf = row[1] as Uint8Array;
+      expect(new TextDecoder().decode(nameBuf)).toBe("hello");
+
+      const dataBuf = row[2] as Uint8Array;
+      expect(Array.from(dataBuf)).toEqual([1, 2, 3]);
+
+      const scoreBuf = row[3] as Uint8Array;
+      const scoreView = new DataView(scoreBuf.buffer, scoreBuf.byteOffset, scoreBuf.byteLength);
+      expect(scoreView.getFloat64(0, true)).toBe(3.14);
+
+      await sql`INSERT INTO test VALUES (NULL, NULL, NULL, NULL)`;
+      const resultWithNull = await sql`SELECT * FROM test WHERE id IS NULL`.raw();
+      expect(resultWithNull).toHaveLength(1);
+      const nullRow = resultWithNull[0];
+      expect(nullRow[0]).toBeNull();
+      expect(nullRow[1]).toBeNull();
+      expect(nullRow[2]).toBeNull();
+      expect(nullRow[3]).toBeNull();
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -3611,7 +3644,7 @@ describe("Query Normalization Fuzzing Tests", () => {
         expect(Array.isArray(pragmaValues[0])).toBe(true);
       }
 
-      expect(pragmaValues).toMatchInlineSnapshot();
+      expect(pragmaValues).toMatchSnapshot();
 
       await sql.close();
       await rm(dir, { recursive: true });

@@ -80,8 +80,6 @@ async function diagnose(
     options?: Partial<ts.CompilerOptions>;
     /** Specify extra files to include in the build */
     files?: Record<string, string>;
-    /** Extra (absolute) paths for files to include (useful for loading lib) */
-    include?: string[];
   } = {},
 ) {
   const tsconfig = config.options ?? {};
@@ -101,10 +99,6 @@ async function diagnose(
         files.push(absolutePath);
       }
     }
-  }
-
-  if (config.include) {
-    files.push(...config.include);
   }
 
   const options: ts.CompilerOptions = {
@@ -354,16 +348,16 @@ describe("@types/bun integration test", () => {
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         code: 2345,
       },
-      // {
-      //   line: "spawn.ts:62:38",
-      //   message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-      //   code: 2339,
-      // },
-      // {
-      //   line: "spawn.ts:107:38",
-      //   message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-      //   code: 2339,
-      // },
+      {
+        line: "spawn.ts:62:38",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
+        code: 2339,
+      },
+      {
+        line: "spawn.ts:107:38",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
+        code: 2339,
+      },
       {
         line: "streams.ts:18:3",
         message: "No overload matches this call.",
@@ -374,26 +368,26 @@ describe("@types/bun integration test", () => {
         message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
         code: 2339,
       },
-      // {
-      //   line: "streams.ts:44:19",
-      //   message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      //   code: 2339,
-      // },
-      // {
-      //   line: "streams.ts:45:19",
-      //   message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      //   code: 2339,
-      // },
-      // {
-      //   line: "streams.ts:46:19",
-      //   message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      //   code: 2339,
-      // },
-      // {
-      //   line: "streams.ts:47:19",
-      //   message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      //   code: 2339,
-      // },
+      {
+        line: "streams.ts:46:19",
+        message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        line: "streams.ts:47:19",
+        message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        line: "streams.ts:48:19",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
+      {
+        line: "streams.ts:49:19",
+        message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        code: 2339,
+      },
       {
         line: "websocket.ts:25:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",

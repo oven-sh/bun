@@ -2,8 +2,8 @@ import type * as BunSQLite from "bun:sqlite";
 
 declare module "bun" {
   /**
-   * Represents a reserved connection from the connection pool
-   * Extends SQL with additional release functionality
+   * Represents a reserved connection from the connection pool Extends SQL with
+   * additional release functionality
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
@@ -13,8 +13,8 @@ declare module "bun" {
   }
 
   /**
-   * Represents a client within a transaction context
-   * Extends SQL with savepoint functionality
+   * Represents a client within a transaction context Extends SQL with savepoint
+   * functionality
    */
   interface TransactionSQL extends SQL {
     /**
@@ -163,14 +163,16 @@ declare module "bun" {
       connection_timeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * Maximum time in seconds to wait when establishing a connection (alias
+       * for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
       connectTimeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout)
+       * Maximum time in seconds to wait when establishing a connection (alias
+       * for connectionTimeout)
        * @deprecated Prefer {@link connectionTimeout}
        * @default 30
        */
@@ -201,12 +203,13 @@ declare module "bun" {
        */
       ssl?: TLSOptions | boolean | undefined;
 
-      // `.path` is currently unsupported in Bun, the implementation is incomplete.
+      // `.path` is currently unsupported in Bun, the implementation is
+      // incomplete.
       //
       // /**
       //  * Unix domain socket path for connection
       //  * @default ""
-      //  */
+      //    */
       // path?: string | undefined;
 
       /**
@@ -233,7 +236,8 @@ declare module "bun" {
       max?: number | undefined;
 
       /**
-       * By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts.
+       * By default values outside i32 range are returned as strings. If this is
+       * true, values outside i32 range are returned as BigInts.
        * @default false
        */
       bigint?: boolean | undefined;
@@ -267,8 +271,8 @@ declare module "bun" {
     type Options = SQLiteOptions | PostgresOptions;
 
     /**
-     * Represents a SQL query that can be executed, with additional control methods
-     * Extends Promise to allow for async/await usage
+     * Represents a SQL query that can be executed, with additional control
+     * methods Extends Promise to allow for async/await usage
      */
     interface Query<T> extends Promise<T> {
       /**
@@ -287,7 +291,8 @@ declare module "bun" {
       cancel(): Query<T>;
 
       /**
-       * Executes the query as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons
+       * Executes the query as a simple query, no parameters are allowed but can
+       * execute multiple commands separated by semicolons
        */
       simple(): Query<T>;
 
@@ -530,7 +535,7 @@ declare module "bun" {
      * This can be used for running queries on an isolated connection.
      * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
      *
-     * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)
+     * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)s
      *
      * @example
      * ```ts

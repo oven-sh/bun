@@ -509,13 +509,7 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
-        : env(env)
-        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(WTFMove(finalizer))
-        , refCount(count)
-    {
-    }
+    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer, bool deleteSelf = false);
 
     JSC::JSValue value() const
     {
@@ -526,57 +520,11 @@ public:
         return strongRef.get();
     }
 
-    void setValueInitial(JSC::JSValue value, bool can_be_weak)
-    {
-        if (refCount > 0) {
-            strongRef.set(globalObject->vm(), value);
-        }
+    void setValueInitial(JSC::JSValue value, bool can_be_weak);
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
-        if (can_be_weak) {
-            weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
-        }
+    void callFinalizer();
 
-        if (value.isSymbol()) {
-            auto* symbol = jsDynamicCast<JSC::Symbol*>(value);
-            ASSERT(symbol != nullptr);
-            if (symbol->uid().isRegistered()) {
-                // Global symbols must always be retrievable,
-                // even if garbage collection happens while the ref count is 0.
-                m_isEternal = true;
-                if (refCount == 0) {
-                    strongRef.set(globalObject->vm(), symbol);
-                }
-            }
-        }
-    }
-
-    void callFinalizer()
-    {
-        // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
-        // calling the finalizer
-        Bun::NapiFinalizer saved_finalizer = this->finalizer;
-        this->finalizer.clear();
-        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
-    }
-
-    ~NapiRef()
-    {
-        NAPI_LOG("destruct napi ref %p", this);
-        if (boundCleanup) {
-            boundCleanup->deactivate(env);
-            boundCleanup = nullptr;
-        }
-
-        if (!m_isEternal) {
-            strongRef.clear();
-        }
-
-        // The weak ref can lead to calling the destructor
-        // so we must first clear the weak ref before we call the finalizer
-        weakValueRef.clear();
-    }
+    ~NapiRef();
 
     napi_env env = nullptr;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
@@ -590,6 +538,7 @@ public:
 
 private:
     bool m_isEternal = false;
+    bool m_deleteSelf = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

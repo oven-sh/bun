@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { sign, constants } from "crypto";
+import { expect, test } from "bun:test";
+import { constants, sign } from "crypto";
 
 const DUMMY_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIICeAIBADANBgkqhkiG9w0BAQEFAASCAmIwggJeAgEAAoGBAMx5bEJhDzwNBG1m

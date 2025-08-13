@@ -32,8 +32,7 @@ pub fn init(gpa: std.mem.Allocator) Collection {
     };
 }
 pub fn deinit(this: *Collection) void {
-    this.root_scope.deinit(this.bunTest());
-    this.bunTest().gpa.destroy(this.root_scope);
+    this.root_scope.destroy(this.bunTest());
     for (this.describe_callback_queue.items) |*item| {
         item.deinit();
     }
@@ -76,11 +75,26 @@ pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, n
 
     _ = name;
 
-    const test_scope = bun.create(this.bunTest().gpa, describe2.TestScope, .{
-        .mode = .testFn,
+    const test_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, .{
+        .parent = this.active_scope,
+        .tag = .test_callback,
         .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
     });
-    try this.active_scope.entries.append(.{ .test_scope = test_scope });
+    try this.active_scope.entries.append(.{ .test_callback = test_callback });
+}
+pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, comptime tag: @Type(.enum_literal), callback: jsc.JSValue) bun.JSError!void {
+    group.begin(@src());
+    defer group.end();
+
+    bun.assert(!this.locked);
+    group.log("enqueueTestCallback", .{});
+
+    const hook_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, .{
+        .parent = this.active_scope,
+        .tag = tag,
+        .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
+    });
+    try @field(this.active_scope, @tagName(tag)).append(hook_callback);
 }
 
 pub fn run(this: *Collection, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {

@@ -363,7 +363,7 @@ pub const Jest = struct {
 
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
+        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.testFn, false);
         module.put(
             globalObject,
             ZigString.static("test"),
@@ -390,7 +390,7 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
-        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, ThisDescribeScope.call, false);
+        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.describeFn, false);
         inline for (.{
             "only",
             "skip",
@@ -418,26 +418,13 @@ pub const Jest = struct {
             describe,
         );
 
-        const describe2 = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe2"), 2, Describe2.js_fns.describeFn, false);
-        describe2.put(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), 2, Describe2.js_fns.forDebuggingExecuteTestsNow, false));
-        describe2.put(globalObject, ZigString.static("forDebuggingDeinitNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingDeinitNow"), 2, Describe2.js_fns.forDebuggingDeinitNow, false));
-        module.put(globalObject, ZigString.static("describe2"), describe2);
-        module.put(globalObject, ZigString.static("test2"), jsc.host_fn.NewFunction(globalObject, ZigString.static("test2"), 2, Describe2.js_fns.testFn, false));
+        describe.put(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), 2, Describe2.js_fns.forDebuggingExecuteTestsNow, false));
+        describe.put(globalObject, ZigString.static("forDebuggingDeinitNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingDeinitNow"), 2, Describe2.js_fns.forDebuggingDeinitNow, false));
 
-        inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
-            const function = if (outside_of_test)
-                jsc.host_fn.NewFunction(globalObject, null, 1, globalHook(name), false)
-            else
-                jsc.host_fn.NewFunction(
-                    globalObject,
-                    ZigString.static(name),
-                    1,
-                    @field(DescribeScope, name),
-                    false,
-                );
-            module.put(globalObject, ZigString.static(name), function);
-            function.ensureStillAlive();
-        }
+        module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, Describe2.js_fns.genericHook(.beforeEach).hookFn, false));
+        module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, Describe2.js_fns.genericHook(.beforeAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, Describe2.js_fns.genericHook(.afterAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, Describe2.js_fns.genericHook(.afterEach).hookFn, false));
 
         module.put(
             globalObject,

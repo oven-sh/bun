@@ -146,7 +146,7 @@ pub const SavedMappingsCompact = struct {
             // For error reporting and other uses, stay in compact format
             // Increment ref count and return compact data
             this.compact_table.ref();
-            
+
             // Calculate proper input line count - use the last line index as the total
             const input_line_count = if (this.compact_table.line_offsets.len > 1)
                 this.compact_table.line_offsets.len - 1

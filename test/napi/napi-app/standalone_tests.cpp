@@ -567,7 +567,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   auto clear = [&] { info.Env().GetAndClearPendingException(); };
 
-  auto expect_initial_failure = [&](const char *name, const auto &fn) {
+  auto expect_failure_during_exception = [&](const char *name, const auto &fn) {
     do_throw();
     napi_status status = fn();
     if (status == napi_ok) {
@@ -654,7 +654,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   napi_value function;
 
-  expect_initial_failure("napi_create_function", [&] {
+  expect_failure_during_exception("napi_create_function", [&] {
     return napi_create_function(
         env, "thing", 5,
         +[](napi_env env, napi_callback_info info) {
@@ -666,45 +666,45 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   napi_value result;
 
-  expect_initial_failure("napi_call_function", [&] {
+  expect_failure_during_exception("napi_call_function", [&] {
     return napi_call_function(env, function, function, 0, nullptr, &result);
   });
 
-  expect_initial_failure("napi_set_named_property", [&] {
+  expect_failure_during_exception("napi_set_named_property", [&] {
     return napi_set_named_property(env, object, "hej", result);
   });
 
-  expect_initial_failure("napi_get_named_property", [&] {
+  expect_failure_during_exception("napi_get_named_property", [&] {
     return napi_get_named_property(env, object, "hej", &result);
   });
 
   bool has_own_property;
 
-  expect_initial_failure("napi_has_own_property", [&] {
+  expect_failure_during_exception("napi_has_own_property", [&] {
     return napi_has_own_property(env, object, string, &has_own_property);
   });
 
   if (!has_own_property) {
-    printf("object does not have own property \"result\"\n");
+    puts("object does not have own property \"result\"");
     return nullptr;
   }
 
   napi_value keys;
 
-  expect_initial_failure("napi_get_property_names", [&] {
+  expect_failure_during_exception("napi_get_property_names", [&] {
     return napi_get_property_names(env, object, &keys);
   });
 
-  expect_initial_failure("napi_delete_property", [&] {
+  expect_failure_during_exception("napi_delete_property", [&] {
     return napi_delete_property(env, object, string, nullptr);
   });
 
-  expect_initial_failure("napi_has_own_property", [&] {
+  expect_failure_during_exception("napi_has_own_property", [&] {
     return napi_has_own_property(env, object, string, &has_own_property);
   });
 
   if (has_own_property) {
-    printf("object still has own property \"result\"\n");
+    puts("object still has own property \"result\"");
     return nullptr;
   }
 
@@ -712,7 +712,6 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
       {
           .utf8name = "foo",
           .name = nullptr,
-          .value = nullptr,
           .method = nullptr,
           .getter =
               +[](napi_env env, napi_callback_info info) {
@@ -722,13 +721,13 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
                 return result;
               },
           .setter = nullptr,
+          .value = nullptr,
           .attributes = static_cast<napi_property_attributes>(napi_default),
           .data = nullptr,
       },
       {
           .utf8name = "bar",
           .name = nullptr,
-          .value = nullptr,
           .method = nullptr,
           .getter = nullptr,
           .setter =
@@ -740,13 +739,14 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
                 assert(argc == 1);
                 return ok(env);
               },
+          .value = nullptr,
           .attributes = static_cast<napi_property_attributes>(napi_default |
                                                               napi_writable),
           .data = nullptr,
       },
   };
 
-  expect_initial_failure("napi_define_properties", [&] {
+  expect_failure_during_exception("napi_define_properties", [&] {
     return napi_define_properties(env, object, 2, desc);
   });
 
@@ -760,10 +760,11 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
-  expect_initial_failure("napi_set_element",
-                         [&] { return napi_set_element(env, object, 0, two); });
+  expect_failure_during_exception("napi_set_element", [&] {
+    return napi_set_element(env, object, 0, two);
+  });
 
-  expect_initial_failure("napi_get_named_property", [&] {
+  expect_failure_during_exception("napi_get_named_property", [&] {
     return napi_get_named_property(env, object, "foo", &result);
   });
 
@@ -780,7 +781,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   assert(n == 42);
 
-  expect_initial_failure("napi_set_named_property", [&] {
+  expect_failure_during_exception("napi_set_named_property", [&] {
     return napi_set_named_property(env, object, "bar", result);
   });
 

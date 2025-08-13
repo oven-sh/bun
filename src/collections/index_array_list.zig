@@ -78,52 +78,33 @@ pub const IndexArrayList = union(Size) {
         };
     }
 
+    fn upconvert(self: *IndexArrayList, allocator: std.mem.Allocator, to: Size) !void {
+        switch (self.*) {
+            inline else => |*current, current_size| {
+                switch (to) {
+                    inline else => |to_size| {
+                        const Type = Size.Type(to_size);
+                        const new_list = try bun.BabyList(Type).initCapacity(allocator, current.len + 1);
+                        new_list.len = current.len;
+                        copyTIntoT2(current_size.Type(), current.sliceConst(), Type, new_list.slice());
+                        self.deinit(allocator);
+                        self.* = @unionInit(IndexArrayList, @tagName(to), new_list);
+                    },
+                }
+            },
+        }
+    }
+
     pub fn append(self: *IndexArrayList, allocator: std.mem.Allocator, value: u32) !void {
-        const target_size: usize = switch (value) {
-            std.math.minInt(u8)...std.math.maxInt(u8) => 1,
-            std.math.maxInt(u8) + 1...std.math.maxInt(u16) => 2,
-            std.math.maxInt(u16) + 1...std.math.maxInt(u24) => 3,
-            std.math.maxInt(u24) + 1...std.math.maxInt(u32) => 4,
+        const target_size: Size = switch (value) {
+            std.math.minInt(u8)...std.math.maxInt(u8) => .u8,
+            std.math.maxInt(u8) + 1...std.math.maxInt(u16) => .u16,
+            std.math.maxInt(u16) + 1...std.math.maxInt(u24) => .u24,
+            std.math.maxInt(u24) + 1...std.math.maxInt(u32) => .u32,
         };
 
-        const current_size: usize = switch (self.*) {
-            .u8 => 1,
-            .u16 => 2,
-            .u24 => 3,
-            .u32 => 4,
-        };
-
-        if (current_size < target_size) {
-            self.* = switch (target_size) {
-                2 => .{
-                    .u16 = brk: {
-                        var new_list = try bun.BabyList(u16).initCapacity(allocator, self.u8.len + 1);
-                        new_list.len = self.u8.len;
-                        copyTIntoT2(u8, self.u8.sliceConst(), u16, new_list.slice());
-                        self.deinit(allocator);
-                        break :brk new_list;
-                    },
-                },
-                3 => .{
-                    .u24 = brk: {
-                        var new_list = try bun.BabyList(u24).initCapacity(allocator, self.u16.len + 1);
-                        new_list.len = self.u16.len;
-                        copyTIntoT2(u16, self.u16.sliceConst(), u24, new_list.slice());
-                        self.deinit(allocator);
-                        break :brk new_list;
-                    },
-                },
-                4 => .{
-                    .u32 = brk: {
-                        var new_list = try bun.BabyList(u32).initCapacity(allocator, self.u24.len + 1);
-                        new_list.len = self.u24.len;
-                        copyTIntoT2(u24, self.u24.sliceConst(), u32, new_list.slice());
-                        self.deinit(allocator);
-                        break :brk new_list;
-                    },
-                },
-                else => unreachable,
-            };
+        if (@intFromEnum(target_size) > @intFromEnum(@as(Size, self.*))) {
+            try self.upconvert(allocator, target_size);
         }
 
         switch (self.*) {
@@ -143,11 +124,20 @@ pub const IndexArrayList = union(Size) {
         }
     }
 
-    const Size = enum {
-        u8,
-        u16,
-        u24,
-        u32,
+    const Size = enum(u8) {
+        u8 = 1,
+        u16 = 2,
+        u24 = 3,
+        u32 = 4,
+
+        pub fn Type(self: Size) type {
+            return switch (self) {
+                .u8 => u8,
+                .u16 => u16,
+                .u24 => u24,
+                .u32 => u32,
+            };
+        }
     };
 };
 

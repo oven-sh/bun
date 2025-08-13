@@ -104,7 +104,7 @@ pub const Yield = union(enum) {
                 if (x.state == .done) {
                     // remove it from the pipeline stack as calling `.next()` will now deinit it
                     if (std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x)) |idx| {
-                        _ = pipeline_stack.swapRemove(idx);
+                        _ = pipeline_stack.orderedRemove(idx);
                     }
                     continue :state x.next();
                 }

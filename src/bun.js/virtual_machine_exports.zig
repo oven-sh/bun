@@ -173,6 +173,13 @@ export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source
     vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
+export fn Bun__addDevServerSourceProvider(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putDevServerSourceProvider(@as(*DevServerSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
+}
+
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
@@ -209,6 +216,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
 const PluginRunner = bun.transpiler.PluginRunner;
 
 const jsc = bun.jsc;

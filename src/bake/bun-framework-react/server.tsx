@@ -83,20 +83,21 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
 
   // This renders Server Components to a ReadableStream "RSC Payload"
   let pipe;
-  const signal: MiniAbortSignal = { aborted: false, abort: null! };
+  const signal: MiniAbortSignal = { aborted: undefined, abort: null! };
   ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
     onError: err => {
+      // console.error("onError renderToPipeableStream", !!signal.aborted);
       if (signal.aborted) return;
-      console.error(err);
+
+      // Mark as aborted and call the abort function
+      signal.aborted = err;
+      // @ts-expect-error
+      signal.abort(err);
+      rscPayload.destroy(err);
     },
     filterStackFrame: () => false,
   }));
   pipe(rscPayload);
-
-  rscPayload.on("error", err => {
-    if (signal.aborted) return;
-    console.error(err);
-  });
 
   if (skipSSR) {
     return new Response(rscPayload as any, {
@@ -106,7 +107,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   }
 
   // The RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.modules, signal), {
+  return new Response(renderToHtml(rscPayload, meta.modules, signal), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },
@@ -190,7 +191,7 @@ export const contentTypeToStaticFile = {
 
 /** Instead of using AbortController, this is used */
 export interface MiniAbortSignal {
-  aborted: boolean;
+  aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
   abort: () => void;
 }

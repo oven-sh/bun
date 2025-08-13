@@ -2086,7 +2086,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onRequestFromSaved(
+        pub fn onSavedRequest(
             this: *ThisServer,
             req: SavedRequest.Union,
             resp: *App.Response,
@@ -2874,7 +2874,17 @@ pub const SavedRequest = struct {
     }
 
     pub const Union = union(enum) {
+        /// Direct pointer to a µWebSockets request that is still on the stack.
+        /// Used for synchronous request handling where the request can be processed
+        /// immediately within the current call frame. This avoids heap allocation
+        /// and is more efficient for simple, fast operations.
         stack: *uws.Request,
+
+        /// A heap-allocated copy of the request data that persists beyond the
+        /// initial request handler. Used when request processing needs to be
+        /// deferred (e.g., async operations, waiting for framework initialization).
+        /// Contains strong references to JavaScript objects and all context needed
+        /// to complete the request later.
         saved: bun.jsc.API.SavedRequest,
     };
 };
@@ -3147,7 +3157,7 @@ pub const AnyServer = struct {
         };
     }
 
-    pub fn onRequestFromSaved(
+    pub fn onSavedRequest(
         this: AnyServer,
         req: SavedRequest.Union,
         resp: uws.AnyResponse,
@@ -3156,10 +3166,10 @@ pub const AnyServer = struct {
         extra_args: [extra_arg_count]JSValue,
     ) void {
         return switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequestFromSaved(req, resp.TCP, callback, extra_arg_count, extra_args),
-            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onRequestFromSaved(req, resp.SSL, callback, extra_arg_count, extra_args),
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequestFromSaved(req, resp.TCP, callback, extra_arg_count, extra_args),
-            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onRequestFromSaved(req, resp.SSL, callback, extra_arg_count, extra_args),
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onSavedRequest(req, resp.TCP, callback, extra_arg_count, extra_args),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onSavedRequest(req, resp.SSL, callback, extra_arg_count, extra_args),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onSavedRequest(req, resp.TCP, callback, extra_arg_count, extra_args),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onSavedRequest(req, resp.SSL, callback, extra_arg_count, extra_args),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

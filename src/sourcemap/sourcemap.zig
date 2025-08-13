@@ -888,15 +888,17 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    const SourceProviderKind = enum(u1) { zig, bake };
+    const SourceProviderKind = enum(u2) { zig, bake, dev_server };
     const AnySourceProvider = union(enum) {
         zig: *SourceProviderMap,
         bake: *BakeSourceProvider,
+        dev_server: *DevServerSourceProvider,
 
         pub fn ptr(this: AnySourceProvider) *anyopaque {
             return switch (this) {
                 .zig => @ptrCast(this.zig),
                 .bake => @ptrCast(this.bake),
+                .dev_server => @ptrCast(this.dev_server),
             };
         }
 
@@ -909,6 +911,7 @@ pub const ParsedSourceMap = struct {
             return switch (this) {
                 .zig => this.zig.getSourceMap(source_filename, load_hint, result),
                 .bake => this.bake.getSourceMap(source_filename, load_hint, result),
+                .dev_server => this.dev_server.getSourceMap(source_filename, load_hint, result),
             };
         }
     };
@@ -916,7 +919,7 @@ pub const ParsedSourceMap = struct {
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint,
         kind: SourceProviderKind,
-        data: u61,
+        data: u60,
 
         pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .zig, .data = 0 };
 
@@ -928,10 +931,15 @@ pub const ParsedSourceMap = struct {
             return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .bake };
         }
 
+        fn fromDevServerProvider(p: *DevServerSourceProvider) SourceContentPtr {
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .dev_server };
+        }
+
         pub fn provider(sc: SourceContentPtr) ?AnySourceProvider {
             switch (sc.kind) {
                 .zig => return .{ .zig = @ptrFromInt(sc.data) },
                 .bake => return .{ .bake = @ptrFromInt(sc.data) },
+                .dev_server => return .{ .dev_server = @ptrFromInt(sc.data) },
             }
         }
     };
@@ -1021,9 +1029,10 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
+/// Always returns UTF-8
 fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
-    const found = bun.strings.indexOfT(T, source, needle) orelse return null;
+    const found = std.mem.lastIndexOf(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
@@ -1033,6 +1042,189 @@ fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allo
             bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
         ),
         else => @compileError("Not Supported"),
+    };
+}
+
+fn findSourceMappingURLNah(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
+    // According to the spec, we need to find the LAST valid sourceMappingURL
+    // We need to handle both //# and //@ prefixes, and also /* */ comments
+    var last_url: ?bun.jsc.ZigString.Slice = null;
+    var i: usize = 0;
+
+    const solidus = comptime bun.strings.literal(T, "/")[0];
+    const asterisk = comptime bun.strings.literal(T, "*")[0];
+    const newline = comptime bun.strings.literal(T, "\n")[0];
+    const carriage_return = comptime bun.strings.literal(T, "\r")[0];
+
+    // Line terminators as per ECMAScript spec
+    // Note: For UTF-8, these would be multi-byte sequences, so we only check them in UTF-16
+    const line_separator: T = if (T == u16) 0x2028 else newline;
+    const paragraph_separator: T = if (T == u16) 0x2029 else newline;
+
+    while (i < source.len) {
+        // Skip to next potential comment
+        const slash_pos = std.mem.indexOfScalarPos(T, source, i, solidus) orelse break;
+        i = slash_pos + 1;
+
+        if (i >= source.len) break;
+
+        const next_char = source[i];
+
+        // Handle single-line comment //
+        if (next_char == solidus) {
+            i += 1;
+            const comment_start = i;
+
+            // Find end of line
+            var line_end = source.len;
+            var j = comment_start;
+            while (j < source.len) : (j += 1) {
+                const c = source[j];
+                if (c == newline or c == carriage_return or
+                    (T == u16 and (c == line_separator or c == paragraph_separator)))
+                {
+                    line_end = j;
+                    break;
+                }
+            }
+
+            const comment = source[comment_start..line_end];
+            if (matchSourceMappingURL(T, comment, alloc)) |url| {
+                // Free previous URL if any
+                if (last_url) |prev| prev.deinit();
+                last_url = url;
+            }
+
+            i = line_end;
+        }
+        // Handle multi-line comment /* */
+        else if (next_char == asterisk) {
+            i += 1;
+            const comment_start = i;
+
+            // Find closing */
+            var found_end = false;
+            while (i + 1 < source.len) : (i += 1) {
+                if (source[i] == asterisk and source[i + 1] == solidus) {
+                    const comment = source[comment_start..i];
+                    if (matchSourceMappingURL(T, comment, alloc)) |url| {
+                        // Free previous URL if any
+                        if (last_url) |prev| prev.deinit();
+                        last_url = url;
+                    }
+                    i += 2;
+                    found_end = true;
+                    break;
+                }
+            }
+
+            if (!found_end) {
+                // Unclosed comment - ignore rest of file
+                break;
+            }
+        }
+        // Not a comment - check if it's whitespace
+        else {
+            // Back up to check the character before the slash
+            const before_slash = slash_pos;
+            if (before_slash > 0) {
+                var j = before_slash - 1;
+                // Check backwards for non-whitespace on this line
+                while (j > 0) : (j -%= 1) {
+                    const c = source[j];
+                    if (c == newline or c == carriage_return or
+                        (T == u16 and (c == line_separator or c == paragraph_separator)))
+                    {
+                        // Hit line boundary, this slash starts the line (after whitespace)
+                        break;
+                    }
+                    if (!isWhitespace(T, c)) {
+                        // Non-whitespace found - reset last_url per spec
+                        if (last_url) |prev| {
+                            prev.deinit();
+                            last_url = null;
+                        }
+                        break;
+                    }
+                    if (j == 0) break;
+                }
+            }
+        }
+    }
+
+    return last_url;
+}
+
+// Helper function to match sourceMappingURL pattern in a comment
+fn matchSourceMappingURL(comptime T: type, comment: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
+    // Pattern: ^[@#]\s*sourceMappingURL=(\S*?)\s*$
+    var i: usize = 0;
+
+    // Skip leading whitespace
+    while (i < comment.len and isWhitespace(T, comment[i])) : (i += 1) {}
+
+    if (i >= comment.len) return null;
+
+    // Check for @ or # prefix
+    const at_sign = comptime bun.strings.literal(T, "@")[0];
+    const hash = comptime bun.strings.literal(T, "#")[0];
+
+    if (comment[i] != at_sign and comment[i] != hash) return null;
+    i += 1;
+
+    // Skip whitespace after prefix
+    while (i < comment.len and isWhitespace(T, comment[i])) : (i += 1) {}
+
+    // Check for "sourceMappingURL="
+    const mapping_text = comptime bun.strings.literal(T, "sourceMappingURL=");
+    if (i + mapping_text.len > comment.len) return null;
+
+    const text_part = comment[i .. i + mapping_text.len];
+    if (!std.mem.eql(T, text_part, mapping_text)) return null;
+
+    i += mapping_text.len;
+
+    // Find the URL (non-whitespace characters)
+    const url_start = i;
+    while (i < comment.len and !isWhitespace(T, comment[i])) : (i += 1) {}
+
+    if (url_start == i) return null; // Empty URL
+
+    const url = comment[url_start..i];
+
+    // Verify rest is only whitespace
+    while (i < comment.len) : (i += 1) {
+        if (!isWhitespace(T, comment[i])) return null;
+    }
+
+    // Return the URL as a ZigString.Slice
+    return switch (T) {
+        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.jsc.ZigString.Slice.init(
+            alloc,
+            bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
+        ),
+        else => @compileError("Not Supported"),
+    };
+}
+
+// Helper to check if a character is whitespace
+fn isWhitespace(comptime T: type, char: T) bool {
+    return switch (char) {
+        '\t', '\n', '\r', ' ', 0x0B, 0x0C => true,
+        else => {
+            if (T == u16) {
+                return switch (char) {
+                    0xA0, // non-breaking space
+                    0xFEFF, // BOM
+                    0x2028, // line separator
+                    0x2029, // paragraph separator
+                    => true,
+                    else => false,
+                };
+            }
+            return false;
+        },
     };
 }
 
@@ -1066,29 +1258,61 @@ pub fn getSourceMapImpl(
             defer source.deref();
             bun.assert(source.tag == .ZigString);
 
-            const found_url = (if (source.is8Bit())
-                findSourceMappingURL(u8, source.latin1(), allocator)
-            else
-                findSourceMappingURL(u16, source.utf16(), allocator)) orelse
-                break :try_inline;
+            const maybe_found_url = found_url: {
+                if (source.is8Bit())
+                    break :found_url findSourceMappingURL(u8, source.latin1(), allocator);
+
+                break :found_url findSourceMappingURL(u16, source.utf16(), allocator);
+            };
+
+            const found_url = maybe_found_url orelse break :try_inline;
             defer found_url.deinit();
+
+            if (bun.strings.hasPrefixComptime(
+                found_url.slice(),
+                "bake://server.map",
+            )) {}
+
+            const parsed = parseUrl(
+                bun.default_allocator,
+                allocator,
+                found_url.slice(),
+                result,
+            ) catch |err| {
+                inline_err = err;
+                break :try_inline;
+            };
 
             break :parsed .{
                 .is_inline_map,
-                parseUrl(
-                    bun.default_allocator,
-                    allocator,
-                    found_url.slice(),
-                    result,
-                ) catch |err| {
-                    inline_err = err;
-                    break :try_inline;
-                },
+                parsed,
             };
         }
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
+            if (comptime SourceProviderKind == DevServerSourceProvider) {
+                // For DevServerSourceProvider, get the source map JSON directly
+                const source_map_data = provider.getSourceMapJSON();
+
+                if (source_map_data.length == 0) {
+                    break :try_external;
+                }
+
+                const json_slice = source_map_data.ptr[0..source_map_data.length];
+
+                // Parse the JSON source map
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        json_slice,
+                        result,
+                    ) catch return null,
+                };
+            }
+
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
                 const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
@@ -1234,6 +1458,39 @@ pub const BakeSourceProvider = opaque {
     ) ?SourceMap.ParseUrl {
         return getSourceMapImpl(
             BakeSourceProvider,
+            provider,
+            source_filename,
+            load_hint,
+            result,
+        );
+    }
+};
+
+pub const DevServerSourceProvider = opaque {
+    pub const SourceMapData = extern struct {
+        ptr: [*]const u8,
+        length: usize,
+    };
+
+    extern fn DevServerSourceProvider__getSourceSlice(*DevServerSourceProvider) bun.String;
+    extern fn DevServerSourceProvider__getSourceMapJSON(*DevServerSourceProvider) SourceMapData;
+
+    pub const getSourceSlice = DevServerSourceProvider__getSourceSlice;
+    pub const getSourceMapJSON = DevServerSourceProvider__getSourceMapJSON;
+
+    pub fn toSourceContentPtr(this: *DevServerSourceProvider) ParsedSourceMap.SourceContentPtr {
+        return ParsedSourceMap.SourceContentPtr.fromDevServerProvider(this);
+    }
+
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *DevServerSourceProvider,
+        source_filename: []const u8,
+        load_hint: SourceMap.SourceMapLoadHint,
+        result: SourceMap.ParseUrlResultHint,
+    ) ?SourceMap.ParseUrl {
+        return getSourceMapImpl(
+            DevServerSourceProvider,
             provider,
             source_filename,
             load_hint,

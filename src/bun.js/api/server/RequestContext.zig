@@ -1675,6 +1675,55 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
+
+                        // Render the error fallback HTML page like renderDefaultError does
+                        if (!req.flags.has_written_status) {
+                            req.flags.has_written_status = true;
+                            if (req.resp) |resp| {
+                                resp.writeStatus("500 Internal Server Error");
+                                resp.writeHeader("content-type", MimeType.html.value);
+                            }
+                        }
+
+                        const allocator = req.allocator;
+                        const fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
+                        defer allocator.destroy(fallback_container);
+
+                        // Create error message for the stream rejection
+                        const error_message = "Stream error during server-side rendering";
+
+                        fallback_container.* = Api.FallbackMessageContainer{
+                            .message = allocator.dupe(u8, error_message) catch unreachable,
+                            .router = null,
+                            .reason = .fetch_event_handler,
+                            .cwd = server.vm.transpiler.fs.top_level_dir,
+                            .problems = Api.Problems{
+                                .code = 500,
+                                .name = "StreamError",
+                                .exceptions = exception_list.items,
+                                .build = .{
+                                    .msgs = &.{},
+                                },
+                            },
+                        };
+
+                        var bb = std.ArrayList(u8).init(allocator);
+                        defer bb.clearAndFree();
+                        const bb_writer = bb.writer();
+
+                        Fallback.renderBackend(
+                            allocator,
+                            fallback_container,
+                            @TypeOf(bb_writer),
+                            bb_writer,
+                        ) catch unreachable;
+
+                        if (req.resp) |resp| {
+                            _ = resp.write(bb.items);
+                        }
+
+                        req.endStream(req.shouldCloseConnection());
+                        return;
                     }
                 }
             }

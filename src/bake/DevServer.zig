@@ -839,6 +839,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             arena.allocator(),
             source_id.kind,
             dev.allocator,
+            .client,
         ) catch bun.outOfMemory();
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator, json_bytes), .{
             .server = dev.server,
@@ -1181,7 +1182,7 @@ fn onFrameworkRequestWithBundle(
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
 
-    const bundle = &route_bundle.data.framework;
+    const framework_bundle = &route_bundle.data.framework;
 
     // Extract route params by re-matching the URL
     var params: FrameworkRouter.MatchedParams = undefined;
@@ -1238,9 +1239,9 @@ fn onFrameworkRequestWithBundle(
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
 
-    const router_type = dev.router.typePtr(dev.router.routePtr(bundle.route_index).type);
+    const router_type = dev.router.typePtr(dev.router.routePtr(framework_bundle.route_index).type);
 
-    dev.server.?.onRequestFromSaved(
+    dev.server.?.onSavedRequest(
         req,
         resp,
         server_request_callback,
@@ -1256,17 +1257,17 @@ fn onFrameworkRequestWithBundle(
                 break :str str;
             },
             // routeModules
-            bundle.cached_module_list.get() orelse arr: {
+            framework_bundle.cached_module_list.get() orelse arr: {
                 const global = dev.vm.global;
                 const keys = dev.server_graph.bundled_files.keys();
                 var n: usize = 1;
-                var route = dev.router.routePtr(bundle.route_index);
+                var route = dev.router.routePtr(framework_bundle.route_index);
                 while (true) {
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
-                route = dev.router.routePtr(bundle.route_index);
+                route = dev.router.routePtr(framework_bundle.route_index);
                 {
                     const relative_path_buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(relative_path_buf);
@@ -1287,11 +1288,11 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = .create(arr, global);
+                framework_bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
-            bundle.cached_client_bundle_url.get() orelse str: {
+            framework_bundle.cached_client_bundle_url.get() orelse str: {
                 const bundle_index: u32 = route_bundle_index.get();
                 const generation: u32 = route_bundle.client_script_generation;
                 const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
@@ -1300,13 +1301,13 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
+                framework_bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
-            bundle.cached_css_file_array.get() orelse arr: {
+            framework_bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = .create(js, dev.vm.global);
+                framework_bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
             // params
@@ -1476,7 +1477,7 @@ fn generateJavaScriptCodeForHTMLFile(
 
 pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
-    const blob = route_bundle.client_bundle orelse generate: {
+    const client_bundle = route_bundle.client_bundle orelse generate: {
         const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
@@ -1489,7 +1490,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         break :generate route_bundle.client_bundle.?;
     };
     dev.source_maps.addWeakRef(route_bundle.sourceMapId());
-    blob.onWithMethod(method, resp);
+    client_bundle.onWithMethod(method, resp);
 }
 
 pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
@@ -2266,14 +2267,65 @@ pub fn finalizeBundle(
 
     // Load all new chunks into the server runtime.
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
+        // Generate a script_id for server bundles
+        // Use high bit set to distinguish from client bundles, and include generation
+        const server_script_id = SourceMapStore.Key.init((1 << 63) | @as(u64, dev.generation));
+
+        // Get the source map if available and render to JSON
+        var source_map_json = if (dev.server_graph.current_chunk_source_maps.items.len > 0) json: {
+            // Create a temporary source map entry to render
+            var source_map_entry = SourceMapStore.Entry{
+                .ref_count = 1,
+                .paths = &.{},
+                .files = .empty,
+                .overlapping_memory_cost = 0,
+            };
+
+            // Fill the source map entry
+            var arena = std.heap.ArenaAllocator.init(dev.allocator);
+            defer arena.deinit();
+            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, &source_map_entry);
+            defer {
+                source_map_entry.ref_count = 0;
+                source_map_entry.deinit(dev);
+            }
+
+            const json_data = try source_map_entry.renderJSON(
+                dev,
+                arena.allocator(),
+                .hmr_chunk,
+                dev.allocator,
+                .server,
+            );
+            break :json json_data;
+        } else null;
+        defer if (source_map_json) |json| bun.default_allocator.free(json);
+
+        const server_bundle = try dev.server_graph.takeJSBundle(&.{
+            .kind = .hmr_chunk,
+            .script_id = server_script_id,
+        });
         defer dev.allocator.free(server_bundle);
 
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
-            // No user code has been evaluated yet, since everything is to
-            // be wrapped in a function clousure. This means that the likely
-            // error is going to be a syntax error, or other mistake in the
-            // bundler.
+        const server_modules = if (bun.take(&source_map_json)) |json| blk: {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            // from here on out
+            dev.allocation_scope.leakSlice(json);
+
+            break :blk c.BakeLoadServerHmrPatchWithSourceMap(
+                @ptrCast(dev.vm.global),
+                bun.String.cloneUTF8(server_bundle),
+                json.ptr,
+                json.len,
+            ) catch |err| {
+                // No user code has been evaluated yet, since everything is to
+                // be wrapped in a function clousure. This means that the likely
+                // error is going to be a syntax error, or other mistake in the
+                // bundler.
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+            };
+        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
             dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
             @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
         };
@@ -3593,6 +3645,11 @@ const c = struct {
     fn BakeLoadServerHmrPatch(global: *jsc.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
         const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
+    }
+
+    fn BakeLoadServerHmrPatchWithSourceMap(global: *jsc.JSGlobalObject, code: bun.String, source_map_json_ptr: [*]const u8, source_map_json_len: usize) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, [*]const u8, usize) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatchWithSourceMap" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, source_map_json_ptr, source_map_json_len });
     }
 
     fn BakeLoadInitialServerCode(global: *jsc.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {

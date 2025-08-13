@@ -75,11 +75,11 @@ pub const Entry = struct {
     pub fn renderMappings(map: Entry, kind: ChunkKind, arena: Allocator, gpa: Allocator) ![]u8 {
         var j: StringJoiner = .{ .allocator = arena };
         j.pushStatic("AAAA");
-        try joinVLQ(&map, kind, &j, arena);
+        try joinVLQ(&map, kind, &j, arena, .client);
         return j.done(gpa);
     }
 
-    pub fn renderJSON(map: *const Entry, dev: *DevServer, arena: Allocator, kind: ChunkKind, gpa: Allocator) ![]u8 {
+    pub fn renderJSON(map: *const Entry, dev: *DevServer, arena: Allocator, kind: ChunkKind, gpa: Allocator, side: bake.Side) ![]u8 {
         const map_files = map.files.slice();
         const paths = map.paths;
 
@@ -105,13 +105,22 @@ pub const Entry = struct {
 
             if (std.fs.path.isAbsolute(path)) {
                 const is_windows_drive_path = Environment.isWindows and path[0] != '/';
-                try source_map_strings.appendSlice(if (is_windows_drive_path)
-                    "\"file:///"
-                else
-                    "\"file://");
+
+                // On the client we prefix the sourcemap path with "file://" and
+                // percent encode it
+                if (side == .client) {
+                    try source_map_strings.appendSlice(if (is_windows_drive_path)
+                        "\"file:///"
+                    else
+                        "\"file://");
+                } else {
+                    try source_map_strings.append('"');
+                }
+
                 if (Environment.isWindows and !is_windows_drive_path) {
                     // UNC namespace -> file://server/share/path.ext
-                    bun.strings.percentEncodeWrite(
+                    encodeSourceMapPath(
+                        side,
                         if (path.len > 2 and path[0] == '/' and path[1] == '/')
                             path[2..]
                         else
@@ -126,7 +135,7 @@ pub const Entry = struct {
                     // -> file:///path/to/file.js
                     // windows drive letter paths have the extra slash added
                     // -> file:///C:/path/to/file.js
-                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| switch (err) {
+                    encodeSourceMapPath(side, path, &source_map_strings) catch |err| switch (err) {
                         error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
                         error.OutOfMemory => |e| return e,
                     };
@@ -174,14 +183,14 @@ pub const Entry = struct {
         j.pushStatic(
             \\],"names":[],"mappings":"AAAA
         );
-        try joinVLQ(map, kind, &j, arena);
+        try joinVLQ(map, kind, &j, arena, side);
 
         const json_bytes = try j.doneWithEnd(gpa, "\"}");
         errdefer @compileError("last try should be the final alloc");
 
         if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |dump_dir| {
-            const rel_path_escaped = "latest_chunk.js.map";
-            dumpBundle(dump_dir, .client, rel_path_escaped, json_bytes, false) catch |err| {
+            const rel_path_escaped = if (side == .client) "latest_chunk.js.map" else "latest_hmr.js.map";
+            dumpBundle(dump_dir, if (side == .client) .client else .server, rel_path_escaped, json_bytes, false) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.warn("Could not dump bundle: {}", .{err});
             };
@@ -190,13 +199,22 @@ pub const Entry = struct {
         return json_bytes;
     }
 
-    fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator) !void {
-        const map_files = map.files.slice();
+    fn encodeSourceMapPath(
+        side: bake.Side,
+        utf8_input: []const u8,
+        writer: *std.ArrayList(u8),
+    ) error{ OutOfMemory, IncompleteUTF8 }!void {
+        // On the client, percent encode everything so it works in the browser
+        if (side == .client) {
+            return bun.strings.percentEncodeWrite(utf8_input, writer);
+        }
 
-        const runtime: bake.HmrRuntime = switch (kind) {
-            .initial_response => bun.bake.getHmrRuntime(.client),
-            .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
-        };
+        // On the server, we don't need to do anything
+        try writer.appendSlice(utf8_input);
+    }
+
+    fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {
+        const map_files = map.files.slice();
 
         var prev_end_state: SourceMap.SourceMapState = .{
             .generated_line = 0,
@@ -206,8 +224,20 @@ pub const Entry = struct {
             .original_column = 0,
         };
 
-        // +2 because the magic fairy in my dreams said it would align the source maps.
-        var lines_between: u32 = runtime.line_count + 2;
+        var lines_between: u32 = lines_between: {
+            if (side == .client) {
+                const runtime: bake.HmrRuntime = switch (kind) {
+                    .initial_response => bun.bake.getHmrRuntime(.client),
+                    .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+                };
+                // +2 because the magic fairy in my dreams said it would align the source maps.
+                // TODO: why the fuck is this 2?
+                const lines_between: u32 = runtime.line_count + 2;
+                break :lines_between lines_between;
+            }
+
+            break :lines_between 0;
+        };
 
         // Join all of the mappings together.
         for (map_files.items(.tags), map_files.items(.data), 1..) |tag, chunk, source_index| switch (tag) {
@@ -223,7 +253,7 @@ pub const Entry = struct {
                 continue;
             },
             .ref => {
-                const content = chunk.ref.data;
+                const content: *PackedMap = chunk.ref.data;
                 const start_state: SourceMap.SourceMapState = .{
                     .source_index = @intCast(source_index),
                     .generated_line = @intCast(lines_between),

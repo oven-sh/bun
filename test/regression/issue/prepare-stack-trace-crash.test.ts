@@ -2,59 +2,43 @@ import { test, expect } from "bun:test";
 
 test("Error.prepareStackTrace should not crash when stacktrace parameter is not an array", () => {
   const e = new Error("test message");
-  
-  // Test with undefined as second argument
-  expect(() => {
+  try {
+    // Test with undefined as second argument (Node errors with 'TypeError: Cannot read properties of undefined' in this case)
     const result = Error.prepareStackTrace(e);
-    expect(typeof result).toBe("string");
-    expect(result).toBe("Error: test message");
-  }).not.toThrow();
-
-  // Test with null as second argument
-  expect(() => {
+  } catch (e) {}
+  try {
+    // Test with null as second argument (Node errors with 'TypeError: Cannot read properties of null' in this case)
     const result = Error.prepareStackTrace(e, null);
-    expect(typeof result).toBe("string");
-    expect(result).toBe("Error: test message");
-  }).not.toThrow();
-
-  // Test with number as second argument
-  expect(() => {
+  } catch (e) {}
+  {
+    // Test with number as second argument (Node does the equivalent of Error.prepareStackTrace(e, [""]) in this case)
     const result = Error.prepareStackTrace(e, 123);
     expect(typeof result).toBe("string");
-    expect(result).toBe("Error: test message");
-  }).not.toThrow();
-
-  // Test with string as second argument
-  expect(() => {
+  }
+  {
+    // Test with string as second argument (Node does the equivalent of Error.prepareStackTrace(e, [""]) in this case)
     const result = Error.prepareStackTrace(e, "not an array");
     expect(typeof result).toBe("string");
-    expect(result).toBe("Error: test message");
-  }).not.toThrow();
-
-  // Test with object as second argument
-  expect(() => {
+  }
+  {
+    // Test with object as second argument (Node does the equivalent of Error.prepareStackTrace(e, [""]) in this case)
     const result = Error.prepareStackTrace(e, {});
     expect(typeof result).toBe("string");
-    expect(result).toBe("Error: test message");
-  }).not.toThrow();
+  }
 });
 
 test("Error.prepareStackTrace should work with empty message", () => {
   const e = new Error("");
-  
-  expect(() => {
-    const result = Error.prepareStackTrace(e);
-    expect(typeof result).toBe("string");
-    expect(result).toBe("Error");
-  }).not.toThrow();
+
+  const result = Error.prepareStackTrace(e);
+  expect(typeof result).toBe("string");
+  expect(result).toBe("Error");
 });
 
 test("Error.prepareStackTrace should work with no message", () => {
   const e = new Error();
-  
-  expect(() => {
-    const result = Error.prepareStackTrace(e);
-    expect(typeof result).toBe("string");
-    expect(result).toBe("Error");
-  }).not.toThrow();
+
+  const result = Error.prepareStackTrace(e);
+  expect(typeof result).toBe("string");
+  expect(result).toBe("Error");
 });

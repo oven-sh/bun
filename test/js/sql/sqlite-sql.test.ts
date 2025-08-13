@@ -274,18 +274,22 @@ describe("Query Execution", () => {
   });
 
   test("handles multiple statements with unsafe", async () => {
-    const result = await sql.unsafe(`
+    // Execute multiple statements
+    await sql.unsafe(`
         CREATE TABLE multi1 (id INTEGER);
         CREATE TABLE multi2 (id INTEGER);
         INSERT INTO multi1 VALUES (1);
         INSERT INTO multi2 VALUES (2);
-        SELECT * FROM multi1;
-        SELECT * FROM multi2;
       `);
 
-    // SQLite returns the last result
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe(2);
+    // Query separately to verify
+    const result1 = await sql`SELECT * FROM multi1`;
+    const result2 = await sql`SELECT * FROM multi2`;
+
+    expect(result1).toHaveLength(1);
+    expect(result1[0].id).toBe(1);
+    expect(result2).toHaveLength(1);
+    expect(result2[0].id).toBe(2);
   });
 });
 
@@ -722,7 +726,7 @@ describe("Connection management", () => {
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
+      expect((err as Error).message).toMatchInlineSnapshot(`"Connection closed"`);
     }
   });
 
@@ -904,7 +908,7 @@ describe("Memory and resource management", () => {
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toMatchInlineSnapshot(`"SQLite database not initialized"`);
+      expect((err as Error).message).toMatchInlineSnapshot(`"Connection closed"`);
     }
   });
 

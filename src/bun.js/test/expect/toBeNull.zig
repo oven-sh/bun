@@ -1,14 +1,13 @@
-pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+pub fn toBeNull(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     defer this.postMatch(globalThis);
+
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeUndefined", "");
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeNull", "");
 
     incrementExpectCallCounter();
 
     const not = this.flags.not;
-    var pass = false;
-    if (value.isUndefined()) pass = true;
-
+    var pass = value.isNull();
     if (not) pass = !pass;
     if (pass) return .js_undefined;
 
@@ -18,12 +17,12 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const value_fmt = value.toFmt(&formatter);
     if (not) {
         const received_line = "Received: <red>{any}<r>\n";
-        const signature = comptime getSignature("toBeUndefined", "", true);
+        const signature = comptime getSignature("toBeNull", "", true);
         return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     const received_line = "Received: <red>{any}<r>\n";
-    const signature = comptime getSignature("toBeUndefined", "", false);
+    const signature = comptime getSignature("toBeNull", "", false);
     return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
 }
 

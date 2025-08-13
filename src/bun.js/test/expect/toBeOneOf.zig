@@ -81,9 +81,7 @@ pub fn toBeOneOf(
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ value_fmt, expected_fmt });
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

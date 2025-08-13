@@ -65,9 +65,8 @@ pub fn toHaveLength(
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_length, actual_length });
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const std = @import("std");
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

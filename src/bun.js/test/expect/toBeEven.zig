@@ -1,13 +1,37 @@
-pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+pub fn toBeEven(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     defer this.postMatch(globalThis);
+
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeUndefined", "");
+
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeEven", "");
 
     incrementExpectCallCounter();
 
     const not = this.flags.not;
     var pass = false;
-    if (value.isUndefined()) pass = true;
+
+    if (value.isAnyInt()) {
+        const _value = value.toInt64();
+        pass = @mod(_value, 2) == 0;
+        if (_value == -0.0) { // negative zero is even
+            pass = true;
+        }
+    } else if (value.isBigInt() or value.isBigInt32()) {
+        const _value = value.toInt64();
+        pass = switch (_value == -0.0) { // negative zero is even
+            true => true,
+            else => _value & 1 == 0,
+        };
+    } else if (value.isNumber()) {
+        const _value = JSValue.asNumber(value);
+        if (@mod(_value, 1) == 0 and @mod(_value, 2) == 0) { // if the fraction is all zeros and even
+            pass = true;
+        } else {
+            pass = false;
+        }
+    } else {
+        pass = false;
+    }
 
     if (not) pass = !pass;
     if (pass) return .js_undefined;
@@ -18,12 +42,12 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const value_fmt = value.toFmt(&formatter);
     if (not) {
         const received_line = "Received: <red>{any}<r>\n";
-        const signature = comptime getSignature("toBeUndefined", "", true);
+        const signature = comptime getSignature("toBeEven", "", true);
         return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     const received_line = "Received: <red>{any}<r>\n";
-    const signature = comptime getSignature("toBeUndefined", "", false);
+    const signature = comptime getSignature("toBeEven", "", false);
     return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
 }
 

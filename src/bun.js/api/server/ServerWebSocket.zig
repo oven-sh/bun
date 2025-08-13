@@ -43,7 +43,7 @@ pub fn memoryCost(this: *const ServerWebSocket) usize {
     return this.websocket().memoryCost() + @sizeOf(ServerWebSocket);
 }
 
-const log = Output.scoped(.WebSocketServer, false);
+const log = Output.scoped(.WebSocketServer, .visible);
 
 pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     log("OnOpen", .{});

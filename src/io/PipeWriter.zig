@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.PipeWriter, true);
+const log = bun.Output.scoped(.PipeWriter, .hidden);
 
 pub const WriteResult = union(enum) {
     done: usize,

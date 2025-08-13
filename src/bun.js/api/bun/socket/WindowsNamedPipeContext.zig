@@ -22,7 +22,7 @@ pub const SocketType = union(enum) {
 };
 
 pub const new = bun.TrivialNew(WindowsNamedPipeContext);
-const log = Output.scoped(.WindowsNamedPipeContext, false);
+const log = Output.scoped(.WindowsNamedPipeContext, .visible);
 
 fn onOpen(this: *WindowsNamedPipeContext) void {
     this.is_open = true;

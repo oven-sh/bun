@@ -1800,7 +1800,7 @@ pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: 
 
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, bun.IdentityContext(u64), 80);
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 

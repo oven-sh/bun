@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.S3, true);
+const log = bun.Output.scoped(.S3, .hidden);
 pub const S3HttpDownloadStreamingTask = struct {
     pub const new = bun.TrivialNew(@This());
 

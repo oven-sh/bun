@@ -21,7 +21,7 @@ must_block_until_connected: bool = false,
 
 pub const Wait = enum { off, shortly, forever };
 
-pub const log = Output.scoped(.debugger, false);
+pub const log = Output.scoped(.debugger, .visible);
 
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
@@ -289,7 +289,7 @@ pub fn willDispatchAsyncCall(globalObject: *JSGlobalObject, call: AsyncCallType,
 
 pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
-    const debug = Output.scoped(.TestReporterAgent, false);
+    const debug = Output.scoped(.TestReporterAgent, .visible);
 
     pub const TestStatus = enum(u8) {
         pass,
@@ -363,7 +363,7 @@ pub const TestReporterAgent = struct {
 
 pub const LifecycleAgent = struct {
     handle: ?*Handle = null,
-    const debug = Output.scoped(.LifecycleAgent, false);
+    const debug = Output.scoped(.LifecycleAgent, .visible);
 
     pub const Handle = opaque {
         extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;

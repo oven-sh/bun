@@ -675,7 +675,7 @@ fn buildRequestBody(
     );
 }
 
-const log = Output.scoped(.WebSocketUpgradeClient, false);
+const log = Output.scoped(.WebSocketUpgradeClient, .visible);
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const std = @import("std");

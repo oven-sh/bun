@@ -2778,6 +2778,12 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
+            // Prevent inline snapshot updates in CI environments
+            if (ci_info.detectCI()) |_| {
+                const signature = comptime getSignature(fn_name, "", true);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments\n", .{});
+            }
+            
             if (this.testScope() == null) {
                 const signature = comptime getSignature(fn_name, "", true);
                 return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
@@ -2916,6 +2922,7 @@ pub const Expect = struct {
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments", .{}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             };
         };
@@ -6362,6 +6369,7 @@ const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
 const bun = @import("bun");
+const ci_info = @import("../../ci_info.zig");
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;

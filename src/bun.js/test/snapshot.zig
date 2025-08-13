@@ -81,6 +81,11 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
+        // Prevent snapshot creation in CI environments
+        if (ci_info.detectCI()) |_| {
+            return error.SnapshotCreationNotAllowedInCI;
+        }
+        
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(
@@ -539,6 +544,7 @@ const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
 
 const bun = @import("bun");
+const ci_info = @import("../../ci_info.zig");
 const js_ast = bun.ast;
 const js_parser = bun.js_parser;
 const logger = bun.logger;

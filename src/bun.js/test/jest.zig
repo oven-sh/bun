@@ -1950,6 +1950,10 @@ inline fn createScope(
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
+        // Prevent test.only in CI environments
+        if (ci_info.detectCI()) |_| {
+            return globalThis.throwPretty("test.only is not allowed in CI environments", .{});
+        }
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
@@ -2330,6 +2334,10 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             const tag = parent.tag;
 
             if (tag == .only) {
+                // Prevent test.only in CI environments
+                if (ci_info.detectCI()) |_| {
+                    return globalThis.throwPretty("test.only is not allowed in CI environments", .{});
+                }
                 Jest.runner.?.setOnly();
             }
 
@@ -2493,6 +2501,7 @@ const Expect = expect.Expect;
 const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
+const ci_info = @import("../../ci_info.zig");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
 const Fs = bun.fs;

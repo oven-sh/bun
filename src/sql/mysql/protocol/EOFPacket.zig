@@ -19,4 +19,4 @@ const std = @import("std");
 const bun = @import("bun");
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const StatusFlags = @import("../StatusFlags.zig");
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;

@@ -2,23 +2,25 @@ const MySQLConnection = @This();
 
 socket: Socket,
 status: ConnectionState = .disconnected,
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 
 write_buffer: bun.OffsetByteList = .{},
 read_buffer: bun.OffsetByteList = .{},
 last_message_start: u32 = 0,
 sequence_id: u8 = 0,
 
-requests: std.fifo.LinearFifo(*MySQLQuery, .Dynamic) = std.fifo.LinearFifo(*MySQLQuery, .Dynamic).init(bun.default_allocator),
+requests: Queue = Queue.init(bun.default_allocator),
 statements: PreparedStatementsMap = .{},
 
 poll_ref: bun.Async.KeepAlive = .{},
 globalObject: *jsc.JSGlobalObject,
+vm: *jsc.VirtualMachine,
 
 pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 js_value: JSValue = .js_undefined,
 
 is_ready_for_query: bool = false,
+has_backpressure: bool = false,
 
 server_version: bun.ByteList = .{},
 connection_id: u32 = 0,
@@ -44,6 +46,31 @@ password: []const u8 = "",
 options: []const u8 = "",
 options_buf: []const u8 = "",
 
+auto_flusher: AutoFlusher = .{},
+
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+pub fn onAutoFlush(this: *@This()) bool {
+    if (this.has_backpressure) {
+        debug("onAutoFlush: has backpressure", .{});
+        this.auto_flusher.registered = false;
+        // if we have backpressure, wait for onWritable
+        return false;
+    }
+    this.ref();
+    defer this.deref();
+    debug("onAutoFlush: draining", .{});
+    // drain as much as we can
+    this.drainInternal();
+
+    // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
+    const keep_flusher_registered = !this.has_backpressure and this.write_buffer.len() > 0;
+    debug("onAutoFlush: keep_flusher_registered: {}", .{keep_flusher_registered});
+    this.auto_flusher.registered = keep_flusher_registered;
+    return keep_flusher_registered;
+}
+
 pub const AuthState = union(enum) {
     pending: void,
     native_password: void,
@@ -67,6 +94,28 @@ fn updateHasPendingActivity(this: *MySQLConnection) void {
     this.pending_activity_count.store(a + b, .release);
 }
 
+fn registerAutoFlusher(this: *@This()) void {
+    const data_to_send = this.write_buffer.len();
+    debug("registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}", .{ this.has_backpressure, this.auto_flusher.registered, data_to_send });
+
+    if (!this.auto_flusher.registered and // should not be registered
+        !this.has_backpressure and // if has backpressure we need to wait for onWritable event
+        data_to_send > 0 and // we need data to send
+        this.status == .connected //and we need to be connected
+    ) {
+        AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.vm);
+        this.auto_flusher.registered = true;
+    }
+}
+
+fn unregisterAutoFlusher(this: *@This()) void {
+    debug("unregisterAutoFlusher registered: {}", .{this.auto_flusher.registered});
+    if (this.auto_flusher.registered) {
+        AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, this.vm);
+        this.auto_flusher.registered = false;
+    }
+}
+
 pub fn setStatus(this: *MySQLConnection, status: ConnectionState) void {
     defer this.updateHasPendingActivity();
 
@@ -80,13 +129,29 @@ pub fn setStatus(this: *MySQLConnection, status: ConnectionState) void {
             const js_value = this.js_value;
             js_value.ensureStillAlive();
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-            this.poll_ref.unref(this.globalObject.bunVM());
+            this.poll_ref.unref(this.vm);
             this.updateHasPendingActivity();
         },
         else => {},
     }
 }
 
+fn drainInternal(this: *@This()) void {
+    debug("drainInternal", .{});
+    if (this.vm.isShuttingDown()) return this.close();
+
+    const event_loop = this.vm.eventLoop();
+    event_loop.enter();
+    defer event_loop.exit();
+
+    this.flushData();
+
+    if (!this.has_backpressure) {
+        // no backpressure yet so pipeline more if possible and flush again
+        // this.advance();
+        this.flushData();
+    }
+}
 pub fn finalize(this: *MySQLConnection) void {
     debug("MySQLConnection finalize", .{});
 
@@ -100,22 +165,19 @@ pub fn finalize(this: *MySQLConnection) void {
 }
 
 pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-    this.poll_ref.ref(this.globalObject.bunVM());
+    this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
     return .js_undefined;
 }
 
 pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-    this.poll_ref.unref(this.globalObject.bunVM());
+    this.poll_ref.unref(this.vm);
     this.updateHasPendingActivity();
     return .js_undefined;
 }
 
-pub fn doFlush(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    _ = callframe;
-    _ = globalObject;
-    _ = this;
-
+pub fn doFlush(this: *MySQLConnection, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    this.registerAutoFlusher();
     return .js_undefined;
 }
 
@@ -145,16 +207,27 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame)
     return globalObject.throw("MySQLConnection cannot be constructed directly", .{});
 }
 
-pub fn flushData(this: *MySQLConnection) void {
+pub fn flushData(this: *@This()) void {
+    // we know we still have backpressure so just return we will flush later
+    if (this.has_backpressure) {
+        debug("flushData: has backpressure", .{});
+        return;
+    }
+
     const chunk = this.write_buffer.remaining();
-    if (chunk.len == 0) return;
+    if (chunk.len == 0) {
+        debug("flushData: no data to flush", .{});
+        return;
+    }
+
     const wrote = this.socket.write(chunk);
+    this.has_backpressure = wrote < chunk.len;
+    debug("flushData: wrote {d}/{d} bytes", .{ wrote, chunk.len });
     if (wrote > 0) {
         // SocketMonitor.write(chunk[0..@intCast(wrote)]);
         this.write_buffer.consume(@intCast(wrote));
     }
 }
-
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer this.updateHasPendingActivity();
     if (this.status == .failed) return;
@@ -179,24 +252,9 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: anyerror) void {
 }
 
 pub fn onClose(this: *MySQLConnection) void {
-    var vm = this.globalObject.bunVM();
+    var vm = this.vm;
     defer vm.drainMicrotasks();
     this.fail("Connection closed", error.ConnectionClosed);
-}
-
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count += 1;
-}
-
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count;
-    this.ref_count -= 1;
-
-    if (ref_count == 1) {
-        this.disconnect();
-        this.deinit();
-    }
 }
 
 pub fn disconnect(this: *@This()) void {
@@ -219,8 +277,6 @@ pub fn disconnect(this: *@This()) void {
         this.socket.close();
     }
 }
-
-const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 
 fn SocketHandler(comptime ssl: bool) type {
     return struct {
@@ -279,24 +335,21 @@ pub fn onTimeout(this: *MySQLConnection) void {
 }
 
 pub fn onDrain(this: *MySQLConnection) void {
-    const event_loop = this.globalObject.bunVM().eventLoop();
-    event_loop.enter();
-    defer event_loop.exit();
-    this.flushData();
+    this.drainInternal();
 }
 
 pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments_old(10).slice();
-    const hostname_str = arguments[0].toBunString(globalObject);
+    const arguments = callframe.arguments();
+    const hostname_str = try arguments[0].toBunString(globalObject);
     defer hostname_str.deref();
-    const port = arguments[1].coerce(i32, globalObject);
+    const port = try arguments[1].coerce(i32, globalObject);
 
-    const username_str = arguments[2].toBunString(globalObject);
+    const username_str = try arguments[2].toBunString(globalObject);
     defer username_str.deref();
-    const password_str = arguments[3].toBunString(globalObject);
+    const password_str = try arguments[3].toBunString(globalObject);
     defer password_str.deref();
-    const database_str = arguments[4].toBunString(globalObject);
+    const database_str = try arguments[4].toBunString(globalObject);
     defer database_str.deref();
     // TODO: update this to match MySQL.
     const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
@@ -326,31 +379,33 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        if (tls_config.reject_unauthorized != 0)
-            tls_config.request_cert = 1;
+        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+        const original_reject_unauthorized = tls_config.reject_unauthorized;
+        tls_config.reject_unauthorized = 0;
+        tls_config.request_cert = 1;
 
         // We create it right here so we can throw errors early.
         const context_options = tls_config.asUSockets();
         var err: uws.create_bun_socket_error_t = .none;
-        tls_ctx = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*MySQLConnection), context_options, &err) orelse {
+        tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*@This()), context_options, &err) orelse {
             if (err != .none) {
-                globalObject.throw("failed to create TLS context", .{});
+                return globalObject.throw("failed to create TLS context", .{});
             } else {
-                globalObject.throwValue(err.toJS(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject));
             }
-            return .zero;
         };
 
+        // restore the original reject_unauthorized
+        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
-            globalObject.throwValue(err.toJS(globalObject));
             if (tls_ctx) |ctx| {
                 ctx.deinit(true);
             }
-            return .zero;
+            return globalObject.throwValue(err.toJS(globalObject));
         }
 
-        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *MySQLConnection, SocketHandler(true));
+        uws.NewSocketHandler(true).configure(tls_ctx.?, true, *@This(), SocketHandler(true));
     }
 
     var username: []const u8 = "";
@@ -358,7 +413,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     var database: []const u8 = "";
     var options: []const u8 = "";
 
-    const options_str = arguments[7].toBunString(globalObject);
+    const options_str = try arguments[7].toBunString(globalObject);
     defer options_str.deref();
 
     const options_buf: []u8 = brk: {
@@ -392,8 +447,8 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     ptr.* = MySQLConnection{
         .globalObject = globalObject,
-        .on_connect = jsc.Strong.create(on_connect, globalObject),
-        .on_close = jsc.Strong.create(on_close, globalObject),
+        .on_connect = .create(on_connect, globalObject),
+        .on_close = .create(on_close, globalObject),
         .database = database,
         .user = username,
         .password = password,
@@ -409,6 +464,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
         .character_set = CharacterSet.default,
+        .vm = vm,
     };
 
     {
@@ -416,9 +472,8 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         defer hostname.deinit();
 
         const ctx = vm.rareData().mysql_context.tcp orelse brk: {
-            var err: uws.create_bun_socket_error_t = .none;
-            const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*MySQLConnection), uws.us_bun_socket_context_options_t{}, &err).?;
-            uws.NewSocketHandler(false).configure(ctx_, true, *MySQLConnection, SocketHandler(false));
+            const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*@This())).?;
+            uws.NewSocketHandler(false).configure(ctx_, true, *@This(), SocketHandler(false));
             vm.rareData().mysql_context.tcp = ctx_;
             break :brk ctx_;
         };
@@ -447,8 +502,6 @@ pub fn deinit(this: *MySQLConnection) void {
     this.disconnect();
     debug("MySQLConnection deinit", .{});
 
-    bun.assert(this.ref_count == 0);
-
     var requests = this.requests;
     defer requests.deinit();
     this.requests = Queue.init(bun.default_allocator);
@@ -476,7 +529,7 @@ pub fn deinit(this: *MySQLConnection) void {
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.socket = socket;
     this.status = .handshaking;
-    this.poll_ref.ref(this.globalObject.bunVM());
+    this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 
     // Do nothing, the server will start the handshake process.
@@ -486,31 +539,42 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
     debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+    const handshake_success = if (success == 1) true else false;
+    if (handshake_success) {
+        if (this.tls_config.reject_unauthorized != 0) {
+            // only reject the connection if reject_unauthorized == true
+            switch (this.ssl_mode) {
+                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
 
-    if (success != 1) {
-        this.failWithJSValue(ssl_error.toJS(this.globalObject));
-        return;
-    }
+                .verify_ca, .verify_full => {
+                    if (ssl_error.error_no != 0) {
+                        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                        return;
+                    }
 
-    if (this.tls_config.reject_unauthorized == 1) {
-        if (ssl_error.error_no != 0) {
-            this.failWithJSValue(ssl_error.toJS(this.globalObject));
-            return;
-        }
-        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
-            const hostname = servername[0..bun.len(servername)];
-            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const hostname = servername[0..bun.len(servername)];
+                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                        }
+                    }
+                },
+                else => {
+                    return;
+                },
             }
         }
+    } else {
+        // if we are here is because server rejected us, and the error_no is the cause of this
+        // no matter if reject_unauthorized is false because we are disconnected by the server
+        this.failWithJSValue(ssl_error.toJS(this.globalObject));
     }
 }
 
 pub fn onData(this: *MySQLConnection, data: []const u8) void {
     this.ref();
-    const vm = this.globalObject.bunVM();
-
+    const vm = this.vm;
     // Clear the timeout.
     this.socket.setTimeout(0);
 
@@ -1145,17 +1209,18 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                             defer row.deinit(allocator);
                             try row.decode(allocator, reader);
 
-                            const pending_value = MySQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
+                            const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue) orelse .zero;
 
                             // Process row data
-                            const row_value = row.toJS(request.statement.?.structure(request.thisValue, globalThis), pending_value, globalThis);
+                            const structure = request.statement.?.structure(request.thisValue, globalThis);
+                            const row_value = row.toJS(structure.jsValue() orelse .js_undefined, pending_value, globalThis);
                             if (globalThis.hasException()) {
                                 request.onJSError(globalThis.tryTakeException().?, globalThis);
                                 return error.JSError;
                             }
 
                             if (pending_value == .zero) {
-                                MySQLQuery.pendingValueSetCached(request.thisValue, globalThis, row_value);
+                                MySQLQuery.js.pendingValueSetCached(request.thisValue, globalThis, row_value);
                             }
                         },
                     }
@@ -1167,12 +1232,18 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
     }
 }
 
+fn close(this: *@This()) void {
+    this.disconnect();
+    this.unregisterAutoFlusher();
+    this.write_buffer.deinit(bun.default_allocator);
+}
+
 pub fn closeStatement(this: *MySQLConnection, statement: *MySQLStatement) !void {
-    var close = PreparedStatement.Close{
+    var _close = PreparedStatement.Close{
         .statement_id = statement.statement_id,
     };
 
-    try close.write(this.writer());
+    try _close.write(this.writer());
     this.flushData();
 }
 
@@ -1236,7 +1307,7 @@ const MySQLStatement = @import("./MySQLStatement.zig");
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const types = @import("./MySQLTypes.zig");
 const Capabilities = @import("./Capabilities.zig");
-const StatusFlags = @import("./StatusFlags.zig");
+const StatusFlags = @import("./StatusFlags.zig").StatusFlags;
 const AuthMethod = @import("./AuthMethod.zig").AuthMethod;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 const SSLMode = @import("./SSLMode.zig").SSLMode;
@@ -1244,8 +1315,8 @@ const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const debug = bun.Output.scoped(.MySQLConnection, false);
 const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
 const NewReader = @import("./protocol/NewReader.zig").NewReader;
-const BoringSSL = bun.boringssl;
-const Data = @import("./protocol/Data.zig");
+const BoringSSL = bun.BoringSSL;
+const Data = @import("./protocol/Data.zig").Data;
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const CharacterSet = @import("./protocol/CharacterSet.zig").CharacterSet;
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
@@ -1265,3 +1336,6 @@ const Auth = @import("./protocol/Auth.zig");
 const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
 const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
 const MySQLQuery = @import("./MySQLQuery.zig");
+const AutoFlusher = jsc.WebCore.AutoFlusher;
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);

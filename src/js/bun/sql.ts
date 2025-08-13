@@ -65,6 +65,7 @@ const _values = Symbol("values");
 const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
+const _adapter = Symbol("adapter");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
@@ -123,6 +124,7 @@ function getQueryHandle(query) {
         query[_poolSize],
         query[_flags] & SQLQueryFlags.bigint,
         query[_flags] & SQLQueryFlags.simple,
+        query[_adapter],
       );
     } catch (err) {
       query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
@@ -440,6 +442,7 @@ class Query extends PublicPromise {
   [_queryStatus] = 0;
   [_strings];
   [_values];
+  [_adapter];
 
   [Symbol.for("nodejs.util.inspect.custom")]() {
     const status = this[_queryStatus];
@@ -450,7 +453,7 @@ class Query extends PublicPromise {
     return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
   }
 
-  constructor(strings, values, flags, poolSize, handler) {
+  constructor(strings, values, flags, poolSize, handler, adapter) {
     var resolve_, reject_;
     super((resolve, reject) => {
       resolve_ = resolve;
@@ -472,7 +475,7 @@ class Query extends PublicPromise {
     this[_strings] = strings;
     this[_values] = values;
     this[_flags] = flags;
-
+    this[_adapter] = adapter;
     this[_results] = null;
   }
 
@@ -614,53 +617,27 @@ class Query extends PublicPromise {
 }
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
-init(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
-    /// simple queries
-    if (query[_flags] & SQLQueryFlags.simple) {
-      // simple can have multiple results or a single result
-      if (is_last) {
-        if (queries) {
-          const queriesIndex = queries.indexOf(query);
-          if (queriesIndex !== -1) {
-            queries.splice(queriesIndex, 1);
-          }
-        }
-        try {
-          query.resolve(query[_results]);
-        } catch {}
-        return;
-      }
-      $assert(result instanceof SQLResultArray, "Invalid result array");
-      // prepare for next query
-      query[_handle].setPendingValue(new SQLResultArray());
 
-      if (typeof commandTag === "string") {
-        if (commandTag.length > 0) {
-          result.command = commandTag;
-        }
-      } else {
-        result.command = cmds[commandTag];
-      }
-
-      result.count = count || 0;
-      const last_result = query[_results];
-
-      if (!last_result) {
-        query[_results] = result;
-      } else {
-        if (last_result instanceof SQLResultArray) {
-          // multiple results
-          query[_results] = [last_result, result];
-        } else {
-          // 3 or more results
-          last_result.push(result);
+function onResolveSQLQuery(query, result, commandTag, count, queries, is_last) {
+  /// simple queries
+  if (query[_flags] & SQLQueryFlags.simple) {
+    // simple can have multiple results or a single result
+    if (is_last) {
+      if (queries) {
+        const queriesIndex = queries.indexOf(query);
+        if (queriesIndex !== -1) {
+          queries.splice(queriesIndex, 1);
         }
       }
+      try {
+        query.resolve(query[_results]);
+      } catch {}
       return;
     }
-    /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
+    // prepare for next query
+    query[_handle].setPendingValue(new SQLResultArray());
+
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
         result.command = commandTag;
@@ -670,29 +647,56 @@ init(
     }
 
     result.count = count || 0;
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
-      }
-    }
-    try {
-      query.resolve(result);
-    } catch {}
-  },
-  function onRejectPostgresQuery(query, reject, queries) {
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
-      }
-    }
+    const last_result = query[_results];
 
-    try {
-      query.reject(reject);
-    } catch {}
-  },
-);
+    if (!last_result) {
+      query[_results] = result;
+    } else {
+      if (last_result instanceof SQLResultArray) {
+        // multiple results
+        query[_results] = [last_result, result];
+      } else {
+        // 3 or more results
+        last_result.push(result);
+      }
+    }
+    return;
+  }
+  /// prepared statements
+  $assert(result instanceof SQLResultArray, "Invalid result array");
+  if (typeof commandTag === "string") {
+    if (commandTag.length > 0) {
+      result.command = commandTag;
+    }
+  } else {
+    result.command = cmds[commandTag];
+  }
+
+  result.count = count || 0;
+  if (queries) {
+    const queriesIndex = queries.indexOf(query);
+    if (queriesIndex !== -1) {
+      queries.splice(queriesIndex, 1);
+    }
+  }
+  try {
+    query.resolve(result);
+  } catch {}
+}
+function onRejectSQLQuery(query, reject, queries) {
+  if (queries) {
+    const queriesIndex = queries.indexOf(query);
+    if (queriesIndex !== -1) {
+      queries.splice(queriesIndex, 1);
+    }
+  }
+
+  try {
+    query.reject(reject);
+  } catch {}
+}
+init(onResolveSQLQuery, onRejectSQLQuery);
+initMysql(onResolveSQLQuery, onRejectSQLQuery);
 
 function onQueryFinish(onClose) {
   this.queries.delete(onClose);
@@ -1228,6 +1232,7 @@ async function createConnection(options, onConnected, onClose) {
     maxLifetime = 0,
     prepare = true,
     path,
+    adapter,
   } = options;
 
   let password = options.password;
@@ -1238,7 +1243,13 @@ async function createConnection(options, onConnected, onClose) {
         password = await password;
       }
     }
-    return _createConnection(
+
+    let createNativeConnection = _createConnection;
+    if (adapter === "mysql") {
+      createNativeConnection = _createConnectionMysql;
+    }
+
+    return createNativeConnection(
       hostname,
       Number(port),
       username || "",
@@ -1264,7 +1275,7 @@ async function createConnection(options, onConnected, onClose) {
   }
 }
 
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple) {
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple, adapter) {
   const [sqlString, final_values] = normalizeQuery(strings, values);
   if (!allowUnsafeTransaction) {
     if (poolSize !== 1) {
@@ -1274,7 +1285,11 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
       }
     }
   }
-  return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
+  let createNativeQuery = createQuery;
+  if (adapter === "mysql") {
+    createNativeQuery = createQueryMysql;
+  }
+  return createNativeQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
 class SQLHelper {
@@ -1519,6 +1534,11 @@ function loadOptions(o: Bun.SQL.Options) {
     case "postgresql":
       adapter = "postgres";
       break;
+    case "mysql":
+    case "mysql2":
+    case "mariadb":
+      adapter = "mysql";
+      break;
     default:
       throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
@@ -1609,6 +1629,7 @@ function SQL(o, e = {}) {
         connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
         connectionInfo.max,
         queryFromPoolHandler,
+        connectionInfo.adapter,
       );
     } catch (err) {
       return Promise.reject(err);
@@ -1621,7 +1642,7 @@ function SQL(o, e = {}) {
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler);
+      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler, connectionInfo.adapter);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1656,6 +1677,7 @@ function SQL(o, e = {}) {
           : SQLQueryFlags.allowUnsafeTransaction,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        connectionInfo.adapter,
       );
       transactionQueries.add(query);
       return query;
@@ -1678,6 +1700,7 @@ function SQL(o, e = {}) {
         flags,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        connectionInfo.adapter,
       );
       transactionQueries.add(query);
       return query;

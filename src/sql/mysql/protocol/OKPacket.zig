@@ -36,7 +36,7 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
     }
 
     // Status flags
-    this.status_flags = mysql.StatusFlags.fromInt(try reader.int(u16));
+    this.status_flags = StatusFlags.fromInt(try reader.int(u16));
 
     // Warnings
     this.warnings = try reader.int(u16);
@@ -60,9 +60,8 @@ pub const decode = decoderWrap(OKPacket, decodeInternal).decode;
 
 const std = @import("std");
 const bun = @import("bun");
-const mysql = @import("../MySQLTypes.zig");
 const Data = @import("./Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const StatusFlags = @import("../StatusFlags.zig");
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;

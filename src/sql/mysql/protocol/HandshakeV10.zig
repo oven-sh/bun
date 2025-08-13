@@ -77,6 +77,6 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const Capabilities = @import("../Capabilities.zig");
 const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const StatusFlags = @import("../StatusFlags.zig");
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
 const bun = @import("bun");
 const debug = bun.Output.scoped(.MySQLConnection, false);

@@ -72,7 +72,7 @@ pub fn onNoData(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        this.pending_value.trySwap() orelse .undefined,
+        this.pending_value.trySwap() orelse .js_undefined,
         JSValue.jsNumber(0),
         JSValue.jsNumber(0),
     });
@@ -205,7 +205,7 @@ pub fn onSuccess(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        this.pending_value.trySwap() orelse .undefined,
+        this.pending_value.trySwap() orelse .js_undefined,
         JSValue.jsNumber(0),
         JSValue.jsNumber(0),
     });

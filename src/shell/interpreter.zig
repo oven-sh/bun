@@ -80,7 +80,7 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-pub const log = bun.Output.scoped(.SHELL, false);
+pub const log = bun.Output.scoped(.SHELL, .visible);
 
 /// This is a zero-sized type returned by `.needsIO()`, designed to ensure
 /// functions which rely on IO are not called when they do don't need it.
@@ -140,7 +140,7 @@ pub const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const debug = bun.Output.scoped(.CowFd, true);
+    const debug = bun.Output.scoped(.CowFd, .hidden);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
@@ -742,7 +742,7 @@ pub const Interpreter = struct {
         }
 
         if (comptime bun.Environment.allow_assert) {
-            const debug = bun.Output.scoped(.ShellTokens, true);
+            const debug = bun.Output.scoped(.ShellTokens, .hidden);
             var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {

@@ -450,7 +450,7 @@ fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
 }
 
 pub const ShellRmTask = struct {
-    const debug = bun.Output.scoped(.AsyncRmTask, true);
+    const debug = bun.Output.scoped(.AsyncRmTask, .hidden);
 
     rm: *Rm,
     opts: Opts,
@@ -1196,7 +1196,7 @@ pub fn writeFailingError(this: *Rm, buf: []const u8, exit_code: ExitCode) Yield 
     return this.bltn().done(exit_code);
 }
 
-const log = bun.Output.scoped(.Rm, true);
+const log = bun.Output.scoped(.Rm, .hidden);
 
 const builtin = @import("builtin");
 const std = @import("std");

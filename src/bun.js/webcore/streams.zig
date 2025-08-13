@@ -729,7 +729,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         auto_flusher: WebCore.AutoFlusher = .{},
 
-        const log = Output.scoped(.HTTPServerWritable, false);
+        const log = Output.scoped(.HTTPServerWritable, .visible);
 
         pub fn connect(this: *@This(), signal: Signal) void {
             this.signal = signal;
@@ -1350,7 +1350,7 @@ pub const NetworkSink = struct {
     done: bool = false,
     cancel: bool = false,
 
-    const log = bun.Output.scoped(.NetworkSink, false);
+    const log = bun.Output.scoped(.NetworkSink, .visible);
 
     fn getHighWaterMark(this: *@This()) Blob.SizeType {
         if (this.task) |task| {

@@ -721,7 +721,12 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(
+            arena,
+            out.options.target.defaultConditions(),
+            out.options.target.isServerSide(),
+            bundler_options.conditions.keys(),
+        );
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
@@ -733,9 +738,6 @@ pub const Framework = struct {
         // This helps with package.json imports field resolution
         if (renderer == .server or renderer == .ssr) {
             try out.options.conditions.appendSlice(&.{"node"});
-        }
-        if (bundler_options.conditions.count() > 0) {
-            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
 
         out.options.production = mode != .development;

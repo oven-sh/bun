@@ -357,7 +357,7 @@ pub const Scripts = extern struct {
 
 const string = []const u8;
 const stringZ = [:0]const u8;
-const debug = Output.scoped(.Lockfile, true);
+const debug = Output.scoped(.Lockfile, .hidden);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

@@ -87,9 +87,9 @@ pub const All = struct {
         }
 
         timer.next = time.*;
-        if (timer.jsTimerInternals()) |internals| {
+        if (timer.jsTimerInternalsFlags()) |flags| {
             this.epoch +%= 1;
-            internals.flags.epoch = this.epoch;
+            flags.epoch = this.epoch;
         }
 
         this.timers.insert(timer);

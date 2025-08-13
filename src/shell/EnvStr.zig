@@ -11,7 +11,7 @@ pub const EnvStr = packed struct(u128) {
     tag: Tag = .empty,
     len: usize = 0,
 
-    const debug = bun.Output.scoped(.EnvStr, true);
+    const debug = bun.Output.scoped(.EnvStr, .hidden);
 
     const Tag = enum(u16) {
         /// no value

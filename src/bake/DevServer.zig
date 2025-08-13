@@ -10,9 +10,9 @@
 
 const DevServer = @This();
 
-pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
+pub const debug = bun.Output.Scoped(.DevServer, .visible);
+pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
+pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -63,10 +63,10 @@ server: ?bun.jsc.API.AnyServer,
 router: FrameworkRouter,
 /// Every navigatable route has bundling state here.
 route_bundles: ArrayListUnmanaged(RouteBundle),
-/// All access into IncrementalGraph is guarded by a DebugThreadLock. This is
+/// All access into IncrementalGraph is guarded by a ThreadLock. This is
 /// only a debug assertion as contention to this is always a bug; If a bundle is
 /// active and a file is changed, that change is placed into the next bundle.
-graph_safety_lock: bun.DebugThreadLock,
+graph_safety_lock: bun.safety.ThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
 /// State populated during bundling and hot updates. Often cleared
@@ -205,9 +205,6 @@ deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_p
 /// UWS can handle closing the websocket connections themselves
 active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
-relative_path_buf_lock: bun.DebugThreadLock,
-relative_path_buf: bun.PathBuffer,
-
 // Debugging
 
 dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
@@ -285,7 +282,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .server_fetch_function_callback = .empty,
         .server_register_update_callback = .empty,
         .generation = 0,
-        .graph_safety_lock = .unlocked,
+        .graph_safety_lock = .initUnlocked(),
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundler_options = options.bundler_options,
@@ -325,7 +322,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
                 true
         else
             bun.getRuntimeFeatureFlag(.BUN_ASSUME_PERFECT_INCREMENTAL),
-        .relative_path_buf_lock = .unlocked,
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
         .server_transpiler = undefined,
@@ -337,7 +333,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .watcher_atomics = undefined,
         .log = undefined,
         .deferred_request_pool = undefined,
-        .relative_path_buf = undefined,
     });
     errdefer bun.destroy(dev);
     const allocator = dev.allocation_scope.allocator();
@@ -537,10 +532,13 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
 
+    bun.assert(dev.magic == .valid);
+
     return dev;
 }
 
 pub fn deinit(dev: *DevServer) void {
+    debug.log("deinit", .{});
     dev_server_deinit_count_for_testing +|= 1;
 
     const allocator = dev.allocator;
@@ -561,12 +559,10 @@ pub fn deinit(dev: *DevServer) void {
         .frontend_only = {},
         .generation = {},
         .plugin_state = {},
-        .relative_path_buf_lock = {},
         .root = {},
         .server = {},
         .server_transpiler = {},
         .ssr_transpiler = {},
-        .relative_path_buf = {},
         .vm = {},
 
         // WebSockets should be deinitialized before other parts
@@ -1253,8 +1249,9 @@ fn onFrameworkRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
-                dev.releaseRelativePathBuf();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
+                const str = try bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(relative_path_buf, name));
                 router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
             },
@@ -1270,14 +1267,21 @@ fn onFrameworkRequestWithBundle(
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
-                var route_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                try arr.putIndex(global, 0, route_name.transferToJS(global));
-                dev.releaseRelativePathBuf();
+                {
+                    const relative_path_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(relative_path_buf);
+                    var route_name = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
+                    try arr.putIndex(global, 0, route_name.transferToJS(global));
+                }
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
-                        var layout_name = bun.String.cloneUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
-                        defer dev.releaseRelativePathBuf();
+                        const relative_path_buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(relative_path_buf);
+                        var layout_name = bun.String.cloneUTF8(dev.relativePath(
+                            relative_path_buf,
+                            keys[fromOpaqueFileId(.server, layout).get()],
+                        ));
                         try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
@@ -1580,7 +1584,7 @@ pub const DeferredRequest = struct {
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
     fn deinitImpl(this: *DeferredRequest) void {
-        bun.assert(this.ref_count.active_counts == 0);
+        this.ref_count.assertNoRefs();
 
         defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
         switch (this.handler) {
@@ -1642,7 +1646,7 @@ pub fn startAsyncBundle(
     // Ref server to keep it from closing.
     if (dev.server) |server| server.onPendingRequest();
 
-    var heap = try ThreadLocalArena.init();
+    var heap = ThreadLocalArena.init();
     errdefer heap.deinit();
     const allocator = heap.allocator();
     const ast_memory_allocator = try allocator.create(bun.ast.ASTMemoryAllocator);
@@ -1921,8 +1925,9 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *jsc.JSGlobalObjec
     const arr = try jsc.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
-        const str = bun.String.cloneUTF8(dev.relativePath(names[item.get()]));
-        defer dev.releaseRelativePathBuf();
+        const relative_path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(relative_path_buf);
+        const str = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, names[item.get()]));
         defer str.deref();
         try arr.putIndex(global, @intCast(i), str.toJS(global));
     }
@@ -2591,32 +2596,40 @@ pub fn finalizeBundle(
             ms_elapsed,
         });
 
-        // Compute a file name to display
-        const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
-            if (bv2.graph.entry_points.items.len > 0)
-                dev.relativePath(
-                    bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
-                )
-            else
-                null // TODO: How does this happen
-        else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.data.bundle.data.path),
-            .framework => |fw| file_name: {
-                const route = dev.router.routePtr(fw.route_index);
-                const opaque_id = route.file_page.unwrap() orelse
-                    route.file_layout.unwrap() orelse
-                    break :file_name null;
-                const server_index = fromOpaqueFileId(.server, opaque_id);
-                const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
-                break :file_name dev.relativePath(abs_path);
-            },
-        };
-        defer dev.releaseRelativePathBuf();
-        const total_count = bv2.graph.entry_points.items.len;
-        if (file_name) |name| {
-            Output.prettyError("<d>:<r> {s}", .{name});
-            if (total_count > 1) {
-                Output.prettyError(" <d>+ {d} more<r>", .{total_count - 1});
+        // Intentionally creating a new scope here so we can limit the lifetime
+        // of the `relative_path_buf`
+        {
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
+
+            // Compute a file name to display
+            const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
+                if (bv2.graph.entry_points.items.len > 0)
+                    dev.relativePath(
+                        relative_path_buf,
+                        bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
+                    )
+                else
+                    null // TODO: How does this happen
+            else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
+                .html => |html| dev.relativePath(relative_path_buf, html.html_bundle.data.bundle.data.path),
+                .framework => |fw| file_name: {
+                    const route = dev.router.routePtr(fw.route_index);
+                    const opaque_id = route.file_page.unwrap() orelse
+                        route.file_layout.unwrap() orelse
+                        break :file_name null;
+                    const server_index = fromOpaqueFileId(.server, opaque_id);
+                    const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
+                    break :file_name dev.relativePath(relative_path_buf, abs_path);
+                },
+            };
+
+            const total_count = bv2.graph.entry_points.items.len;
+            if (file_name) |name| {
+                Output.prettyError("<d>:<r> {s}", .{name});
+                if (total_count > 1) {
+                    Output.prettyError(" <d>+ {d} more<r>", .{total_count - 1});
+                }
             }
         }
         Output.prettyError("\n", .{});
@@ -3318,8 +3331,9 @@ pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !voi
             g.bundled_files.values(),
             0..,
         ) |k, v, i| {
-            const normalized_key = dev.relativePath(k);
-            defer dev.releaseRelativePathBuf();
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
+            const normalized_key = dev.relativePath(relative_path_buf, k);
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);
@@ -3750,12 +3764,12 @@ pub fn onRouterCollisionError(dev: *DevServer, rel_path: []const u8, other_id: O
         },
     });
     Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
+    const relative_path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(relative_path_buf);
     Output.prettyErrorln("  - <blue>{s}<r>", .{
-        dev.relativePath(dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, other_id).get()]),
+        dev.relativePath(relative_path_buf, dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, other_id).get()]),
     });
     Output.flush();
-
-    dev.releaseRelativePathBuf();
 }
 
 fn toOpaqueFileId(comptime side: bake.Side, index: IncrementalGraph(side).FileIndex) OpaqueFileId {
@@ -3779,9 +3793,9 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
 }
 
 /// Returns posix style path, suitible for URLs and reproducible hashes.
-/// To avoid overwriting memory, this has a lock for the buffer.
-pub fn relativePath(dev: *DevServer, path: []const u8) []const u8 {
-    dev.relative_path_buf_lock.lock();
+/// Calculate the relative path from the dev server root.
+/// The caller must provide a PathBuffer from the pool.
+pub fn relativePath(dev: *DevServer, relative_path_buf: *bun.PathBuffer, path: []const u8) []const u8 {
     bun.assert(dev.root[dev.root.len - 1] != '/');
 
     if (!std.fs.path.isAbsolute(path)) {
@@ -3795,17 +3809,10 @@ pub fn relativePath(dev: *DevServer, path: []const u8) []const u8 {
         return path[dev.root.len + 1 ..];
     }
 
-    const rel = bun.path.relativePlatformBuf(&dev.relative_path_buf, dev.root, path, .auto, true);
+    const rel = bun.path.relativePlatformBuf(relative_path_buf, dev.root, path, .auto, true);
     // @constCast: `rel` is owned by a buffer on `dev`, which is mutable
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
-}
-
-pub fn releaseRelativePathBuf(dev: *DevServer) void {
-    dev.relative_path_buf_lock.unlock();
-    if (bun.Environment.isDebug) {
-        dev.relative_path_buf = undefined;
-    }
 }
 
 /// Either of two conditions make this true:

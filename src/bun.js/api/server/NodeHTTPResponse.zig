@@ -1,6 +1,6 @@
 const NodeHTTPResponse = @This();
 
-const log = bun.Output.scoped(.NodeHTTPResponse, false);
+const log = bun.Output.scoped(.NodeHTTPResponse, .visible);
 
 pub const js = jsc.Codegen.JSNodeHTTPResponse;
 pub const toJS = js.toJS;

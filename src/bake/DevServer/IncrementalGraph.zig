@@ -182,7 +182,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    if (@import("builtin").mode == .ReleaseFast or @import("builtin").mode == .ReleaseSmall) {
+                    if (!Environment.ci_assert) {
                         bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
                         bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }
@@ -614,7 +614,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundle_graph_index: bun.ast.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
                 @panic("unresolved index"); // do not process for failed chunks
             log("index id={d} {}:", .{
@@ -675,6 +675,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
             }
 
+            // We need to add this here to not trip up
+            // `checkEdgeRemoval(edge_idx)` (which checks that there no
+            // references to `edge_idx`.
+            //
+            // I don't think `g.first_import.items[file_index]` is ever read
+            // from again in this function, so this is safe.
+            g.first_import.items[file_index.get()] = .none;
+
             // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()[0..quick_lookup_values_to_care_len]) |val| {
                 if (!val.seen) {
@@ -698,10 +706,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
+        /// When we delete an edge, we need to delete it by connecting the
+        /// previous dependency (importer) edge to the next depedenency
+        /// (importer) edge.
+        ///
+        /// DO NOT ONLY CALL THIS FUNCTION TO TRY TO DELETE AN EDGE, YOU MUST DELETE
+        /// THE IMPORTS TOO!
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
             const imported = edge.imported.get();
-            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, true);
+            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, .hidden);
             log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
@@ -790,7 +804,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 css,
             },
         ) bun.OOM!enum { @"continue", stop } {
-            const log = bun.Output.scoped(.processEdgeAttachment, false);
+            const log = bun.Output.scoped(.processEdgeAttachment, .visible);
 
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
@@ -909,7 +923,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // don't call this function for CSS sources
             bun.assert(ctx.loaders[index.get()] != .css);
 
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 // When an import record is duplicated, it gets marked unused.
                 // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
@@ -1398,13 +1412,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // TODO: DevServer should get a stdio manager which can process
             // the error list as it changes while also supporting a REPL
             log.print(Output.errorWriter()) catch {};
-            const failure = try SerializedFailure.initFromLog(
-                dev,
-                fail_owner,
-                dev.relativePath(gop.key_ptr.*),
-                log.msgs.items,
-            );
-            defer dev.releaseRelativePathBuf();
+            const failure = failure: {
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
+                // this string is just going to be memcpy'd into the log buffer
+                const owner_display_name = dev.relativePath(relative_path_buf, gop.key_ptr.*);
+                break :failure try SerializedFailure.initFromLog(
+                    dev,
+                    fail_owner,
+                    owner_display_name,
+                    log.msgs.items,
+                );
+            };
             const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
@@ -1420,6 +1439,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Disconnect all imports
             var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            g.first_import.items[index.get()] = .none;
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
                 it = dep.next_import.unwrap();
@@ -1617,13 +1637,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.writeAll("}, {\n  main: ");
                         const initial_response_entry_point = options.initial_response_entry_point;
                         if (initial_response_entry_point.len > 0) {
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
-                                g.owner().relativePath(initial_response_entry_point),
+                                g.owner().relativePath(relative_path_buf, initial_response_entry_point),
                                 @TypeOf(w),
                                 w,
                                 .utf8,
                             );
-                            g.owner().releaseRelativePathBuf();
                         } else {
                             try w.writeAll("null");
                         }
@@ -1642,13 +1663,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
-                                g.owner().relativePath(options.react_refresh_entry_point),
+                                g.owner().relativePath(relative_path_buf, options.react_refresh_entry_point),
                                 @TypeOf(w),
                                 w,
                                 .utf8,
                             );
-                            g.owner().releaseRelativePathBuf();
                         }
                         try w.writeAll("\n})");
                     },
@@ -1720,10 +1742,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             var source_map_strings = std.ArrayList(u8).init(arena);
             defer source_map_strings.deinit();
 
-            const dev = g.owner();
-            dev.relative_path_buf_lock.lock();
-            defer dev.relative_path_buf_lock.unlock();
-
             const buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
 
@@ -1760,6 +1778,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Disconnect all imports
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                g.first_import.items[file_index.get()] = .none;
                 while (it) |edge_index| {
                     const dep = g.edges.items[edge_index.get()];
                     it = dep.next_import.unwrap();
@@ -1802,6 +1821,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
         fn freeEdge(g: *@This(), edge_index: EdgeIndex) void {
+            igLog("IncrementalGraph(0x{x}, {s}).freeEdge({d})", .{ @intFromPtr(g), @tagName(side), edge_index.get() });
+            defer g.checkEdgeRemoval(edge_index);
             if (Environment.isDebug) {
                 g.edges.items[edge_index.get()] = undefined;
             }
@@ -1813,6 +1834,49 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     // Leak an edge object; Ok since it may get cleaned up by
                     // the next incremental graph garbage-collection cycle.
                 };
+            }
+        }
+
+        /// It is very easy to call `g.freeEdge(idx)` but still keep references
+        /// to the idx around, basically causing use-after-free with more steps
+        /// and no asan to check it since we are dealing with indices and not
+        /// pointers to memory.
+        ///
+        /// So we'll check it manually by making sure there are no references to
+        /// `edge_index` in the graph.
+        fn checkEdgeRemoval(g: *@This(), edge_index: EdgeIndex) void {
+            // Enable this on any builds with asan enabled so we can catch stuff
+            // in CI too
+            const enabled = bun.asan.enabled or bun.Environment.ci_assert;
+            if (comptime !enabled) return;
+
+            for (g.first_dep.items) |maybe_first_dep| {
+                if (maybe_first_dep.unwrap()) |first_dep| {
+                    bun.assert_neql(first_dep.get(), edge_index.get());
+                }
+            }
+
+            for (g.first_import.items) |maybe_first_import| {
+                if (maybe_first_import.unwrap()) |first_import| {
+                    bun.assert_neql(first_import.get(), edge_index.get());
+                }
+            }
+
+            for (g.edges.items) |edge| {
+                const in_free_list = in_free_list: {
+                    for (g.edges_free_list.items) |free_edge_index| {
+                        if (free_edge_index.get() == edge_index.get()) {
+                            break :in_free_list true;
+                        }
+                    }
+                    break :in_free_list false;
+                };
+
+                if (in_free_list) continue;
+
+                bun.assert_neql(edge.prev_dependency.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_import.unwrapGet(), edge_index.get());
+                bun.assert_neql(edge.next_dependency.unwrapGet(), edge_index.get());
             }
         }
 

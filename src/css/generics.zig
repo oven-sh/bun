@@ -469,9 +469,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
-            .baby_list => {
-                return bun.BabyList(result.child).deepClone2(this, allocator);
-            },
+            .baby_list => this.deepCloneInfallible(allocator),
             .small_list => this.deepClone(allocator),
         };
     }

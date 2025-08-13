@@ -631,7 +631,7 @@ pub fn toAST(
     }
 }
 
-const JSONParser = if (bun.fast_debug_build_mode) TSConfigParser else JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
+const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .ignore_leading_escape_sequences = true,
     .ignore_trailing_escape_sequences = true,

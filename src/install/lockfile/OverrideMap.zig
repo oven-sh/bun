@@ -1,6 +1,6 @@
 const OverrideMap = @This();
 
-const debug = Output.scoped(.OverrideMap, false);
+const debug = Output.scoped(.OverrideMap, .visible);
 
 map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
 

@@ -1,5 +1,7 @@
 import { expect, mock, test } from "bun:test";
 
+const stripAnsi = (str: string) => str.replaceAll(/\x1b\[[0-9;]*m/g, "");
+
 test("toHaveBeenCalledWith should show diff when assertion fails", () => {
   const mockedFn = mock(args => args);
 
@@ -18,8 +20,8 @@ test("toHaveBeenCalledWith should show diff when assertion fails", () => {
   expect(error).toBeDefined();
   expect(error!.message).toContain("- Expected");
   expect(error!.message).toContain("+ Received");
-  expect(error!.message).toContain("d: 1");
-  expect(error!.message).toContain("d: 2");
+  expect(stripAnsi(error!.message)).toContain('"d": 1');
+  expect(stripAnsi(error!.message)).toContain('"d": 2');
 });
 
 test("toHaveBeenNthCalledWith should show diff when assertion fails", () => {
@@ -80,8 +82,8 @@ test("toHaveBeenCalledWith should show diff for multiple arguments", () => {
   expect(error).toBeDefined();
   expect(error!.message).toContain("- Expected");
   expect(error!.message).toContain("+ Received");
-  expect(error!.message).toContain("bar");
-  expect(error!.message).toContain("baz");
+  expect(stripAnsi(error!.message)).toContain("bar");
+  expect(stripAnsi(error!.message)).toContain("baz");
 });
 
 test("toHaveBeenCalledWith should show diff for complex nested structures", () => {

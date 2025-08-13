@@ -145,7 +145,7 @@ pub fn toInt(this: Capabilities) u32 {
 pub fn fromInt(flags: u32) Capabilities {
     var this: Capabilities = .{};
     inline for (comptime std.meta.fieldNames(Capabilities)) |field| {
-        @field(this, field) = (@field(Capabilities, field) & flags) != 0;
+        @field(this, field) = (@field(Capabilities, "_" ++ field) & flags) != 0;
     }
     return this;
 }

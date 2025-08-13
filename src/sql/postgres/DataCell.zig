@@ -1103,7 +1103,7 @@ pub const DataCell = extern struct {
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const Data = @import("./Data.zig").Data;

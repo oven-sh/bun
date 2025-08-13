@@ -1809,7 +1809,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");

@@ -1,4 +1,4 @@
-fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !Value {
+pub fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !Value {
     return switch (field_type) {
         .MYSQL_TYPE_TINY => blk: {
             const val = try reader.byte();

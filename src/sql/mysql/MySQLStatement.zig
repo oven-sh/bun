@@ -1,6 +1,6 @@
 const MySQLStatement = @This();
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-cached_structure: jsc.Strong.Optional = .empty,
+cached_structure: CachedStructure = .{},
 ref_count: RefCount = RefCount.init(),
 statement_id: u32 = 0,
 params: []const types.FieldType = &[_]types.FieldType{},
@@ -32,27 +32,44 @@ pub fn deinit(this: *MySQLStatement) void {
     bun.default_allocator.destroy(this);
 }
 
-pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) JSValue {
-    return this.cached_structure.get() orelse {
-        const names = bun.default_allocator.alloc(bun.String, this.columns.len) catch return .undefined;
-        defer {
-            for (names) |*name| {
-                name.deref();
-            }
-            bun.default_allocator.free(names);
-        }
-        for (this.columns, names) |*column, *name| {
-            name.* = String.fromUTF8(column.name.slice());
-        }
-        const structure_ = jsc.JSObject.createStructure(
+pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) CachedStructure {
+    if (this.cached_structure.has()) {
+        return this.cached_structure;
+    }
+    // this.checkForDuplicateFields();
+
+    // lets avoid most allocations
+    var stack_ids: [70]jsc.JSObject.ExternColumnIdentifier = undefined;
+    // lets de duplicate the fields early
+    // var nonDuplicatedCount = this.columns.len;
+    const nonDuplicatedCount = this.columns.len;
+    // for (this.fields) |*field| {
+    //     if (field.name_or_index == .duplicate) {
+    //         nonDuplicatedCount -= 1;
+    //     }
+    // }
+    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+    var i: usize = 0;
+
+    var id: *jsc.JSObject.ExternColumnIdentifier = &ids[i];
+    for (this.columns) |*column| {
+        id.value.name = String.createAtomIfPossible(column.name.slice());
+        id.tag = 2;
+        i += 1;
+    }
+
+    if (nonDuplicatedCount > jsc.JSObject.maxInlineCapacity()) {
+        this.cached_structure.set(globalObject, null, ids);
+    } else {
+        this.cached_structure.set(globalObject, jsc.JSObject.createStructure(
             globalObject,
             owner,
-            @truncate(this.columns.len),
-            names.ptr,
-        );
-        this.cached_structure.set(globalObject, structure_);
-        return structure_;
-    };
+            @truncate(ids.len),
+            ids.ptr,
+        ), null);
+    }
+
+    return this.cached_structure;
 }
 
 const std = @import("std");
@@ -65,3 +82,4 @@ const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const JSValue = jsc.JSValue;
 const String = bun.String;
 const debug = bun.Output.scoped(.MySQLStatement, false);
+const CachedStructure = @import("../shared/CachedStructure.zig");

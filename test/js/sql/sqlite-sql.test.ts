@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
+import { join } from "node:path";
 import path from "path";
 
 describe("Connection & Initialization", () => {
@@ -981,6 +982,8 @@ describe("Connection URL Edge Cases", () => {
 
       const result = await sql`SELECT * FROM test`;
       expect(result).toHaveLength(1);
+
+      expect(sql.options.filename).toBe(join(dir, name));
 
       await sql.close();
       await rm(dir, { recursive: true });

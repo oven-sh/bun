@@ -517,7 +517,7 @@ extern "C" void bun_initialize_process()
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);
 
-        sa.sa_flags = SA_RESETHAND;
+        sa.sa_flags = SA_RESETHAND | SA_ONSTACK;
         sa.sa_handler = onExitSignal;
 
         sigaction(SIGTERM, &sa, nullptr);
@@ -838,7 +838,7 @@ extern "C" void Bun__registerSignalsForForwarding()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;
+    sa.sa_flags = SA_RESETHAND | SA_ONSTACK;
     sa.sa_handler = [](int sig) {
         if (Bun__currentSyncPID == 0) {
             Bun__pendingSignalToSend = sig;

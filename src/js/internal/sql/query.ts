@@ -15,14 +15,15 @@ const _adapter = Symbol("adapter");
 
 const PublicPromise = Promise;
 
-export interface BaseQueryHandle {
+export interface BaseQueryHandle<Connection> {
   done?(): void;
   cancel?(): void;
   setMode(mode: SQLQueryResultMode): void;
+  run(connection: Connection, query: Query<any, any>): void;
 }
 
 export type { Query };
-class Query<T, Handle extends BaseQueryHandle> extends PublicPromise<T> {
+class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_resolve]: (value: T) => void;
   public [_reject]: (reason?: Error) => void;
   public [_handle]: Handle | null;

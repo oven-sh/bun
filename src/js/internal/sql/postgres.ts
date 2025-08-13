@@ -402,7 +402,9 @@ class PooledPostgresConnection {
   }
 }
 
-export class PostgresAdapter implements DatabaseAdapter<TODO, TODO> {
+export class PostgresAdapter
+  implements DatabaseAdapter<PooledPostgresConnection, $ZigGeneratedClasses.PostgresSQLQuery>
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
 
   public readonly connections: PooledPostgresConnection[];

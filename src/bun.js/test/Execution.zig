@@ -2,8 +2,15 @@ order: []*TestScope,
 index: usize,
 extra_queue: std.ArrayList(*TestScope), // for if test() is called inside a test
 
-pub fn init(_: std.mem.Allocator) Execution {
-    return .{};
+pub fn init(gpa: std.mem.Allocator) Execution {
+    return .{
+        .order = &.{},
+        .index = 0,
+        .extra_queue = .init(gpa),
+    };
+}
+pub fn deinit(this: *Execution) void {
+    this.extra_queue.deinit();
 }
 
 fn bunTest(this: *Execution) *BunTest {
@@ -27,6 +34,20 @@ pub fn runLoop(this: *Execution) bun.JSError!void {
 pub fn runOne(this: *Execution, current: *DescribeScope) bun.JSError!enum { sync, async_ } {
     _ = this;
     _ = current;
+}
+
+pub fn generateOrderSub(current: *DescribeScope, out: *std.ArrayList(*TestScope)) bun.JSError!void {
+    // gather beforeAll
+    for (current.beforeEach.items) |entry| {
+        // todo queue
+        _ = entry;
+        _ = out;
+    }
+
+    // add each test. before each test queue each beforeEach in this & parent scopes
+    // after each test queue each afterEach in this & parent scopes
+
+    // gather afterAll
 }
 
 const std = @import("std");

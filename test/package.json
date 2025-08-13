@@ -30,6 +30,7 @@
     "@testing-library/react": "16.1.0",
     "@verdaccio/config": "6.0.0-6-next.76",
     "acorn": "8.15.0",
+    "ansi-regex": "6.1.0",
     "astro": "5.5.5",
     "aws-cdk-lib": "2.148.0",
     "axios": "1.6.8",

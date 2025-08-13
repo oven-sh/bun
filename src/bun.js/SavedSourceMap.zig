@@ -109,8 +109,8 @@ pub const SavedMappingsCompact = struct {
         this.compact_table.ref();
 
         // Calculate proper input line count - use the last line index as the total
-        const input_line_count = if (this.compact_table.line_offsets.len > 1)
-            this.compact_table.line_offsets.len - 1
+        const input_line_count = if (this.compact_table.line_offsets().len() > 1)
+            this.compact_table.line_offsets().len() - 1
         else
             1;
 
@@ -125,9 +125,10 @@ pub const SavedMappingsCompact = struct {
     }
 
     fn toFullMappings(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
+        const line_offsets = this.compact_table.line_offsets();
         // Parse the VLQ mappings using the existing parser for coverage analysis
-        const input_line_count = if (this.compact_table.line_offsets.len > 1)
-            this.compact_table.line_offsets.len - 1
+        const input_line_count = if (line_offsets.len() > 1)
+            line_offsets.len() - 1
         else
             1;
 

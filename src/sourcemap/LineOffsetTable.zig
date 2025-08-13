@@ -28,34 +28,23 @@ pub const Compact = struct {
     ref_count: RefCount,
     /// VLQ-encoded sourcemap mappings string
     vlq_mappings: []const u8,
-    /// Index of positions where ';' (line separators) occur in vlq_mappings
-    line_offsets: []const u32,
+
+    /// Index of positions where ';' (line separators) occur in vlq_mappings.
+    /// Lazily populated on first access. Guarded by mutex.
+    lazy_line_offsets: ?bun.collections.IndexArrayList = null,
+    lazy_line_offsets_mutex: bun.Mutex = .{},
+
     /// Names array for sourcemap symbols
     names: []const bun.Semver.String,
     names_buffer: bun.ByteList,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, vlq_mappings: []const u8) !*Compact {
-        // Find all line separator positions
-        var line_positions = std.ArrayList(u32).init(allocator);
-        defer line_positions.deinit();
-
-        // Start with implicit position 0 for first line
-        try line_positions.append(0);
-
-        for (vlq_mappings, 0..) |char, i| {
-            if (char == ';') {
-                try line_positions.append(@intCast(i + 1));
-            }
-        }
-
         const owned_mappings = try allocator.dupe(u8, vlq_mappings);
-        const owned_offsets = try allocator.dupe(u32, line_positions.items);
 
         return bun.new(Compact, .{
             .ref_count = .init(),
             .vlq_mappings = owned_mappings,
-            .line_offsets = owned_offsets,
             .names = &[_]bun.Semver.String{},
             .names_buffer = .{},
             .allocator = allocator,
@@ -64,18 +53,38 @@ pub const Compact = struct {
 
     fn deinit(self: *Compact) void {
         self.allocator.free(self.vlq_mappings);
-        self.allocator.free(self.line_offsets);
+        if (self.lazy_line_offsets) |*offsets| {
+            offsets.deinit(self.allocator);
+        }
         self.names_buffer.deinitWithAllocator(self.allocator);
         self.allocator.free(self.names);
         bun.destroy(self);
     }
 
-    /// Find mapping for a given line/column by decoding VLQ with proper global accumulation
-    pub fn findMapping(self: *const Compact, target_line: i32, target_column: i32) ?SourceMapping {
-        if (target_line < 0 or target_line >= self.line_offsets.len - 1) {
-            return null;
+    pub fn line_offsets(self: *Compact) bun.collections.IndexArrayList.Slice {
+        self.lazy_line_offsets_mutex.lock();
+        defer self.lazy_line_offsets_mutex.unlock();
+        return self.ensureLazyLineOffsets().items();
+    }
+
+    fn ensureLazyLineOffsets(self: *Compact) *const bun.collections.IndexArrayList {
+        if (self.lazy_line_offsets) |*offsets| {
+            return offsets;
         }
 
+        var offsets = bun.collections.IndexArrayList{ .u8 = .{} };
+        for (self.vlq_mappings, 0..) |char, i| {
+            if (char == ';') {
+                offsets.append(self.allocator, @intCast(i + 1)) catch bun.outOfMemory();
+            }
+        }
+
+        self.lazy_line_offsets = offsets;
+        return &self.lazy_line_offsets.?;
+    }
+
+    /// Find mapping for a given line/column by decoding VLQ with proper global accumulation
+    pub fn findMapping(self: *Compact, target_line: i32, target_column: i32) ?SourceMapping {
         // VLQ sourcemap spec requires global accumulation for source_index, original_line, original_column
         // Only generated_column resets per line. We need to process all lines up to target_line
         // to get correct accumulated state.
@@ -87,109 +96,127 @@ pub const Compact = struct {
 
         // Process all lines from 0 to target_line to maintain correct VLQ accumulation
         var current_line: i32 = 0;
-        while (current_line <= target_line and current_line < self.line_offsets.len - 1) {
-            const line_start = self.line_offsets[@intCast(current_line)];
-            const line_end = if (current_line + 1 < self.line_offsets.len)
-                self.line_offsets[@intCast(current_line + 1)] - 1 // -1 to exclude the ';'
-            else
-                @as(u32, @intCast(self.vlq_mappings.len));
 
-            if (line_start >= line_end) {
-                current_line += 1;
-                continue;
-            }
-
-            const line_mappings = self.vlq_mappings[line_start..line_end];
-
-            // generated_column resets to 0 per line (per spec)
-            var generated_column: i32 = 0;
-            var pos: usize = 0;
-
-            while (pos < line_mappings.len) {
-                // Skip commas
-                if (line_mappings[pos] == ',') {
-                    pos += 1;
-                    continue;
+        switch (self.line_offsets()) {
+            inline else => |offsets| {
+                if (target_line < 0 or offsets.len == 0) {
+                    return null;
                 }
 
-                // Decode generated column delta (resets per line)
-                if (pos >= line_mappings.len) break;
-                const gen_col_result = VLQ.decode(line_mappings, pos);
-                if (gen_col_result.start == pos) break; // Invalid VLQ
-                generated_column += gen_col_result.value;
-                pos = gen_col_result.start;
+                // If we only have one offset (just the initial 0), there's no line data
+                if (offsets.len == 1) {
+                    return null;
+                }
 
-                // Only process target line for column matching
-                if (current_line == target_line) {
-                    // If we've passed the target column, return the last good mapping
-                    if (generated_column > target_column and best_mapping != null) {
-                        return best_mapping;
+                // Clamp target_line to valid range
+                const max_line = @as(i32, @intCast(offsets.len - 1));
+                const clamped_target_line = @min(target_line, max_line - 1);
+
+                while (current_line <= clamped_target_line and current_line < max_line) {
+                    const line_start = offsets[@intCast(current_line)];
+                    const line_end = if (current_line + 1 < max_line)
+                        offsets[@intCast(current_line + 1)] - 1 // -1 to exclude the ';'
+                    else
+                        @as(u32, @intCast(self.vlq_mappings.len));
+
+                    if (line_start >= line_end) {
+                        current_line += 1;
+                        continue;
                     }
-                }
 
-                if (pos >= line_mappings.len) break;
-                if (line_mappings[pos] == ',') {
-                    // Only generated column - no source info, skip
-                    pos += 1;
-                    continue;
-                }
+                    const line_mappings = self.vlq_mappings[line_start..line_end];
 
-                // Decode source index delta (accumulates globally)
-                if (pos >= line_mappings.len) break;
-                const src_idx_result = VLQ.decode(line_mappings, pos);
-                if (src_idx_result.start == pos) break;
-                global_source_index += src_idx_result.value;
-                pos = src_idx_result.start;
+                    // generated_column resets to 0 per line (per spec)
+                    var generated_column: i32 = 0;
+                    var pos: usize = 0;
 
-                if (pos >= line_mappings.len) break;
+                    while (pos < line_mappings.len) {
+                        // Skip commas
+                        if (line_mappings[pos] == ',') {
+                            pos += 1;
+                            continue;
+                        }
 
-                // Decode original line delta (accumulates globally)
-                if (pos >= line_mappings.len) break;
-                const orig_line_result = VLQ.decode(line_mappings, pos);
-                if (orig_line_result.start == pos) break;
-                global_original_line += orig_line_result.value;
-                pos = orig_line_result.start;
+                        // Decode generated column delta (resets per line)
+                        if (pos >= line_mappings.len) break;
+                        const gen_col_result = VLQ.decode(line_mappings, pos);
+                        if (gen_col_result.start == pos) break; // Invalid VLQ
+                        generated_column += gen_col_result.value;
+                        pos = gen_col_result.start;
 
-                if (pos >= line_mappings.len) break;
+                        // Only process target line for column matching
+                        if (current_line == target_line) {
+                            // If we've passed the target column, return the last good mapping
+                            if (generated_column > target_column and best_mapping != null) {
+                                return best_mapping;
+                            }
+                        }
 
-                // Decode original column delta (accumulates globally)
-                if (pos >= line_mappings.len) break;
-                const orig_col_result = VLQ.decode(line_mappings, pos);
-                if (orig_col_result.start == pos) break;
-                global_original_column += orig_col_result.value;
-                pos = orig_col_result.start;
+                        if (pos >= line_mappings.len) break;
+                        if (line_mappings[pos] == ',') {
+                            // Only generated column - no source info, skip
+                            pos += 1;
+                            continue;
+                        }
 
-                // Skip name index if present
-                if (pos < line_mappings.len and line_mappings[pos] != ',' and line_mappings[pos] != ';') {
-                    if (pos < line_mappings.len) {
-                        const name_result = VLQ.decode(line_mappings, pos);
-                        if (name_result.start > pos) {
-                            pos = name_result.start;
+                        // Decode source index delta (accumulates globally)
+                        if (pos >= line_mappings.len) break;
+                        const src_idx_result = VLQ.decode(line_mappings, pos);
+                        if (src_idx_result.start == pos) break;
+                        global_source_index += src_idx_result.value;
+                        pos = src_idx_result.start;
+
+                        if (pos >= line_mappings.len) break;
+
+                        // Decode original line delta (accumulates globally)
+                        if (pos >= line_mappings.len) break;
+                        const orig_line_result = VLQ.decode(line_mappings, pos);
+                        if (orig_line_result.start == pos) break;
+                        global_original_line += orig_line_result.value;
+                        pos = orig_line_result.start;
+
+                        if (pos >= line_mappings.len) break;
+
+                        // Decode original column delta (accumulates globally)
+                        if (pos >= line_mappings.len) break;
+                        const orig_col_result = VLQ.decode(line_mappings, pos);
+                        if (orig_col_result.start == pos) break;
+                        global_original_column += orig_col_result.value;
+                        pos = orig_col_result.start;
+
+                        // Skip name index if present
+                        if (pos < line_mappings.len and line_mappings[pos] != ',' and line_mappings[pos] != ';') {
+                            if (pos < line_mappings.len) {
+                                const name_result = VLQ.decode(line_mappings, pos);
+                                if (name_result.start > pos) {
+                                    pos = name_result.start;
+                                }
+                            }
+                        }
+
+                        // Update best mapping if this is target line and column is <= target
+                        if (current_line == target_line and generated_column <= target_column) {
+                            // All values should be non-negative with correct VLQ accumulation
+                            if (target_line >= 0 and generated_column >= 0 and
+                                global_original_line >= 0 and global_original_column >= 0)
+                            {
+                                best_mapping = SourceMapping{
+                                    .generated_line = target_line,
+                                    .generated_column = generated_column,
+                                    .source_index = global_source_index,
+                                    .original_line = global_original_line,
+                                    .original_column = global_original_column,
+                                };
+                            }
                         }
                     }
+
+                    current_line += 1;
                 }
 
-                // Update best mapping if this is target line and column is <= target
-                if (current_line == target_line and generated_column <= target_column) {
-                    // All values should be non-negative with correct VLQ accumulation
-                    if (target_line >= 0 and generated_column >= 0 and
-                        global_original_line >= 0 and global_original_column >= 0)
-                    {
-                        best_mapping = SourceMapping{
-                            .generated_line = target_line,
-                            .generated_column = generated_column,
-                            .source_index = global_source_index,
-                            .original_line = global_original_line,
-                            .original_column = global_original_column,
-                        };
-                    }
-                }
-            }
-
-            current_line += 1;
+                return best_mapping;
+            },
         }
-
-        return best_mapping;
     }
 
     /// Get name by index, similar to Mapping.List.getName
@@ -201,26 +228,6 @@ pub const Compact = struct {
 
         const str: *const bun.Semver.String = &self.names[i];
         return str.slice(self.names_buffer.slice());
-    }
-
-    /// Compatible API with regular LineOffsetTable for findLine
-    pub fn findLine(self: *const Compact, loc: Logger.Loc) i32 {
-        // For compact version, we need to search through mappings to find the line
-        // This is a simplified version - in practice you'd want to maintain
-        // generated line->original line mapping
-
-        // For now, return a basic implementation that assumes 1:1 line mapping
-        // This can be optimized by maintaining a separate line mapping cache
-        return @max(0, @min(@as(i32, @intCast(self.line_offsets.len)) - 2, loc.start));
-    }
-
-    /// Compatible API with regular LineOffsetTable for findIndex
-    pub fn findIndex(self: *const Compact, loc: Logger.Loc) ?usize {
-        const line = self.findLine(loc);
-        if (line >= 0 and line < self.line_offsets.len - 1) {
-            return @intCast(line);
-        }
-        return null;
     }
 
     const SourceMapping = struct {

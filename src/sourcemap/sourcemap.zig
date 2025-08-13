@@ -870,11 +870,12 @@ pub const MappingsData = union(enum) {
                 if (compact.findMapping(line, column)) |sm| {
                     // Validate that values are non-negative before using addScalar
                     // VLQ decoding can result in negative accumulated values due to negative deltas
-                    if (sm.generated_line < 0 or sm.generated_column < 0 or 
-                        sm.original_line < 0 or sm.original_column < 0) {
+                    if (sm.generated_line < 0 or sm.generated_column < 0 or
+                        sm.original_line < 0 or sm.original_column < 0)
+                    {
                         return null; // Invalid mapping data - return null instead of panicking
                     }
-                    
+
                     return Mapping{
                         .generated = .{
                             .lines = bun.Ordinal.start.addScalar(sm.generated_line),

@@ -207,13 +207,8 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
             // SELECT queries must use prepared statements for results
             const stmt = db.prepare(sql);
             const result = stmt.all(...(values ?? []));
-            const sqlResult = new SQLResultArray();
+            const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
-            if (Array.isArray(result)) {
-              sqlResult.push(...result);
-            } else if (result) {
-              sqlResult.push(result);
-            }
             sqlResult.command = command;
             sqlResult.count = result.length;
             stmt.finalize();

@@ -1,12 +1,9 @@
 import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-// This test suite documents the expected behavior of CI restrictions
-// These tests will be enabled once the CI restriction feature is fully implemented
-
 describe("CI restrictions", () => {
   describe("test.only restrictions", () => {
-    test.skip("test.only should work when CI=false", async () => {
+    test("test.only should work when CI=false", async () => {
       const dir = tempDirWithFiles("ci-test-only-false", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -35,7 +32,7 @@ test("should be skipped", () => {
       expect(stderr).toContain("1 pass");
     });
 
-    test.skip("test.only should fail when GITHUB_ACTIONS=1", async () => {
+    test("test.only should fail when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-test-only-true", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -60,7 +57,7 @@ test.only("should fail in CI", () => {
       expect(stderr).toContain("test.only is not allowed in CI environments");
     });
 
-    test.skip("describe.only should fail when GITHUB_ACTIONS=1", async () => {
+    test("describe.only should fail when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-describe-only", {
         "test.test.js": `
 import { test, expect, describe } from "bun:test";
@@ -89,7 +86,7 @@ describe.only("CI test", () => {
   });
 
   describe("snapshot restrictions", () => {
-    test.skip("toMatchSnapshot should work for existing snapshots when GITHUB_ACTIONS=1", async () => {
+    test("toMatchSnapshot should work for existing snapshots when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-existing-snapshot", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -118,7 +115,36 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
       expect(stderr).toContain("1 pass");
     });
 
-    test.skip("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
+    test("toMatchSnapshot should fail for new snapshots 2 when GITHUB_ACTIONS=1", async () => {
+      const dir = tempDirWithFiles("ci-new-snapshot", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+
+test("new snapshot", () => {
+  expect("this is new").toMatchSnapshot();
+});
+        `,
+        "__snapshots__/test.test.js.snap": `// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[\`existing snapshot 1\`] = \`"hello world"\`;
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "test.test.js"],
+        env: { ...bunEnv, GITHUB_ACTIONS: "1" },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
+    });
+
+    test("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-new-snapshot", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -143,7 +169,7 @@ test("new snapshot", () => {
       expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
     });
 
-    test.skip("toMatchSnapshot should work for new snapshots when CI=false", async () => {
+    test("toMatchSnapshot should work for new snapshots when CI=false", async () => {
       const dir = tempDirWithFiles("ci-new-snapshot-allowed", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -169,7 +195,7 @@ test("new snapshot allowed", () => {
       expect(stderr).toContain("snapshots: 1 passed, 1 added");
     });
 
-    test.skip("toMatchInlineSnapshot should work for existing inline snapshots when GITHUB_ACTIONS=1", async () => {
+    test("toMatchInlineSnapshot should work for existing inline snapshots when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-existing-inline", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -194,7 +220,7 @@ test("existing inline snapshot", () => {
       expect(stderr).toContain("1 pass");
     });
 
-    test.skip("toMatchInlineSnapshot should fail for new inline snapshots when GITHUB_ACTIONS=1", async () => {
+    test("toMatchInlineSnapshot should fail for new inline snapshots when GITHUB_ACTIONS=1", async () => {
       const dir = tempDirWithFiles("ci-new-inline", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -219,7 +245,7 @@ test("new inline snapshot", () => {
       expect(stderr).toContain("Inline snapshot updates are not allowed in CI environments");
     });
 
-    test.skip("toMatchInlineSnapshot should work for new inline snapshots when CI=false", async () => {
+    test("toMatchInlineSnapshot should work for new inline snapshots when CI=false", async () => {
       const dir = tempDirWithFiles("ci-new-inline-allowed", {
         "test.test.js": `
 import { test, expect } from "bun:test";
@@ -233,6 +259,57 @@ test("new inline snapshot allowed", () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "test.test.js"],
         env: { ...bunEnv, CI: "false" },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toContain("1 pass");
+    });
+
+    test("toMatchSnapshot should allow new snapshots with --update-snapshots even when GITHUB_ACTIONS=1", async () => {
+      const dir = tempDirWithFiles("ci-update-snapshots-flag", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+
+test("new snapshot with update flag", () => {
+  expect("new snapshot content").toMatchSnapshot();
+});
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "test.test.js", "--update-snapshots"],
+        env: { ...bunEnv, GITHUB_ACTIONS: "1" },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("snapshots: 1 passed, 1 added");
+    });
+
+    test("toMatchInlineSnapshot should allow updates with --update-snapshots even when GITHUB_ACTIONS=1", async () => {
+      const dir = tempDirWithFiles("ci-update-inline-snapshots-flag", {
+        "test.test.js": `
+import { test, expect } from "bun:test";
+
+test("new inline snapshot with update flag", () => {
+  expect("inline snapshot content").toMatchInlineSnapshot();
+});
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "test.test.js", "--update-snapshots"],
+        env: { ...bunEnv, GITHUB_ACTIONS: "1" },
         cwd: dir,
         stdout: "pipe",
         stderr: "pipe",

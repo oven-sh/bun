@@ -42,8 +42,18 @@ it("should not download tarballs with --lockfile-only", async () => {
     }),
   );
 
+  // Override the test setup's bunfig.toml to use default lockfile behavior (text lockfiles)
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${root_url}/"
+`,
+  );
+
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--lockfile-only", "--save-text-lockfile"], // TODO: Should be bun.lock by default?
+    cmd: [bunExe(), "install", "--lockfile-only"], // bun.lock is saved by default
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",

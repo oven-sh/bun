@@ -43,7 +43,7 @@ it("should not download tarballs with --lockfile-only", async () => {
   );
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--lockfile-only"],
+    cmd: [bunExe(), "install", "--lockfile-only", "--save-text-lockfile"], // TODO: Should be bun.lock by default?
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -51,21 +51,22 @@ it("should not download tarballs with --lockfile-only", async () => {
   });
 
   expect(await exited).toBe(0);
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
+
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
 
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    expect.stringContaining("Saved bun.lockb"), // lockfile should be saved but no packages installed
+    expect.stringContaining("Saved bun.lock"), // lockfile should be saved but no packages installed
   ]);
 
-  // Verify that only the manifest URL was requested, NOT the tarball URL
+  console.log(out);
+
   expect(urls.sort()).toEqual([`${root_url}/baz`]);
   expect(requested).toBe(1);
 
-  // Verify lockfile was created but no packages were actually installed
-  await access(join(package_dir, "bun.lockb"));
+  await access(join(package_dir, "bun.lock"));
 });

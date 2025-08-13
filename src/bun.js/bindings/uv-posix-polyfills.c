@@ -138,4 +138,85 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
         abort();
 }
 
+// Implementation of uv_queue_work using pthreads
+// This bridges libuv's work queue API to basic thread pool functionality
+// Required for Go runtime initialization in native modules
+
+struct uv_work_data {
+    uv_work_t* req;
+    uv_work_cb work_cb;
+    uv_after_work_cb after_work_cb;
+    uv_loop_t* loop;
+    int status;
+};
+
+static void* uv_work_thread(void* arg) {
+    struct uv_work_data* data = (struct uv_work_data*)arg;
+    
+    // Execute the work callback on this thread
+    if (data->work_cb && data->req) {
+        data->work_cb(data->req);
+    }
+    
+    // Note: The after_work_cb should ideally be called on the main thread
+    // For now, we call it immediately after the work completes
+    // This is sufficient for Go runtime initialization needs
+    if (data->after_work_cb && data->req) {
+        data->after_work_cb(data->req, data->status);
+    }
+    
+    free(data);
+    return NULL;
+}
+
+UV_EXTERN int uv_queue_work(uv_loop_t* loop,
+                            uv_work_t* req,
+                            uv_work_cb work_cb,
+                            uv_after_work_cb after_work_cb) {
+    if (!req || !work_cb || !after_work_cb) {
+        return UV_EINVAL;
+    }
+    
+    // Set up the loop and callbacks in the request
+    req->loop = loop;
+    req->work_cb = work_cb;
+    req->after_work_cb = after_work_cb;
+    
+    // Create work data for the thread
+    struct uv_work_data* data = malloc(sizeof(struct uv_work_data));
+    if (!data) {
+        return UV_ENOMEM;
+    }
+    
+    data->req = req;
+    data->work_cb = work_cb;
+    data->after_work_cb = after_work_cb;
+    data->loop = loop;
+    data->status = 0; // Success by default
+    
+    // Create a detached thread to run the work
+    pthread_t thread;
+    pthread_attr_t attr;
+    
+    if (pthread_attr_init(&attr) != 0) {
+        free(data);
+        return UV_EIO;
+    }
+    
+    if (pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) != 0) {
+        pthread_attr_destroy(&attr);
+        free(data);
+        return UV_EIO;
+    }
+    
+    if (pthread_create(&thread, &attr, uv_work_thread, data) != 0) {
+        pthread_attr_destroy(&attr);
+        free(data);
+        return UV_EIO;
+    }
+    
+    pthread_attr_destroy(&attr);
+    return 0; // Success
+}
+
 #endif

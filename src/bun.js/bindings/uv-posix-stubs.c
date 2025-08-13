@@ -1326,14 +1326,6 @@ UV_EXTERN int uv_process_kill(uv_process_t*, int signum)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_queue_work(uv_loop_t* loop,
-    uv_work_t* req,
-    uv_work_cb work_cb,
-    uv_after_work_cb after_work_cb)
-{
-    __bun_throw_not_implemented("uv_queue_work");
-    __builtin_unreachable();
-}
 
 UV_EXTERN int uv_random(uv_loop_t* loop,
     uv_random_t* req,

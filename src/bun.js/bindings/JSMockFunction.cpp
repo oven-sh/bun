@@ -1453,11 +1453,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globa
 {
     Zig::GlobalObject* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
     JSMock__resetSpies(zigGlobalObject);
-    
+
     // Restore module mocks
     auto& vm = JSC::getVM(globalObject);
     zigGlobalObject->onLoadPlugins.restoreModuleMocks(vm, zigGlobalObject);
-    
+
     return JSValue::encode(jsUndefined());
 }
 

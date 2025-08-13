@@ -87,7 +87,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     }
 
     // If there are multiple calls, list them all to help debugging.
-    const list_formatter = Expect.AllCallsWithArgsFormatter{
+    const list_formatter = mock.AllCallsWithArgsFormatter{
         .globalThis = globalThis,
         .calls = calls,
         .formatter = &formatter,
@@ -130,3 +130,4 @@ const ZigString = bun.ZigString;
 const ExpectAny = bun.jsc.Expect.ExpectAny;
 const assert = bun.assert;
 const Output = bun.Output;
+const mock = bun.jsc.Expect.mock;

@@ -335,8 +335,13 @@ src/bun.js/test/expect/toHaveBeenCalledTimes.zig
 src/bun.js/test/expect/toHaveBeenCalledWith.zig
 src/bun.js/test/expect/toHaveBeenLastCalledWith.zig
 src/bun.js/test/expect/toHaveBeenNthCalledWith.zig
+src/bun.js/test/expect/toHaveLastReturnedWith.zig
 src/bun.js/test/expect/toHaveLength.zig
+src/bun.js/test/expect/toHaveNthReturnedWith.zig
 src/bun.js/test/expect/toHaveProperty.zig
+src/bun.js/test/expect/toHaveReturned.zig
+src/bun.js/test/expect/toHaveReturnedTimes.zig
+src/bun.js/test/expect/toHaveReturnedWith.zig
 src/bun.js/test/expect/toInclude.zig
 src/bun.js/test/expect/toIncludeRepeated.zig
 src/bun.js/test/expect/toMatch.zig

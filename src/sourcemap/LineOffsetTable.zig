@@ -79,7 +79,7 @@ pub const Compact = struct {
         // VLQ sourcemap spec requires global accumulation for source_index, original_line, original_column
         // Only generated_column resets per line. We need to process all lines up to target_line
         // to get correct accumulated state.
-        
+
         var global_source_index: i32 = 0;
         var global_original_line: i32 = 0;
         var global_original_column: i32 = 0;
@@ -100,7 +100,7 @@ pub const Compact = struct {
             }
 
             const line_mappings = self.vlq_mappings[line_start..line_end];
-            
+
             // generated_column resets to 0 per line (per spec)
             var generated_column: i32 = 0;
             var pos: usize = 0;
@@ -166,8 +166,9 @@ pub const Compact = struct {
                 // Update best mapping if this is target line and column is <= target
                 if (current_line == target_line and generated_column <= target_column) {
                     // All values should be non-negative with correct VLQ accumulation
-                    if (target_line >= 0 and generated_column >= 0 and 
-                        global_original_line >= 0 and global_original_column >= 0) {
+                    if (target_line >= 0 and generated_column >= 0 and
+                        global_original_line >= 0 and global_original_column >= 0)
+                    {
                         best_mapping = SourceMapping{
                             .generated_line = target_line,
                             .generated_column = generated_column,

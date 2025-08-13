@@ -74,8 +74,6 @@ it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile
     expect.stringContaining(`Saved ${lockfile}`),
   ]);
 
-  console.log(out);
-
   expect(urls.sort()).toEqual([`${root_url}/baz`]);
   expect(requested).toBe(1);
 

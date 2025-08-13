@@ -152,13 +152,17 @@ pub const Compact = struct {
 
             // Update best mapping if this column is <= target
             if (generated_column <= target_column) {
-                best_mapping = SourceMapping{
-                    .generated_line = target_line,
-                    .generated_column = generated_column,
-                    .source_index = source_index,
-                    .original_line = original_line,
-                    .original_column = original_column,
-                };
+                // Validate that all values are non-negative to prevent addScalar panic
+                // Negative values indicate incorrect VLQ parsing due to per-line reset instead of global accumulation
+                if (generated_column >= 0 and original_line >= 0 and original_column >= 0) {
+                    best_mapping = SourceMapping{
+                        .generated_line = target_line,
+                        .generated_column = generated_column,
+                        .source_index = source_index,
+                        .original_line = original_line,
+                        .original_column = original_column,
+                    };
+                }
             }
         }
 

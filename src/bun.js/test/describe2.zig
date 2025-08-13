@@ -120,6 +120,7 @@ pub const BunTest = struct {
         };
     }
     pub fn deinit(this: *BunTest) void {
+        this.execution.deinit();
         this.collection.deinit();
         const backing = this.allocation_scope.parent;
         this.allocation_scope.deinit();
@@ -142,6 +143,10 @@ pub const Collection = @import("./Collection.zig");
 pub const DescribeScope = struct {
     parent: ?*DescribeScope,
     entries: std.ArrayList(TestScheduleEntry2),
+    // beforeAll: std.ArrayList(*TestScope),
+    // beforeEach: std.ArrayList(*TestScope),
+    // afterEach: std.ArrayList(*TestScope),
+    // afterAll: std.ArrayList(*TestScope),
     name: jsc.Strong.Optional,
 
     pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {

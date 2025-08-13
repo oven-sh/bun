@@ -20,9 +20,10 @@ describe("Connection & Initialization", () => {
       expect(myapp2.options.adapter).toBe("sqlite");
       expect(myapp2.options.filename).toBe("myapp.db");
 
-      const myapp3 = new SQL("myapp.db");
-      expect(myapp3.options.adapter).toBe("sqlite");
-      expect(myapp3.options.filename).toBe("myapp.db");
+      // Too ambiguous
+      expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
+        `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
+      );
 
       const postgres = new SQL("postgres://user1:pass2@localhost:5432/mydb");
       expect(postgres.options.adapter).not.toBe("sqlite");

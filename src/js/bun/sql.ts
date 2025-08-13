@@ -1,5 +1,5 @@
 import type { PostgresAdapter, PostgresDotZig } from "internal/sql/postgres";
-import type { Query } from "internal/sql/query";
+import type { BaseQueryHandle, Query } from "internal/sql/query";
 import type { DatabaseAdapter, SQLHelper } from "internal/sql/shared";
 
 const {
@@ -169,7 +169,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onQueryConnected(this: Query<any, any>, handle, err, pooledConnection) {
+  function onQueryConnected(this: Query<any, any>, handle: BaseQueryHandle<any>, err, pooledConnection) {
     const query = this;
     if (err) {
       // fail to aquire a connection from the pool

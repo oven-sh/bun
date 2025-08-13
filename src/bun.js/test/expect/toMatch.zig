@@ -58,9 +58,7 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
@@ -70,8 +68,3 @@ const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const ZigString = bun.ZigString;
-const ExpectAny = bun.jsc.Expect.ExpectAny;
-const assert = bun.assert;

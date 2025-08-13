@@ -144,21 +144,18 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
 }
 
 const std = @import("std");
-const bun = @import("bun");
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+
+const bun = @import("bun");
+const Output = bun.Output;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+
 const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
+const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const ZigString = bun.ZigString;
-const ExpectAny = bun.jsc.Expect.ExpectAny;
-const assert = bun.assert;
-const mock = bun.jsc.Expect.mock;
-const Output = bun.Output;

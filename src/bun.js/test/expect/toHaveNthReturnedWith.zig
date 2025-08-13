@@ -85,7 +85,6 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     return this.throw(globalThis, signature, "\n\nCall {d}:\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ n, expected.toFmt(&formatter), nth_return_value.toFmt(&formatter) });
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
@@ -93,14 +92,9 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+
 const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
+const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const ZigString = bun.ZigString;
-const ExpectAny = bun.jsc.Expect.ExpectAny;
-const assert = bun.assert;
-const mock = bun.jsc.Expect.mock;
-const Output = bun.Output;

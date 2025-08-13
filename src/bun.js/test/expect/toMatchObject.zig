@@ -56,7 +56,6 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
@@ -68,8 +67,3 @@ const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const ZigString = bun.ZigString;
-const ExpectAny = bun.jsc.Expect.ExpectAny;
-const assert = bun.assert;

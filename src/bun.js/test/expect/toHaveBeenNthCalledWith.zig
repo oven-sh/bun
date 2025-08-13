@@ -93,7 +93,6 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
     return this.throw(globalThis, signature, "\n\nCall #{d}:\n{any}\n", .{ nthCallNum, diff_format });
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
@@ -105,9 +104,3 @@ const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const ZigString = bun.ZigString;
-const ExpectAny = bun.jsc.Expect.ExpectAny;
-const assert = bun.assert;
-const Output = bun.Output;

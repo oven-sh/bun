@@ -83,7 +83,7 @@ pub const SavedMappings = struct {
 pub const SavedMappingsCompact = struct {
     compact_table: *SourceMap.LineOffsetTable.Compact,
     sources_count: usize,
-    
+
     pub fn init(allocator: Allocator, vlq_mappings: []const u8) !SavedMappingsCompact {
         return SavedMappingsCompact{
             .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
@@ -105,10 +105,10 @@ pub const SavedMappingsCompact = struct {
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
         _ = allocator; // not used in compact version
         _ = path; // not used in compact version
-        
+
         // Instead of parsing the mappings, just increment ref count and return compact data
         this.compact_table.ref();
-        
+
         // Calculate proper input line count - use the last line index as the total
         const input_line_count = if (this.compact_table.line_offsets.len > 1)
             this.compact_table.line_offsets.len - 1
@@ -229,7 +229,6 @@ pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings
         try this.putValue(source.path.text, Value.init(compact));
     }
 }
-
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
     this.lock();

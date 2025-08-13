@@ -1,90 +1,90 @@
-import { describe2, test2 } from "bun:test";
+import { describe, test } from "bun:test";
 
 console.log("HIT 1");
-describe2("abc", () => {
+describe("abc", () => {
   console.log("HIT 2");
 
-  test2("1", () => {});
+  test("1", () => {});
 });
 console.log("HIT 3");
-describe2("abc", () => {
+describe("abc", () => {
   console.log("HIT 4");
-  test2("2", () => {});
-  describe2("abc", () => {
+  test("2", () => {});
+  describe("abc", () => {
     console.log("HIT 7");
-    test2("3", () => {});
+    test("3", () => {});
   });
   console.log("HIT 5");
-  test2("4", () => {});
-  describe2("abc", () => {
+  test("4", () => {});
+  describe("abc", () => {
     console.log("HIT 8");
-    test2("5", () => {});
+    test("5", () => {});
   });
   console.log("HIT 6");
-  test2("6", () => {});
+  test("6", () => {});
 });
 console.log("HIT 9");
-test2("7", () => {});
+test("7", () => {});
 await Promise.resolve(undefined);
 
 const { promise, resolve } = Promise.withResolvers();
 
 console.log("HIT 10");
-test2("8", () => {});
-describe2("abc", async () => {
+test("8", () => {});
+describe("abc", async () => {
   console.log("HIT 11");
-  test2("9", () => {});
-  describe2("abc", async () => {
-    test2("10", () => {});
+  test("9", () => {});
+  describe("abc", async () => {
+    test("10", () => {});
     console.log("HIT 14");
   });
-  test2("11", () => {});
+  test("11", () => {});
 });
-test2("12", () => {});
+test("12", () => {});
 console.log("HIT 12");
-describe2("def", async () => {
-  test2("13", () => {});
+describe("def", async () => {
+  test("13", () => {});
   console.log("HIT 15");
-  describe2("def", async () => {
-    test2("14", () => {});
+  describe("def", async () => {
+    test("14", () => {});
     console.log("HIT 16");
   });
-  test2("15", () => {});
-  describe2("def", () => {
-    test2("16", () => {});
+  test("15", () => {});
+  describe("def", () => {
+    test("16", () => {});
     console.log("HIT 17");
   });
-  test2("17", () => {});
-  describe2("def", async () => {
-    test2("18", () => {});
+  test("17", () => {});
+  describe("def", async () => {
+    test("18", () => {});
     console.log("HIT 18");
     resolve();
-    test2("19", () => {});
+    test("19", () => {});
   });
-  test2("20", () => {});
+  test("20", () => {});
 });
 console.log("HIT 13");
-test2("21", () => {});
+test("21", () => {});
 
 await promise;
 console.log("ready to run tests now");
 
-await describe2.forDebuggingExecuteTestsNow();
-describe2.forDebuggingDeinitNow();
+await describe.forDebuggingExecuteTestsNow();
+describe.forDebuggingDeinitNow();
 
 /*
 this one needs async context to handle properly:
-describe2("abc", () => {
+describe("abc", () => {
   setTimeout(() => {
-    describe2("def", () => {
+    describe("def", () => {
     
     });
   }, 0);
 })
 
 oh and here's the problem we're hitting:
-describe2("", async () => {
-  describe2("", async () => {
+describe("", async () => {
+  describe("", async () => {
   });
 });
 the issue is that we call:

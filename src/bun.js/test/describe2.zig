@@ -46,6 +46,33 @@ pub const js_fns = struct {
         }
     }
 
+    pub fn genericHook(comptime tag: @Type(.enum_literal)) type {
+        return struct {
+            pub fn hookFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+                const vm = globalObject.bunVM();
+                if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+                    @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+                }
+                if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+                    return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+                }
+                const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+                const callback = callFrame.argumentsAsArray(1)[0];
+
+                switch (bunTest.phase) {
+                    .collection => {
+                        try bunTest.collection.enqueueHookCallback(globalObject, tag, callback);
+                        return .js_undefined;
+                    },
+                    .execution => {
+                        return globalObject.throw("Cannot call beforeEach/beforeAll/afterAll/afterEach() inside a test", .{});
+                    },
+                }
+            }
+        };
+    }
+
     pub fn forDebuggingExecuteTestsNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
@@ -65,6 +92,10 @@ pub const js_fns = struct {
         // - apply `.only`
         // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
         // - reorder (`--randomize`)
+        // now, generate the execution order
+        var order = std.ArrayList(*ExecutionEntry).init(bunTest.gpa);
+        defer order.deinit();
+        try Execution.generateOrderDescribe(bunTest.collection.root_scope, &order);
         // now, allowing js execution again:
         // - start the test execution loop
 
@@ -72,7 +103,6 @@ pub const js_fns = struct {
         // - one at a time
         // - timeout handling
 
-        _ = bunTest;
         _ = callframe;
 
         return .js_undefined; // TODO: return a promise that resolves when all tests have executed
@@ -143,59 +173,63 @@ pub const Collection = @import("./Collection.zig");
 pub const DescribeScope = struct {
     parent: ?*DescribeScope,
     entries: std.ArrayList(TestScheduleEntry2),
-    // beforeAll: std.ArrayList(*TestScope),
-    // beforeEach: std.ArrayList(*TestScope),
-    // afterEach: std.ArrayList(*TestScope),
-    // afterAll: std.ArrayList(*TestScope),
+    beforeEach: std.ArrayList(*ExecutionEntry),
+    beforeAll: std.ArrayList(*ExecutionEntry),
+    afterAll: std.ArrayList(*ExecutionEntry),
+    afterEach: std.ArrayList(*ExecutionEntry),
     name: jsc.Strong.Optional,
 
     pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
-            .entries = std.ArrayList(TestScheduleEntry2).init(gpa),
+            .entries = .init(gpa),
+            .beforeAll = .init(gpa),
+            .beforeEach = .init(gpa),
+            .afterEach = .init(gpa),
+            .afterAll = .init(gpa),
             .parent = parent,
             .name = .empty,
         };
     }
-    pub fn deinit(this: *DescribeScope, buntest: *BunTest) void {
-        for (this.entries.items) |*entry| {
-            entry.deinit(buntest);
-        }
+    pub fn destroy(this: *DescribeScope, buntest: *BunTest) void {
+        for (this.entries.items) |*entry| entry.deinit(buntest);
+        for (this.beforeEach.items) |item| item.destroy(buntest);
+        for (this.beforeAll.items) |item| item.destroy(buntest);
+        for (this.afterEach.items) |item| item.destroy(buntest);
+        for (this.afterAll.items) |item| item.destroy(buntest);
         this.entries.deinit();
+        this.beforeEach.deinit();
+        this.beforeAll.deinit();
+        this.afterEach.deinit();
+        this.afterAll.deinit();
         this.name.deinit();
+        buntest.gpa.destroy(this);
     }
 };
-pub const TestScope = struct {
-    // TODO: to get this in faster, maybe we get it to use a jest.zig TestScope
-    mode: enum {
-        beforeAll,
+pub const ExecutionEntry = struct {
+    parent: *DescribeScope,
+    tag: enum {
+        test_callback,
         beforeEach,
+        beforeAll,
         afterAll,
         afterEach,
-        testFn,
     },
-    callback: jsc.Strong.Optional, // TODO: once called, this is swapped with &.empty so gc can collect it
-
-    pub fn deinit(this: *TestScope, buntest: *BunTest) void {
-        _ = buntest;
+    callback: jsc.Strong.Optional,
+    pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();
+        buntest.gpa.destroy(this);
     }
 };
 pub const TestScheduleEntry2 = union(enum) {
     describe: *DescribeScope,
-    test_scope: *TestScope,
+    test_callback: *ExecutionEntry,
     fn deinit(
         this: *TestScheduleEntry2,
         buntest: *BunTest,
     ) void {
         switch (this.*) {
-            .describe => |describe| {
-                describe.deinit(buntest);
-                buntest.gpa.destroy(describe);
-            },
-            .test_scope => |test_scope| {
-                test_scope.deinit(buntest);
-                buntest.gpa.destroy(test_scope);
-            },
+            .describe => |describe| describe.destroy(buntest),
+            .test_callback => |test_scope| test_scope.destroy(buntest),
         }
     }
 };

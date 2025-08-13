@@ -93,6 +93,13 @@ class NodeAggregateError extends AggregateError {
   }
 }
 
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+}
+
 class ErrnoException extends Error {
   constructor(err, syscall, original) {
     util ??= require("node:util");
@@ -111,7 +118,7 @@ class ErrnoException extends Error {
   }
 }
 
-function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+function once(callback, { preserveReturnValue = false } = kEmptyObject as any) {
   let called = false;
   let returnValue;
   return function (...args) {
@@ -134,6 +141,7 @@ export default {
   warnNotImplementedOnce,
   ExceptionWithHostPort,
   NodeAggregateError,
+  ConnResetException,
   ErrnoException,
   once,
 

@@ -348,6 +348,20 @@ function hasServerResponseFinished(self, chunk, callback) {
   return false;
 }
 
+let utcCache;
+function utcDate() {
+  if (!utcCache) cache();
+  return utcCache;
+}
+function cache() {
+  const d = new Date();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
+}
+function resetCache() {
+  utcCache = undefined;
+}
+
 function emitErrorNt(msg, err, callback) {
   if ($isCallable(callback)) {
     callback(err);
@@ -359,6 +373,7 @@ function emitErrorNt(msg, err, callback) {
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kNeedDrain = Symbol("kNeedDrain");
 
 export {
   ConnResetException,
@@ -406,6 +421,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kNeedDrain,
   kOptions,
   kOutHeaders,
   kParser,
@@ -439,6 +455,7 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
+  utcDate,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

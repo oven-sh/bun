@@ -47,8 +47,8 @@ const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
-const { IncomingMessage } = require("node:_http_incoming");
-const { OutgoingMessage } = require("node:_http_outgoing");
+const { IncomingMessage } = require("internal/http/server/_http_incoming");
+const { OutgoingMessage } = require("internal/http/server/_http_outgoing");
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
@@ -84,7 +84,7 @@ function setCloseCallback(self, callback) {
 
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
@@ -471,7 +471,7 @@ const ServerResponsePrototype = {
 
   assignSocket(socket) {
     if (socket._httpMessage) {
-      throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+      throw $ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
     socket.once("close", onServerResponseClose);
@@ -722,10 +722,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   let err;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
-      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error: Invalid Content-Length");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
-      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Invalid Transfer-Encoding");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
       err = $HPE_INVALID_EOF_STATE("Parse Error");
@@ -787,11 +787,12 @@ const ServerPrototype = {
   },
 
   closeIdleConnections() {
-    // not actually implemented
+    const server = this[serverSymbol];
+    server.closeIdleConnections();
   },
 
   close(optionalCallback?) {
-    const server = this[serverSymbol];
+    const server: Bun.Server | undefined = this[serverSymbol];
     if (!server) {
       if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
       return;
@@ -803,6 +804,7 @@ const ServerPrototype = {
     }
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     this.listening = false;
+    server.closeIdleConnections();
     server.stop();
   },
   [EventEmitter.captureRejectionSymbol]: function (err, event, ...args) {
@@ -1515,7 +1517,7 @@ function _writeHead(statusCode, reason, obj, response) {
           (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
           (response._trailer || response.hasHeader("trailer"))
         ) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
@@ -1551,7 +1553,7 @@ function _writeHead(statusCode, reason, obj, response) {
       } else {
         response.removeHeader("content-length");
       }
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      throw $ERR_HTTP_TRAILER_INVALID();
     }
   }
 

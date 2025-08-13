@@ -738,6 +738,8 @@ declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
+declare function $ERR_HTTP_CONTENT_LENGTH_MISMATCH(body, header);
+declare function $ERR_SSL_NO_CIPHER_MATCH(cipher): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -767,7 +769,6 @@ declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
-declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
 declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
 declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;
@@ -802,6 +803,7 @@ declare function $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA(): Error;
 declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
 declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
 declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
+declare function $ERR_HTTP_TRAILER_INVALID(): Error;
 
 /**
  * Convert a function to a class-like object.

@@ -298,6 +298,27 @@ public:
         return std::move(*this);
     }
 
+    /* Closes all idle sockets, does not close the listen socket. */
+    TemplatedApp &&closeIdle() {
+        auto context = (struct us_socket_context_t *)this->httpContext;
+        struct us_socket_t *s = context->head_sockets;
+        struct us_socket_t **prev = &context->head_sockets;
+        while (s) {
+            auto *data = HttpContext<SSL>::getSocketContextDataS(s);
+            struct us_socket_t *nextS = s->next;
+
+            if (!data->isParsingHttp()) {
+                us_socket_close(SSL, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+                *prev = nextS;
+            } else {
+                prev = &s->next;
+            }
+
+            s = nextS;
+        }
+        return std::move(*this);
+    }
+
     template <typename UserData>
     TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
         /* Don't compile if alignment rules cannot be satisfied */

@@ -77,6 +77,10 @@ private:
     bool isAuthorized() const {
         return flags.isAuthorized;
     }
+
+    bool isParsingHttp() const {
+        return flags.isParsingHttp;
+    }
 };
 
 }

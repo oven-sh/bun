@@ -137,10 +137,6 @@ private:
         return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext());
     }
 
-    static HttpContextData<SSL> *getSocketContextDataS(us_socket_t *s) {
-        return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext(s));
-    }
-
     /* Init the HttpContext by registering libusockets event handlers */
     HttpContext<SSL> *init() {
 
@@ -640,6 +636,10 @@ public:
             }
             return true;
         }, priority);
+    }
+
+    static HttpContextData<SSL> *getSocketContextDataS(us_socket_t *s) {
+        return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext(s));
     }
 
     /* Listen to port using this HttpContext */

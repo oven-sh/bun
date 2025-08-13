@@ -4093,6 +4093,11 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   interface Server extends Disposable {
+    /*
+     * Closes all idle sockets. Does not invalidate the socket context.
+     */
+    closeIdleConnections(): void;
+
     /**
      * Stop listening to prevent new connections from being accepted.
      *

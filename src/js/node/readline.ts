@@ -1237,10 +1237,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   input.resume();
 }
-InterfaceConstructor.prototype = {};
-
-ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-// ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+$toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
   // eslint-disable-next-line no-useless-constructor
@@ -2221,10 +2218,7 @@ function Interface(input, output, completer, terminal) {
     this._ttyWrite = _ttyWriteDumb.bind(this);
   }
 }
-Interface.prototype = {};
-
-ObjectSetPrototypeOf(Interface.prototype, _Interface.prototype);
-ObjectSetPrototypeOf(Interface, _Interface);
+$toClass(Interface, "Interface", _Interface);
 
 /**
  * Displays `query` by writing it to the `output`.

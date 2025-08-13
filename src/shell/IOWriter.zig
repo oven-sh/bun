@@ -160,6 +160,10 @@ pub fn __start(this: *IOWriter) Maybe(void) {
         }
     }
 
+    if (comptime bun.Environment.isWindows) {
+        log("IOWriter(0x{x}, {}) starting with source={s}", .{ @intFromPtr(this), this.fd, if (this.writer.source) |src| @tagName(src) else "no source lol" });
+    }
+
     return .success;
 }
 
@@ -652,7 +656,10 @@ pub fn deinitOnMainThread(this: *IOWriter) void {
         if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
             this.writer.handle.closeImpl(null, {}, false);
         }
-    } else this.winbuf.deinit(bun.default_allocator);
+    } else {
+        this.writer.close();
+        this.winbuf.deinit(bun.default_allocator);
+    }
     if (this.fd.isValid()) this.fd.close();
     this.writer.disableKeepingProcessAlive(this.evtloop);
     bun.destroy(this);

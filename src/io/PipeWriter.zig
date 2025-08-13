@@ -898,7 +898,7 @@ fn BaseWindowsPipeWriter(
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
                 bun.FileDescriptor => rawfd,
-                *bun.MovableFD => rawfd.move(),
+                *bun.MovableFD => rawfd.get().?,
                 else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableFD` but got: " ++ @typeName(rawfd)),
             };
             bun.assert(this.source == null);
@@ -906,6 +906,15 @@ fn BaseWindowsPipeWriter(
                 .result => |source| source,
                 .err => |err| return .{ .err = err },
             };
+            // Creating a uv_pipe/uv_tty takes ownership of the file descriptor
+            // TODO: Change the type of the parameter and update all places to
+            //       use MovableFD
+            if (switch (source) {
+                .pipe, .tty => true,
+                else => false,
+            } and FDType == *bun.MovableFD) {
+                _ = rawfd.move();
+            }
             source.setData(this);
             this.source = source;
             this.setParent(this.parent);

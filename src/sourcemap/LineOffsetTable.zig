@@ -113,6 +113,7 @@ pub const Compact = struct {
                 }
 
                 // Decode generated column delta (resets per line)
+                if (pos >= line_mappings.len) break;
                 const gen_col_result = VLQ.decode(line_mappings, pos);
                 if (gen_col_result.start == pos) break; // Invalid VLQ
                 generated_column += gen_col_result.value;
@@ -134,6 +135,7 @@ pub const Compact = struct {
                 }
 
                 // Decode source index delta (accumulates globally)
+                if (pos >= line_mappings.len) break;
                 const src_idx_result = VLQ.decode(line_mappings, pos);
                 if (src_idx_result.start == pos) break;
                 global_source_index += src_idx_result.value;
@@ -142,6 +144,7 @@ pub const Compact = struct {
                 if (pos >= line_mappings.len) break;
 
                 // Decode original line delta (accumulates globally)
+                if (pos >= line_mappings.len) break;
                 const orig_line_result = VLQ.decode(line_mappings, pos);
                 if (orig_line_result.start == pos) break;
                 global_original_line += orig_line_result.value;
@@ -150,6 +153,7 @@ pub const Compact = struct {
                 if (pos >= line_mappings.len) break;
 
                 // Decode original column delta (accumulates globally)
+                if (pos >= line_mappings.len) break;
                 const orig_col_result = VLQ.decode(line_mappings, pos);
                 if (orig_col_result.start == pos) break;
                 global_original_column += orig_col_result.value;
@@ -157,9 +161,11 @@ pub const Compact = struct {
 
                 // Skip name index if present
                 if (pos < line_mappings.len and line_mappings[pos] != ',' and line_mappings[pos] != ';') {
-                    const name_result = VLQ.decode(line_mappings, pos);
-                    if (name_result.start > pos) {
-                        pos = name_result.start;
+                    if (pos < line_mappings.len) {
+                        const name_result = VLQ.decode(line_mappings, pos);
+                        if (name_result.start > pos) {
+                            pos = name_result.start;
+                        }
                     }
                 }
 

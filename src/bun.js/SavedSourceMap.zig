@@ -263,8 +263,15 @@ pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings
         const data = try bun.default_allocator.dupe(u8, mappings.list.items);
         try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, data.ptr)));
     } else {
+        // The mappings buffer has a 24-byte header when prepend_count is true
+        // We need to skip this header for the compact format
+        const vlq_data = if (mappings.list.items.len > vlq_offset)
+            mappings.list.items[vlq_offset..]
+        else
+            mappings.list.items;
+
         const compact = try bun.default_allocator.create(SavedMappingsCompact);
-        compact.* = try SavedMappingsCompact.init(bun.default_allocator, mappings.list.items);
+        compact.* = try SavedMappingsCompact.init(bun.default_allocator, try bun.default_allocator.dupe(u8, vlq_data) catch bun.outOfMemory());
         try this.putValue(source.path.text, Value.init(compact));
     }
 }

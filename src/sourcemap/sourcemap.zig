@@ -870,12 +870,13 @@ pub const MappingsData = union(enum) {
                 if (compact.findMapping(line, column)) |sm| {
                     return Mapping{
                         .generated = .{
-                            .lines = bun.Ordinal.start.addScalar(sm.generated_line),
-                            .columns = bun.Ordinal.start.addScalar(sm.generated_column),
+                            // Values from VLQ are already 0-based
+                            .lines = .fromZeroBased(sm.generated_line),
+                            .columns = .fromZeroBased(sm.generated_column),
                         },
                         .original = .{
-                            .lines = bun.Ordinal.start.addScalar(sm.original_line),
-                            .columns = bun.Ordinal.start.addScalar(sm.original_column),
+                            .lines = .fromZeroBased(sm.original_line),
+                            .columns = .fromZeroBased(sm.original_column),
                         },
                         .source_index = sm.source_index,
                         .name_index = -1, // Compact format doesn't support names yet

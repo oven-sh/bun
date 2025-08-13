@@ -20,12 +20,11 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
-it("should not download tarballs with --lockfile-only", async () => {
+it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile-only using %s", async lockfile => {
+  const isLockb = lockfile === "bun.lockb";
+
   const urls: string[] = [];
-  const registry = {
-    "0.0.1": { as: "0.0.1" },
-    latest: "0.0.1",
-  };
+  const registry = { "0.0.1": { as: "0.0.1" }, latest: "0.0.1" };
 
   setHandler(dummyRegistry(urls, registry));
 
@@ -39,17 +38,23 @@ it("should not download tarballs with --lockfile-only", async () => {
     }),
   );
 
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "${root_url}/"
-`,
-  );
+  const cmd = [bunExe(), "install", "--lockfile-only"];
+
+  if (!isLockb) {
+    // the default beforeEach disables --save-text-lockfile in the dummy registry, so we should restore
+    // default behaviour
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `
+      [install]
+      cache = false
+      registry = "${root_url}/"
+      `,
+    );
+  }
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--lockfile-only"],
+    cmd,
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -66,7 +71,7 @@ registry = "${root_url}/"
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    expect.stringContaining("Saved bun.lock"),
+    expect.stringContaining(`Saved ${lockfile}`),
   ]);
 
   console.log(out);
@@ -74,5 +79,5 @@ registry = "${root_url}/"
   expect(urls.sort()).toEqual([`${root_url}/baz`]);
   expect(requested).toBe(1);
 
-  await access(join(package_dir, "bun.lock"));
+  await access(join(package_dir, lockfile));
 });

@@ -91,13 +91,6 @@ pub const SavedMappingsCompact = struct {
         });
     }
 
-    pub fn initWithSourcesCount(allocator: Allocator, vlq_mappings: []const u8, sources_count: usize) !SavedMappingsCompact {
-        return bun.new(SavedMappingsCompact, .{
-            .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
-            .sources_count = sources_count,
-        });
-    }
-
     pub fn deinit(this: *SavedMappingsCompact) void {
         this.compact_table.deref();
         bun.destroy(this);
@@ -239,6 +232,20 @@ pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: *
 
 pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
+fn deinitValue(value: Value) void {
+    if (value.get(ParsedSourceMap)) |source_map| {
+        source_map.deref();
+    } else if (value.get(SavedMappings)) |saved_mappings| {
+        var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+        saved.deinit();
+    } else if (value.get(SavedMappingsCompact)) |saved_compact| {
+        var compact: *SavedMappingsCompact = saved_compact;
+        compact.deinit();
+    } else if (value.get(SourceProviderMap)) |provider| {
+        _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+    }
+}
+
 pub fn deinit(this: *SavedSourceMap) void {
     {
         this.lock();
@@ -246,18 +253,8 @@ pub fn deinit(this: *SavedSourceMap) void {
 
         var iter = this.map.valueIterator();
         while (iter.next()) |val| {
-            var value = Value.from(val.*);
-            if (value.get(ParsedSourceMap)) |source_map| {
-                source_map.deref();
-            } else if (value.get(SavedMappings)) |saved_mappings| {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-                saved.deinit();
-            } else if (value.get(SavedMappingsCompact)) |saved_compact| {
-                var compact: *SavedMappingsCompact = saved_compact;
-                compact.deinit();
-            } else if (value.get(SourceProviderMap)) |provider| {
-                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
-            }
+            const value = Value.from(val.*);
+            deinitValue(value);
         }
     }
 
@@ -290,19 +287,8 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
 
     const entry = try this.map.getOrPut(bun.hash(path));
     if (entry.found_existing) {
-        var old_value = Value.from(entry.value_ptr.*);
-        if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
-            var source_map: *ParsedSourceMap = parsed_source_map;
-            source_map.deref();
-        } else if (old_value.get(SavedMappings)) |saved_mappings| {
-            var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-            saved.deinit();
-        } else if (old_value.get(SavedMappingsCompact)) |saved_compact| {
-            var compact: *SavedMappingsCompact = saved_compact;
-            compact.deinit();
-        } else if (old_value.get(SourceProviderMap)) |provider| {
-            _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
-        }
+        const old_value = Value.from(entry.value_ptr.*);
+        deinitValue(old_value);
     }
     entry.value_ptr.* = value.ptr();
 }

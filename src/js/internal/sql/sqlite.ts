@@ -240,7 +240,6 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
         }
       },
       setMode: mode => {
-        console.log("[SQLite] setMode called with:", mode);
         resultMode = mode;
       },
     };

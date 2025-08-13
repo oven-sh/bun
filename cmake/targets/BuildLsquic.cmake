@@ -3,8 +3,8 @@ register_repository(
     lsquic
   REPOSITORY
     litespeedtech/lsquic
-  COMMIT
-    70486141724f85e97b08f510673e29f399bbae8f
+  TAG
+    v4.3.0
 )
 
 set(Lsquic_CMAKE_C_FLAGS "")

@@ -270,6 +270,10 @@ export default [
         fn: "jsStream",
         length: 1,
       },
+      createStream: {
+        fn: "createStream",
+        length: 1,
+      },
       close: {
         fn: "close",
         length: 0,

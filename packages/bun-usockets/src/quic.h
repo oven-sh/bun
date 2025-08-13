@@ -89,5 +89,14 @@ void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *context
 void *us_quic_socket_context_ext(us_quic_socket_context_t *context);
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 
+/* Context cleanup function */
+void us_quic_socket_context_free(us_quic_socket_context_t *context);
+
+/* Internal sweep function for deferred cleanup */
+void us_internal_quic_sweep_closed(us_quic_socket_context_t *context);
+
+/* Get the bound port from a listen socket */
+int us_quic_listen_socket_get_port(us_quic_listen_socket_t *listen_socket);
+
 #endif
 #endif

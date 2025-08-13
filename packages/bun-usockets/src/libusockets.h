@@ -148,6 +148,9 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
+/* Frees a packet buffer allocated with us_create_udp_packet_buffer. */
+void us_free_udp_packet_buffer(struct us_udp_packet_buffer_t *buf);
+
 /* Creates a (heavy-weight) UDP socket with a user space ring buffer. Again, this one is heavy weight and
  * shoud be reused. One entire QUIC server can be implemented using only one single UDP socket so weight
  * is not a concern as is the case for TCP sockets which are 1-to-1 with TCP connections. */

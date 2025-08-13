@@ -64,6 +64,7 @@ struct us_internal_loop_data_t {
     /* QUIC engines - one per loop, shared by all contexts */
     struct lsquic_engine *quic_server_engine;  /* Server engine for this loop */
     struct lsquic_engine *quic_client_engine;  /* Client engine for this loop */
+    struct us_timer_t *quic_timer;             /* QUIC timer for this loop */
 };
 
 #endif // LOOP_DATA_H

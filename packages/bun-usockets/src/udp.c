@@ -20,6 +20,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
 
 // int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
 //     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
@@ -257,4 +258,16 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
     
     /* Return the buffer part (us_udp_packet_buffer_t is typedef for struct udp_recvbuf) */
     return (struct us_udp_packet_buffer_t *)&wrapper->buffer;
+}
+
+void us_free_udp_packet_buffer(struct us_udp_packet_buffer_t *buf) {
+    if (!buf) {
+        return;
+    }
+    
+    /* Calculate the wrapper pointer from the buffer pointer */
+    struct us_udp_packet_buffer_wrapper *wrapper = 
+        (struct us_udp_packet_buffer_wrapper *)((char *)buf - offsetof(struct us_udp_packet_buffer_wrapper, buffer));
+    
+    free(wrapper);
 }

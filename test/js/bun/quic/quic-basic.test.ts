@@ -111,7 +111,7 @@ test("QuicSocket should support stream creation", () => {
 
   // Stream creation should succeed even during connection process in QUIC
   expect(() => socket.createStream()).not.toThrow();
-  expect(typeof socket.createStream()).toBe("number");
+  expect(typeof socket.createStream()).toBe("object");
   
   socket.close();
 });

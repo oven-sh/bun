@@ -98,6 +98,9 @@ class ConnResetException extends Error {
     super(msg);
     this.code = "ECONNRESET";
   }
+  get ["constructor"]() {
+    return Error;
+  }
 }
 
 class ErrnoException extends Error {

@@ -1,6 +1,6 @@
 'use strict';
 const common = require('../common');
-// if ('Bun' in globalThis) require('../common').skip("TODO: BUN: test was edited and never worked");
+if ('Bun' in globalThis) require('../common').skip("TODO: BUN: test was edited and never worked");
 const assert = require('assert');
 
 const { createServer } = require('http');

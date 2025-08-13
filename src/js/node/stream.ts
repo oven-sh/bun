@@ -1,5 +1,4 @@
 // Hardcoded module "node:stream" / "readable-stream"
-const EE = require("node:events").EventEmitter;
 const exports = require("internal/stream");
 
 $debug("node:stream loaded");

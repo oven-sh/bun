@@ -5,6 +5,7 @@ import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray } from "./
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
+  SQLQueryResultMode,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
@@ -141,7 +142,7 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-export interface SQLiteQueryHandle extends BaseQueryHandle {}
+export interface SQLiteQueryHandle extends BaseQueryHandle<BunSQLiteModule.Database> {}
 
 export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
@@ -184,7 +185,9 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     }
   }
 
-  createQueryHandle(sql: string, values: any[] | undefined | null) {
+  createQueryHandle(sql: string, values: any[] | undefined | null, flags: number): SQLiteQueryHandle {
+    let resultMode = SQLQueryResultMode.objects;
+
     return {
       run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
         try {
@@ -206,11 +209,21 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
           ) {
             // SELECT queries must use prepared statements for results
             const stmt = db.prepare(sql);
-            const result = stmt.all(...(values ?? []));
+            let result: unknown[] | undefined;
+
+            if (resultMode === SQLQueryResultMode.values) {
+              result = stmt.values(...(values ?? []));
+            } else if (resultMode === SQLQueryResultMode.raw) {
+              stmt.finalize();
+              throw new Error("SQLite does not support raw mode. Use 'values' mode instead.");
+            } else {
+              result = stmt.all(...(values ?? []));
+            }
+
             const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
             sqlResult.command = command;
-            sqlResult.count = result.length;
+            sqlResult.count = $isArray(result) ? result.length : 1;
             stmt.finalize();
             query.resolve(sqlResult);
           } else {
@@ -226,8 +239,9 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
           query.reject(err as Error);
         }
       },
-      setMode: () => {
-        throw new Error("SQLite does not support result modes");
+      setMode: mode => {
+        console.log("[SQLite] setMode called with:", mode);
+        resultMode = mode;
       },
     };
   }

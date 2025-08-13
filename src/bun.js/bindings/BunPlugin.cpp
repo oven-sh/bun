@@ -626,6 +626,25 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (moduleNamespaceObject) {
+                        // Backup original module before mocking
+                        if (globalObject->onLoadPlugins.originalModules == nullptr) {
+                            globalObject->onLoadPlugins.originalModules = new BunPlugin::VirtualModuleMap;
+                        }
+                        
+                        // Create a backup object with current exports  
+                        JSC::JSObject* backupObject = JSC::constructEmptyObject(globalObject);
+                        JSC::PropertyNameArray originalNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                        moduleNamespaceObject->getOwnPropertyNames(moduleNamespaceObject, globalObject, originalNames, DontEnumPropertiesMode::Exclude);
+                        
+                        for (auto& name : originalNames) {
+                            JSValue originalValue = moduleNamespaceObject->get(globalObject, name);
+                            if (!scope.exception()) {
+                                backupObject->putDirect(vm, name, originalValue, 0);
+                            }
+                        }
+                        
+                        globalObject->onLoadPlugins.originalModules->set(specifier, JSC::Strong<JSC::JSObject> { vm, backupObject });
+                        
                         JSValue exportsValue = getJSValue();
                         RETURN_IF_EXCEPTION(scope, {});
                         auto* object = exportsValue.getObject();
@@ -668,6 +687,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
+            // Backup original CommonJS module before mocking
+            if (globalObject->onLoadPlugins.originalModules == nullptr) {
+                globalObject->onLoadPlugins.originalModules = new BunPlugin::VirtualModuleMap;
+            }
+            
+            JSValue originalExports = moduleObject->get(globalObject, Bun::builtinNames(vm).exportsPublicName());
+            if (originalExports && originalExports.isObject()) {
+                globalObject->onLoadPlugins.originalModules->set(specifier, JSC::Strong<JSC::JSObject> { vm, originalExports.getObject() });
+            }
+            
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -771,6 +800,65 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     }
 
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
+}
+
+void BunPlugin::OnLoad::restoreModuleMocks(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    if (!virtualModules) {
+        return;
+    }
+    
+    // Clear all virtual modules (mocks)
+    virtualModules->clear();
+    
+    // If we have backed up original modules, restore them
+    if (originalModules) {
+        auto* esm = globalObject->esmRegistryMap();
+        auto* cjs = globalObject->requireMap();
+        
+        for (auto& entry : *originalModules) {
+            const String& path = entry.key;
+            JSC::JSObject* originalModule = entry.value.get();
+            
+            if (!originalModule) continue;
+            
+            // Try to restore to ESM registry
+            JSC::JSString* pathString = jsString(vm, path);
+            JSValue existingESM = esm->get(globalObject, pathString);
+            if (existingESM) {
+                // Module exists in ESM registry, restore it
+                if (JSObject* entry = existingESM.getObject()) {
+                    auto moduleValue = entry->getIfPropertyExists(globalObject, Identifier::fromString(vm, String("module"_s)));
+                    if (moduleValue) {
+                        if (auto* mod = jsDynamicCast<JSC::AbstractModuleRecord*>(moduleValue)) {
+                            JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
+                            if (moduleNamespaceObject) {
+                                // Restore original exports
+                                JSC::PropertyNameArray names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                                JSObject::getOwnPropertyNames(originalModule, globalObject, names, DontEnumPropertiesMode::Exclude);
+                                
+                                for (auto& name : names) {
+                                    JSValue value = originalModule->get(globalObject, name);
+                                    moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Try to restore to CJS registry  
+            JSValue existingCJS = cjs->get(globalObject, pathString);
+            if (existingCJS) {
+                if (auto* moduleObject = jsDynamicCast<Bun::JSCommonJSModule*>(existingCJS)) {
+                    moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), originalModule, 0);
+                    moduleObject->hasEvaluated = true;
+                }
+            }
+        }
+        
+        originalModules->clear();
+    }
 }
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)

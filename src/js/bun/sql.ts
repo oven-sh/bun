@@ -622,7 +622,7 @@ const SQL: typeof Bun.SQL = function SQL(
           pool.release(pooledConnection);
 
           // do not support options just use defaults
-          return reject(new Error(`SQLite dont support distributed transactions.`));
+          return reject(new Error(`SQLite doesn't support distributed transactions.`));
         case "mssql":
           BEGIN_COMMAND = ` BEGIN DISTRIBUTED TRANSACTION ${options}`;
           ROLLBACK_COMMAND = `ROLLBACK TRANSACTION ${options}`;
@@ -964,7 +964,7 @@ const SQL: typeof Bun.SQL = function SQL(
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically rolled back.`);
       case "sqlite":
-        throw Error(`SQLite dont support distributed transactions.`);
+        throw Error(`SQLite doesn't support distributed transactions.`);
       default:
         throw Error(`Unsupported adapter: ${adapter}.`);
     }
@@ -984,7 +984,7 @@ const SQL: typeof Bun.SQL = function SQL(
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically committed.`);
       case "sqlite":
-        throw Error(`SQLite dont support distributed transactions.`);
+        throw Error(`SQLite doesn't support distributed transactions.`);
       default:
         throw Error(`Unsupported adapter: ${adapter}.`);
     }

@@ -2645,6 +2645,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
         return {};
     }
 
+    if (!callSites) {
+        // If callSites is not an array, return the error message without stack trace
+        // This matches the behavior when there are no stack frames
+        auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (errorMessage) {
+            auto* str = errorMessage.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (str->length() > 0) {
+                auto view = str->view(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                return JSC::JSValue::encode(jsString(vm, makeString("Error: "_s, view.data)));
+            }
+        }
+        return JSC::JSValue::encode(jsString(vm, String("Error"_s)));
+    }
+
     JSValue result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, jsUndefined());
 
     RETURN_IF_EXCEPTION(scope, {});

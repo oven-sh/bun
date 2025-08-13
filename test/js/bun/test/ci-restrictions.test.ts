@@ -29,11 +29,7 @@ test("should be skipped", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
@@ -58,11 +54,7 @@ test.only("should fail in CI", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("test.only is not allowed in CI environments");
@@ -89,11 +81,7 @@ describe.only("CI test", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("test.only is not allowed in CI environments");
@@ -124,11 +112,7 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
@@ -153,11 +137,7 @@ test("new snapshot", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
@@ -182,11 +162,7 @@ test("new snapshot allowed", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
@@ -212,11 +188,7 @@ test("existing inline snapshot", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
@@ -241,11 +213,7 @@ test("new inline snapshot", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Inline snapshot updates are not allowed in CI environments");
@@ -270,54 +238,10 @@ test("new inline snapshot allowed", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
-    });
-  });
-
-  // Tests for CI environment detection logic
-  describe("CI environment detection", () => {
-    test("should detect CI environment variables correctly", () => {
-      // This test verifies the environment variables that detectCI() checks
-      const ciVars = [
-        "CI",
-        "GITHUB_ACTIONS", 
-        "BUILDKITE",
-        "CIRCLECI",
-        "TRAVIS",
-        "APPVEYOR",
-        "GITLAB_CI",
-        "JENKINS_URL"
-      ];
-
-      // Just verify these are the kind of variables that would be checked
-      ciVars.forEach(varName => {
-        expect(typeof varName).toBe("string");
-        expect(varName.length).toBeGreaterThan(0);
-      });
-    });
-
-    test("CI=false should disable CI detection", () => {
-      // According to ci-info logic, CI=false explicitly disables CI detection
-      const original = process.env.CI;
-      
-      try {
-        process.env.CI = "false";
-        expect(process.env.CI).toBe("false");
-        // This should be treated as not being in CI
-      } finally {
-        if (original !== undefined) {
-          process.env.CI = original;
-        } else {
-          delete process.env.CI;
-        }
-      }
     });
   });
 });

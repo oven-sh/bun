@@ -98,7 +98,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, false);
+const log = bun.Output.scoped(.EventLoop, .visible);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {
@@ -526,20 +526,6 @@ pub fn enqueueTask(this: *EventLoop, task: Task) void {
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
     this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-}
-
-pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-    // TODO: make this more efficient!
-    const loop = this.virtual_machine.uwsLoop();
-    var timer = uws.Timer.createFallthrough(loop, task.ptr());
-    timer.set(task.ptr(), callTask, timeout, 0);
-}
-
-pub fn callTask(timer: *uws.Timer) callconv(.C) void {
-    const task = Task.from(timer.as(*anyopaque));
-    defer timer.deinit(true);
-
-    VirtualMachine.get().enqueueTask(task);
 }
 
 pub fn ensureWaker(this: *EventLoop) void {

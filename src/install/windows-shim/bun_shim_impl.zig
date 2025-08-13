@@ -42,7 +42,7 @@ const dbg = builtin.mode == .Debug;
 
 const is_standalone = @import("root") == @This();
 const bun = if (!is_standalone) @import("bun") else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
-const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, .hidden);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
 
 /// A copy of all ntdll declarations this program uses

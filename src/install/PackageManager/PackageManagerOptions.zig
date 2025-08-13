@@ -535,6 +535,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.lockfile_only) {
+            this.do.prefetch_resolved_tarballs = false;
+        }
+
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
         }
@@ -668,7 +672,8 @@ pub const Do = packed struct(u16) {
     update_to_latest: bool = false,
     analyze: bool = false,
     recursive: bool = false,
-    _: u3 = 0,
+    prefetch_resolved_tarballs: bool = true,
+    _: u2 = 0,
 };
 
 pub const Enable = packed struct(u16) {

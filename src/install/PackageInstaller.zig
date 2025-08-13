@@ -45,7 +45,7 @@ pub const PackageInstaller = struct {
 
     seen_bin_links: bun.StringHashMap(void),
 
-    const debug = Output.scoped(.PackageInstaller, true);
+    const debug = Output.scoped(.PackageInstaller, .hidden);
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,

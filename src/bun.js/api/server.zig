@@ -1,5 +1,5 @@
-const httplog = Output.scoped(.Server, false);
-const ctxLog = Output.scoped(.RequestContext, false);
+const httplog = Output.scoped(.Server, .visible);
+const ctxLog = Output.scoped(.RequestContext, .visible);
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
@@ -1642,7 +1642,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = Arena.getThreadLocalDefault(),
                 .dev_server = dev_server,
             });
 

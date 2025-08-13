@@ -1,10 +1,10 @@
 const Graph = @This();
 
 pool: *ThreadPool,
-heap: ThreadLocalArena = .{},
+heap: ThreadLocalArena,
 /// This allocator is thread-local to the Bundler thread
 /// .allocator == .heap.allocator()
-allocator: std.mem.Allocator = undefined,
+allocator: std.mem.Allocator,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},

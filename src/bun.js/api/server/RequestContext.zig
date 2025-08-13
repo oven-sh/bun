@@ -1235,7 +1235,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.renderMissing();
         }
 
-        const streamLog = Output.scoped(.ReadableStream, false);
+        const streamLog = Output.scoped(.ReadableStream, .visible);
 
         pub fn didUpgradeWebSocket(this: *RequestContext) bool {
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
@@ -2568,7 +2568,7 @@ fn writeHeaders(
     }
 }
 
-const ctxLog = Output.scoped(.RequestContext, false);
+const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");

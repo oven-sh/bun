@@ -166,7 +166,7 @@ const LibC = struct {
 
 /// The windows implementation borrows the struct used for libc getaddrinfo
 const LibUVBackend = struct {
-    const log = Output.scoped(.LibUVBackend, false);
+    const log = Output.scoped(.LibUVBackend, .visible);
 
     fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
         //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
@@ -267,7 +267,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
     return struct {
         const request_type = @This();
 
-        const log = Output.scoped(.ResolveInfoRequest, true);
+        const log = Output.scoped(.ResolveInfoRequest, .hidden);
 
         resolver_for_caching: ?*Resolver = null,
         hash: u64 = 0,
@@ -373,7 +373,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
 pub const GetHostByAddrInfoRequest = struct {
     const request_type = @This();
 
-    const log = Output.scoped(@This(), false);
+    const log = Output.scoped(@This(), .visible);
 
     resolver_for_caching: ?*Resolver = null,
     hash: u64 = 0,
@@ -472,7 +472,7 @@ pub const GetHostByAddrInfoRequest = struct {
 };
 
 pub const CAresNameInfo = struct {
-    const log = Output.scoped(.CAresNameInfo, true);
+    const log = Output.scoped(.CAresNameInfo, .hidden);
 
     globalThis: *jsc.JSGlobalObject,
     promise: jsc.JSPromise.Strong,
@@ -534,7 +534,7 @@ pub const CAresNameInfo = struct {
 pub const GetNameInfoRequest = struct {
     const request_type = @This();
 
-    const log = Output.scoped(@This(), false);
+    const log = Output.scoped(@This(), .visible);
 
     resolver_for_caching: ?*Resolver = null,
     hash: u64 = 0,
@@ -626,7 +626,7 @@ pub const GetNameInfoRequest = struct {
 };
 
 pub const GetAddrInfoRequest = struct {
-    const log = Output.scoped(.GetAddrInfoRequest, false);
+    const log = Output.scoped(.GetAddrInfoRequest, .visible);
 
     backend: Backend = undefined,
     resolver_for_caching: ?*Resolver = null,
@@ -882,7 +882,7 @@ pub const GetAddrInfoRequest = struct {
 };
 
 pub const CAresReverse = struct {
-    const log = Output.scoped(.CAresReverse, false);
+    const log = Output.scoped(.CAresReverse, .visible);
 
     resolver: ?*Resolver,
     globalThis: *jsc.JSGlobalObject,
@@ -955,7 +955,7 @@ pub const CAresReverse = struct {
 
 pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) type {
     return struct {
-        const log = Output.scoped(.CAresLookup, true);
+        const log = Output.scoped(.CAresLookup, .hidden);
 
         resolver: ?*Resolver,
         globalThis: *jsc.JSGlobalObject,
@@ -1036,7 +1036,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 }
 
 pub const DNSLookup = struct {
-    const log = Output.scoped(.DNSLookup, false);
+    const log = Output.scoped(.DNSLookup, .visible);
 
     resolver: ?*Resolver,
     globalThis: *jsc.JSGlobalObject = undefined,
@@ -1143,7 +1143,7 @@ pub const GlobalData = struct {
 };
 
 pub const internal = struct {
-    const log = Output.scoped(.dns, true);
+    const log = Output.scoped(.dns, .hidden);
 
     var __max_dns_time_to_live_seconds: ?u32 = null;
     pub fn getMaxDNSTimeToLiveSeconds() u32 {
@@ -1843,7 +1843,7 @@ pub const Resolver = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    const log = Output.scoped(.DNSResolver, false);
+    const log = Output.scoped(.DNSResolver, .visible);
 
     ref_count: RefCount,
     channel: ?*c_ares.Channel = null,

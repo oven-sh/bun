@@ -1,6 +1,6 @@
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
-const log = bun.Output.scoped(.PROCESS, false);
+const log = bun.Output.scoped(.PROCESS, .visible);
 
 const win_rusage = struct {
     utime: struct {

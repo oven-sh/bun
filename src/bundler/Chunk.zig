@@ -517,7 +517,7 @@ pub const Chunk = struct {
         pub const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
-                return self.deepClone2(allocator);
+                return self.deepCloneInfallible(allocator);
             }
 
             pub fn deinit(self: *Self, a: std.mem.Allocator) void {

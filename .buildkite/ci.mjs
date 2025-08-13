@@ -303,9 +303,34 @@ function getCppAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
-    cpuCount: 32,
-    threadsPerCore: 1,
+    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+  });
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getLinkBunAgent(platform, options) {
+  const { os, arch, distro } = platform;
+
+  if (os === "darwin") {
+    return {
+      queue: `build-${os}`,
+      os,
+      arch,
+    };
+  }
+
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    });
+  }
+
+  return getEc2Agent(platform, options, {
+    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
   });
 }
 
@@ -354,6 +379,15 @@ function getTestAgent(platform, options) {
       os,
       arch,
     };
+  }
+
+  // TODO: delete this block when we upgrade to mimalloc v3
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
   }
 
   if (arch === "aarch64") {
@@ -493,7 +527,7 @@ function getLinkBunStep(platform, options) {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
     depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
-    agents: getCppAgent(platform, options),
+    agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {

@@ -1,5 +1,5 @@
 pub const SourceMap = @This();
-const debug = bun.Output.scoped(.SourceMap, false);
+const debug = bun.Output.scoped(.SourceMap, .visible);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted

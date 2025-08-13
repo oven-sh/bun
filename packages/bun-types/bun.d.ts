@@ -7529,10 +7529,11 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
+    options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -7564,8 +7565,9 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
     /**
      * The command to run
@@ -7582,7 +7584,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

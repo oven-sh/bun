@@ -71,7 +71,7 @@ pub fn initializeMiniStore() void {
     if (MiniStore.instance == null) {
         var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
         mini_store.* = .{
-            .heap = bun.MimallocArena.init() catch bun.outOfMemory(),
+            .heap = bun.MimallocArena.init(),
             .memory_allocator = undefined,
         };
         mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
@@ -82,7 +82,7 @@ pub fn initializeMiniStore() void {
         var mini_store = MiniStore.instance.?;
         if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
             mini_store.heap.deinit();
-            mini_store.heap = bun.MimallocArena.init() catch bun.outOfMemory();
+            mini_store.heap = bun.MimallocArena.init();
             mini_store.memory_allocator.allocator = mini_store.heap.allocator();
         }
         mini_store.memory_allocator.reset();

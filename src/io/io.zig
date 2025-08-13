@@ -8,7 +8,7 @@ pub const heap = @import("./heap.zig");
 pub const openForWriting = @import("./openForWriting.zig").openForWriting;
 pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
-const log = bun.Output.scoped(.loop, false);
+const log = bun.Output.scoped(.loop, .visible);
 
 pub const Source = @import("./source.zig").Source;
 

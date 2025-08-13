@@ -1,6 +1,8 @@
 src/allocators.zig
 src/allocators/AllocationScope.zig
 src/allocators/basic.zig
+src/allocators/fallback.zig
+src/allocators/fallback/z.zig
 src/allocators/LinuxMemFdAllocator.zig
 src/allocators/MaxHeapAllocator.zig
 src/allocators/MemoryReportingAllocator.zig
@@ -707,6 +709,9 @@ src/Progress.zig
 src/ptr.zig
 src/ptr/Cow.zig
 src/ptr/CowSlice.zig
+src/ptr/owned.zig
+src/ptr/owned/maybe.zig
+src/ptr/owned/meta.zig
 src/ptr/ref_count.zig
 src/ptr/tagged_pointer.zig
 src/ptr/weak_ptr.zig
@@ -731,8 +736,10 @@ src/s3/multipart.zig
 src/s3/simple_request.zig
 src/s3/storage_class.zig
 src/safety.zig
-src/safety/alloc_ptr.zig
+src/safety/alloc.zig
 src/safety/CriticalSection.zig
+src/safety/thread_id.zig
+src/safety/ThreadLock.zig
 src/semver.zig
 src/semver/ExternalString.zig
 src/semver/SemverObject.zig

@@ -303,11 +303,11 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     case JSC::JSType::SymbolType: {
         auto symbol = jsCast<Symbol*>(cell);
-        auto result = symbol->tryGetDescriptiveString();
-        if (result.has_value()) {
-            builder.append(result.value());
+        auto result = symbol->description();
+        if (!result.isEmpty()) {
+            builder.append(symbol->tryGetDescriptiveString().value_or(String()));
         } else {
-            builder.append("Symbol"_s);
+            builder.append(globalObject->vm().smallStrings.symbolString());
         }
         return;
     }

@@ -1439,6 +1439,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
+                .HTMLBundle => {
+                    // HTMLBundle cannot be used in HEAD response
+                    this.renderMetadata();
+                    resp.writeHeaderInt("content-length", 0);
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
             }
         }
 

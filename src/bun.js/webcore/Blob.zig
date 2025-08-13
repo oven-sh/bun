@@ -1325,6 +1325,10 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 => {
                     break :brk response.body.use();
                 },
+                .HTMLBundle => {
+                    destination_blob.detach();
+                    return globalThis.throwInvalidArguments("HTMLBundle cannot be written to a file", .{});
+                },
                 .Error => |*err_ref| {
                     destination_blob.detach();
                     _ = response.body.value.use();
@@ -1385,6 +1389,10 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Null,
                 => {
                     break :brk request.body.value.use();
+                },
+                .HTMLBundle => {
+                    destination_blob.detach();
+                    return globalThis.throwInvalidArguments("HTMLBundle cannot be written to a file", .{});
                 },
                 .Error => |*err_ref| {
                     destination_blob.detach();

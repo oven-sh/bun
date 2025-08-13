@@ -297,6 +297,9 @@ pub const Stdio = union(enum) {
             },
 
             .Blob, .WTFStringImpl, .InternalBlob => unreachable, // handled above.
+            .HTMLBundle => {
+                return globalThis.throwInvalidArguments("HTMLBundle cannot be used as stdin", .{});
+            },
             .Locked => {
                 if (is_sync) {
                     return globalThis.throwInvalidArguments("ReadableStream cannot be used in sync mode", .{});

@@ -255,7 +255,6 @@ pub fn deinit(this: *SavedSourceMap) void {
             } else if (value.get(SavedMappingsCompact)) |saved_compact| {
                 var compact: *SavedMappingsCompact = saved_compact;
                 compact.deinit();
-                bun.default_allocator.destroy(compact);
             } else if (value.get(SourceProviderMap)) |provider| {
                 _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
             }

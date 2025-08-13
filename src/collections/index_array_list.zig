@@ -88,7 +88,7 @@ pub const IndexArrayList = union(Size) {
                         new_list.len = current.len;
                         copyTIntoT2(current_size.Type(), current.sliceConst(), Type, new_list.slice());
                         self.deinit(allocator);
-                        self.* = @unionInit(IndexArrayList, @tagName(to), new_list);
+                        self.* = @unionInit(IndexArrayList, @tagName(to_size), new_list);
                     },
                 }
             },

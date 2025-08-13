@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, nodeExe } from "harness";
 const stripAnsi = (input: string) => {
   return Bun.spawnSync({
-    cmd: ["node", "-e", `process.stdout.write(require("strip-ansi").default(${JSON.stringify(input)}))`],
+    cmd: [bunExe(), "-e", `process.stdout.write(require("strip-ansi").default(${JSON.stringify(input)}))`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "inherit",
   }).stdout.toString();
 };
 

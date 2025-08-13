@@ -1,7 +1,7 @@
 import stripAnsi from "strip-ansi";
 import { bench, run } from "../runner.mjs";
 
-const bunStripAnsi = globalThis?.Bun?.stripANSI;
+const bunStripAnsi = globalThis?.Bun?.stripAnsi;
 
 const stripAnsiFunc = bunStripAnsi || stripAnsi;
 const formatter = new Intl.NumberFormat();
@@ -19,7 +19,7 @@ const inputs = [
 const maxInputLength = Math.max(...inputs.map(([input]) => input.length));
 
 for (const [input, textLabel] of inputs) {
-  const label = bunStripAnsi ? "Bun.stripAnsi" : "npm/strip-ansi";
+  const label = bunStripAnsi ? "Bun.stripANSI" : "npm/strip-ansi";
   const name = `${label} ${format(input.length).padStart(format(maxInputLength).length, " ")} chars ${textLabel}`;
 
   bench(name, () => {

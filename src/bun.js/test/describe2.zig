@@ -57,8 +57,7 @@ pub const js_fns = struct {
         const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
 
         // re-entry safety:
-        // bun.refBlockJSExecution();
-        // defer bun.derefBlockJSExecution();
+        // - use ScriptDisallowedScope::InMainThread
 
         // here:
         // - assert the collection phase is complete, then lock the collection phase

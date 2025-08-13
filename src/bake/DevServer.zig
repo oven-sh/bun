@@ -2308,9 +2308,13 @@ pub fn finalizeBundle(
         defer dev.allocator.free(server_bundle);
 
         const server_modules = if (bun.take(&source_map_json)) |json| blk: {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            // from here on out
+            dev.allocation_scope.leakSlice(json);
+
             break :blk c.BakeLoadServerHmrPatchWithSourceMap(
                 @ptrCast(dev.vm.global),
-                bun.String.cloneLatin1(server_bundle),
+                bun.String.cloneUTF8(server_bundle),
                 json.ptr,
                 json.len,
             ) catch |err| {

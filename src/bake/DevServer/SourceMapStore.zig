@@ -120,6 +120,7 @@ pub const Entry = struct {
                 if (Environment.isWindows and !is_windows_drive_path) {
                     // UNC namespace -> file://server/share/path.ext
                     encodeSourceMapPath(
+                        side,
                         if (path.len > 2 and path[0] == '/' and path[1] == '/')
                             path[2..]
                         else

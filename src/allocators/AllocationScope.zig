@@ -252,6 +252,12 @@ pub inline fn downcast(a: Allocator) ?*AllocationScope {
         null;
 }
 
+pub fn leakSlice(scope: *AllocationScope, memory: anytype) void {
+    if (comptime !enabled) return;
+    _ = @typeInfo(@TypeOf(memory)).pointer;
+    bun.assert(!scope.trackExternalFree(memory, null));
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

@@ -631,7 +631,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 });
                                 return;
                             }
-                            try g.current_chunk_source_maps.append(dev.allocator, PackedMap.RefOrEmpty.blank_empty);
+
+                            // Must precompute this. Otherwise, source maps won't have
+                            // the info needed to concatenate VLQ mappings.
+                            const count: u32 = @intCast(bun.strings.countChar(content.js.code, '\n'));
+                            try g.current_chunk_source_maps.append(dev.allocator, PackedMap.RefOrEmpty{
+                                .empty = .{
+                                    .line_count = .init(count),
+                                    // TODO: not sure if this is correct
+                                    .html_bundle_route_index = .none,
+                                },
+                            });
                         }
                     }
                 },

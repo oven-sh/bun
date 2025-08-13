@@ -739,6 +739,30 @@ declare module "bun:sqlite" {
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
+     * Execute the prepared statement and return all results as arrays of
+     * `Uint8Array`s.
+     *
+     * This is similar to `values()` but returns all values as Uint8Array
+     * objects, regardless of their original SQLite type.
+     *
+     * @param params optional values to bind to the statement. If omitted, the
+     * statement is run with the last bound values or no parameters if there are
+     * none.
+     *
+     * @example
+     * ```ts
+     * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
+     *
+     * stmt.raw("baz");
+     * // => [[Uint8Array(24)]]
+     *
+     * stmt.raw();
+     * // => [[Uint8Array(24)]]
+     * ```
+     */
+    raw(...params: ParamsType): Array<Array<Uint8Array | null>>;
+
+    /**
      * The names of the columns returned by the prepared statement.
      * @example
      * ```ts

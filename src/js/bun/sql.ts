@@ -186,10 +186,26 @@ const SQL: typeof Bun.SQL = function SQL(
     if (pooledConnection.bindQuery) {
       // PostgreSQL pooled connection
       pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
-      handle.run(pooledConnection.connection, query);
+      try {
+        const result = handle.run(pooledConnection.connection, query);
+
+        if (result && $isPromise(result)) {
+          result.catch(err => query.reject(err));
+        }
+      } catch (err) {
+        query.reject(err);
+      }
     } else {
       // SQLite - direct database connection
-      handle.run(pooledConnection, query);
+      try {
+        const result = handle.run(pooledConnection, query);
+
+        if (result && $isPromise(result)) {
+          result.catch(err => query.reject(err));
+        }
+      } catch (err) {
+        query.reject(err);
+      }
     }
   }
   function queryFromPoolHandler(query, handle, err) {
@@ -249,6 +265,7 @@ const SQL: typeof Bun.SQL = function SQL(
       transactionQueries.delete(query);
       return query.reject(err);
     }
+
     // query is cancelled
     if (query.cancelled) {
       transactionQueries.delete(query);
@@ -256,7 +273,15 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
-    handle.run(pooledConnection.connection, query);
+
+    try {
+      const result = handle.run(pooledConnection.connection, query);
+      if (result && $isPromise(result)) {
+        result.catch(err => query.reject(err));
+      }
+    } catch (err) {
+      query.reject(err);
+    }
   }
 
   function queryFromTransaction(

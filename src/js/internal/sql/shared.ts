@@ -133,13 +133,47 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
 
   if (str.startsWith("sqlite://")) {
     try {
-      return value instanceof URL ? value.pathname : str.slice(9);
+      if (value instanceof URL) {
+        if (value.protocol !== "sqlite:" && value.protocol !== "file:") {
+          return null;
+        }
+
+        // If pathname is empty but hostname exists, use hostname as filename
+        // This handles cases like sqlite://myapp.db
+        return value.pathname || value.hostname;
+      }
+
+      const url = new URL(str);
+
+      // same as above for parsing hostname
+      return url.pathname || url.hostname;
     } catch {
       // If it's not a valid URL, just strip the prefix
-      return str.slice(9); // "sqlite://".length
+      // But preserve query params if they exist
+      const pathWithQuery = str.slice(9); // "sqlite://".length
+      const queryIndex = pathWithQuery.indexOf("?");
+      if (queryIndex !== -1) {
+        return pathWithQuery.slice(0, queryIndex);
+      }
+      return pathWithQuery;
     }
   }
   if (str.startsWith("sqlite:")) return str.slice(7); // "sqlite:".length
+
+  // Handle file:// URLs as SQLite databases
+  if (str.startsWith("file://")) {
+    try {
+      const url = value instanceof URL ? value : new URL(str);
+      return url.pathname;
+    } catch {
+      // If it's not a valid URL, just strip the prefix
+      return str.slice(7); // "file://".length
+    }
+  }
+  if (str.startsWith("file:")) {
+    // Handle file: without slashes
+    return str.slice(5); // "file:".length
+  }
 
   // We can't guarantee this is exclusively an sqlite url here
   // even if it *could* be
@@ -166,7 +200,10 @@ function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
-  let [stringOrUrl, options]: [string | URL | null, Bun.SQL.Options] =
+  let [
+    stringOrUrl = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL || null,
+    options,
+  ]: [string | URL | null, Bun.SQL.Options] =
     typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL
       ? [stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty]
       : stringOrUrlOrOptions
@@ -177,11 +214,34 @@ function parseOptions(
     const sqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
 
     if (sqliteUrl !== null) {
-      return {
+      const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
         ...options,
         adapter: "sqlite",
         filename: sqliteUrl,
       };
+
+      const str = typeof stringOrUrl === "string" ? stringOrUrl : stringOrUrl.toString();
+      if (str.includes("?")) {
+        try {
+          const url = new URL(str.startsWith("sqlite://") || str.startsWith("file://") ? str : "sqlite://" + str);
+          const params = url.searchParams;
+
+          const mode = params.get("mode");
+
+          if (mode === "ro") {
+            sqliteOptions.readonly = true;
+          } else if (mode === "rw") {
+            sqliteOptions.readonly = false;
+          } else if (mode === "rwc") {
+            sqliteOptions.readonly = false;
+            sqliteOptions.create = true;
+          }
+        } catch {
+          // If URL parsing fails, ignore the parameters
+        }
+      }
+
+      return sqliteOptions;
     }
   }
 

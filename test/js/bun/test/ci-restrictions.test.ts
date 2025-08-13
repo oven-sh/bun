@@ -293,7 +293,7 @@ test("new snapshot with update flag", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr).toContain("1 pass");
-      expect(stderr).toContain("snapshots: 1 passed, 1 added");
+      expect(stderr).toContain("snapshots: +1 added");
     });
 
     test("toMatchInlineSnapshot should allow updates with --update-snapshots even when GITHUB_ACTIONS=1", async () => {

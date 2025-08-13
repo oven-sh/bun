@@ -81,9 +81,11 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
-        // Prevent snapshot creation in CI environments
+        // Prevent snapshot creation in CI environments unless --update-snapshots is used
         if (ci_info.detectCI()) |_| {
-            return error.SnapshotCreationNotAllowedInCI;
+            if (!this.update_snapshots) {
+                return error.SnapshotCreationNotAllowedInCI;
+            }
         }
         
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;

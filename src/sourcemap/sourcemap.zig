@@ -906,6 +906,18 @@ pub const MappingsData = union(enum) {
             .compact => |compact| return compact.getName(index),
         }
     }
+
+    pub fn generated(self: *const MappingsData) []const LineColumnOffset {
+        switch (self.*) {
+            .list => |*list| return list.generated(),
+            .compact => |_| {
+                // For compact format, we can't provide direct access to generated positions
+                // since they would need to be decoded from VLQ on-demand.
+                // Return empty slice - callers should handle this gracefully or use find() instead
+                return &[_]LineColumnOffset{};
+            },
+        }
+    }
 };
 
 pub const ParsedSourceMap = struct {

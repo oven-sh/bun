@@ -459,7 +459,7 @@ pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventL
 
 pub const GetResult = struct {
     index: bun.GenericIndex(u32, Entry),
-    mappings: SourceMap.Mapping.List,
+    mappings: SourceMap.MappingsData,
     file_paths: []const []const u8,
     entry_files: *const bun.MultiArrayList(PackedMap.RefOrEmpty),
 
@@ -494,7 +494,7 @@ pub fn getParsedSourceMap(store: *SourceMapStore, script_id: Key, arena: Allocat
         .success => |psm| {
             return .{
                 .index = .init(@intCast(index)),
-                .mappings = psm.mappings.list,
+                .mappings = psm.mappings,
                 .file_paths = entry.paths,
                 .entry_files = &entry.files,
             };

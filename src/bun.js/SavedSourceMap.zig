@@ -103,26 +103,65 @@ pub const SavedMappingsCompact = struct {
     }
 
     pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
-        _ = allocator; // not used in compact version
-        _ = path; // not used in compact version
+        // Check if coverage is enabled - only then convert to full format
+        if (bun.cli.Command.get().test_options.coverage.enabled) {
+            // Parse the VLQ mappings using the existing parser for coverage analysis
+            const input_line_count = if (this.compact_table.line_offsets.len > 1)
+                this.compact_table.line_offsets.len - 1
+            else
+                1;
 
-        // Instead of parsing the mappings, just increment ref count and return compact data
-        this.compact_table.ref();
+            const result = SourceMap.Mapping.parse(
+                allocator,
+                this.compact_table.vlq_mappings,
+                null, // estimated mapping count
+                @intCast(this.sources_count), // use stored sources count
+                input_line_count, // input line count - use proper calculation
+                .{ .allow_names = true, .sort = true }, // Enable names support for coverage
+            );
+            switch (result) {
+                .fail => |fail| {
+                    if (Output.enable_ansi_colors_stderr) {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
+                            false,
+                            true,
+                        );
+                    } else {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
+                            false,
+                            false,
+                        );
+                    }
+                    return fail.err;
+                },
+                .success => |success| {
+                    return success;
+                },
+            }
+        } else {
+            // For error reporting and other uses, stay in compact format
+            // Increment ref count and return compact data
+            this.compact_table.ref();
+            
+            // Calculate proper input line count - use the last line index as the total
+            const input_line_count = if (this.compact_table.line_offsets.len > 1)
+                this.compact_table.line_offsets.len - 1
+            else
+                1;
 
-        // Calculate proper input line count - use the last line index as the total
-        const input_line_count = if (this.compact_table.line_offsets.len > 1)
-            this.compact_table.line_offsets.len - 1
-        else
-            1;
-
-        return ParsedSourceMap{
-            .ref_count = .init(),
-            .input_line_count = input_line_count,
-            .mappings = .{ .compact = this.compact_table },
-            .external_source_names = &.{},
-            .underlying_provider = .none,
-            .is_standalone_module_graph = false,
-        };
+            return ParsedSourceMap{
+                .ref_count = .init(),
+                .input_line_count = input_line_count,
+                .mappings = .{ .compact = this.compact_table },
+                .external_source_names = &.{},
+                .underlying_provider = .none,
+                .is_standalone_module_graph = false,
+            };
+        }
     }
 };
 

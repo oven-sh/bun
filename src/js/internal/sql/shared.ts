@@ -7,27 +7,23 @@ declare global {
   }
 }
 
-export interface SQLResultArrayProperties {
-  count: number | null;
-  command: string | null;
-  lastInsertRowid: number | bigint | null;
-}
-
 export type { SQLResultArray };
-class SQLResultArray<T> extends PublicArray<T> implements SQLResultArrayProperties {
-  public count!: SQLResultArrayProperties["count"];
-  public command!: SQLResultArrayProperties["command"];
-  public lastInsertRowid!: SQLResultArrayProperties["lastInsertRowid"];
+class SQLResultArray<T> extends PublicArray<T> {
+  public count!: number | null;
+  public command!: string | null;
+  public lastInsertRowid!: number | bigint | null;
 
   static [Symbol.toStringTag] = "SQLResults";
 
-  constructor(properties: Partial<SQLResultArrayProperties> = {}) {
-    super();
-    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
+  constructor(values: T[] = []) {
+    super(...values);
+
+    // match postgres's result array, in this way for in will not list the
+    // properties and .map will not return undefined command and count
     Object.defineProperties(this, {
-      count: { value: properties.count ?? null, writable: true },
-      command: { value: properties.command ?? null, writable: true },
-      lastInsertRowid: { value: properties.lastInsertRowid ?? null, writable: true },
+      count: { value: null, writable: true },
+      command: { value: null, writable: true },
+      lastInsertRowid: { value: null, writable: true },
     });
   }
 

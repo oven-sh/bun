@@ -799,13 +799,17 @@ describe("Connection management", () => {
   test("distributed transactions throw for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    expect(() => sql.beginDistributed("test-tx", async () => {})).toThrow(
-      "SQLite doesn't support distributed transactions",
+    expect(() => sql.beginDistributed("test-tx", async () => {})).toThrowErrorMatchingInlineSnapshot(
+      `"This adapter doesn't support distributed transactions."`,
     );
 
-    expect(() => sql.commitDistributed("test-tx")).toThrow("SQLite doesn't support distributed transactions");
+    expect(() => sql.commitDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
+      `"SQLite doesn't support distributed transactions."`,
+    );
 
-    expect(() => sql.rollbackDistributed("test-tx")).toThrow("SQLite doesn't support distributed transactions");
+    expect(() => sql.rollbackDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
+      `"SQLite doesn't support distributed transactions."`,
+    );
 
     await sql.close();
   });
@@ -813,7 +817,9 @@ describe("Connection management", () => {
   test("flush throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    expect(() => sql.flush()).toThrow("SQLite doesn't support flush() - queries are executed synchronously");
+    expect(() => sql.flush()).toThrowErrorMatchingInlineSnapshot(
+      `"SQLite doesn't support flush() - queries are executed synchronously"`,
+    );
 
     await sql.close();
   });

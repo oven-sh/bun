@@ -339,6 +339,82 @@ describe("Parameterized Queries", () => {
   });
 });
 
+describe("Template Literal Security", () => {
+  let sql: SQL;
+
+  beforeAll(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterAll(async () => {
+    await sql?.close();
+  });
+
+  test("dynamic table names are not allowed in template literals", async () => {
+    const tableName = "users";
+
+    expect(() => sql`CREATE TABLE ${tableName} (id INTEGER)`.then(r => r)).toThrowErrorMatchingInlineSnapshot(
+      `"near "?": syntax error"`,
+    );
+
+    await sql.unsafe(`CREATE TABLE ${tableName} (id INTEGER)`);
+    const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`;
+    expect(tables).toHaveLength(1);
+  });
+
+  test("dynamic column names are not allowed in template literals", async () => {
+    await sql`CREATE TABLE test_security (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO test_security VALUES (1, 'test')`;
+
+    const columnName = "name";
+
+    const result = await sql`SELECT ${columnName} FROM test_security`;
+    expect(result[0]).toEqual({ "?": "name" });
+
+    const unsafeResult = await sql.unsafe(`SELECT ${columnName} FROM test_security`);
+    expect(unsafeResult[0].name).toBe("test");
+  });
+
+  test("dynamic SQL structure is not allowed in template literals", async () => {
+    const columns = "id INTEGER, name TEXT";
+
+    expect(sql`CREATE TABLE dynamic_structure (${columns})`.then(r => r)).rejects.toThrow();
+
+    await sql.unsafe(`CREATE TABLE dynamic_structure (${columns})`);
+    const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='dynamic_structure'`;
+    expect(tables).toHaveLength(1);
+  });
+
+  test("SQL injection is prevented with template literals", async () => {
+    await sql`CREATE TABLE injection_test (id INTEGER, value TEXT)`;
+    await sql`INSERT INTO injection_test VALUES (1, 'safe')`;
+
+    const maliciousInput = "'; DROP TABLE injection_test; --";
+
+    await sql`INSERT INTO injection_test VALUES (2, ${maliciousInput})`;
+
+    const result = await sql`SELECT * FROM injection_test WHERE id = 2`;
+    expect(result[0].value).toBe("'; DROP TABLE injection_test; --");
+
+    const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='injection_test'`;
+    expect(tables).toHaveLength(1);
+  });
+
+  test("parameters work correctly for VALUES but not for identifiers", async () => {
+    await sql`CREATE TABLE identifier_test (id INTEGER, name TEXT)`;
+
+    const id = 1;
+    const name = "Alice";
+    await sql`INSERT INTO identifier_test VALUES (${id}, ${name})`;
+
+    const result = await sql`SELECT * FROM identifier_test WHERE id = ${id}`;
+    expect(result[0].name).toBe("Alice");
+
+    const table = "identifier_test";
+    expect(sql`SELECT * FROM ${table}`.then(r => r)).rejects.toThrowErrorMatchingInlineSnapshot(`"near "?": syntax error"`);
+  });
+});
+
 describe("Transactions", () => {
   let sql: SQL;
 
@@ -3557,8 +3633,8 @@ describe("Query Normalization Fuzzing Tests", () => {
     await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
     await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
 
-    const longName = "a".repeat(1000);
-    // Dynamic table names require unsafe
+    const longName = "a".repeat(50_000_000);
+
     await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
     await sql.unsafe(`SELECT * FROM "${longName}"`);
     await sql.unsafe(`DROP TABLE "${longName}"`);

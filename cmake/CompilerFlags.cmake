@@ -315,3 +315,10 @@ if(NOT WIN32 AND NOT APPLE)
   set(CMAKE_CXX_EXTENSIONS ON)
   set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
 endif()
+
+if(USE_MIMALLOC)
+  register_compiler_flags(
+    DESCRIPTION "Use mimalloc"
+    -DUSE_MIMALLOC=1
+  )
+endif()

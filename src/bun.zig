@@ -3738,10 +3738,6 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 }
 const StackOverflow = error{StackOverflow};
 
-comptime {
-    @export(&bun.use_mimalloc, .{ .name = "Bun__useMimalloc", .linkage = .strong });
-}
-
 pub const S3 = @import("./s3/client.zig");
 pub const ptr = @import("./ptr.zig");
 

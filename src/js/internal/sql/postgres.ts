@@ -5,14 +5,98 @@ const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values },
+  symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
 
-const { createConnection: createPostgresConnection, createQuery: createPostgresQuery } = $zig(
-  "postgres.zig",
-  "createBinding",
-) as PostgresDotZig;
+const {
+  createConnection: createPostgresConnection,
+  createQuery: createPostgresQuery,
+  init: initPostgres,
+} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+
+const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
+
+initPostgres(
+  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+    /// simple queries
+    if (query[_flags] & SQLQueryFlags.simple) {
+      // simple can have multiple results or a single result
+      if (is_last) {
+        if (queries) {
+          const queriesIndex = queries.indexOf(query);
+          if (queriesIndex !== -1) {
+            queries.splice(queriesIndex, 1);
+          }
+        }
+        try {
+          query.resolve(query[_results]);
+        } catch {}
+        return;
+      }
+      $assert(result instanceof SQLResultArray, "Invalid result array");
+      // prepare for next query
+      query[_handle].setPendingValue(new SQLResultArray());
+
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
+      }
+
+      result.count = count || 0;
+      const last_result = query[_results];
+
+      if (!last_result) {
+        query[_results] = result;
+      } else {
+        if (last_result instanceof SQLResultArray) {
+          // multiple results
+          query[_results] = [last_result, result];
+        } else {
+          // 3 or more results
+          last_result.push(result);
+        }
+      }
+      return;
+    }
+    /// prepared statements
+    $assert(result instanceof SQLResultArray, "Invalid result array");
+    if (typeof commandTag === "string") {
+      if (commandTag.length > 0) {
+        result.command = commandTag;
+      }
+    } else {
+      result.command = cmds[commandTag];
+    }
+
+    result.count = count || 0;
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+    try {
+      query.resolve(result);
+    } catch {}
+  },
+
+  function onRejectPostgresQuery(query: Query<any, any>, reject: Error, queries: Query<any, any>[]) {
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+
+    try {
+      query.reject(reject);
+    } catch {}
+  },
+);
 
 export interface PostgresDotZig {
   init: (
@@ -422,6 +506,69 @@ export class PostgresAdapter
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
+  }
+
+  getTransactionCommands(options?: string): import("./shared").TransactionCommands {
+    let BEGIN = "BEGIN";
+    if (options) {
+      BEGIN = `BEGIN ${options}`;
+    }
+
+    return {
+      BEGIN,
+      COMMIT: "COMMIT",
+      ROLLBACK: "ROLLBACK",
+      SAVEPOINT: "SAVEPOINT",
+      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
+      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
+    };
+  }
+
+  getDistributedTransactionCommands(name: string): import("./shared").TransactionCommands | null {
+    if (!this.validateDistributedTransactionName(name).valid) {
+      return null;
+    }
+
+    return {
+      BEGIN: "BEGIN",
+      COMMIT: `PREPARE TRANSACTION '${name}'`,
+      ROLLBACK: "ROLLBACK",
+      SAVEPOINT: "SAVEPOINT",
+      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
+      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
+      BEFORE_COMMIT_OR_ROLLBACK: null,
+    };
+  }
+
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // PostgreSQL accepts any transaction options
+    return { valid: true };
+  }
+
+  validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
+    if (name.indexOf("'") !== -1) {
+      return {
+        valid: false,
+        error: "Distributed transaction name cannot contain single quotes.",
+      };
+    }
+    return { valid: true };
+  }
+
+  getCommitDistributedSQL(name: string): string {
+    const validation = this.validateDistributedTransactionName(name);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+    return `COMMIT PREPARED '${name}'`;
+  }
+
+  getRollbackDistributedSQL(name: string): string {
+    const validation = this.validateDistributedTransactionName(name);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+    return `ROLLBACK PREPARED '${name}'`;
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {

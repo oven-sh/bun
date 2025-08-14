@@ -437,27 +437,17 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
       return onConnected(connectionClosedError(), null);
     }
 
+    // SQLite doesn't support reserved connections since it doesn't have a connection pool
+    // Reserved connections are meant for exclusive use from a pool, which SQLite doesn't have
+    if (reserved) {
+      return onConnected(new Error("SQLite doesn't support connection reservation (no connection pool)"), null);
+    }
+
     // Since SQLite connection is synchronous, we immediately know the result
     if (this.storedError) {
       onConnected(this.storedError, null);
     } else if (this.db) {
-      // For reserved connections (used in transactions), we need to provide an object
-      // that mimics the PostgreSQL pooled connection interface
-      if (reserved) {
-        const connection = {
-          connection: this.db,
-          onClose: (callback: Function) => {
-            // SQLite doesn't have connection events, but we can track it
-          },
-          flush: () => {
-            // SQLite doesn't need flush
-          },
-          queries: new Set(),
-        };
-        onConnected(null, connection as any);
-      } else {
-        onConnected(null, this.db);
-      }
+      onConnected(null, this.db);
     } else {
       onConnected(connectionClosedError(), null);
     }
@@ -496,6 +486,69 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
 
   get closed(): boolean {
     return this._closed;
+  }
+
+  getTransactionCommands(options?: string): import("./shared").TransactionCommands {
+    let BEGIN = "BEGIN";
+
+    if (options) {
+      // SQLite supports DEFERRED, IMMEDIATE, EXCLUSIVE
+      const upperOptions = options.toUpperCase();
+      if (upperOptions === "DEFERRED" || upperOptions === "IMMEDIATE" || upperOptions === "EXCLUSIVE") {
+        BEGIN = `BEGIN ${upperOptions}`;
+      } else if (upperOptions === "READONLY" || upperOptions === "READ") {
+        // SQLite doesn't support readonly transactions
+        throw new Error(`SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`);
+      } else {
+        BEGIN = `BEGIN ${options}`;
+      }
+    }
+
+    return {
+      BEGIN,
+      COMMIT: "COMMIT",
+      ROLLBACK: "ROLLBACK",
+      SAVEPOINT: "SAVEPOINT",
+      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
+      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
+    };
+  }
+
+  getDistributedTransactionCommands(name: string): import("./shared").TransactionCommands | null {
+    // SQLite doesn't support distributed transactions
+    return null;
+  }
+
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    if (!options) {
+      return { valid: true };
+    }
+
+    const upperOptions = options.toUpperCase();
+    if (upperOptions === "READONLY" || upperOptions === "READ") {
+      return {
+        valid: false,
+        error: `SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`,
+      };
+    }
+
+    // SQLite will handle validation of other options
+    return { valid: true };
+  }
+
+  validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
+    return {
+      valid: false,
+      error: "SQLite doesn't support distributed transactions.",
+    };
+  }
+
+  getCommitDistributedSQL(name: string): string {
+    throw new Error("SQLite doesn't support distributed transactions.");
+  }
+
+  getRollbackDistributedSQL(name: string): string {
+    throw new Error("SQLite doesn't support distributed transactions.");
   }
 }
 

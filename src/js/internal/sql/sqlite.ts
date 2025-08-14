@@ -10,6 +10,7 @@ const {
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
+const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
 function getSQLiteModule() {
@@ -183,7 +184,17 @@ export class SQLiteAdapter
 
       this.db = new SQLiteModule.Database(filename, options);
     } catch (err) {
-      this.storedError = err as Error;
+      // Convert bun:sqlite initialization errors to SQLiteError
+      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+        const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
+        const errno = "errno" in err ? Number(err.errno) : 1;
+        const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
+        const message = "message" in err ? String(err.message) : "SQLite error";
+
+        this.storedError = new SQLiteError(message, { code, errno, byteOffset });
+      } else {
+        this.storedError = err as Error;
+      }
       this.db = null;
     }
   }
@@ -194,50 +205,68 @@ export class SQLiteAdapter
     return {
       run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
         if (!db) {
-          throw new Error("SQLite database not initialized");
+          throw new SQLiteError("SQLite database not initialized", {
+            code: "SQLITE_CONNECTION_CLOSED",
+            errno: 0,
+          });
         }
 
-        const commandMatch = sql.trim().match(/^(\w+)/i);
-        const command = commandMatch ? commandMatch[1].toUpperCase() : "";
+        try {
+          const commandMatch = sql.trim().match(/^(\w+)/i);
+          const command = commandMatch ? commandMatch[1].toUpperCase() : "";
 
-        // For SELECT queries, we need to use a prepared statement
-        // For other queries, we can check if there are multiple statements and use db.run() if so
-        if (
-          command === "SELECT" ||
-          sql.trim().toUpperCase().includes("RETURNING") ||
-          command === "PRAGMA" ||
-          command === "WITH" ||
-          command === "EXPLAIN"
-        ) {
-          // SELECT queries must use prepared statements for results
-          const stmt = db.prepare(sql);
-          let result: unknown[] | undefined;
+          // For SELECT queries, we need to use a prepared statement
+          // For other queries, we can check if there are multiple statements and use db.run() if so
+          if (
+            command === "SELECT" ||
+            sql.trim().toUpperCase().includes("RETURNING") ||
+            command === "PRAGMA" ||
+            command === "WITH" ||
+            command === "EXPLAIN"
+          ) {
+            // SELECT queries must use prepared statements for results
+            const stmt = db.prepare(sql);
+            let result: unknown[] | undefined;
 
-          if (resultMode === SQLQueryResultMode.values) {
-            result = stmt.values(...(values ?? []));
-          } else if (resultMode === SQLQueryResultMode.raw) {
-            result = stmt.raw(...(values ?? []));
+            if (resultMode === SQLQueryResultMode.values) {
+              result = stmt.values(...(values ?? []));
+            } else if (resultMode === SQLQueryResultMode.raw) {
+              result = stmt.raw(...(values ?? []));
+            } else {
+              result = stmt.all(...(values ?? []));
+            }
+
+            const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
+
+            sqlResult.command = command;
+            sqlResult.count = $isArray(result) ? result.length : 1;
+
+            stmt.finalize();
+            query.resolve(sqlResult);
           } else {
-            result = stmt.all(...(values ?? []));
+            // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
+            const changes = db.run(sql, ...(values ?? []));
+            const sqlResult = new SQLResultArray();
+
+            sqlResult.command = command;
+            sqlResult.count = changes.changes;
+            sqlResult.lastInsertRowid = changes.lastInsertRowid;
+
+            query.resolve(sqlResult);
           }
+        } catch (err) {
+          // Convert bun:sqlite errors to SQLiteError
+          if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+            // Extract SQLite error properties
+            const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
+            const errno = "errno" in err ? Number(err.errno) : 1;
+            const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
+            const message = "message" in err ? String(err.message) : "SQLite error";
 
-          const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
-
-          sqlResult.command = command;
-          sqlResult.count = $isArray(result) ? result.length : 1;
-
-          stmt.finalize();
-          query.resolve(sqlResult);
-        } else {
-          // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-          const changes = db.run(sql, ...(values ?? []));
-          const sqlResult = new SQLResultArray();
-
-          sqlResult.command = command;
-          sqlResult.count = changes.changes;
-          sqlResult.lastInsertRowid = changes.lastInsertRowid;
-
-          query.resolve(sqlResult);
+            throw new SQLiteError(message, { code, errno, byteOffset });
+          }
+          // Re-throw if it's not a SQLite error
+          throw err;
         }
       },
       setMode: mode => {

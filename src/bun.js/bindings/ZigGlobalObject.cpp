@@ -2644,6 +2644,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
         throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);
         return {};
     }
+    
+    if (!callSites) {
+        throwTypeError(lexicalGlobalObject, scope, "Second argument must be an Array of CallSite objects"_s);
+        return {};
+    }
 
     JSValue result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, jsUndefined());
 

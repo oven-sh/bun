@@ -29,6 +29,8 @@ Concurrent test execution:
 
 Status:
 
-- [ ] clean up the code
+- [ ] clean up / make the code more robust
 - [ ] add test timeouts
 - [ ] are there hook timeouts?
+- [ ] use the new owned pointer types?
+- [ ] make a new jsc.strong / jsc.strong.optional class that uses .protect()/.unprotect() and in debug builds allocates something for leak checking

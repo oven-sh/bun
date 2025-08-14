@@ -25,15 +25,12 @@ pub fn VisitExpr(
                 p.log.addError(p.source, expr.loc, "Invalid assignment target") catch unreachable;
             }
 
-            // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
-            switch (@as(Expr.Tag, expr.data)) {
-                inline else => |tag| {
-                    if (@hasDecl(visitors, @tagName(tag))) {
-                        return @field(visitors, @tagName(tag))(p, expr, in);
-                    }
-                    return expr;
-                },
-            }
+            return switch (@as(Expr.Tag, expr.data)) {
+                inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))
+                    @field(visitors, @tagName(tag))(p, expr, in)
+                else
+                    expr,
+            };
         }
 
         const visitors = struct {

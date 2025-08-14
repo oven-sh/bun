@@ -31,7 +31,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", regex: true },
+  ": [^=]+= undefined,$": { reason: "Do not default a struct field to undefined", regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
@@ -69,7 +69,7 @@ for (const source of sources) {
       if (source.startsWith("src" + path.sep + "codegen")) continue;
       const content = await file(source).text();
       for (const word of words_keys) {
-        let regex = words[word].regex ? new RegExp(word, "g") : undefined;
+        let regex = words[word].regex ? new RegExp(word, "gm") : undefined;
         const did_match = regex ? regex.test(content) : content.includes(word);
         if (regex) regex.lastIndex = 0;
         if (did_match) {

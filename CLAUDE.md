@@ -231,6 +231,7 @@ bun ci
 9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
+12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 ## Key APIs and Features
 

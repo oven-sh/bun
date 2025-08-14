@@ -138,7 +138,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         // So we can know if the frame is inside the HMR runtime if
         // `frame.position.line < generated_mappings[1].lines`.
         const generated_mappings = result.mappings.generated();
-        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines) {
+        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines.zeroBased()) {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;
@@ -159,12 +159,12 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             if (index >= 1 and (index - 1) < result.file_paths.len) {
                 const abs_path = result.file_paths[@intCast(index - 1)];
                 frame.source_url = .init(abs_path);
-                const relative_path_buf = ctx.dev.relative_path_buf.lock();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
                 const rel_path = ctx.dev.relativePath(relative_path_buf, abs_path);
                 if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
                     frame.function_name = .empty;
                 }
-                ctx.dev.relative_path_buf.unlock();
                 frame.remapped = true;
 
                 if (runtime_lines == null) {
@@ -253,7 +253,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         const src_to_write = frame.source_url.value.ZigString.slice();
         if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
-            const relative_path_buf = ctx.dev.relative_path_buf.lock();
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
             const file = ctx.dev.relativePath(relative_path_buf, src_to_write);
             try w.writeInt(u32, @intCast(file.len), .little);
             try w.writeAll(file);

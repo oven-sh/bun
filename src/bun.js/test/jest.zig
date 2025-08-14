@@ -6,7 +6,7 @@ pub const Tag = enum(u3) {
     todo,
     skipped_because_label,
 };
-const debug = Output.scoped(.jest, false);
+const debug = Output.scoped(.jest, .visible);
 
 var max_test_id_for_debugger: u32 = 0;
 

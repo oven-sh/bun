@@ -1894,7 +1894,7 @@ interface BunFetchRequestInit extends RequestInit {
    * This controls the size of the internal buffer used when reading the response body.
    * Larger values can improve performance for large responses at the cost of memory.
    * This is a custom property that is not part of the Fetch API specification.
-   * 
+   *
    * @default 16384 (16KB)
    * @example
    * ```js
@@ -1912,7 +1912,7 @@ interface BunFetchRequestInit extends RequestInit {
    * and the `Content-Encoding` header will be preserved. This can improve performance
    * when you need to handle compressed data manually or forward it as-is.
    * This is a custom property that is not part of the Fetch API specification.
-   * 
+   *
    * @default true
    * @example
    * ```js

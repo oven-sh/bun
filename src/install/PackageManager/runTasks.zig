@@ -744,10 +744,6 @@ pub fn runTasks(
                     const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
                     const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
 
-                    if (comptime Environment.isDebug) {
-                        Output.prettyErrorln("[git-clone] Processing git clone result: repo={s}, committish={s}", .{ repo, committish });
-                    }
-
                     const resolved = try Repository.findCommit(
                         manager.allocator,
                         manager.env,
@@ -757,10 +753,6 @@ pub fn runTasks(
                         committish,
                         task.id,
                     );
-
-                    if (comptime Environment.isDebug) {
-                        Output.prettyErrorln("[git-clone] Resolved commit: {s}", .{resolved});
-                    }
 
                     const checkout_id = Task.Id.forGitCheckout(repo, resolved);
 

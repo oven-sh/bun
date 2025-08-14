@@ -4,6 +4,8 @@
 #include "JavaScriptCore/TypedArrayType.h"
 #include "mimalloc.h"
 
+extern const bool Bun__useMimalloc;
+
 namespace Bun {
 
 extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
@@ -12,12 +14,11 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
 
     if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-#if __has_feature(address_sanitizer)
-            // mimalloc is disabled in ASAN builds
-            free(p);
-#else
-            mi_free(p);
-#endif
+            if (Bun__useMimalloc) {
+                mi_free(p);
+            } else {
+                free(p);
+            }
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTFMove(buffer), 0, length);
@@ -35,12 +36,11 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
 
     if (length > 0) [[likely]] {
         buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-#if __has_feature(address_sanitizer)
-            // mimalloc is disabled in ASAN builds
-            free(p);
-#else
-            mi_free(p);
-#endif
+            if (Bun__useMimalloc) {
+                mi_free(p);
+            } else {
+                free(p);
+            }
         }));
     } else {
         buffer = ArrayBuffer::create(0, 1);

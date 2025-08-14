@@ -11143,13 +11143,8 @@ describe("Misc", () => {
     });
 
     test("explicit adapter='postgres' with sqlite:// URL should throw as invalid url", async () => {
-      // Skip if no postgres available
-      if (!process.env.DATABASE_URL) {
-        return;
-      }
-
       let sql: Bun.SQL | undefined;
-      let thrown = false;
+      let error: unknown;
 
       try {
         sql = new Bun.SQL("sqlite://:memory:", {
@@ -11164,13 +11159,14 @@ describe("Misc", () => {
 
         expect(false).toBeTrue();
       } catch (e) {
-        thrown = true;
-        expect(e).toBeInstanceOf(TypeError);
-        expect(e.message).toMatchInlineSnapshot(`""sqlite://:memory:" cannot be parsed as a URL."`);
+        error = e;
       }
 
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toMatchInlineSnapshot(
+        `"Invalid URL 'sqlite://:memory:' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
+      );
       expect(sql).toBeUndefined();
-      expect(thrown).toBeTrue();
     });
 
     test("explicit adapter='sqlite' with sqlite:// URL works", async () => {

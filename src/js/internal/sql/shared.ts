@@ -155,6 +155,33 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   return null;
 }
 
+function parseSQLiteOptionsWithQueryParams(
+  sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions,
+  urlString: string | URL | null | undefined,
+): Bun.SQL.__internal.DefinedSQLiteOptions {
+  const str = typeof urlString === "string" ? urlString : urlString?.toString();
+  if (str && str.includes("?")) {
+    try {
+      const url = new URL(str.startsWith("sqlite://") || str.startsWith("file://") ? str : "sqlite://" + str);
+      const params = url.searchParams;
+
+      const mode = params.get("mode");
+
+      if (mode === "ro") {
+        sqliteOptions.readonly = true;
+      } else if (mode === "rw") {
+        sqliteOptions.readonly = false;
+      } else if (mode === "rwc") {
+        sqliteOptions.readonly = false;
+        sqliteOptions.create = true;
+      }
+    } catch {
+      // If URL parsing fails, ignore the parameters
+    }
+  }
+  return sqliteOptions;
+}
+
 function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   options: Bun.SQL.Options,
   adapter: A,
@@ -195,39 +222,28 @@ function parseOptions(
         filename: sqliteUrl,
       };
 
-      const str = typeof stringOrUrl === "string" ? stringOrUrl : stringOrUrl.toString();
-      if (str.includes("?")) {
-        try {
-          const url = new URL(str.startsWith("sqlite://") || str.startsWith("file://") ? str : "sqlite://" + str);
-          const params = url.searchParams;
-
-          const mode = params.get("mode");
-
-          if (mode === "ro") {
-            sqliteOptions.readonly = true;
-          } else if (mode === "rw") {
-            sqliteOptions.readonly = false;
-          } else if (mode === "rwc") {
-            sqliteOptions.readonly = false;
-            sqliteOptions.create = true;
-          }
-        } catch {
-          // If URL parsing fails, ignore the parameters
-        }
-      }
-
-      return sqliteOptions;
+      return parseSQLiteOptionsWithQueryParams(sqliteOptions, stringOrUrl);
     }
   }
 
   if (options.adapter === "sqlite") {
-    const filenameFromOptions = options.filename || stringOrUrl;
+    let filenameFromOptions = options.filename || stringOrUrl;
 
-    return {
+    // Parse sqlite:// URLs when adapter is explicitly sqlite
+    if (typeof filenameFromOptions === "string" || filenameFromOptions instanceof URL) {
+      const parsed = parseDefinitelySqliteUrl(filenameFromOptions);
+      if (parsed !== null) {
+        filenameFromOptions = parsed;
+      }
+    }
+
+    const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
       ...options,
       adapter: "sqlite",
       filename: filenameFromOptions || ":memory:",
     };
+
+    return parseSQLiteOptionsWithQueryParams(sqliteOptions, stringOrUrl);
   }
 
   if (options.adapter !== undefined && options.adapter !== "postgres" && options.adapter !== "postgresql") {
@@ -272,6 +288,17 @@ function parseOptions(
     }
 
     if (urlString) {
+      // Check if it's a SQLite URL before trying to parse as regular URL
+      const sqliteUrl = parseDefinitelySqliteUrl(urlString);
+      if (sqliteUrl !== null) {
+        const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
+          ...options,
+          adapter: "sqlite",
+          filename: sqliteUrl,
+        };
+        return parseSQLiteOptionsWithQueryParams(sqliteOptions, urlString);
+      }
+
       url = new URL(urlString);
     }
   } else if (stringOrUrl && typeof stringOrUrl === "object") {

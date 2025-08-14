@@ -79,7 +79,7 @@ pub const RequestBodyBuffer = union(enum) {
     }
 };
 
-const threadlog = Output.scoped(.HTTPThread, true);
+const threadlog = Output.scoped(.HTTPThread, .hidden);
 const WriteMessage = struct {
     async_http_id: u32,
     flags: packed struct(u8) {
@@ -460,7 +460,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
 
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 
-const log = Output.scoped(.HTTPThread, false);
+const log = Output.scoped(.HTTPThread, .visible);
 
 const stringZ = [:0]const u8;
 

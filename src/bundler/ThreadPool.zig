@@ -11,7 +11,7 @@ pub const ThreadPool = struct {
     workers_assignments_lock: bun.Mutex = .{},
     v2: *BundleV2,
 
-    const debug = Output.scoped(.ThreadPool, false);
+    const debug = Output.scoped(.ThreadPool, .visible);
 
     const IOThreadPool = struct {
         var thread_pool: ThreadPoolLib = undefined;

@@ -1,5 +1,5 @@
-const httplog = Output.scoped(.Server, false);
-const ctxLog = Output.scoped(.RequestContext, false);
+const httplog = Output.scoped(.Server, .visible);
+const ctxLog = Output.scoped(.RequestContext, .visible);
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");

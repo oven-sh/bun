@@ -2,7 +2,7 @@
 
 const Watcher = @This();
 
-const DebugLogScope = bun.Output.Scoped(.watcher, false);
+const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
 
 // This will always be [max_count]WatchEvent,

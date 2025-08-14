@@ -614,7 +614,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundle_graph_index: bun.ast.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
                 @panic("unresolved index"); // do not process for failed chunks
             log("index id={d} {}:", .{
@@ -715,7 +715,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
             const imported = edge.imported.get();
-            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, true);
+            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, .hidden);
             log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
@@ -804,7 +804,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 css,
             },
         ) bun.OOM!enum { @"continue", stop } {
-            const log = bun.Output.scoped(.processEdgeAttachment, false);
+            const log = bun.Output.scoped(.processEdgeAttachment, .visible);
 
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
@@ -923,7 +923,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // don't call this function for CSS sources
             bun.assert(ctx.loaders[index.get()] != .css);
 
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 // When an import record is duplicated, it gets marked unused.
                 // This happens in `ConvertESMExportsForHmr.deduplicatedImport`

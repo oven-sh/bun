@@ -649,7 +649,7 @@ pub const UpgradeCommand = struct {
                         } else |_| {}
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>", .{@errorName(err)});
                     Global.exit(1);
                 };
 

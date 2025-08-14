@@ -10,9 +10,9 @@
 
 const DevServer = @This();
 
-pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
-pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
+pub const debug = bun.Output.Scoped(.DevServer, .visible);
+pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
+pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -2903,22 +2903,18 @@ fn encodeSerializedFailures(
     buf: *std.ArrayList(u8),
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) bun.OOM!void {
+    var all_failures_len: usize = 0;
+    for (failures) |fail| all_failures_len += fail.data.len;
+    var all_failures = try std.ArrayListUnmanaged(u8).initCapacity(dev.allocator, all_failures_len);
+    defer all_failures.deinit(dev.allocator);
+    for (failures) |fail| all_failures.appendSliceAssumeCapacity(fail.data);
+
     const failures_start_buf_pos = buf.items.len;
-    for (failures) |fail| {
-        const len = bun.base64.encodeLen(fail.data);
 
-        try buf.ensureUnusedCapacity(len);
-        const start = buf.items.len;
-        buf.items.len += len;
-        const to_write_into = buf.items[start..];
-
-        var encoded = to_write_into[0..bun.base64.encode(to_write_into, fail.data)];
-        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
-            encoded.len -= 1;
-        }
-
-        buf.items.len = start + encoded.len;
-    }
+    const len = bun.base64.encodeLen(all_failures.items);
+    try buf.ensureUnusedCapacity(len);
+    const to_write_into = buf.unusedCapacitySlice();
+    buf.items.len += bun.base64.encode(to_write_into, all_failures.items);
 
     // Re-use the encoded buffer to avoid encoding failures more times than neccecary.
     if (inspector_agent) |agent| {

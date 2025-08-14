@@ -113,15 +113,6 @@ class SQLHelper<T> {
   }
 }
 
-class UnsupportedAdapterError extends Error {
-  public options: Bun.SQL.Options;
-
-  constructor(options: Bun.SQL.Options) {
-    super(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite"`);
-    this.options = options;
-  }
-}
-
 function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   if (value === null) return null;
   const str = value instanceof URL ? value.toString() : value;
@@ -241,7 +232,7 @@ function parseOptions(
 
   if (options.adapter !== undefined && options.adapter !== "postgres" && options.adapter !== "postgresql") {
     options.adapter satisfies never; // This will type error if we support a new adapter in the future, which will let us know to update this check
-    throw new UnsupportedAdapterError(options);
+    throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite"`);
   }
 
   // @ts-expect-error Compatibility
@@ -504,17 +495,21 @@ export interface TransactionCommands {
   BEFORE_COMMIT_OR_ROLLBACK?: string | null;
 }
 
-export interface DatabaseAdapter<Connection, Handle> {
+export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
-  createQueryHandle(sql: string, values: unknown[], flags: number): Handle;
+  createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
-  release(connection: Connection, connectingEvent?: boolean): void;
+  release(connection: ConnectionHandle, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
   isConnected(): boolean;
   get closed(): boolean;
 
   supportsReservedConnections?(): boolean;
+  getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
+  attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+  detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+
   getTransactionCommands(options?: string): TransactionCommands;
   getDistributedTransactionCommands?(name: string): TransactionCommands | null;
 
@@ -530,7 +525,6 @@ export default {
   isOptionsOfAdapter,
   assertIsOptionsOfAdapter,
   parseOptions,
-  UnsupportedAdapterError,
   SQLHelper,
   SSLMode,
   normalizeSSLMode,

@@ -145,7 +145,9 @@ function detectCommand(query: string): SQLCommand {
 
 export interface SQLiteQueryHandle extends BaseQueryHandle<BunSQLiteModule.Database> {}
 
-export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, SQLiteQueryHandle> {
+export class SQLiteAdapter
+  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
@@ -491,6 +493,10 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
   supportsReservedConnections(): boolean {
     // SQLite doesn't have a connection pool, so it doesn't support reserved connections
     return false;
+  }
+
+  getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
+    return connection;
   }
 
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {

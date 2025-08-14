@@ -11122,14 +11122,6 @@ describe("should proper handle connection errors", () => {
 });
 
 describe("Misc", () => {
-  // test("UnsupportedAdapterError exists", () => {
-  //   expect(Bun.SQL.UnsupportedAdapterError).toBeDefined();
-  //   expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toHaveProperty("options");
-  //   expect(new Bun.SQL.UnsupportedAdapterError({ adapter: "sqlite" })).toMatchInlineSnapshot(
-  //     `[UnsupportedAdapterError: Unsupported adapter: sqlite. Supported adapters: "postgres", "sqlite"]`,
-  //   );
-  // });
-
   describe("Adapter override URL parsing", () => {
     test("explicit adapter='sqlite' overrides postgres:// URL", async () => {
       // Even though URL suggests postgres, explicit adapter should win

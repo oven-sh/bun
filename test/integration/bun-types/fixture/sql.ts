@@ -19,9 +19,6 @@ import { expectAssignable, expectType } from "./utilities";
   await postgres`select * from users where id = ${id}`;
 }
 
-expectType<Bun.SQL.UnsupportedAdapterError>().extends<Error>();
-expectType<Bun.SQL.UnsupportedAdapterError["options"]>().is<Bun.SQL.Options>();
-
 {
   const postgres = new Bun.SQL();
   postgres("ok");

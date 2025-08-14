@@ -35,11 +35,6 @@ declare module "bun" {
   }
 
   namespace SQL {
-    class UnsupportedAdapterError extends Error {
-      public readonly options: Bun.SQL.Options;
-      public constructor(options: Bun.SQL.Options);
-    }
-
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
       [K in keyof T]: Awaited<T[K]>;
     };

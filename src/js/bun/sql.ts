@@ -674,8 +674,17 @@ const SQL: typeof Bun.SQL = function SQL(
 
         case "sqlite":
           if (options) {
-            // SQLite doesn't have a direct "readonly" transaction mode
-            // Just pass through DEFERRED, IMMEDIATE, EXCLUSIVE options
+            // SQLite doesn't support "readonly" transactions
+            if (options === "readonly" || options === "read") {
+              pool.release(pooledConnection); // in theory this is not really needed since sqlite doesnt "release" but we should keep it so that the adapter stays agnostic
+              return reject(
+                new Error(
+                  `SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`,
+                ),
+              );
+            }
+
+            // SQLite supports DEFERRED, IMMEDIATE, EXCLUSIVE
             BEGIN_COMMAND = `BEGIN ${options}`;
           }
           break;
@@ -985,6 +994,7 @@ const SQL: typeof Bun.SQL = function SQL(
     if (pool.closed) {
       throw connectionClosedError();
     }
+
     assertValidTransactionName(name);
     const adapter = connectionInfo.adapter;
     switch (adapter) {

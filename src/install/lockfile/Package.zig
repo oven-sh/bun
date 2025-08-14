@@ -958,7 +958,7 @@ pub const Package = extern struct {
     ) !void {
         initializeStore();
         if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[Package.parse] Parsing JSON from source: path={s}, content_len={}", .{source.path.text, source.contents.len});
+            Output.prettyErrorln("[Package.parse] Parsing JSON from source: path={s}, content_len={}", .{ source.path.text, source.contents.len });
             if (source.contents.len < 500) {
                 Output.prettyErrorln("[Package.parse] Content: {s}", .{source.contents});
             }
@@ -1456,7 +1456,7 @@ pub const Package = extern struct {
             }
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("[parseWithJSON] Found {s} property, type={s}", .{group.prop, @tagName(dependencies_q.expr.data)});
+                    Output.prettyErrorln("[parseWithJSON] Found {s} property, type={s}", .{ group.prop, @tagName(dependencies_q.expr.data) });
                 }
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
@@ -1539,9 +1539,9 @@ pub const Package = extern struct {
                             }
                         }
                         total_dependencies_count += @as(u32, @truncate(obj.properties.len));
-                        
+
                         if (comptime Environment.isDebug) {
-                            Output.prettyErrorln("[parse-deps] Group {s}: found {} dependencies", .{group.prop, obj.properties.len});
+                            Output.prettyErrorln("[parse-deps] Group {s}: found {} dependencies", .{ group.prop, obj.properties.len });
                         }
                     },
                     else => {
@@ -1610,7 +1610,7 @@ pub const Package = extern struct {
         if (comptime Environment.isDebug) {
             Output.prettyErrorln("[parseWithJSON] Total dependencies count: {}", .{total_dependencies_count});
         }
-        
+
         try string_builder.allocate();
         try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);

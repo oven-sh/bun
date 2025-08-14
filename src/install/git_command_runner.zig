@@ -717,11 +717,11 @@ pub const GitCommandRunner = struct {
                                         if (json_buf.len > 0) {
                                             const first_non_space = std.mem.indexOfNone(u8, json_buf, " \t\r\n") orelse 0;
                                             if (first_non_space < json_buf.len) {
-                                                Output.prettyErrorln("[git-checkout] First char: '{c}' (0x{x})", .{json_buf[first_non_space], json_buf[first_non_space]});
+                                                Output.prettyErrorln("[git-checkout] First char: '{c}' (0x{x})", .{ json_buf[first_non_space], json_buf[first_non_space] });
                                             }
                                             // Print first 200 chars
                                             const preview_len = @min(200, json_buf.len);
-                                            Output.prettyErrorln("[git-checkout] First {} chars: {s}", .{preview_len, json_buf[0..preview_len]});
+                                            Output.prettyErrorln("[git-checkout] First {} chars: {s}", .{ preview_len, json_buf[0..preview_len] });
                                         }
                                     }
                                     // Don't close the file yet - we're passing the buffer to the task

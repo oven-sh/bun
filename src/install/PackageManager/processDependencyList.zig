@@ -67,7 +67,7 @@ pub fn processExtractedTarballPackage(
                 var pkg = Lockfile.Package{};
                 if (data.json) |json| {
                     if (comptime Environment.isDebug) {
-                        Output.prettyErrorln("[processExtractedTarballPackage] Has package.json: path={s}, buf_len={}", .{json.path, json.buf.len});
+                        Output.prettyErrorln("[processExtractedTarballPackage] Has package.json: path={s}, buf_len={}", .{ json.path, json.buf.len });
                         if (json.buf.len < 500) {
                             Output.prettyErrorln("[processExtractedTarballPackage] JSON content: {s}", .{json.buf});
                         }
@@ -148,10 +148,7 @@ pub fn processExtractedTarballPackage(
 
             if (comptime Environment.isDebug) {
                 const string_buf = manager.lockfile.buffers.string_bytes.items;
-                Output.prettyErrorln("[git-checkout] Package {s} has {} dependencies", .{ 
-                    package.name.slice(string_buf), 
-                    package.dependencies.len 
-                });
+                Output.prettyErrorln("[git-checkout] Package {s} has {} dependencies", .{ package.name.slice(string_buf), package.dependencies.len });
             }
 
             if (package.dependencies.len > 0) {

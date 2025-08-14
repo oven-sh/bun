@@ -94,11 +94,10 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
-#if __has_feature(address_sanitizer)
-                // mimalloc is disabled in ASAN builds
-                free(const_cast<void*>(ptr));
-#else
+#ifdef USE_MIMALLOC
                 mi_free(const_cast<void*>(ptr));
+#else
+                free(const_cast<void*>(ptr));
 #endif
             };
             const auto destructorNoOp = [](const void* ptr) {

@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("Error.prepareStackTrace should throw TypeError when called with missing arguments", async () => {
@@ -105,7 +105,7 @@ test("Error.prepareStackTrace should work with Error instance containing stack",
       console.error('Error:', err.message);
     }
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -141,7 +141,7 @@ test("Error.prepareStackTrace should handle various Error types", async () => {
       }
     }
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -190,7 +190,7 @@ test("Error.prepareStackTrace edge case: null and undefined arguments", async ()
       console.log('undefined callsites:', e.message);
     }
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -230,7 +230,7 @@ test("Error.prepareStackTrace should not crash with complex nested calls", async
       console.log('Failed:', e.message);
     }
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",

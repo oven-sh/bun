@@ -351,9 +351,5 @@ const Subshell = bun.shell.Interpreter.Subshell;
 
 const Pipe = bun.shell.interpret.Pipe;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const Syscall = bun.shell.interpret.Syscall;
 const closefd = bun.shell.interpret.closefd;
 const log = bun.shell.interpret.log;
-
-const windows = bun.windows;
-const uv = windows.libuv;

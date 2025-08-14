@@ -514,6 +514,7 @@ export interface DatabaseAdapter<Connection, Handle> {
   isConnected(): boolean;
   get closed(): boolean;
 
+  supportsReservedConnections?(): boolean;
   getTransactionCommands(options?: string): TransactionCommands;
   getDistributedTransactionCommands?(name: string): TransactionCommands | null;
 

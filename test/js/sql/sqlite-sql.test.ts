@@ -790,7 +790,7 @@ describe("Connection management", () => {
     const sql = new SQL("sqlite://:memory:");
 
     expect(sql.reserve()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"SQLite doesn't support connection reservation (no connection pool)"`,
+      `"This adapter doesn't support connection reservation"`,
     );
 
     await sql.close();

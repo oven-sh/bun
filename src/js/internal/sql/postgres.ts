@@ -508,6 +508,11 @@ export class PostgresAdapter
     this.readyConnections = new Set();
   }
 
+  supportsReservedConnections(): boolean {
+    // PostgreSQL has a connection pool, so it supports reserved connections
+    return true;
+  }
+
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "BEGIN";
     if (options) {

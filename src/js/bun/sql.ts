@@ -674,7 +674,8 @@ const SQL: typeof Bun.SQL = function SQL(
 
         case "sqlite":
           if (options) {
-            // sqlite supports DEFERRED, IMMEDIATE, EXCLUSIVE
+            // SQLite doesn't have a direct "readonly" transaction mode
+            // Just pass through DEFERRED, IMMEDIATE, EXCLUSIVE options
             BEGIN_COMMAND = `BEGIN ${options}`;
           }
           break;
@@ -966,9 +967,14 @@ const SQL: typeof Bun.SQL = function SQL(
         return unsafeQuery(text, args);
       });
   };
+
   sql.reserve = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
+    }
+
+    if (connectionInfo.adapter === "sqlite") {
+      return Promise.reject(new Error("SQLite doesn't support connection reservation (no connection pool)"));
     }
 
     const promiseWithResolvers = Promise.withResolvers();

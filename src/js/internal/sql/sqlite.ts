@@ -486,7 +486,8 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
   }
 
   flush() {
-    // SQLite doesn't need flush
+    // SQLite executes queries synchronously, so there's nothing to flush
+    throw new Error("SQLite doesn't support flush() - queries are executed synchronously");
   }
 
   isConnected() {

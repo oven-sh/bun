@@ -209,6 +209,15 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
+  async run() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
+
+    await this[_run](true);
+    return this;
+  }
+
   raw() {
     const handle = this.getQueryHandle();
 

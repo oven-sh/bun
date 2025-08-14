@@ -1,25 +1,25 @@
-import { describe, test, beforeAll, afterAll } from "bun:test";
+import { describe, test, beforeEach, afterEach } from "bun:test";
 
-beforeAll(() => {
-  console.log("beforeAll 1");
+beforeEach(() => {
+  console.log("beforeEach 1");
 });
-beforeAll(() => {
-  console.log("beforeAll 2");
+beforeEach(() => {
+  console.log("beforeEach 2");
 });
 
-afterAll(() => {
-  console.log("afterAll 2");
+afterEach(() => {
+  console.log("afterEach 2");
 });
-afterAll(() => {
-  console.log("afterAll 1");
+afterEach(() => {
+  console.log("afterEach 1");
 });
 
 describe("sub", () => {
-  beforeAll(() => {
-    console.log("beforeAll 3");
+  beforeEach(() => {
+    console.log("beforeEach 3");
   });
-  beforeAll(() => {
-    console.log("beforeAll 4");
+  beforeEach(() => {
+    console.log("beforeEach 4");
   });
 
   test("main", () => {
@@ -32,11 +32,11 @@ describe("sub", () => {
     });
   });
 
-  afterAll(() => {
-    console.log("afterAll 4");
+  afterEach(() => {
+    console.log("afterEach 4");
   });
-  afterAll(() => {
-    console.log("afterAll 3");
+  afterEach(() => {
+    console.log("afterEach 3");
   });
 });
 

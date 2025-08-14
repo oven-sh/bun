@@ -65,7 +65,7 @@ pub const js_fns = struct {
                         return .js_undefined;
                     },
                     .execution => {
-                        return globalObject.throw("Cannot call beforeEach/beforeAll/afterAll/afterEach() inside a test", .{});
+                        return globalObject.throw("Cannot call beforeAll/beforeEach/afterEach/afterAll() inside a test", .{});
                     },
                 }
             }
@@ -222,34 +222,34 @@ pub const Collection = @import("./Collection.zig");
 pub const DescribeScope = struct {
     parent: ?*DescribeScope,
     entries: std.ArrayList(TestScheduleEntry2),
-    beforeEach: std.ArrayList(*ExecutionEntry),
     beforeAll: std.ArrayList(*ExecutionEntry),
-    afterAll: std.ArrayList(*ExecutionEntry),
+    beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
+    afterAll: std.ArrayList(*ExecutionEntry),
     name: jsc.Strong.Optional,
 
     pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
             .entries = .init(gpa),
-            .beforeAll = .init(gpa),
             .beforeEach = .init(gpa),
-            .afterEach = .init(gpa),
+            .beforeAll = .init(gpa),
             .afterAll = .init(gpa),
+            .afterEach = .init(gpa),
             .parent = parent,
             .name = .empty,
         };
     }
     pub fn destroy(this: *DescribeScope, buntest: *BunTest) void {
         for (this.entries.items) |*entry| entry.deinit(buntest);
-        for (this.beforeEach.items) |item| item.destroy(buntest);
         for (this.beforeAll.items) |item| item.destroy(buntest);
-        for (this.afterEach.items) |item| item.destroy(buntest);
+        for (this.beforeEach.items) |item| item.destroy(buntest);
         for (this.afterAll.items) |item| item.destroy(buntest);
+        for (this.afterEach.items) |item| item.destroy(buntest);
         this.entries.deinit();
-        this.beforeEach.deinit();
         this.beforeAll.deinit();
-        this.afterEach.deinit();
+        this.beforeEach.deinit();
         this.afterAll.deinit();
+        this.afterEach.deinit();
         this.name.deinit();
         buntest.gpa.destroy(this);
     }
@@ -258,13 +258,13 @@ pub const ExecutionEntry = struct {
     parent: *DescribeScope,
     tag: enum {
         test_callback,
-        beforeEach,
         beforeAll,
-        afterAll,
+        beforeEach,
         afterEach,
+        afterAll,
         pub fn isCalledMultipleTimes(this: @This()) bool {
             return switch (this) {
-                .beforeAll, .afterAll => true,
+                .beforeEach, .afterEach => true,
                 else => false,
             };
         }

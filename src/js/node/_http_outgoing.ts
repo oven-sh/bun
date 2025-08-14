@@ -245,9 +245,13 @@ const OutgoingMessagePrototype = {
   },
 
   getHeaders() {
-    const headers = this[headersSymbol];
-    if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    const outHeaders = this[kOutHeaders];
+    if (!outHeaders) return kEmptyObject;
+    const result = Object.create(null);
+    for (const [key, value] of Object.entries(outHeaders)) {
+      result[key] = Array.isArray(value) ? [...value] : value;
+    }
+    return result;
   },
 
   removeHeader(name) {
@@ -256,8 +260,14 @@ const OutgoingMessagePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("remove");
     }
     const headers = this[headersSymbol];
-    if (!headers) return;
-    headers.delete(name);
+    if (headers) {
+      headers.delete(name);
+    }
+    // Also remove from our stored headers
+    const outHeaders = this[kOutHeaders];
+    if (outHeaders) {
+      delete outHeaders[name.toLowerCase()];
+    }
   },
 
   setHeader(name, value) {
@@ -265,9 +275,31 @@ const OutgoingMessagePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("set");
     }
     validateHeaderName(name);
-    validateHeaderValue(name, value);
-    const headers = (this[headersSymbol] ??= new Headers());
-    setHeader(headers, name, value);
+    
+    // Handle arrays like Node.js - preserve them for getHeaders() but join for actual HTTP
+    if (Array.isArray(value)) {
+      // Validate each array element
+      for (const item of value) {
+        validateHeaderValue(name, item);
+      }
+      const headers = (this[headersSymbol] ??= new Headers());
+      // For the native Headers object, we join the array (for actual HTTP sending)
+      setHeader(headers, name, value.join(", "));
+      // But we also store the original array for getHeaders() compatibility
+      if (!this[kOutHeaders]) {
+        this[kOutHeaders] = Object.create(null);
+      }
+      this[kOutHeaders][name.toLowerCase()] = [...value];
+    } else {
+      validateHeaderValue(name, value);
+      const headers = (this[headersSymbol] ??= new Headers());
+      setHeader(headers, name, value);
+      // Store the string value for getHeaders()
+      if (!this[kOutHeaders]) {
+        this[kOutHeaders] = Object.create(null);
+      }
+      this[kOutHeaders][name.toLowerCase()] = value;
+    }
     return this;
   },
   setHeaders(headers) {

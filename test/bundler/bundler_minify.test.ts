@@ -690,4 +690,5 @@ describe("bundler", () => {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
     },
   });
+
 });

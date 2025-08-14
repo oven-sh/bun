@@ -514,6 +514,11 @@ pub fn VisitExpr(
                 const is_call_target = p.call_target == .e_index and expr.data.e_index == p.call_target.e_index;
                 const is_delete_target = p.delete_target == .e_index and expr.data.e_index == p.delete_target.e_index;
 
+                const target_visited = p.visitExprInOut(e_.target, ExprIn{
+                    .has_chain_parent = e_.optional_chain == .continuation,
+                });
+                e_.target = target_visited;
+
                 // "a['b']" => "a.b"
                 if (p.options.features.minify_syntax and
                     e_.index.data == .e_string and
@@ -540,11 +545,6 @@ pub fn VisitExpr(
 
                     return p.visitExprInOut(dot, in);
                 }
-
-                const target_visited = p.visitExprInOut(e_.target, ExprIn{
-                    .has_chain_parent = e_.optional_chain == .continuation,
-                });
-                e_.target = target_visited;
 
                 switch (e_.index.data) {
                     .e_private_identifier => |_private| {

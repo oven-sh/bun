@@ -304,6 +304,10 @@ const ZlibAllocator = struct {
             return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
         }
 
+        if (comptime !bun.use_mimalloc) {
+            return std.c.calloc(items, len) orelse bun.outOfMemory();
+        }
+
         return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
     }
 

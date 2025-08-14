@@ -1,14 +1,14 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("Error.prepareStackTrace called without second parameter should not crash", async () => {
   // This test is for issue #21815
-  // The command `Error.prepareStackTrace(e)` was causing a segmentation fault 
+  // The command `Error.prepareStackTrace(e)` was causing a segmentation fault
   // due to missing validation of the second parameter (callSites array)
-  // 
+  //
   // Node.js throws: "Cannot read properties of undefined (reading 'length')"
   // Bun now throws: "Second argument must be an array of call sites" (clearer message)
-  
+
   const code = `
 const e = new Error();
 try {
@@ -28,11 +28,7 @@ process.exit(1);
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The command should execute successfully without crashing
   expect(exitCode).toBe(0);
@@ -56,11 +52,7 @@ console.log("Result:", Error.prepareStackTrace(e)); // Missing second param shou
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("Result: Custom: test");

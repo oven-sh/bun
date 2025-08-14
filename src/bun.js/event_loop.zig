@@ -359,9 +359,9 @@ pub fn autoTick(this: *EventLoop) void {
         }
     } else {
         loop.tickWithoutIdle();
-        if (comptime Environment.isDebug) {
-            log("tickWithoutIdle", .{});
-        }
+        // if (comptime Environment.isDebug) {
+        //     log("tickWithoutIdle", .{});
+        // }
     }
 
     if (Environment.isPosix) {

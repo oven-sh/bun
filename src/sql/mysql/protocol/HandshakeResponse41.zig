@@ -25,7 +25,6 @@ pub fn deinit(this: *HandshakeResponse41) void {
 
 pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
     var packet = try writer.start(1);
-    defer packet.end() catch {};
 
     this.capability_flags.CLIENT_CONNECT_ATTRS = this.connect_attrs.count() > 0;
 
@@ -89,6 +88,13 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
             try writer.write(entry.value_ptr.*);
         }
     }
+
+    if (this.capability_flags.CLIENT_ZSTD_COMPRESSION_ALGORITHM) {
+        // try writer.writeInt(u8, this.zstd_compression_algorithm);
+        bun.assertf(false, "zstd compression algorithm is not supported", .{});
+    }
+
+    try packet.end();
 }
 
 pub const write = writeWrap(HandshakeResponse41, writeInternal).write;

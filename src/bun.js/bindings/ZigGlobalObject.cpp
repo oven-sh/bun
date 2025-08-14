@@ -4549,8 +4549,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
     } else if (handler == Bun__TestScope__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
-    } else if (handler == Bun__TestScope__Describe2__describeCallbackThen) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__describeCallbackThen;
+    } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {

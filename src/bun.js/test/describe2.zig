@@ -166,6 +166,21 @@ pub const BunTest = struct {
         // TODO jsvalue(this).unprotect()
         _ = this;
     }
+
+    export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
+    fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        var this: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
+        defer this.unref();
+
+        switch (this.phase) {
+            .collection => try this.collection.describeCallbackThen(globalThis),
+            .execution => try this.execution.testCallbackThen(globalThis),
+        }
+        return .js_undefined;
+    }
+    pub fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
+        promise.then(globalThis, this.ref(), bunTestThen, bunTestThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
+    }
 };
 
 pub const Collection = @import("./Collection.zig");
@@ -235,19 +250,6 @@ pub const TestScheduleEntry2 = union(enum) {
 };
 
 pub const Execution = @import("./Execution.zig");
-
-// here's how to execute describe blocks:
-// - when you call describe:
-// - enqueue_describes?
-//   - append the callback to a list of describe callbacks to execute
-// - else
-//   - call the callback
-//   - did it return a promise? if it did, mark 'enqueue_describes' as true
-//
-// when executing:
-// - sometimes 'test()' will be called during execution stage rather than collection stage. in this case, we should execute it before the next test is called.
-//
-// jest doesn't support async in describe. we will support this, so we can pick whatever order we want.
 
 pub const group = struct {
     fn printIndent() void {

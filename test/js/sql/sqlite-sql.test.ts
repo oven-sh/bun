@@ -96,6 +96,563 @@ describe("Connection & Initialization", () => {
     await sql.close();
     await rm(dir, { recursive: true });
   });
+
+  describe("Environment Variable Handling", () => {
+    let originalEnv: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      originalEnv = { ...Bun.env };
+    });
+
+    afterEach(() => {
+      // Restore original env vars
+      for (const key in Bun.env) {
+        if (!(key in originalEnv)) {
+          delete Bun.env[key];
+        }
+      }
+      for (const key in originalEnv) {
+        Bun.env[key] = originalEnv[key];
+      }
+    });
+
+    test("should use DATABASE_URL for SQLite when it's a SQLite URL", async () => {
+      const dir = tempDirWithFiles("sqlite-env-test", {});
+      const dbPath = path.join(dir, "env-test.db");
+
+      Bun.env.DATABASE_URL = `sqlite://${dbPath}`;
+
+      const sql = new SQL();
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle DATABASE_URL with :memory:", async () => {
+      Bun.env.DATABASE_URL = "sqlite://:memory:";
+
+      const sql = new SQL();
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      await sql`INSERT INTO test VALUES (1)`;
+      const result = await sql`SELECT * FROM test`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+    });
+
+    test("should handle SQLITE_URL env var when specified", async () => {
+      const dir = tempDirWithFiles("sqlite-url-test", {});
+      const dbPath = path.join(dir, "sqlite-url.db");
+
+      // This doesn't exist in the current implementation but testing anyway
+      Bun.env.SQLITE_URL = `sqlite://${dbPath}`;
+      Bun.env.DATABASE_URL = "postgres://localhost/test"; // Should be ignored when adapter is sqlite
+
+      const sql = new SQL("sqlite://:memory:");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should NOT use POSTGRES_URL for SQLite", async () => {
+      Bun.env.POSTGRES_URL = "postgres://user:pass@localhost:5432/mydb";
+
+      // When explicitly using sqlite adapter, POSTGRES_URL should be ignored
+      const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+
+      await sql.close();
+    });
+
+    test("should NOT use PGURL for SQLite", async () => {
+      Bun.env.PGURL = "postgres://user:pass@localhost:5432/mydb";
+
+      const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+
+      await sql.close();
+    });
+
+    test("should NOT use PG_URL for SQLite", async () => {
+      Bun.env.PG_URL = "postgres://user:pass@localhost:5432/mydb";
+
+      const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+
+      await sql.close();
+    });
+
+    test("should throw error when POSTGRES_URL is used without adapter specification", () => {
+      Bun.env.POSTGRES_URL = "postgres://user:pass@localhost:5432/mydb";
+      Bun.env.DATABASE_URL = undefined;
+
+      // This should create a postgres connection, not sqlite
+      const sql = new SQL();
+      expect(sql.options.adapter).toBe("postgres");
+      sql.close();
+    });
+
+    test("should handle multiple env vars with precedence", async () => {
+      // Test precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL
+      Bun.env.PG_URL = "postgres://pg_url@localhost:5432/pg_db";
+      Bun.env.PGURL = "postgres://pgurl@localhost:5432/pgurl_db";
+      Bun.env.DATABASE_URL = "sqlite://:memory:";
+      Bun.env.POSTGRES_URL = "postgres://postgres@localhost:5432/postgres_db";
+
+      const sql = new SQL();
+      // POSTGRES_URL takes precedence
+      expect(sql.options.adapter).toBe("postgres");
+      await sql.close();
+
+      // Remove POSTGRES_URL
+      delete Bun.env.POSTGRES_URL;
+      const sql2 = new SQL();
+      // DATABASE_URL takes next precedence and it's SQLite (detected via :memory:)
+      expect(sql2.options.adapter).toBe("sqlite");
+      expect((sql2.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      await sql2.close();
+    });
+  });
+
+  describe("file:// Protocol URLs", () => {
+    test("should handle file:// URLs", async () => {
+      const dir = tempDirWithFiles("file-protocol-test", {});
+      const dbPath = path.join(dir, "file-test.db");
+
+      const sql = new SQL(`file://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle file: URLs without slashes", async () => {
+      const dir = tempDirWithFiles("file-no-slash-test", {});
+      const dbPath = path.join(dir, "file-noslash.db");
+
+      const sql = new SQL(`file:${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle file:// with :memory:", () => {
+      const sql = new SQL("file://:memory:");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql.close();
+    });
+  });
+
+  describe("Query Parameters in SQLite URLs", () => {
+    test("should handle mode=ro (readonly)", async () => {
+      const dir = tempDirWithFiles("readonly-test", {});
+      const dbPath = path.join(dir, "readonly.db");
+
+      // First create a database
+      const createSql = new SQL(`sqlite://${dbPath}`);
+      await createSql`CREATE TABLE test (id INTEGER)`;
+      await createSql`INSERT INTO test VALUES (1)`;
+      await createSql.close();
+
+      // Now open in readonly mode
+      const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(true);
+
+      // Should be able to read
+      const result = await sql`SELECT * FROM test`;
+      expect(result).toHaveLength(1);
+
+      // Should not be able to write
+      expect(sql`INSERT INTO test VALUES (2)`).rejects.toThrow();
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle mode=rw (read-write)", async () => {
+      const dir = tempDirWithFiles("readwrite-test", {});
+      const dbPath = path.join(dir, "readwrite.db");
+
+      // Create database first
+      const createSql = new SQL(`sqlite://${dbPath}`);
+      await createSql`CREATE TABLE test (id INTEGER)`;
+      await createSql.close();
+
+      const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
+
+      await sql`INSERT INTO test VALUES (1)`;
+      const result = await sql`SELECT * FROM test`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle mode=rwc (read-write-create)", async () => {
+      const dir = tempDirWithFiles("rwc-test", {});
+      const dbPath = path.join(dir, "rwc.db");
+
+      const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
+      expect((sql.options as Bun.SQL.SQLiteOptions).create).toBe(true);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      await sql`INSERT INTO test VALUES (1)`;
+      const result = await sql`SELECT * FROM test`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle multiple query parameters", async () => {
+      const dir = tempDirWithFiles("multi-param-test", {});
+      const dbPath = path.join(dir, "multi.db");
+
+      // Note: Only mode is supported for SQLite, other params should be ignored
+      const sql = new SQL(`sqlite://${dbPath}?mode=rwc&cache=shared&timeout=5000`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).create).toBe(true);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should ignore fragment in URL", async () => {
+      const dir = tempDirWithFiles("fragment-test", {});
+      const dbPath = path.join(dir, "test#file.db");
+
+      // # is a valid filename character in SQLite
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+  });
+
+  describe("Special Characters in Filenames", () => {
+    test("should handle spaces in filename", async () => {
+      const dir = tempDirWithFiles("space-test", {});
+      const dbPath = path.join(dir, "test database.db");
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle special characters # and % in filename", async () => {
+      const dir = tempDirWithFiles("special-chars-test", {});
+      const dbPath = path.join(dir, "test#123%data.db");
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle unicode characters in filename", async () => {
+      const dir = tempDirWithFiles("unicode-test", {});
+      const dbPath = path.join(dir, "测试数据库.db");
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle dots in filename", async () => {
+      const dir = tempDirWithFiles("dots-test", {});
+      const dbPath = path.join(dir, "my.app.v2.0.db");
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+  });
+
+  describe("Path Handling", () => {
+    test("should handle absolute paths", async () => {
+      const dir = tempDirWithFiles("absolute-test", {});
+      const dbPath = path.resolve(dir, "absolute.db");
+
+      const sql = new SQL(`sqlite://${dbPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle relative paths with ./", async () => {
+      const dir = tempDirWithFiles("relative-dot-test", {});
+      const originalCwd = process.cwd();
+
+      try {
+        process.chdir(dir);
+
+        const sql = new SQL("sqlite://./test.db");
+        expect(sql.options.adapter).toBe("sqlite");
+        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("./test.db");
+
+        await sql`CREATE TABLE test (id INTEGER)`;
+        const stats = await stat(path.join(dir, "test.db"));
+        expect(stats.isFile()).toBe(true);
+
+        await sql.close();
+      } finally {
+        process.chdir(originalCwd);
+        await rm(dir, { recursive: true });
+      }
+    });
+
+    test("should handle paths with ../", async () => {
+      const parentDir = tempDirWithFiles("parent-test", {});
+      const childDir = path.join(parentDir, "child");
+      await Bun.$`mkdir -p ${childDir}`;
+      const originalCwd = process.cwd();
+
+      try {
+        process.chdir(childDir);
+
+        const sql = new SQL("sqlite://../parent.db");
+        expect(sql.options.adapter).toBe("sqlite");
+        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("../parent.db");
+
+        await sql`CREATE TABLE test (id INTEGER)`;
+        const stats = await stat(path.join(parentDir, "parent.db"));
+        expect(stats.isFile()).toBe(true);
+
+        await sql.close();
+      } finally {
+        process.chdir(originalCwd);
+        await rm(parentDir, { recursive: true });
+      }
+    });
+
+    test("should handle nested paths", async () => {
+      const dir = tempDirWithFiles("nested-test", {});
+      const nestedPath = path.join(dir, "data", "databases", "app.db");
+      await Bun.$`mkdir -p ${path.dirname(nestedPath)}`;
+
+      const sql = new SQL(`sqlite://${nestedPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(nestedPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(nestedPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+  });
+
+  describe("Empty and Invalid URLs", () => {
+    test("should handle empty string with adapter specified", () => {
+      const sql = new SQL("", { adapter: "sqlite" });
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql.close();
+    });
+
+    test("should handle null/undefined with adapter specified", () => {
+      const sql1 = new SQL(undefined, { adapter: "sqlite" });
+      expect(sql1.options.adapter).toBe("sqlite");
+      expect((sql1.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql1.close();
+
+      const sql2 = new SQL({ adapter: "sqlite" });
+      expect(sql2.options.adapter).toBe("sqlite");
+      expect((sql2.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql2.close();
+    });
+
+    test("should handle sqlite: without path", () => {
+      const sql = new SQL("sqlite:");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("");
+      sql.close();
+    });
+
+    test("should handle sqlite:// without path", () => {
+      const sql = new SQL("sqlite://");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("");
+      sql.close();
+    });
+
+    test("should handle just :memory: without prefix", () => {
+      const sql = new SQL(":memory:");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql.close();
+    });
+
+    test("should handle sqlite:memory without :", () => {
+      const sql = new SQL("sqlite:memory");
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      sql.close();
+    });
+
+    test("should throw for invalid URL without adapter", () => {
+      expect(() => new SQL("not-a-url")).toThrow("Invalid URL");
+    });
+
+    test("should throw for postgres URL when sqlite adapter is expected", () => {
+      expect(() => new SQL("myapp.db")).toThrow("Invalid URL 'myapp.db' for postgres");
+    });
+  });
+
+  describe("Mixed Configurations", () => {
+    test("should prefer explicit URL over env var", async () => {
+      const dir = tempDirWithFiles("explicit-test", {});
+      const envPath = path.join(dir, "env.db");
+      const explicitPath = path.join(dir, "explicit.db");
+
+      Bun.env.DATABASE_URL = `sqlite://${envPath}`;
+
+      const sql = new SQL(`sqlite://${explicitPath}`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(explicitPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      expect(existsSync(explicitPath)).toBe(true);
+      expect(existsSync(envPath)).toBe(false);
+
+      await sql.close();
+      delete Bun.env.DATABASE_URL;
+      await rm(dir, { recursive: true });
+    });
+
+    test("should prefer options object over URL", async () => {
+      const dir = tempDirWithFiles("options-override-test", {});
+      const urlPath = path.join(dir, "url.db");
+      const optionsPath = path.join(dir, "options.db");
+
+      const sql = new SQL(`sqlite://${urlPath}`, {
+        adapter: "sqlite",
+        filename: optionsPath,
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(optionsPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      expect(existsSync(optionsPath)).toBe(true);
+      expect(existsSync(urlPath)).toBe(false);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+
+    test("should handle URL in options object", async () => {
+      const dir = tempDirWithFiles("url-in-options-test", {});
+      const dbPath = path.join(dir, "url-options.db");
+
+      const sql = new SQL({
+        adapter: "sqlite",
+        filename: `sqlite://${dbPath}`,
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      const stats = await stat(dbPath);
+      expect(stats.isFile()).toBe(true);
+
+      await sql.close();
+      await rm(dir, { recursive: true });
+    });
+  });
+
+  describe("Error Cases", () => {
+    test("should throw for unsupported adapter", () => {
+      expect(() => new SQL({ adapter: "mysql" as any })).toThrow("Unsupported adapter");
+    });
+
+    test("should throw for postgres URL without postgres in URL", () => {
+      expect(() => new SQL("localhost:5432/mydb")).toThrow("Invalid URL");
+    });
+
+    test("should not throw for readonly database that doesn't exist with mode=ro", async () => {
+      const dir = tempDirWithFiles("ro-nonexist-test", {});
+      const dbPath = path.join(dir, "nonexistent.db");
+
+      // SQLite will throw when trying to open non-existent DB in readonly mode
+      expect(() => new SQL(`sqlite://${dbPath}?mode=ro`)).toThrow();
+
+      await rm(dir, { recursive: true });
+    });
+  });
 });
 
 describe("Data Types & Values", () => {

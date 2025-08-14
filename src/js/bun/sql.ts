@@ -799,7 +799,12 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.reject(connectionClosedError());
     }
 
-    // Try to reserve a connection - adapters that don't support it will handle appropriately
+    // Check if adapter supports reserved connections
+    if (pool.supportsReservedConnections && !pool.supportsReservedConnections()) {
+      return Promise.reject(new Error("This adapter doesn't support connection reservation"));
+    }
+
+    // Try to reserve a connection - adapters that support it will handle appropriately
     const promiseWithResolvers = Promise.withResolvers();
     pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
     return promiseWithResolvers.promise;
@@ -844,8 +849,8 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    // lets just reuse the same code path as the transaction begin
-    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), true);
+    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
     return promise;
   };
 
@@ -865,7 +870,8 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), true);
+    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };
   sql.connect = () => {

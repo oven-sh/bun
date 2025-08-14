@@ -488,6 +488,11 @@ export class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, 
     return this._closed;
   }
 
+  supportsReservedConnections(): boolean {
+    // SQLite doesn't have a connection pool, so it doesn't support reserved connections
+    return false;
+  }
+
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "BEGIN";
 

@@ -201,7 +201,6 @@ src/bun.js/bindings/TextCodecSingleByte.cpp
 src/bun.js/bindings/TextCodecUserDefined.cpp
 src/bun.js/bindings/TextCodecWrapper.cpp
 src/bun.js/bindings/TextEncoding.cpp
-src/bun.js/bindings/TextEncodingDetectorICU.cpp
 src/bun.js/bindings/TextEncodingRegistry.cpp
 src/bun.js/bindings/Uint8Array.cpp
 src/bun.js/bindings/Undici.cpp

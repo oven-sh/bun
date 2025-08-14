@@ -18,80 +18,93 @@ pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 /// Since macOS watches file descriptors (not paths), we need special handling for deleted files
 pub const DeletedEntrypointWatchlist = struct {
     const Entry = struct {
-        /// Absolute path to the deleted entrypoint file
+        /// Absolute path to the deleted entrypoint file, allocated using
+        /// `dev.allocator`
         abs_path: [:0]const u8,
-        /// Parent directory of the deleted file (for watching directory changes)
-        parent_dir: [:0]const u8,
-        /// Graph kind (server/ssr/client)
-        graph_kind: bake.Graph,
-        /// Loader type for the file
-        loader: bun.options.Loader,
+
+        pub fn deinit(self: *Entry, allocator: Allocator) void {
+            allocator.free(self.abs_path);
+        }
     };
-    
-    /// List of deleted entrypoints we're tracking
-    entries: std.ArrayListUnmanaged(Entry) = .{},
-    /// Allocator for the watchlist
+
+    /// parent directory -> list of deleted entries in that directory
+    entries_by_dir: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(Entry)) = .{},
+
+    /// Should be `dev.allocator`
     allocator: Allocator,
-    
+
     pub fn init(allocator: Allocator) DeletedEntrypointWatchlist {
         return .{
             .allocator = allocator,
-            .entries = .{},
+            .entries_by_dir = .{},
         };
     }
-    
+
     pub fn deinit(self: *DeletedEntrypointWatchlist) void {
-        for (self.entries.items) |entry| {
-            self.allocator.free(entry.abs_path);
-            self.allocator.free(entry.parent_dir);
+        var map = &self.entries_by_dir;
+        var iter = map.iterator();
+        while (iter.next()) |kv| {
+            self.allocator.free(kv.key_ptr.*);
+            for (kv.value_ptr.items) |*entry| {
+                entry.deinit(self.allocator);
+            }
+            kv.value_ptr.deinit(self.allocator);
         }
-        self.entries.deinit(self.allocator);
+        map.deinit(self.allocator);
     }
-    
-    pub fn add(self: *DeletedEntrypointWatchlist, abs_path: []const u8, graph_kind: bake.Graph, loader: bun.options.Loader) !void {
+
+    pub fn add(self: *DeletedEntrypointWatchlist, abs_path: []const u8) !void {
         const abs_path_copy = try self.allocator.dupeZ(u8, abs_path);
         errdefer self.allocator.free(abs_path_copy);
-        
+
         const parent_dir = std.fs.path.dirname(abs_path) orelse abs_path;
-        const parent_dir_copy = try self.allocator.dupeZ(u8, parent_dir);
-        errdefer self.allocator.free(parent_dir_copy);
-        
-        try self.entries.append(self.allocator, .{
+
+        // Get or create the entry list for this directory
+        const gop = try self.entries_by_dir.getOrPut(self.allocator, parent_dir);
+        if (!gop.found_existing) {
+            // New directory, need to copy the key
+            const parent_dir_copy = try self.allocator.dupe(u8, parent_dir);
+            gop.key_ptr.* = parent_dir_copy;
+            gop.value_ptr.* = .{};
+        }
+
+        try gop.value_ptr.append(self.allocator, .{
             .abs_path = abs_path_copy,
-            .parent_dir = parent_dir_copy,
-            .graph_kind = graph_kind,
-            .loader = loader,
         });
-        
+
         debug.log("Added deleted entrypoint to watchlist: {s} (parent: {s})", .{ abs_path, parent_dir });
     }
-    
-    pub fn removeAtIndex(self: *DeletedEntrypointWatchlist, index: usize) void {
-        if (index >= self.entries.items.len) return;
-        
-        const entry = self.entries.items[index];
-        self.allocator.free(entry.abs_path);
-        self.allocator.free(entry.parent_dir);
-        _ = self.entries.swapRemove(index);
-    }
-    
-    pub fn findByPath(self: *const DeletedEntrypointWatchlist, abs_path: []const u8) ?usize {
-        for (self.entries.items, 0..) |entry, i| {
+
+    pub fn removeEntry(self: *DeletedEntrypointWatchlist, parent_dir: []const u8, abs_path: []const u8) void {
+        const entry_list = self.entries_by_dir.getPtr(parent_dir) orelse return;
+
+        for (entry_list.items, 0..) |*entry, i| {
             if (bun.strings.eql(entry.abs_path, abs_path)) {
-                return i;
+                entry.deinit(self.allocator);
+                _ = entry_list.swapRemove(i);
+
+                // Also free if it is the last entry in this directory
+                if (entry_list.items.len == 0) {
+                    entry_list.deinit(self.allocator);
+                    const kv = self.entries_by_dir.fetchRemove(parent_dir).?;
+                    self.allocator.free(kv.key);
+                }
+                break;
             }
         }
-        return null;
     }
-    
-    pub fn getEntriesForDirectory(self: *const DeletedEntrypointWatchlist, dir_path: []const u8) []const Entry {
-        var count: usize = 0;
-        for (self.entries.items) |entry| {
-            if (bun.strings.eql(entry.parent_dir, dir_path)) {
-                count += 1;
-            }
+
+    pub fn getEntriesForDirectory(self: *DeletedEntrypointWatchlist, dir_path: []const u8) ?*ArrayListUnmanaged(Entry) {
+        const entry_list = self.entries_by_dir.getPtr(dir_path) orelse return null;
+        return entry_list;
+    }
+
+    pub fn clearIfEmpty(self: *DeletedEntrypointWatchlist, entries: *ArrayListUnmanaged(Entry), dir_path: []const u8) void {
+        if (entries.items.len == 0) {
+            entries.deinit(self.allocator);
+            const kv = self.entries_by_dir.fetchRemove(dir_path).?;
+            self.allocator.free(kv.key);
         }
-        return self.entries.items;
     }
 };
 
@@ -412,7 +425,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
         .bun_watcher = undefined,
-        .deleted_entrypoints = if (bun.Environment.isMac) bun.threading.GuardedValue(DeletedEntrypointWatchlist, bun.Mutex).init(DeletedEntrypointWatchlist.init(unchecked_allocator), .{}) else {},
+        .deleted_entrypoints = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
         .watcher_atomics = undefined,
@@ -424,6 +437,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.allocator = allocator;
     dev.log = .init(allocator);
     dev.deferred_request_pool = .init(allocator);
+    dev.deleted_entrypoints = if (bun.Environment.isMac)
+        bun.threading.GuardedValue(DeletedEntrypointWatchlist, bun.Mutex).init(
+            DeletedEntrypointWatchlist.init(dev.allocator),
+            .{},
+        )
+    else {};
 
     const global = dev.vm.global;
 
@@ -2873,20 +2892,6 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
         },
     };
 
-    // Linux watches on file paths, so we can just add the deleted file to the
-    // watcher here
-    if (comptime bun.Environment.isLinux) {
-        _ = dev.bun_watcher.addFile(
-            fd,
-            abs_path,
-            bun.hash32(abs_path),
-            loader,
-            bun.invalid_fd,
-            null,
-            true,
-        );
-    }
-
     // macOS watches on file descriptors, but we may not have a open file handle
     // to the deleted file... We need to add it to a list and have the watcher
     // special case it
@@ -2894,12 +2899,11 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
         // Add to deleted entrypoints watchlist (thread-safe)
         const list_ptr = dev.deleted_entrypoints.lock();
         defer dev.deleted_entrypoints.unlock();
-        
-        list_ptr.add(abs_path, graph_kind, loader) catch |err| {
-            debug.log("Failed to add deleted entrypoint to watchlist: {}", .{err});
-        };
-        
+
+        list_ptr.add(abs_path) catch bun.outOfMemory();
+
         // Also watch the parent directory for changes
+        // TODO: is this needed?
         const parent_dir = std.fs.path.dirname(abs_path) orelse abs_path;
         _ = dev.bun_watcher.addDirectory(
             bun.invalid_fd,
@@ -2908,6 +2912,20 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
             true,
         );
     }
+
+    // Linux watches on file paths, so we can just add the deleted file to the
+    // watcher here
+    //
+    // I think this is the same on Windows?
+    _ = dev.bun_watcher.addFile(
+        fd,
+        abs_path,
+        bun.hash32(abs_path),
+        loader,
+        bun.invalid_fd,
+        null,
+        true,
+    );
 }
 
 /// Return a log to write resolution failures into.
@@ -3875,44 +3893,41 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
-                // macOS-specific: Check if any deleted entrypoints have been recreated
+                // macOS watches on FDs, not paths. So if an entrypoint is
+                // deleted we lose its file descriptor. What do we do then?
+                // We'll check if its parent directory changed and test to see
+                // if the file is back again.
                 if (comptime bun.Environment.isMac) {
-                    // Thread-safe access to deleted entrypoints
-                    const list_ptr = dev.deleted_entrypoints.lock();
+                    const deleted_watchlist_for_directory = dev.deleted_entrypoints.lock();
                     defer dev.deleted_entrypoints.unlock();
-                    
-                    // Check all entries in the deleted entrypoints watchlist
-                    const entries = list_ptr.entries.items;
-                    var i: usize = 0;
-                    while (i < entries.len) {
-                        const entry = entries[i];
-                        // Check if this directory change affects a deleted entrypoint's parent
-                        if (bun.strings.eql(entry.parent_dir, file_path)) {
-                            // Try to stat the file to see if it exists (don't open to avoid fd leak)
+
+                    if (deleted_watchlist_for_directory.getEntriesForDirectory(file_path)) |entries| {
+                        var i: usize = 0;
+                        while (i < entries.items.len) {
+                            const entry = &entries.items[i];
+
                             const stat = bun.sys.stat(entry.abs_path);
                             if (stat == .err) {
-                                // File still doesn't exist, move to next
+                                // File still doesn't exist
                                 i += 1;
                                 continue;
                             }
-                            
-                            // File exists! We can't call addFile here due to mutex deadlock
-                            // Instead, just add it to the event for reprocessing
-                            // The file will be re-added to the watcher when it's processed
+
                             debug.log("Deleted entrypoint recreated: {s}", .{entry.abs_path});
-                            
-                            // Add the file to the event for reprocessing
-                            ev.appendFile(dev.allocator, entry.abs_path);
-                            
-                            // Remove from deleted entrypoints watchlist
-                            list_ptr.removeAtIndex(i);
-                            // Don't increment i since we removed an element
-                        } else {
-                            i += 1;
+
+                            const abs_path = entry.abs_path;
+                            entry.abs_path = "";
+
+                            _ = entries.swapRemove(i);
+
+                            // Append the file to the event so it will be reprocessed again in HotReloadEvent.processFileList
+                            ev.appendFile(dev.allocator, abs_path);
                         }
+
+                        deleted_watchlist_for_directory.clearIfEmpty(entries, file_path);
                     }
                 }
-                
+
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {

@@ -123,26 +123,69 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
     const CharacterType* p = start;
     if (p >= end || (*p != static_cast<CharacterType>(0x1B) && *p != static_cast<CharacterType>(0x9B)))
         return nullptr;
+    
+    const CharacterType escChar = *p;
     ++p;
 
-    // [[\]()#;?]*
-    while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))
-        ++p;
-
-    const CharacterType* const afterPrefix = p;
-
-    // ---- 1) CSI/other first: greedy single pass with rightmost-candidate tracking (no array)
-    {
-        const CharacterType* q = afterPrefix;
+    // For C1 CSI (0x9B), we start CSI parsing immediately
+    if (escChar == static_cast<CharacterType>(0x9B)) {
+        // CSI pattern: (?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])
+        const CharacterType* q = p;
         const CharacterType* lastGood = nullptr;
 
-        // zero-digits candidate
+        // zero-digits candidate - check if we can match a final byte immediately
         if (q < end && isCSIFinalByte(*q)) {
             lastGood = q;
-            // save/restore quirk: prefer the next byte if it's ALSO a valid final
-            // (e.g., ESC [ s t ... -> choose 't' as final to match strip-ansi behavior)
-            if ((q + 1) < end && isCSIFinalByte(*(q + 1)))
-                lastGood = q + 1;
+        }
+
+        // \d{1,4}
+        int d = 0;
+        while (q < end && isDigit(*q) && d < 4) {
+            ++q;
+            ++d;
+            if (q < end && isCSIFinalByte(*q))
+                lastGood = q;
+        }
+
+        // (;\d{0,4})*
+        while (q < end && *q == static_cast<CharacterType>(';')) {
+            ++q;
+            if (q < end && isCSIFinalByte(*q))
+                lastGood = q; // zero digits in this group
+            int k = 0;
+            while (q < end && isDigit(*q) && k < 4) {
+                ++q;
+                ++k;
+                if (q < end && isCSIFinalByte(*q))
+                    lastGood = q;
+            }
+        }
+
+        if (lastGood)
+            return lastGood + 1;
+        return nullptr;
+    }
+
+    // For ESC (0x1B), we need to check what follows
+    if (p >= end)
+        return nullptr;
+
+    // Check for CSI introducer '['
+    if (*p == '[') {
+        ++p;
+        
+        // Skip any private parameters (like ? ! > < =)
+        while (p < end && (*p == '?' || *p == '!' || *p == '>' || *p == '<' || *p == '=')) {
+            ++p;
+        }
+        
+        // CSI pattern: (?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])
+        const CharacterType* q = p;
+        const CharacterType* lastGood = nullptr;
+
+        // zero-digits candidate - check if we can match a final byte immediately
+        if (q < end && isCSIFinalByte(*q)) {
+            lastGood = q;
         }
 
         // \d{1,4}
@@ -171,29 +214,169 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
         if (lastGood)
             return lastGood + 1;
     }
-
-    // ---- 2) OSC with required ST; but reject the hyperlink corner that strip-ansi routes to CSI
-    {
-        const CharacterType* q = afterPrefix;
+    
+    // Check for OSC introducer ']'
+    else if (*p == ']') {
+        ++p;
+        
+        // Try incremental OSC payload validation
+        const CharacterType* q = p;
+        
+        // First, find the terminator
+        const CharacterType* terminator = nullptr;
+        size_t terminatorLength = 0;
         while (q < end) {
-            // BEL or ST (0x9C)
             if (isStringTerminator(*q)) {
-                if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
-                    return q + 1;
+                terminator = q;
+                terminatorLength = 1;
                 break;
             }
-            // ESC
-            if (*q == static_cast<CharacterType>(0x1B)) {
-                if (q + 1 < end && q[1] == static_cast<CharacterType>('\\')) {
-                    // strip-ansi quirk: if payload starts with digit and then ';', prefer CSI (do NOT consume as OSC)
-                    if (!(afterPrefix < q && isDigit(*afterPrefix) && (afterPrefix + 1) < q && afterPrefix[1] == static_cast<CharacterType>(';'))) {
-                        if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
-                            return q + 2;
-                    }
-                    break;
-                }
+            if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\')) {
+                terminator = q;
+                terminatorLength = 2;
+                break;
             }
             ++q;
+        }
+        
+        if (terminator) {
+            // Check for digit + semicolon quirk first
+            if (p < terminator && isDigit(*p) && (p + 1) < terminator && p[1] == static_cast<CharacterType>(';')) {
+                // strip-ansi quirk: prefer CSI for digit+semicolon pattern - don't handle as OSC
+                // Let it fall through to other handling
+            } else {
+                // Incrementally validate the payload - consume until we hit invalid character
+                const CharacterType* validEnd = p;
+                
+                // Form B: [a-zA-Z\d]+ ( ; [-…]* )*
+                if (validEnd < terminator && isAlphaNumeric(*validEnd)) {
+                    // Consume initial alphanumeric characters
+                    while (validEnd < terminator && isAlphaNumeric(*validEnd))
+                        ++validEnd;
+                    
+                    // Consume (';' + OSC chars)*
+                    while (validEnd < terminator && *validEnd == static_cast<CharacterType>(';')) {
+                        ++validEnd;
+                        while (validEnd < terminator && isOSCChar(*validEnd))
+                            ++validEnd;
+                    }
+                    
+                    // If we consumed everything, it's a valid payload
+                    if (validEnd == terminator) {
+                        return terminator + terminatorLength;
+                    }
+                    // Otherwise, we consumed a partial valid prefix
+                    return validEnd;
+                }
+                
+                // Form A: ( ; [-…]+ )*
+                validEnd = p;
+                while (validEnd < terminator && *validEnd == static_cast<CharacterType>(';')) {
+                    ++validEnd;
+                    if (validEnd >= terminator || !isOSCChar(*validEnd)) break;
+                    while (validEnd < terminator && isOSCChar(*validEnd))
+                        ++validEnd;
+                }
+                
+                if (validEnd == terminator) {
+                    return terminator + terminatorLength;
+                }
+                
+                // No valid pattern matched - consume just ESC] and return
+                return p;
+            }
+        } else {
+            // No terminator found - consume everything (incomplete OSC)
+            return end;
+        }
+    }
+    
+    // Handle other escape sequences - single character escapes like \e(B, \e=, etc.
+    else {
+        // Single character escape sequences
+        if (p < end) {
+            CharacterType c = *p;
+            // Check for common single-character escape sequences
+            if (c == '(' || c == ')' || c == '*' || c == '+' || c == '=' || c == '>' || 
+                c == 'D' || c == 'E' || c == 'H' || c == 'M' || c == '7' || c == '8' || 
+                c == '#' || c == '%') {
+                // For sequences like \e(B, \e)B, etc., consume one more character if present
+                if ((c == '(' || c == ')' || c == '*' || c == '+' || c == '#' || c == '%') && 
+                    (p + 1) < end) {
+                    return p + 2; // ESC + char + next char
+                } else {
+                    return p + 1; // ESC + char
+                }
+            }
+        }
+        
+        // If not a single-char escape, try prefix parsing for complex sequences
+        // Consume prefix characters: []\()#;?
+        while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))
+            ++p;
+
+        const CharacterType* const afterPrefix = p;
+
+        // Try CSI pattern after prefix
+        {
+            const CharacterType* q = afterPrefix;
+            const CharacterType* lastGood = nullptr;
+
+            // zero-digits candidate
+            if (q < end && isCSIFinalByte(*q)) {
+                lastGood = q;
+            }
+
+            // \d{1,4}
+            int d = 0;
+            while (q < end && isDigit(*q) && d < 4) {
+                ++q;
+                ++d;
+                if (q < end && isCSIFinalByte(*q))
+                    lastGood = q;
+            }
+
+            // (;\d{0,4})*
+            while (q < end && *q == static_cast<CharacterType>(';')) {
+                ++q;
+                if (q < end && isCSIFinalByte(*q))
+                    lastGood = q; // zero digits in this group
+                int k = 0;
+                while (q < end && isDigit(*q) && k < 4) {
+                    ++q;
+                    ++k;
+                    if (q < end && isCSIFinalByte(*q))
+                        lastGood = q;
+                }
+            }
+
+            if (lastGood)
+                return lastGood + 1;
+        }
+
+        // Try OSC pattern after prefix
+        {
+            const CharacterType* q = afterPrefix;
+            while (q < end) {
+                // BEL or ST (0x9C)
+                if (isStringTerminator(*q)) {
+                    if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
+                        return q + 1;
+                    break;
+                }
+                // ESC \ terminator
+                if (*q == static_cast<CharacterType>(0x1B)) {
+                    if (q + 1 < end && q[1] == static_cast<CharacterType>('\\')) {
+                        // strip-ansi quirk: if payload starts with digit and then ';', prefer CSI (do NOT consume as OSC)
+                        if (!(afterPrefix < q && isDigit(*afterPrefix) && (afterPrefix + 1) < q && afterPrefix[1] == static_cast<CharacterType>(';'))) {
+                            if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
+                                return q + 2;
+                        }
+                        break;
+                    }
+                }
+                ++q;
+            }
         }
     }
 

@@ -107,14 +107,13 @@ describe("Windows Resource Editing", () => {
         console.log("exitCode:", exitCode);
       }
 
-
       expect(exitCode).toBe(0);
       expect(stderr).not.toContain("Failed to set");
 
       // Verify executable exists
       const exePath = join(dir, "test.exe");
       expect(await Bun.file(exePath).exists()).toBe(true);
-      
+
       // Check file size
       const fileInfo = await Bun.file(exePath);
       const fileSize = fileInfo.size;
@@ -122,12 +121,12 @@ describe("Windows Resource Editing", () => {
       // Parse and verify resources
       // Force a small delay to ensure file system operations are complete
       await Bun.sleep(100);
-      
+
       // Use Node.js fs to read the file to avoid any potential Bun caching issues
       const fs = require("fs");
       const exeBuffer = fs.readFileSync(exePath);
       const exeData = exeBuffer.buffer.slice(exeBuffer.byteOffset, exeBuffer.byteOffset + exeBuffer.byteLength);
-      
+
       const resources = windowsResourceInternals.parseResources(new Uint8Array(exeData));
 
       // Should have icon resources

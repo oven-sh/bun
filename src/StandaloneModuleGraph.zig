@@ -717,26 +717,26 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 defer bun.default_allocator.free(pe_data);
-                
+
                 var pe_obj = pe_module.PEFile.init(bun.default_allocator, pe_data) catch |err| {
                     Output.prettyErrorln("Error parsing PE file: {}", .{err});
                     Global.exit(1);
                 };
                 defer pe_obj.deinit();
-                
+
                 // Add .bun section
                 pe_obj.addBunSection(bytes) catch |err| {
                     Output.prettyErrorln("Error adding .bun section: {}", .{err});
                     Global.exit(1);
                 };
-                
+
                 // Write to temporary file
                 const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch |err| {
                     Output.prettyErrorln("Error creating temporary file: {}", .{err});
                     Global.exit(1);
                 };
                 defer tmp_file.close();
-                
+
                 pe_obj.write(tmp_file.writer()) catch |err| {
                     Output.prettyErrorln("Error writing PE file: {}", .{err});
                     std.fs.cwd().deleteFile(tmp_path) catch {};
@@ -923,9 +923,9 @@ pub const StandaloneModuleGraph = struct {
             // Apply Windows resource edits if needed
             if (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console) {
                 const pe_module = @import("./pe.zig");
-                
+
                 // Get file size
-                const size = if (Environment.isWindows) 
+                const size = if (Environment.isWindows)
                     Syscall.setFileOffsetToEndWindows(fd).unwrap() catch |err| {
                         Output.err(err, "failed to get file size", .{});
                         Global.exit(1);
@@ -937,7 +937,7 @@ pub const StandaloneModuleGraph = struct {
                     };
                     break :blk @as(usize, @intCast(fstat.size));
                 };
-                
+
                 _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
                     Output.err(err, "failed to seek to start", .{});
                     Global.exit(1);
@@ -946,13 +946,13 @@ pub const StandaloneModuleGraph = struct {
                 // Read entire file
                 const pe_data = try allocator.alloc(u8, size);
                 defer allocator.free(pe_data);
-                
+
                 const read_result = Syscall.readAll(fd, pe_data);
                 _ = read_result.unwrap() catch |err| {
                     Output.err(err, "failed to read PE file", .{});
                     Global.exit(1);
                 };
-                
+
                 var pe_file = try pe_module.PEFile.init(allocator, pe_data);
                 defer pe_file.deinit();
 
@@ -969,18 +969,18 @@ pub const StandaloneModuleGraph = struct {
                 var write_buffer = std.ArrayList(u8).init(allocator);
                 defer write_buffer.deinit();
                 try pe_file.write(write_buffer.writer());
-                
+
                 // Seek to start and write
                 _ = Syscall.setFileOffset(fd, 0).unwrap() catch |err| {
                     Output.err(err, "failed to seek to start for write", .{});
                     Global.exit(1);
                 };
-                
+
                 _ = Syscall.write(fd, write_buffer.items).unwrap() catch |err| {
                     Output.err(err, "failed to write modified PE", .{});
                     Global.exit(1);
                 };
-                
+
                 // Truncate if new size is smaller
                 _ = Syscall.ftruncate(fd, @intCast(write_buffer.items.len)).unwrap() catch |err| {
                     Output.err(err, "failed to truncate file", .{});
@@ -1020,14 +1020,14 @@ pub const StandaloneModuleGraph = struct {
         // Apply Windows resource edits if needed
         if (target.os == .windows and (windows.icon != null or windows.title != null or windows.publisher != null or windows.version != null or windows.description != null or windows.hide_console)) {
             const pe_module = @import("./pe.zig");
-            
+
             // Read the PE file
             const pe_data = std.fs.cwd().readFileAlloc(allocator, outfile, std.math.maxInt(usize)) catch |err| {
                 Output.err(err, "failed to read PE file for resource editing", .{});
                 Global.exit(1);
             };
             defer allocator.free(pe_data);
-            
+
             // Parse and modify PE
             var pe_obj = pe_module.PEFile.init(allocator, pe_data) catch |err| {
                 Output.err(err, "failed to parse PE file", .{});
@@ -1047,20 +1047,20 @@ pub const StandaloneModuleGraph = struct {
             // Write to temporary file then rename
             const tmp_name = try std.fmt.allocPrint(allocator, "{s}.tmp", .{outfile});
             defer allocator.free(tmp_name);
-            
+
             {
                 const tmp_file = std.fs.cwd().createFile(tmp_name, .{}) catch |err| {
                     Output.err(err, "failed to create temporary file", .{});
                     Global.exit(1);
                 };
                 defer tmp_file.close();
-                
+
                 pe_obj.write(tmp_file.writer()) catch |err| {
                     Output.err(err, "failed to write modified PE", .{});
                     Global.exit(1);
                 };
             }
-            
+
             std.fs.cwd().rename(tmp_name, outfile) catch |err| {
                 Output.err(err, "failed to replace PE file", .{});
                 std.fs.cwd().deleteFile(tmp_name) catch {};

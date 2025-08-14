@@ -52,10 +52,6 @@ pub const Heap = opaque {
         return mi_heap_malloc(self, size);
     }
 
-    pub fn backing(_: *Heap) *Heap {
-        return mi_heap_get_default();
-    }
-
     pub fn calloc(self: *Heap, count: usize, size: usize) ?*anyopaque {
         return mi_heap_calloc(self, count, size);
     }

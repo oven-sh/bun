@@ -491,7 +491,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
-const log = bun.Output.scoped(.HTTPContext, true);
+const log = bun.Output.scoped(.HTTPContext, .hidden);
 
 const HTTPCertError = @import("./HTTPCertError.zig");
 const HTTPThread = @import("./HTTPThread.zig");

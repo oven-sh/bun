@@ -25,7 +25,7 @@ pub const PackageInstall = struct {
         contents_hash: u64,
     };
 
-    const debug = Output.scoped(.install, true);
+    const debug = Output.scoped(.install, .hidden);
 
     pub const Summary = struct {
         fail: u32 = 0,

@@ -445,7 +445,7 @@ pub fn get() *PackageManager {
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
-pub const debug = Output.scoped(.PackageManager, true);
+pub const debug = Output.scoped(.PackageManager, .hidden);
 
 pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
     return ensureTempNodeGypScriptOnce.call(.{this});

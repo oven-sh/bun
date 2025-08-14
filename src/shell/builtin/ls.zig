@@ -211,7 +211,7 @@ const ShellLsOutputTaskVTable = struct {
 };
 
 pub const ShellLsTask = struct {
-    const debug = bun.Output.scoped(.ShellLsTask, true);
+    const debug = bun.Output.scoped(.ShellLsTask, .hidden);
     ls: *Ls,
     opts: Opts,
 
@@ -848,7 +848,7 @@ pub inline fn bltn(this: *Ls) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-const log = bun.Output.scoped(.ls, true);
+const log = bun.Output.scoped(.ls, .hidden);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

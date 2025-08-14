@@ -1,4 +1,4 @@
-const log = Output.scoped(.IsolatedInstall, false);
+const log = Output.scoped(.IsolatedInstall, .visible);
 
 /// Runs on main thread
 pub fn installIsolatedPackages(

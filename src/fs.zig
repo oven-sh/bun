@@ -1,6 +1,6 @@
 const Fs = @This();
 
-pub const debug = Output.scoped(.fs, true);
+pub const debug = Output.scoped(.fs, .hidden);
 
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
 

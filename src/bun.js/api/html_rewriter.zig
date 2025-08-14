@@ -883,6 +883,11 @@ fn HandlerCallback(
                 wrapper.deref();
             }
 
+            // Use a CatchScope to properly handle exceptions from the JavaScript callback
+            var scope: bun.jsc.CatchScope = undefined;
+            scope.init(this.global, @src());
+            defer scope.deinit();
+
             const result = @field(this, callback_name).?.call(
                 this.global,
                 if (comptime @hasField(HandlerType, "thisObject"))
@@ -891,9 +896,35 @@ fn HandlerCallback(
                     JSValue.zero,
                 &.{wrapper.toJS(this.global)},
             ) catch {
-                // If there's an error, we'll propagate it to the caller.
+                // If there's an exception in the scope, capture it for later retrieval
+                if (scope.exception()) |exc| {
+                    const exc_value = JSValue.fromCell(exc);
+                    // Store the exception in the VM's unhandled rejection capture mechanism
+                    // if it's available (this is the same mechanism used by BufferOutputSink)
+                    if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                        err_ptr.* = exc_value;
+                        exc_value.protect();
+                    }
+                }
+                // Clear the exception from the scope to prevent assertion failures
+                scope.clearException();
+                // Return true to indicate failure to LOLHTML, which will cause the write
+                // operation to fail and the error handling logic to take over.
                 return true;
             };
+
+            // Check if there's an exception that was thrown but not caught by the error union
+            if (scope.exception()) |exc| {
+                const exc_value = JSValue.fromCell(exc);
+                // Store the exception in the VM's unhandled rejection capture mechanism
+                if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                    err_ptr.* = exc_value;
+                    exc_value.protect();
+                }
+                // Clear the exception to prevent assertion failures
+                scope.clearException();
+                return true;
+            }
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {

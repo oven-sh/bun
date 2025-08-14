@@ -1426,8 +1426,20 @@ function loadOptions(o: Bun.SQL.Options) {
     path = `${path}/.s.PGSQL.${port}`;
   }
 
-  username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
-  database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
+  username ||=
+    o.username ||
+    o.user ||
+    env.PGUSERNAME ||
+    env.PGUSER ||
+    env.USER ||
+    env.USERNAME ||
+    (adapter === "mysql" ? "root" : "postgres"); // default username for mysql is root and for postgres is postgres
+  database ||=
+    o.database ||
+    o.db ||
+    decodeIfValid((url?.pathname ?? "").slice(1)) ||
+    env.PGDATABASE ||
+    (adapter === "mysql" ? "mysql" : username); // default database for mysql is mysql and for postgres is the username
   password ||= o.password || o.pass || env.PGPASSWORD || "";
   const connection = o.connection;
   if (connection && $isObject(connection)) {

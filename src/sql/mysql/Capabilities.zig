@@ -150,18 +150,20 @@ pub fn fromInt(flags: u32) Capabilities {
     return this;
 }
 
-pub fn getDefaultCapabilities() Capabilities {
+pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
     return .{
         .CLIENT_PROTOCOL_41 = true,
         .CLIENT_PLUGIN_AUTH = true,
         .CLIENT_SECURE_CONNECTION = true,
-        .CLIENT_CONNECT_WITH_DB = true,
+        .CLIENT_CONNECT_WITH_DB = has_db_name,
         .CLIENT_DEPRECATE_EOF = true,
-        .CLIENT_TRANSACTIONS = true,
-        .CLIENT_MULTI_STATEMENTS = true,
-        .CLIENT_MULTI_RESULTS = true,
-        .CLIENT_PS_MULTI_RESULTS = true,
-        .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
+        .CLIENT_SSL = ssl,
+        // .CLIENT_TRANSACTIONS = true,
+        // .CLIENT_MULTI_STATEMENTS = true,
+        // .CLIENT_MULTI_RESULTS = true,
+        // .CLIENT_PS_MULTI_RESULTS = true,
+        // .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
+
     };
 }
 const std = @import("std");

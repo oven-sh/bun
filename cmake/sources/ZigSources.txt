@@ -3830,7 +3830,6 @@ src/sql/postgres/Data.zig
 src/sql/postgres/DataCell.zig
 src/sql/postgres/DebugSocketMonitorReader.zig
 src/sql/postgres/DebugSocketMonitorWriter.zig
-src/sql/postgres/PostgresCachedStructure.zig
 src/sql/postgres/PostgresProtocol.zig
 src/sql/postgres/PostgresRequest.zig
 src/sql/postgres/PostgresSQLConnection.zig
@@ -3890,6 +3889,7 @@ src/sql/postgres/types/json.zig
 src/sql/postgres/types/numeric.zig
 src/sql/postgres/types/PostgresString.zig
 src/sql/postgres/types/Tag.zig
+src/sql/shared/CachedStructure.zig
 src/sql/shared/ObjectIterator.zig
 src/sql/shared/QueryBindingIterator.zig
 src/StandaloneModuleGraph.zig

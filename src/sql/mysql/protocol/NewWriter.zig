@@ -31,14 +31,17 @@ pub fn NewWriterWrap(
 
             pub fn end(this: *@This()) !void {
                 const new_offset = offsetFn(this.ctx.wrapped);
-                const length = new_offset - (this.offset + PacketHeader.size); // Adjust start position
+                // fix position for packet header
+                const length = new_offset - this.offset - PacketHeader.size;
                 this.header.length = @intCast(length);
+                debug("writing packet header: {d}", .{this.header.length});
                 try pwrite(this.ctx, &this.header.encode(), this.offset);
             }
         };
 
         pub fn start(this: @This(), sequence_id: u8) !Packet {
             const o = offsetFn(this.wrapped);
+            debug("starting packet: {d}", .{o});
             try this.write(&[_]u8{0} ** PacketHeader.size);
             return .{
                 .header = .{ .sequence_id = sequence_id, .length = 0 },
@@ -117,3 +120,4 @@ const types = @import("../MySQLTypes.zig");
 const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;
 const PacketHeader = @import("./PacketHeader.zig");
+const debug = bun.Output.scoped(.NewWriter, false);

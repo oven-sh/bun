@@ -116,26 +116,6 @@ fn unregisterAutoFlusher(this: *@This()) void {
     }
 }
 
-pub fn setStatus(this: *MySQLConnection, status: ConnectionState) void {
-    defer this.updateHasPendingActivity();
-
-    if (this.status == status) return;
-
-    this.status = status;
-    switch (status) {
-        .connected => {
-            const on_connect = this.on_connect.swap();
-            if (on_connect == .zero) return;
-            const js_value = this.js_value;
-            js_value.ensureStillAlive();
-            this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-            this.poll_ref.unref(this.vm);
-            this.updateHasPendingActivity();
-        },
-        else => {},
-    }
-}
-
 fn drainInternal(this: *@This()) void {
     debug("drainInternal", .{});
     if (this.vm.isShuttingDown()) return this.close();
@@ -228,19 +208,29 @@ pub fn flushData(this: *@This()) void {
         this.write_buffer.consume(@intCast(wrote));
     }
 }
+
+pub fn getQueriesArray(this: *const @This()) JSValue {
+    return js.queriesGetCached(this.js_value) orelse .zero;
+}
+
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer this.updateHasPendingActivity();
     if (this.status == .failed) return;
 
-    this.status = .failed;
+    this.setStatus(.failed);
     if (!this.socket.isClosed()) this.socket.close();
-    const on_close = this.on_close.swap();
-    if (on_close == .zero) return;
+    const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
+    const loop = this.vm.eventLoop();
+    loop.enter();
+    defer loop.exit();
     _ = on_close.call(
         this.globalObject,
         this.js_value,
-        &[_]JSValue{value},
+        &[_]JSValue{
+            value,
+            this.getQueriesArray(),
+        },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
@@ -259,7 +249,7 @@ pub fn onClose(this: *MySQLConnection) void {
 
 pub fn disconnect(this: *@This()) void {
     if (this.status == .connected) {
-        this.status = .disconnected;
+        this.setStatus(.disconnected);
         this.poll_ref.disable();
 
         const requests = this.requests.readableSlice(0);
@@ -335,6 +325,7 @@ pub fn onTimeout(this: *MySQLConnection) void {
 }
 
 pub fn onDrain(this: *MySQLConnection) void {
+    debug("onDrain", .{});
     this.drainInternal();
 }
 
@@ -416,6 +407,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const options_str = try arguments[7].toBunString(globalObject);
     defer options_str.deref();
 
+    const path_str = try arguments[8].toBunString(globalObject);
+    defer path_str.deref();
+
     const options_buf: []u8 = brk: {
         var b = bun.StringBuilder{};
         b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
@@ -440,8 +434,12 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         break :brk b.allocatedSlice();
     };
 
-    const on_connect = arguments[8];
-    const on_close = arguments[9];
+    const on_connect = arguments[9];
+    const on_close = arguments[10];
+    // const idle_timeout = arguments[11].toInt32();
+    // const connection_timeout = arguments[12].toInt32();
+    // const max_lifetime = arguments[13].toInt32();
+    // const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 
@@ -528,7 +526,7 @@ pub fn deinit(this: *MySQLConnection) void {
 
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.socket = socket;
-    this.status = .handshaking;
+    this.setStatus(.handshaking);
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 
@@ -573,6 +571,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
 }
 
 pub fn onData(this: *MySQLConnection, data: []const u8) void {
+    debug("onData: {d}", .{data.len});
     this.ref();
     const vm = this.vm;
     // Clear the timeout.
@@ -593,6 +592,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
     const event_loop = vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
+
     // SocketMonitor.read(data);
 
     if (this.read_buffer.remaining().len == 0) {
@@ -677,7 +677,7 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Process packet based on connection state
         switch (this.status) {
             .handshaking => try this.handleHandshake(Context, reader),
-            .authenticating => try this.handleAuth(Context, reader),
+            .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader),
             .connected => try this.handleCommand(Context, reader),
             else => {
                 debug("Unexpected packet in state {s}", .{@tagName(this.status)});
@@ -695,7 +695,9 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     // Store server info
     this.server_version = try handshake.server_version.toOwned();
     this.connection_id = handshake.connection_id;
-    this.capabilities = handshake.capability_flags;
+    // this.capabilities = handshake.capability_flags;
+    this.capabilities = Capabilities.getDefaultCapabilities(this.ssl_mode != .disable, this.database.len > 0);
+
     // Override with utf8mb4 instead of using server's default
     this.character_set = CharacterSet.default;
     this.status_flags = handshake.status_flags;
@@ -738,10 +740,79 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     }
 
     // Update status
-    this.status = .authenticating;
+    this.setStatus(.authenticating);
 
     // Send auth response
     try this.sendHandshakeResponse();
+}
+
+fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+    var response = Auth.caching_sha2_password.PublicKeyResponse{};
+    try response.decode(reader);
+    defer response.deinit();
+    // revert back to authenticating since we received the public key
+    this.setStatus(.authenticating);
+
+    var encrypted_password = Auth.caching_sha2_password.EncryptedPassword{
+        .password = this.password,
+        .public_key = response.data.slice(),
+        .nonce = this.auth_data,
+        .sequence_id = this.sequence_id,
+    };
+    try encrypted_password.write(this.writer());
+    this.flushData();
+}
+
+// pub fn resetConnectionTimeout(this: *@This()) void {
+//     // if we are processing data, don't reset the timeout, wait for the data to be processed
+//     if (this.flags.is_processing_data) return;
+//     const interval = this.getTimeoutInterval();
+//     if (this.timer.state == .ACTIVE) {
+//         this.vm.timer.remove(&this.timer);
+//     }
+//     if (interval == 0) {
+//         return;
+//     }
+
+//     this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+//     this.vm.timer.insert(&this.timer);
+// }
+
+pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
+    debug("consumeOnConnectCallback", .{});
+    const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
+    debug("consumeOnConnectCallback exists", .{});
+
+    js.onconnectSetCached(this.js_value, globalObject, .zero);
+    return on_connect;
+}
+
+pub fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
+    debug("consumeOnCloseCallback", .{});
+    const on_close = js.oncloseGetCached(this.js_value) orelse return null;
+    debug("consumeOnCloseCallback exists", .{});
+    js.oncloseSetCached(this.js_value, globalObject, .zero);
+    return on_close;
+}
+
+pub fn setStatus(this: *@This(), status: ConnectionState) void {
+    if (this.status == status) return;
+    defer this.updateHasPendingActivity();
+
+    this.status = status;
+    // this.resetConnectionTimeout();
+    if (this.vm.isShuttingDown()) return;
+
+    switch (status) {
+        .connected => {
+            const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
+            const js_value = this.js_value;
+            js_value.ensureStillAlive();
+            this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
+            this.poll_ref.unref(this.vm);
+        },
+        else => {},
+    }
 }
 
 pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
@@ -756,7 +827,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             try ok.decode(reader);
             defer ok.deinit();
 
-            this.status = .connected;
+            this.setStatus(.connected);
             this.status_flags = ok.status_flags;
             this.is_ready_for_query = true;
         },
@@ -775,23 +846,44 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             if (this.auth_plugin) |plugin| {
                 switch (plugin) {
                     .caching_sha2_password => {
+                        reader.skip(1);
+
+                        if (this.status == .authentication_awaiting_pk) {
+                            return this.handleHandshakeDecodePublicKey(Context, reader);
+                        }
+
                         var response = Auth.caching_sha2_password.Response{};
                         try response.decode(reader);
                         defer response.deinit();
 
                         switch (response.status) {
                             .success => {
-                                this.status = .connected;
+                                debug("success", .{});
+                                this.setStatus(.connected);
                                 this.is_ready_for_query = true;
                             },
-                            .fail => {
-                                this.fail("Authentication failed", error.AuthenticationFailed);
+                            .continue_auth => {
+                                debug("continue auth", .{});
+
+                                if (this.ssl_mode == .disable) {
+                                    // we are in plain TCP so we need to request the public key
+                                    this.setStatus(.authentication_awaiting_pk);
+                                    var packet = try this.writer().start(this.sequence_id);
+
+                                    var request = Auth.caching_sha2_password.PublicKeyRequest{};
+                                    try request.write(this.writer());
+                                    try packet.end();
+                                    this.flushData();
+                                } else {
+                                    // SSL mode is enabled, send password as is
+                                    var packet = try this.writer().start(this.sequence_id);
+                                    try this.writer().write(this.password);
+                                    try packet.end();
+                                    this.flushData();
+                                }
                             },
-                            .full_auth => {
-                                // Server wants full authentication
-                                this.auth_state = .{ .caching_sha2 = .full_auth };
-                                // Send empty response to continue auth
-                                try this.sendAuthSwitchResponse(plugin, "");
+                            else => {
+                                this.fail("Authentication failed", error.AuthenticationFailed);
                             },
                         }
                     },
@@ -888,7 +980,7 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
 
     var response = HandshakeResponse41{
         .capability_flags = this.capabilities,
-        .max_packet_size = 16777216,
+        .max_packet_size = 0, //16777216,
         .character_set = CharacterSet.default,
         .username = .{ .temporary = this.user },
         .database = .{ .temporary = this.database },
@@ -907,8 +999,8 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
     defer response.deinit();
 
     // Add some basic connect attributes like mysql2
-    try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_name"), try bun.default_allocator.dupe(u8, "Bun"));
-    try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_version"), try bun.default_allocator.dupe(u8, bun.Global.package_json_version_with_revision));
+    // try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_name"), try bun.default_allocator.dupe(u8, "Bun"));
+    // try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_version"), try bun.default_allocator.dupe(u8, bun.Global.package_json_version_with_revision));
 
     // Generate auth response based on plugin
     var scrambled_buf: [32]u8 = undefined;

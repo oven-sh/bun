@@ -63,8 +63,8 @@ pub const caching_sha2_password = struct {
 
     pub const FastAuthStatus = enum(u8) {
         success = 0x03,
-        fail = 0x04,
-        full_auth = 0x02,
+        continue_auth = 0x04,
+        _,
     };
 
     pub const Response = struct {
@@ -76,7 +76,9 @@ pub const caching_sha2_password = struct {
         }
 
         pub fn decodeInternal(this: *Response, comptime Context: type, reader: NewReader(Context)) !void {
-            this.status = @enumFromInt(try reader.int(u8));
+            const status = try reader.int(u8);
+            debug("FastAuthStatus: {d}", .{status});
+            this.status = @enumFromInt(status);
 
             // Read remaining data if any
             const remaining = reader.peek();
@@ -87,6 +89,101 @@ pub const caching_sha2_password = struct {
 
         pub const decode = decoderWrap(Response, decodeInternal).decode;
     };
+    pub const EncryptedPassword = struct {
+        password: []const u8,
+        public_key: []const u8,
+        nonce: []const u8,
+        sequence_id: u8,
+
+        // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
+        // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
+
+        pub fn writeInternal(this: *const EncryptedPassword, comptime Context: type, writer: NewWriter(Context)) !void {
+            // 1024 is overkill but lets cover all cases
+            var password_buf: [1024]u8 = undefined;
+            var needs_to_free_password = false;
+            var plain_password = brk: {
+                const needed_len = this.password.len + 1;
+                if (needed_len > password_buf.len) {
+                    needs_to_free_password = true;
+                    break :brk try bun.default_allocator.alloc(u8, needed_len);
+                } else {
+                    break :brk password_buf[0..needed_len];
+                }
+            };
+            @memcpy(plain_password[0..this.password.len], this.password);
+            plain_password[this.password.len] = 0;
+            defer if (needs_to_free_password) bun.default_allocator.free(plain_password);
+
+            for (plain_password, 0..) |*c, i| {
+                c.* ^= this.nonce[i % this.nonce.len];
+            }
+            BoringSSL.load();
+            BoringSSL.c.ERR_clear_error();
+            // Decode public key
+            const bio = BoringSSL.c.BIO_new_mem_buf(&this.public_key[0], @intCast(this.public_key.len)) orelse return error.InvalidPublicKey;
+            defer _ = BoringSSL.c.BIO_free(bio);
+
+            const rsa = BoringSSL.c.PEM_read_bio_RSA_PUBKEY(bio, null, null, null) orelse return {
+                if (bun.Environment.isDebug) {
+                    BoringSSL.c.ERR_load_ERR_strings();
+                    BoringSSL.c.ERR_load_crypto_strings();
+                    var buf: [256]u8 = undefined;
+                    debug("Failed to read public key: {s}", .{BoringSSL.c.ERR_error_string(BoringSSL.c.ERR_get_error(), &buf)});
+                }
+                return error.InvalidPublicKey;
+            };
+            defer BoringSSL.c.RSA_free(rsa);
+            // encrypt password
+
+            const rsa_size = BoringSSL.c.RSA_size(rsa);
+            var needs_to_free_encrypted_password = false;
+            // should never ne bigger than 4096 but lets cover all cases
+            var encrypted_password_buf: [4096]u8 = undefined;
+            var encrypted_password = brk: {
+                if (rsa_size > encrypted_password_buf.len) {
+                    needs_to_free_encrypted_password = true;
+                    break :brk try bun.default_allocator.alloc(u8, rsa_size);
+                } else {
+                    break :brk encrypted_password_buf[0..rsa_size];
+                }
+            };
+            defer if (needs_to_free_encrypted_password) bun.default_allocator.free(encrypted_password);
+
+            const encrypted_password_len = BoringSSL.c.RSA_public_encrypt(
+                @intCast(plain_password.len),
+                plain_password.ptr,
+                encrypted_password.ptr,
+                rsa,
+                BoringSSL.c.RSA_PKCS1_OAEP_PADDING,
+            );
+            if (encrypted_password_len == -1) {
+                return error.FailedToEncryptPassword;
+            }
+            const encrypted_password_slice = encrypted_password[0..@intCast(encrypted_password_len)];
+
+            var packet = try writer.start(this.sequence_id);
+            try writer.write(encrypted_password_slice);
+            try packet.end();
+        }
+
+        pub const write = writeWrap(EncryptedPassword, writeInternal).write;
+    };
+    pub const PublicKeyResponse = struct {
+        data: Data = .{ .empty = {} },
+
+        pub fn deinit(this: *PublicKeyResponse) void {
+            this.data.deinit();
+        }
+        pub fn decodeInternal(this: *PublicKeyResponse, comptime Context: type, reader: NewReader(Context)) !void {
+            // get all the data
+            const remaining = reader.peek();
+            if (remaining.len > 0) {
+                this.data = try reader.read(remaining.len);
+            }
+        }
+        pub const decode = decoderWrap(PublicKeyResponse, decodeInternal).decode;
+    };
 
     pub const PublicKeyRequest = struct {
         pub fn writeInternal(this: *const PublicKeyRequest, comptime Context: type, writer: NewWriter(Context)) !void {
@@ -96,54 +193,6 @@ pub const caching_sha2_password = struct {
 
         pub const write = writeWrap(PublicKeyRequest, writeInternal).write;
     };
-
-    pub const EncryptedPassword = struct {
-        password: []const u8,
-        public_key: []const u8,
-        nonce: []const u8,
-
-        pub fn writeInternal(this: *const EncryptedPassword, comptime Context: type, writer: NewWriter(Context)) !void {
-            var stack = std.heap.stackFallback(4096, bun.default_allocator);
-            const allocator = stack.get();
-            const encrypted = try encryptPassword(allocator, this.password, this.public_key, this.nonce);
-            defer allocator.free(encrypted);
-            try writer.write(encrypted);
-        }
-
-        pub const write = writeWrap(EncryptedPassword, writeInternal).write;
-
-        fn encryptPassword(allocator: std.mem.Allocator, password: []const u8, public_key: []const u8, nonce: []const u8) ![]u8 {
-            _ = allocator; // autofix
-            _ = password; // autofix
-            _ = public_key; // autofix
-            _ = nonce; // autofix
-            bun.todoPanic(@src(), "Not implemented", .{});
-            // XOR the password with the nonce
-            // var xored = try allocator.alloc(u8, password.len);
-            // defer allocator.free(xored);
-
-            // for (password, 0..) |c, i| {
-            //     xored[i] = c ^ nonce[i % nonce.len];
-            // }
-
-            // // // Load the public key
-            // // const key = try BoringSSL.PKey.fromPEM(public_key);
-            // // defer key.deinit();
-
-            // // // Encrypt with RSA
-            // // const out = try allocator.alloc(u8, key.size());
-            // // errdefer allocator.free(out);
-
-            // // const written = try key.encrypt(out, xored, .PKCS1_OAEP);
-
-            // const written
-            // // if (written != out.len) {
-            //     return error.EncryptionFailed;
-            // }
-
-            // return out;
-        }
-    };
 };
 const bun = @import("bun");
 const jsc = bun.jsc;
@@ -152,3 +201,5 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const debug = bun.Output.scoped(.Auth, false);
+const BoringSSL = bun.BoringSSL;

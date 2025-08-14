@@ -729,9 +729,8 @@ async function readFileOrEmpty(file: string): Promise<string> {
 
 async function main() {
   const args = process.argv.slice(2);
-  const rootDir = args[0];
   const dstDir = args[1];
-  if (!rootDir || !dstDir) {
+  if (!dstDir) {
     console.error(
       String.raw`
                    _     _           _ 
@@ -744,7 +743,7 @@ async function main() {
       |_|   |_|                        
 `.slice(1),
     );
-    console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
+    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen");
     process.exit(1);
   }
   await mkdir(dstDir, { recursive: true });

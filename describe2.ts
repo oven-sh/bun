@@ -27,8 +27,6 @@ console.log("HIT 9");
 test("7", () => {});
 await Promise.resolve(undefined);
 
-const { promise, resolve } = Promise.withResolvers();
-
 console.log("HIT 10");
 test("8", () => {});
 describe("abc", async () => {
@@ -58,7 +56,6 @@ describe("def", async () => {
   describe("def", async () => {
     test("18", () => {});
     console.log("HIT 18");
-    resolve();
     test("19", () => {});
   });
   test("20", () => {});
@@ -66,11 +63,7 @@ describe("def", async () => {
 console.log("HIT 13");
 test("21", () => {});
 
-await promise;
-console.log("ready to run tests now");
-
 await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();
 
 /*
 this one needs async context to handle properly:

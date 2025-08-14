@@ -14,7 +14,6 @@ pub const js_fns = struct {
         switch (bunTest.phase) {
             .collection => {
                 try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback);
-                if (!bunTest.collection.executing) try bunTest.collection.run(globalObject, bunTest.collection.active_scope);
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -83,51 +82,17 @@ pub const js_fns = struct {
         }
         const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
 
-        // re-entry safety:
-        // - use ScriptDisallowedScope::InMainThread
-
-        // here:
-        // - assert the collection phase is complete, then lock the collection phase
-        // - apply filters (`-t`)
-        // - apply `.only`
-        // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
-        // - reorder (`--randomize`)
-        // now, generate the execution order
-        var order = std.ArrayList(*ExecutionEntry).init(bunTest.gpa);
-        defer order.deinit();
-        try Execution.generateOrderDescribe(bunTest.collection.root_scope, &order);
-        // now, allowing js execution again:
-        // - start the test execution loop
-
-        // test execution:
-        // - one at a time
-        // - timeout handling
+        try bunTest.run(globalObject);
 
         _ = callframe;
 
-        return .js_undefined; // TODO: return a promise that resolves when all tests have executed
-    }
-    pub fn forDebuggingDeinitNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const vm = globalObject.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
-            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
-
-        _ = callframe;
-
-        bunTest.deinit();
-        bun.jsc.Jest.Jest.runner.?.describe2 = null;
-
-        return .js_undefined; // TODO: deinitialize describe2
+        return .js_undefined; // TODO: return a promise that resolves when done
     }
 };
 
 /// this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
 pub const BunTest = struct {
+    executing: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
 
@@ -142,6 +107,7 @@ pub const BunTest = struct {
         var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
         const gpa = allocation_scope.allocator();
         return .{
+            .executing = false,
             .allocation_scope = allocation_scope,
             .gpa = gpa,
             .phase = .collection,
@@ -168,6 +134,7 @@ pub const BunTest = struct {
     }
 
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
+    export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         var this: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
         defer this.unref();
@@ -178,9 +145,76 @@ pub const BunTest = struct {
         }
         return .js_undefined;
     }
+    fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return bunTestThen(globalThis, callframe); // TODO: throw the error
+    }
     pub fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
         promise.then(globalThis, this.ref(), bunTestThen, bunTestThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
+
+    pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+        group.begin(@src());
+        defer group.end();
+
+        if (this.executing) return; // already running
+        this.executing = true;
+
+        while (true) {
+            const result = switch (this.phase) {
+                .collection => try this.collection.runOne(globalThis),
+                .execution => try this.execution.runOne(globalThis),
+            };
+            group.log("runOne -> {s}", .{@tagName(result)});
+            switch (result) {
+                .continue_async => return, // continue in 'then' callback
+                .continue_sync => continue,
+                .done => {
+                    switch (this.phase) {
+                        .collection => {
+                            // collection phase is complete. advance to execution phase, then continue.
+                            // re-entry safety:
+                            // - use ScriptDisallowedScope::InMainThread
+
+                            // here:
+                            // - assert the collection phase is complete, then lock the collection phase
+                            // - apply filters (`-t`)
+                            // - apply `.only`
+                            // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
+                            // - reorder (`--randomize`)
+                            // now, generate the execution order
+                            this.phase = .execution;
+                            var order = std.ArrayList(*ExecutionEntry).init(this.gpa);
+                            defer order.deinit();
+                            try Execution.generateOrderDescribe(this.collection.root_scope, &order);
+                            this.execution.order = try order.toOwnedSlice();
+                            // now, allowing js execution again:
+                            // - start the test execution loop
+
+                            // test execution:
+                            // - one at a time
+                            // - timeout handling
+                        },
+                        .execution => {
+                            // execution phase is complete. print results.
+
+                            this.executing = false;
+                            this.deinit();
+                            bun.jsc.Jest.Jest.runner.?.describe2 = null;
+                            return;
+                        },
+                    }
+                },
+            }
+        }
+
+        comptime unreachable;
+    }
+};
+
+pub const RunOneResult = enum {
+    done,
+    continue_sync,
+    continue_async,
 };
 
 pub const Collection = @import("./Collection.zig");
@@ -228,6 +262,12 @@ pub const ExecutionEntry = struct {
         beforeAll,
         afterAll,
         afterEach,
+        pub fn isCalledMultipleTimes(this: @This()) bool {
+            return switch (this) {
+                .beforeAll, .afterAll => true,
+                else => false,
+            };
+        }
     },
     callback: jsc.Strong.Optional,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {

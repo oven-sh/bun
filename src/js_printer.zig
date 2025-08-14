@@ -4460,25 +4460,31 @@ fn NewPrinter(
                     p.printImportRecordPath(record);
 
                     // backwards compatibility: previously, we always stripped type
-                    if (comptime is_bun_platform) if (record.loader) |loader| switch (loader) {
-                        .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
-                        .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
-                        .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
-                        .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
+                    if (record.loader) |loader| switch (loader) {
+                        // Always preserve CSS import attributes (standard web platform)
                         .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
-                        .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
+                        // Always preserve JSON import attributes (standard web platform)
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
-                        .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
-                        .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
-                        .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
-                        .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
-                        .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
-                        .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
-                        .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
-                        .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
-                        // sqlite_embedded only relevant when bundling
-                        .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
-                        .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                        // Only preserve Bun-specific loaders when on Bun platform
+                        else => if (comptime is_bun_platform) switch (loader) {
+                            .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
+                            .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
+                            .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
+                            .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
+                            .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
+                            .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
+                            .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                            .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
+                            .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
+                            .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
+                            .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
+                            .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
+                            .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
+                            // sqlite_embedded only relevant when bundling
+                            .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
+                            .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                            .css, .json => unreachable, // handled above
+                        },
                     };
                     p.printSemicolonAfterStatement();
                 },

@@ -135,6 +135,7 @@ src/bun.js/api/server/StaticRoute.zig
 src/bun.js/api/server/WebSocketServerContext.zig
 src/bun.js/api/streams.classes.zig
 src/bun.js/api/Timer.zig
+src/bun.js/api/Timer/DateHeaderTimer.zig
 src/bun.js/api/Timer/EventLoopTimer.zig
 src/bun.js/api/Timer/ImmediateObject.zig
 src/bun.js/api/Timer/TimeoutObject.zig

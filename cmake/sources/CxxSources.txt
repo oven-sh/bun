@@ -186,6 +186,7 @@ src/bun.js/bindings/ProcessBindingUV.cpp
 src/bun.js/bindings/ProcessIdentifier.cpp
 src/bun.js/bindings/RegularExpression.cpp
 src/bun.js/bindings/S3Error.cpp
+src/bun.js/bindings/SamplingProfilerTraceEvent.cpp
 src/bun.js/bindings/ScriptExecutionContext.cpp
 src/bun.js/bindings/Serialization.cpp
 src/bun.js/bindings/ServerRouteList.cpp

@@ -358,6 +358,7 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        profile_file: ?[]const u8 = null,
     };
 
     var global_cli_ctx: Context = undefined;

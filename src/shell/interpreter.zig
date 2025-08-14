@@ -773,7 +773,42 @@ pub const Interpreter = struct {
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
         const export_env = brk: {
-            if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
+            if (event_loop == .js) {
+                var env_map = if (export_env_) |e| e else env_blk: {
+                    // Initialize with current process environment for Bun.$ when no env provided
+                    var env = EnvMap.init(allocator);
+                    
+                    // Copy current process environment
+                    for (std.os.environ) |env_ptr| {
+                        const env_str = bun.span(env_ptr);
+                        if (bun.strings.indexOfChar(env_str, '=')) |eq_index| {
+                            const key = env_str[0..eq_index];
+                            const value = env_str[eq_index + 1..];
+                            if (key.len > 0) {
+                                const key_envstr = EnvStr.initSlice(key);
+                                const value_envstr = EnvStr.initSlice(value);
+                                env.insert(key_envstr, value_envstr);
+                            }
+                        }
+                    }
+                    
+                    break :env_blk env;
+                };
+                
+                // Always set SHELL environment variable to Bun executable path for Bun.$
+                if (bun.selfExePath()) |self_exe_path| {
+                    const shell_key = EnvStr.initSlice("SHELL");
+                    const shell_value = EnvStr.initSlice(self_exe_path);
+                    env_map.insert(shell_key, shell_value);
+                } else |_| {
+                    // If we can't get the executable path, fall back to a default
+                    const shell_key = EnvStr.initSlice("SHELL");
+                    const shell_value = EnvStr.initSlice("bun");
+                    env_map.insert(shell_key, shell_value);
+                }
+                
+                break :brk env_map;
+            }
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
@@ -792,6 +827,18 @@ pub const Interpreter = struct {
                 const value = EnvStr.initSlice(entry.value_ptr.value);
                 const key = EnvStr.initSlice(entry.key_ptr.*);
                 export_env.insert(key, value);
+            }
+
+            // Set SHELL environment variable to Bun executable path
+            if (bun.selfExePath()) |self_exe_path| {
+                const shell_key = EnvStr.initSlice("SHELL");
+                const shell_value = EnvStr.initSlice(self_exe_path);
+                export_env.insert(shell_key, shell_value);
+            } else |_| {
+                // If we can't get the executable path, fall back to a default
+                const shell_key = EnvStr.initSlice("SHELL");
+                const shell_value = EnvStr.initSlice("bun");
+                export_env.insert(shell_key, shell_value);
             }
 
             break :brk export_env;

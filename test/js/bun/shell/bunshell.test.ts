@@ -444,6 +444,39 @@ describe("bunshell", () => {
     });
   });
 
+  describe("SHELL environment variable", () => {
+    test("should be set to Bun executable path", async () => {
+      const { stdout } = await $`echo $SHELL`;
+      const shellPath = stdout.toString().trim();
+      
+      // Should contain "bun" in the path
+      expect(shellPath).toContain("bun");
+      
+      // Should be an absolute path
+      expect(shellPath).toMatch(/^\/|^[A-Z]:\\/);
+    });
+
+    test("should be set in shell scripts", async () => {
+      const tempdir = tmpdirSync();
+      const scriptPath = join(tempdir, "test_shell.sh");
+      
+      // Create a shell script that prints SHELL
+      await Bun.write(scriptPath, 'echo "SHELL: $SHELL"');
+      
+      const result = await $`bun ${scriptPath}`.text();
+      
+      expect(result).toContain("SHELL:");
+      expect(result).toContain("bun");
+    });
+
+    TestBuilder.command`echo $SHELL`
+      .stdout(stdout => {
+        expect(stdout.trim()).toContain("bun");
+        expect(stdout.trim()).toMatch(/^\/|^[A-Z]:\\/);
+      })
+      .runAsTest("SHELL via TestBuilder");
+  });
+
   // Ported from GNU bash "quote.tests"
   // https://github.com/bminor/bash/blob/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests/quote.tests#L1
   // Some backtick tests are skipped, because of insane behavior:

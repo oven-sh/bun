@@ -146,7 +146,10 @@ pub const BunTest = struct {
         return .js_undefined;
     }
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        return bunTestThen(globalThis, callframe); // TODO: throw the error
+        _ = globalThis;
+        _ = callframe;
+        @panic("bun:test failure. TODO: throw the error");
+        // return bunTestThen(globalThis, callframe); // TODO: throw the error
     }
     pub fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
         promise.then(globalThis, this.ref(), bunTestThen, bunTestThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++

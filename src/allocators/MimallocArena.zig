@@ -75,7 +75,7 @@ fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: mem.Alignment) ?[*]
     const ptr: ?*anyopaque = if (mimalloc.mustUseAlignedAlloc(alignment))
         mimalloc.mi_heap_malloc_aligned(heap, len, alignment.toByteUnits())
     else
-        mimalloc.mi_heap_malloc(heap, len);
+        mimalloc.mi_heap_malloc_aligned_at(heap, len, alignment.toByteUnits(), 0);
 
     if (comptime Environment.isDebug) {
         const usable = mimalloc.mi_malloc_usable_size(ptr);

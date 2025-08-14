@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    178534eeb7c0b4e2f438b513640c6f4d7338416a
+    c1f17cd2538417620f60bff70bffe7e68d332aec
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -14,7 +14,7 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_TESTS=OFF
   -DMI_USE_CXX=ON
   -DMI_SKIP_COLLECT_ON_EXIT=ON
-  
+
   # ```
   # ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
   # Started development server: http://localhost:3004

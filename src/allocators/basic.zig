@@ -23,7 +23,6 @@ fn mimalloc_free(
 }
 
 const MimallocAllocator = struct {
-    pub const supports_posix_memalign = true;
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
@@ -77,8 +76,6 @@ const c_allocator_vtable = &Allocator.VTable{
 };
 
 const ZAllocator = struct {
-    pub const supports_posix_memalign = true;
-
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 

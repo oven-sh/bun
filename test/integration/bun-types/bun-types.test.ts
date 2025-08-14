@@ -1,6 +1,6 @@
 import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -113,23 +113,22 @@ async function diagnose(
   const host: ts.LanguageServiceHost = {
     getScriptFileNames: () => files,
     getScriptVersion: () => "0",
-    getScriptSnapshot: fileName => {
+    getScriptSnapshot: absolutePath => {
       if (extraFiles) {
-        const relativePath = relative(fixtureDir, fileName);
+        const relativePath = relative(fixtureDir, absolutePath);
         if (relativePath in extraFiles) {
           return ts.ScriptSnapshot.fromString(extraFiles[relativePath]);
         }
       }
 
-      if (!existsSync(fileName)) {
-        return undefined;
-      }
-
-      return ts.ScriptSnapshot.fromString(readFileSync(fileName).toString());
+      return ts.ScriptSnapshot.fromString(readFileSync(absolutePath).toString());
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
+    getDefaultLibFileName: options => {
+      const defaultLibFileName = ts.getDefaultLibFileName(options);
+      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
+    },
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,
@@ -360,32 +359,32 @@ describe("@types/bun integration test", () => {
         code: 2339,
       },
       {
-        line: "streams.ts:16:3",
+        line: "streams.ts:18:3",
         message: "No overload matches this call.",
         code: 2769,
       },
       {
-        line: "streams.ts:18:16",
+        line: "streams.ts:20:16",
         message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
         code: 2339,
       },
       {
-        line: "streams.ts:44:19",
+        line: "streams.ts:46:19",
         message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        line: "streams.ts:45:19",
+        line: "streams.ts:47:19",
         message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        line: "streams.ts:46:19",
+        line: "streams.ts:48:19",
         message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        line: "streams.ts:47:19",
+        line: "streams.ts:49:19",
         message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },

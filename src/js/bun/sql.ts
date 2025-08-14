@@ -46,16 +46,23 @@ const SQL: typeof Bun.SQL = function SQL(
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
     // connection closed mid query this will not be called if the query finishes first
     const query = this;
+
     if (err) {
       return query.reject(err);
     }
+
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
   }
 
-  function onQueryConnected(this: Query<any, any>, handle: BaseQueryHandle<any>, err, pooledConnection) {
+  function onQueryConnected(
+    this: Query<any, any>,
+    handle: BaseQueryHandle<any>,
+    err,
+    connectionHandle: ConnectionHandle,
+  ) {
     const query = this;
     if (err) {
       // fail to aquire a connection from the pool
@@ -63,35 +70,23 @@ const SQL: typeof Bun.SQL = function SQL(
     }
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
-      pool.release(pooledConnection); // release the connection back to the pool
+      pool.release(connectionHandle); // release the connection back to the pool
       return query.reject($ERR_POSTGRES_QUERY_CANCELLED("Query cancelled"));
     }
 
-    // For PostgreSQL, bind close event to the query
-    // For SQLite, the connection is just the Database object
-    if (pooledConnection.bindQuery) {
-      // PostgreSQL pooled connection
-      pooledConnection.bindQuery(query, onQueryDisconnected.bind(query));
-      try {
-        const result = handle.run(pooledConnection.connection, query);
+    if (connectionHandle.bindQuery) {
+      connectionHandle.bindQuery(query, onQueryDisconnected.bind(query));
+    }
 
-        if (result && $isPromise(result)) {
-          result.catch(err => query.reject(err));
-        }
-      } catch (err) {
-        query.reject(err);
-      }
-    } else {
-      // SQLite - direct database connection
-      try {
-        const result = handle.run(pooledConnection, query);
+    try {
+      const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(connectionHandle) : connectionHandle;
+      const result = handle.run(connection, query);
 
-        if (result && $isPromise(result)) {
-          result.catch(err => query.reject(err));
-        }
-      } catch (err) {
-        query.reject(err);
+      if (result && $isPromise(result)) {
+        result.catch(err => query.reject(err));
       }
+    } catch (err) {
+      query.reject(err);
     }
   }
   function queryFromPoolHandler(query, handle, err) {
@@ -161,7 +156,9 @@ const SQL: typeof Bun.SQL = function SQL(
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
 
     try {
-      const result = handle.run(pooledConnection.connection, query);
+      // Use adapter method to get the actual connection
+      const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(pooledConnection) : pooledConnection;
+      const result = handle.run(connection, query);
       if (result && $isPromise(result)) {
         result.catch(err => query.reject(err));
       }
@@ -235,7 +232,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection: PooledPostgresConnection) {
+  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
     if (err) {
@@ -252,7 +249,9 @@ const SQL: typeof Bun.SQL = function SQL(
     };
 
     const onClose = onTransactionDisconnected.bind(state);
-    pooledConnection.onClose(onClose);
+    if (pooledConnection.onClose) {
+      pooledConnection.onClose(onClose);
+    }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
       if (
@@ -263,7 +262,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       if ($isArray(strings)) {
         // detect if is tagged template
-        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+        if (!$isArray(strings.raw)) {
           return new SQLHelper(strings, values);
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
@@ -367,7 +366,11 @@ const SQL: typeof Bun.SQL = function SQL(
       if (state.connectionState & ReservedConnectionState.closed) {
         throw connectionClosedError();
       }
-      return pooledConnection.flush();
+      // Use pooled connection's flush if available, otherwise use adapter's flush
+      if (pooledConnection.flush) {
+        return pooledConnection.flush();
+      }
+      return pool.flush();
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
       const reserveQueries = state.queries;
@@ -426,7 +429,10 @@ const SQL: typeof Bun.SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      pooledConnection.queries.delete(onClose);
+      // Use adapter method to detach connection close handler
+      if (pool.detachConnectionCloseHandler) {
+        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      }
       pool.release(pooledConnection);
       return Promise.resolve(undefined);
     };
@@ -534,7 +540,10 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     const onClose = onTransactionDisconnected.bind(state);
-    pooledConnection.onClose(onClose);
+    // Use adapter method to attach connection close handler
+    if (pool.attachConnectionCloseHandler) {
+      pool.attachConnectionCloseHandler(pooledConnection, onClose);
+    }
 
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -621,7 +630,11 @@ const SQL: typeof Bun.SQL = function SQL(
       if (state.connectionState & ReservedConnectionState.closed) {
         throw connectionClosedError();
       }
-      return pooledConnection.flush();
+      // Use pooled connection's flush if available, otherwise use adapter's flush
+      if (pooledConnection.flush) {
+        return pooledConnection.flush();
+      }
+      return pool.flush();
     };
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
@@ -761,7 +774,10 @@ const SQL: typeof Bun.SQL = function SQL(
       return reject(err);
     } finally {
       state.connectionState |= ReservedConnectionState.closed;
-      pooledConnection.queries.delete(onClose);
+      // Use adapter method to detach connection close handler
+      if (pool.detachConnectionCloseHandler) {
+        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      }
       if (!dontRelease) {
         pool.release(pooledConnection);
       }

@@ -487,7 +487,12 @@ class PooledPostgresConnection {
 }
 
 export class PostgresAdapter
-  implements DatabaseAdapter<PooledPostgresConnection, $ZigGeneratedClasses.PostgresSQLQuery>
+  implements
+    DatabaseAdapter<
+      PooledPostgresConnection,
+      $ZigGeneratedClasses.PostgresSQLConnection,
+      $ZigGeneratedClasses.PostgresSQLQuery
+    >
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
 
@@ -508,9 +513,26 @@ export class PostgresAdapter
     this.readyConnections = new Set();
   }
 
-  supportsReservedConnections(): boolean {
-    // PostgreSQL has a connection pool, so it supports reserved connections
+  supportsReservedConnections() {
     return true;
+  }
+
+  getConnectionForQuery(pooledConnection: PooledPostgresConnection) {
+    return pooledConnection.connection;
+  }
+
+  attachConnectionCloseHandler(connection: PooledPostgresConnection, handler: () => void): void {
+    // PostgreSQL pooled connections support onClose handlers
+    if (connection.onClose) {
+      connection.onClose(handler);
+    }
+  }
+
+  detachConnectionCloseHandler(connection: PooledPostgresConnection, handler: () => void): void {
+    // PostgreSQL pooled connections track queries
+    if (connection.queries) {
+      connection.queries.delete(handler);
+    }
   }
 
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {

@@ -80,13 +80,16 @@ pub const js_fns = struct {
         if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
             return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
         }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+        const buntest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
 
-        try bunTest.run(globalObject);
+        try buntest.run(globalObject);
 
         _ = callframe;
 
-        return .js_undefined; // TODO: return a promise that resolves when done
+        if (buntest.done_promise.get() == null) {
+            buntest.done_promise.set(globalObject, jsc.JSPromise.create(globalObject).toJS());
+        }
+        return buntest.done_promise.get().?; // TODO: return a promise that resolves when done
     }
 };
 
@@ -95,6 +98,7 @@ pub const BunTest = struct {
     executing: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
+    done_promise: jsc.Strong.Optional = .empty,
 
     phase: enum {
         collection,
@@ -104,6 +108,9 @@ pub const BunTest = struct {
     execution: Execution,
 
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+        group.begin(@src());
+        defer group.end();
+
         var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
         const gpa = allocation_scope.allocator();
         return .{
@@ -116,6 +123,10 @@ pub const BunTest = struct {
         };
     }
     pub fn deinit(this: *BunTest) void {
+        group.begin(@src());
+        defer group.end();
+
+        this.done_promise.deinit();
         this.execution.deinit();
         this.collection.deinit();
         const backing = this.allocation_scope.parent;
@@ -136,6 +147,9 @@ pub const BunTest = struct {
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
     export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
         var this: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
         defer this.unref();
 
@@ -146,13 +160,16 @@ pub const BunTest = struct {
         return .js_undefined;
     }
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+
         _ = globalThis;
         _ = callframe;
         @panic("bun:test failure. TODO: throw the error");
         // return bunTestThen(globalThis, callframe); // TODO: throw the error
     }
     pub fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
-        promise.then(globalThis, this.ref(), bunTestThen, bunTestThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
+        promise.then(globalThis, this.ref(), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
     pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
@@ -199,6 +216,8 @@ pub const BunTest = struct {
                         },
                         .execution => {
                             // execution phase is complete. print results.
+
+                            if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
 
                             this.executing = false;
                             this.deinit();
@@ -265,10 +284,33 @@ pub const ExecutionEntry = struct {
         beforeEach,
         afterEach,
         afterAll,
+
+        executing,
+        pass,
+        fail,
+        skip,
+        todo,
+        timeout,
+        skipped_because_label,
+        fail_because_failing_test_passed,
+        fail_because_todo_passed,
+        fail_because_expected_has_assertions,
+        fail_because_expected_assertion_count,
+
         pub fn isCalledMultipleTimes(this: @This()) bool {
             return switch (this) {
                 .beforeEach, .afterEach => true,
                 else => false,
+            };
+        }
+        pub fn shouldExecute(this: @This()) bool {
+            return switch (this) {
+                .test_callback, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
+                .skip, .todo, .skipped_because_label => false,
+                .executing, .pass, .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => {
+                    bun.assert(false);
+                    return false;
+                },
             };
         }
     },

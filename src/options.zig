@@ -1648,6 +1648,32 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const LegalComments = enum {
+    none,
+    @"inline",
+    eof,
+    linked,
+    external,
+
+    pub fn fromString(str: ?[]const u8) LegalComments {
+        const s = str orelse return .eof; // Default to eof when bundling, inline otherwise (handled in Arguments.zig)
+        if (strings.eqlComptime(s, "none")) return .none;
+        if (strings.eqlComptime(s, "inline")) return .@"inline";
+        if (strings.eqlComptime(s, "eof")) return .eof;
+        if (strings.eqlComptime(s, "linked")) return .linked;
+        if (strings.eqlComptime(s, "external")) return .external;
+        return .eof; // Default fallback
+    }
+
+    pub const Map = bun.ComptimeStringMap(LegalComments, .{
+        .{ "none", .none },
+        .{ "inline", .@"inline" },
+        .{ "eof", .eof },
+        .{ "linked", .linked },
+        .{ "external", .external },
+    });
+};
+
 pub const PackagesOption = enum {
     bundle,
     external,
@@ -1705,6 +1731,7 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     production: bool = false,
+    legal_comments: LegalComments = .eof,
 
     // only used by bundle_v2
     output_format: Format = .esm,

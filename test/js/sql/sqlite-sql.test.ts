@@ -411,7 +411,9 @@ describe("Template Literal Security", () => {
     expect(result[0].name).toBe("Alice");
 
     const table = "identifier_test";
-    expect(sql`SELECT * FROM ${table}`.then(r => r)).rejects.toThrowErrorMatchingInlineSnapshot(`"near "?": syntax error"`);
+    expect(sql`SELECT * FROM ${table}`.then(r => r)).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"near "?": syntax error"`,
+    );
   });
 });
 

@@ -35,6 +35,58 @@ declare module "bun" {
   }
 
   namespace SQL {
+    class SQLError extends Error {
+      constructor(message: string);
+    }
+
+    class PostgresError extends SQLError {
+      public readonly code: string;
+      public readonly detail: string;
+      public readonly hint: string;
+      public readonly severity: string;
+      public readonly position?: string;
+      public readonly internalPosition?: string;
+      public readonly internalQuery?: string;
+      public readonly where?: string;
+      public readonly schema?: string;
+      public readonly table?: string;
+      public readonly column?: string;
+      public readonly dataType?: string;
+      public readonly constraint?: string;
+      public readonly file?: string;
+      public readonly line?: string;
+      public readonly routine?: string;
+
+      constructor(
+        message: string,
+        options: {
+          code: string;
+          detail: string;
+          hint: string;
+          position?: string;
+          internalPosition?: string;
+          internalQuery?: string;
+          where?: string;
+          schema?: string;
+          table?: string;
+          column?: string;
+          dataType?: string;
+          constraint?: string;
+          file?: string;
+          line?: string;
+          routine?: string;
+          severity?: string;
+        },
+      );
+    }
+
+    class SQLiteError extends SQLError {
+      public readonly code: string;
+      public readonly errno: number;
+
+      constructor(message: string, options: { code: string; errno: number });
+    }
+
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
       [K in keyof T]: Awaited<T[K]>;
     };

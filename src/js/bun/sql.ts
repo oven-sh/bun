@@ -10,6 +10,129 @@ const { connectionClosedError } = require("internal/sql/utils");
 
 const defineProperties = Object.defineProperties;
 
+class SQLError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SQLError";
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      stack: this.stack,
+    };
+  }
+}
+
+class PostgresError extends SQLError {
+  public readonly code: string;
+  public readonly detail: string;
+  public readonly hint: string;
+  public readonly severity: string;
+  public readonly position?: string;
+  public readonly internalPosition?: string;
+  public readonly internalQuery?: string;
+  public readonly where?: string;
+  public readonly schema?: string;
+  public readonly table?: string;
+  public readonly column?: string;
+  public readonly dataType?: string;
+  public readonly constraint?: string;
+  public readonly file?: string;
+  public readonly line?: string;
+  public readonly routine?: string;
+
+  constructor(
+    message: string,
+    options: {
+      code: string;
+      detail: string;
+      hint: string;
+      position?: string;
+      internalPosition?: string;
+      internalQuery?: string;
+      where?: string;
+      schema?: string;
+      table?: string;
+      column?: string;
+      dataType?: string;
+      constraint?: string;
+      file?: string;
+      line?: string;
+      routine?: string;
+      severity?: string;
+    },
+  ) {
+    super(message);
+    this.name = "PostgresError";
+
+    // Required fields
+    this.code = options.code;
+    this.detail = options.detail;
+    this.hint = options.hint;
+    this.severity = options.severity;
+
+    // Copy any additional fields
+    for (const [key, value] of Object.entries(options)) {
+      if (key !== "code" && key !== "detail" && key !== "hint" && key !== "severity") {
+        this[key] = value;
+      }
+    }
+  }
+
+  toJSON() {
+    const result: any = {
+      name: this.name,
+      message: this.message,
+      stack: this.stack,
+      code: this.code,
+      detail: this.detail,
+      hint: this.hint,
+      severity: this.severity,
+    };
+
+    // Include optional fields if they exist
+    if (this.position) result.position = this.position;
+    if (this.internalPosition) result.internalPosition = this.internalPosition;
+    if (this.internalQuery) result.internalQuery = this.internalQuery;
+    if (this.where) result.where = this.where;
+    if (this.schema) result.schema = this.schema;
+    if (this.table) result.table = this.table;
+    if (this.column) result.column = this.column;
+    if (this.dataType) result.dataType = this.dataType;
+    if (this.constraint) result.constraint = this.constraint;
+    if (this.file) result.file = this.file;
+    if (this.line) result.line = this.line;
+    if (this.routine) result.routine = this.routine;
+
+    return result;
+  }
+}
+
+class SQLiteError extends SQLError {
+  public readonly code: string;
+  public readonly errno: number;
+
+  constructor(message: string, options: { code: string; errno: number; byteOffset?: number }) {
+    super(message);
+    this.name = "SQLiteError";
+
+    this.code = options.code;
+    this.errno = options.errno;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      stack: this.stack,
+      code: this.code,
+      errno: this.errno,
+    };
+  }
+}
+
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
 enum ReservedConnectionState {
@@ -1017,10 +1140,17 @@ defineProperties(defaultSQLObject, {
   },
 });
 
+SQL.SQLError = SQLError;
+SQL.PostgresError = PostgresError;
+SQL.SQLiteError = SQLiteError;
+
 export default {
   sql: defaultSQLObject,
   default: defaultSQLObject,
   SQL,
   Query,
   postgres: SQL,
+  SQLError,
+  PostgresError,
+  SQLiteError,
 };

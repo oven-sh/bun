@@ -73,9 +73,20 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         js.dataSetCached(current_this, globalObject, value_to_cache);
     }
 
-    if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
+    if (onOpenHandler.isEmptyOrUndefinedOrNull()) {
+        if (bun.take(&this.handler.onBeforeOpen)) |on_before_open| {
+            // Only create the "this" value if needed.
+            const this_value = this.getThisValue();
+            on_before_open.callback(on_before_open.ctx, this_value, ws.raw());
+        }
+        return;
+    }
+
     const this_value = this.getThisValue();
     var args = [_]JSValue{this_value};
+    if (bun.take(&this.handler.onBeforeOpen)) |on_before_open| {
+        on_before_open.callback(on_before_open.ctx, this_value, ws.raw());
+    }
 
     const loop = vm.eventLoop();
     loop.enter();

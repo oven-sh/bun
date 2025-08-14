@@ -65,7 +65,7 @@ pub const HTMLRewriter = struct {
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
             return global.throwValue(createLOLHTMLError(global));
         errdefer selector.deinit();
-        
+
         const handler_ = try ElementHandler.init(global, listener);
         const handler = bun.default_allocator.create(ElementHandler) catch bun.outOfMemory();
         handler.* = handler_;

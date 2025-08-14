@@ -1,18 +1,18 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("HTMLRewriter selector validation should throw proper errors", () => {
   // Test various invalid CSS selectors that should be rejected
   const invalidSelectors = [
-    "",                    // empty selector
-    "   ",                // whitespace only  
-    "<<<",                // invalid CSS
-    "div[",               // incomplete attribute selector
-    "div)",               // mismatched brackets
-    "div::",              // invalid pseudo
-    "..invalid",          // invalid start
+    "", // empty selector
+    "   ", // whitespace only
+    "<<<", // invalid CSS
+    "div[", // incomplete attribute selector
+    "div)", // mismatched brackets
+    "div::", // invalid pseudo
+    "..invalid", // invalid start
   ];
 
-  invalidSelectors.forEach((selector) => {
+  invalidSelectors.forEach(selector => {
     expect(() => {
       const rewriter = new HTMLRewriter();
       rewriter.on(selector, {
@@ -64,7 +64,7 @@ test("HTMLRewriter memory management - no leaks on selector parse errors", () =>
       // Expected to throw, but no memory should leak
     }
   }
-  
+
   // If there were memory leaks, running this many times would consume significant memory
   // The test passes if it completes without memory issues
   expect(true).toBe(true);
@@ -98,7 +98,7 @@ test("HTMLRewriter concurrent usage should work correctly", () => {
       element.setInnerContent("modified");
     },
   });
-  
+
   expect(() => {
     const result1 = rewriter.transform("<div>original1</div>");
     const result2 = rewriter.transform("<div>original2</div>");
@@ -107,7 +107,7 @@ test("HTMLRewriter concurrent usage should work correctly", () => {
 
 test("HTMLRewriter should handle many handlers on same element", () => {
   let rewriter = new HTMLRewriter();
-  
+
   // Add many handlers to the same element type
   for (let i = 0; i < 50; i++) {
     rewriter = rewriter.on("div", {
@@ -117,7 +117,7 @@ test("HTMLRewriter should handle many handlers on same element", () => {
       },
     });
   }
-  
+
   expect(() => {
     rewriter.transform('<div data-count="0">test</div>');
   }).not.toThrow();
@@ -126,13 +126,13 @@ test("HTMLRewriter should handle many handlers on same element", () => {
 test("HTMLRewriter should handle special characters in selectors safely", () => {
   // These selectors with special characters should either work or fail gracefully
   const specialSelectors = [
-    'div[data-test="\'quotes\'"]',
+    "div[data-test=\"'quotes'\"]",
     'div[data-test="\\"escaped\\""]',
     'div[class~="space separated"]',
     'input[type="text"]',
   ];
 
-  specialSelectors.forEach((selector) => {
+  specialSelectors.forEach(selector => {
     expect(() => {
       const rewriter = new HTMLRewriter().on(selector, {
         element(element) {

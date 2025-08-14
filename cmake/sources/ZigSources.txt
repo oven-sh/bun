@@ -191,6 +191,7 @@ src/bun.js/bindings/SourceProvider.zig
 src/bun.js/bindings/SourceType.zig
 src/bun.js/bindings/static_export.zig
 src/bun.js/bindings/SystemError.zig
+src/bun.js/bindings/TextCodec.zig
 src/bun.js/bindings/URL.zig
 src/bun.js/bindings/URLSearchParams.zig
 src/bun.js/bindings/VM.zig

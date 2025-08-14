@@ -190,7 +190,7 @@ pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObje
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
-    const WTF = @import("../bindings/WTF.zig");
+    const TextCodec = @import("../bindings/TextCodec.zig").TextCodec;
 
     switch (this.encoding) {
         EncodingLabel.latin1 => {
@@ -283,7 +283,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
 
             // Create codec if we don't have one cached
             // Note: In production, we might want to cache these per-encoding
-            const codec = WTF.TextCodec.create(encoding_name) orelse {
+            const codec = TextCodec.create(encoding_name) orelse {
                 // Fallback to empty string if codec creation fails
                 return ZigString.init("").toJS(globalThis);
             };

@@ -353,7 +353,7 @@ describe("Template Literal Security", () => {
   test("dynamic table names are not allowed in template literals", async () => {
     const tableName = "users";
 
-    expect(() => sql`CREATE TABLE ${tableName} (id INTEGER)`.then(r => r)).toThrowErrorMatchingInlineSnapshot(
+    expect(sql`CREATE TABLE ${tableName} (id INTEGER)`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
 
@@ -378,7 +378,7 @@ describe("Template Literal Security", () => {
   test("dynamic SQL structure is not allowed in template literals", async () => {
     const columns = "id INTEGER, name TEXT";
 
-    expect(sql`CREATE TABLE dynamic_structure (${columns})`.then(r => r)).rejects.toThrow();
+    expect(sql`CREATE TABLE dynamic_structure (${columns})`.execute()).rejects.toThrow();
 
     await sql.unsafe(`CREATE TABLE dynamic_structure (${columns})`);
     const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='dynamic_structure'`;
@@ -411,7 +411,7 @@ describe("Template Literal Security", () => {
     expect(result[0].name).toBe("Alice");
 
     const table = "identifier_test";
-    expect(sql`SELECT * FROM ${table}`.then(r => r)).rejects.toThrowErrorMatchingInlineSnapshot(
+    expect(sql`SELECT * FROM ${table}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
   });
@@ -480,22 +480,11 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(600);
   });
 
-  test.todo("read-only transactions", async () => {
-    const result = await sql.begin("read", async tx => {
-      const accounts = await tx`SELECT * FROM accounts`;
-
-      try {
-        await tx`UPDATE accounts SET balance = 0`;
-        expect().fail("Update should have failed");
-      } catch (err) {
-        expect(err).toBeInstanceOf(Error);
-        expect((err as Error).message).toContain("readonly");
-      }
-
-      return accounts;
-    });
-
-    expect(result).toHaveLength(2);
+  // SQLite doesn't support read-only transactions via BEGIN syntax
+  // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
+  test.skip("read-only transactions", async () => {
+    // This test is skipped because SQLite doesn't have a direct "readonly" transaction mode
+    // Using PRAGMA query_only would be too brittle and add unnecessary complexity
   });
 
   test("deferred vs immediate transactions", async () => {
@@ -790,7 +779,7 @@ describe("Connection management", () => {
     }
   });
 
-  test.todo("reserve throws for SQLite", async () => {
+  test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
     await expect(sql.reserve()).rejects.toThrow("SQLite doesn't support connection reservation (no connection pool)");
@@ -812,7 +801,7 @@ describe("Connection management", () => {
     await sql.close();
   });
 
-  test.todo("flush throws for SQLite", async () => {
+  test("flush throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
     expect(() => sql.flush()).toThrow("SQLite doesn't support flush() - queries are executed synchronously");

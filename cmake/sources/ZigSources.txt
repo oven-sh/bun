@@ -98,6 +98,11 @@ src/bun.js/api/bun/spawn.zig
 src/bun.js/api/bun/spawn/stdio.zig
 src/bun.js/api/bun/ssl_wrapper.zig
 src/bun.js/api/bun/subprocess.zig
+src/bun.js/api/bun/subprocess/Readable.zig
+src/bun.js/api/bun/subprocess/ResourceUsage.zig
+src/bun.js/api/bun/subprocess/StaticPipeWriter.zig
+src/bun.js/api/bun/subprocess/SubprocessPipeReader.zig
+src/bun.js/api/bun/subprocess/Writable.zig
 src/bun.js/api/bun/udp_socket.zig
 src/bun.js/api/bun/x509.zig
 src/bun.js/api/BunObject.zig

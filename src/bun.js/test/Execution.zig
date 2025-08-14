@@ -1,18 +1,15 @@
 executing: bool,
 order: []*ExecutionEntry,
 index: usize,
-extra_queue: std.ArrayList(*ExecutionEntry), // for if test() is called inside a test. we will need to queue beforeEach/afterEach for these tests. this can be done by calling generateOrderSub on the TestScheduleEntry2 and passing extra_queue as the out parameter.
 
-pub fn init(gpa: std.mem.Allocator) Execution {
+pub fn init(_: std.mem.Allocator) Execution {
     return .{
         .executing = false,
         .order = &.{},
         .index = 0,
-        .extra_queue = .init(gpa),
     };
 }
 pub fn deinit(this: *Execution) void {
-    this.extra_queue.deinit();
     this.bunTest().gpa.free(this.order);
 }
 
@@ -24,10 +21,6 @@ fn bunTest(this: *Execution) *BunTest {
 }
 
 pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.RunOneResult {
-    if (this.extra_queue.items.len > 0) {
-        // 1. check if the current entry is an afterAll hook. if it is, we need to run it before we run anything in the extra_queue.
-        @panic("TODO: implement extra_queue");
-    }
     if (this.index >= this.order.len) return .done;
     const entry = this.order[this.index];
     this.index += 1;

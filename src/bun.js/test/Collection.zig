@@ -97,20 +97,21 @@ pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, c
     try @field(this.active_scope, @tagName(tag)).append(hook_callback);
 }
 
-pub fn run(this: *Collection, globalThis: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
+pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.RunOneResult {
     group.begin(@src());
     defer group.end();
 
-    while (!this.executing and this.describe_callback_queue.items.len > 0) {
-        group.log("describeCallbackCompleted -> call next", .{});
+    if (!this.executing and this.describe_callback_queue.items.len > 0) {
+        group.log("runOne -> call next", .{});
         var first = this.describe_callback_queue.orderedRemove(0);
         defer first.deinit();
-        _ = try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get(), previous_scope);
+        return try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get(), first.active_scope);
+    } else {
+        return .done;
     }
-    group.log("describeCallbackCompleted -> done", .{});
 }
 
-pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!jsc.JSValue {
+pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!describe2.RunOneResult {
     group.begin(@src());
     defer group.end();
 
@@ -131,12 +132,12 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
         bun.assert(this._previous_scope == null);
         this._previous_scope = previous_scope;
         buntest.addThen(globalThis, result);
-        return this.drainedPromise(globalThis);
+        return .continue_async;
     } else {
         this.executing = false;
         group.log("callDescribeCallback -> got value", .{});
         try this.describeCallbackCompleted(globalThis, previous_scope);
-        return .js_undefined;
+        return .continue_sync;
     }
 }
 pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
@@ -149,7 +150,10 @@ pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) 
     const prev_scope = this._previous_scope.?;
     this._previous_scope = null;
     try this.describeCallbackCompleted(globalThis, prev_scope);
-    try this.run(globalThis, prev_scope);
+
+    // continue execution
+    this.bunTest().executing = false;
+    try this.bunTest().run(globalThis);
 }
 pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
     group.begin(@src());

@@ -23,19 +23,19 @@ fn bunTest(this: *Execution) *BunTest {
     return @fieldParentPtr("execution", this);
 }
 
-pub fn runLoop(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
-    while (try this.runOne(globalThis) == .continue_sync) {}
-}
-
-pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { done, continue_sync, continue_async } {
+pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.RunOneResult {
     if (this.extra_queue.items.len > 0) {
+        // 1. check if the current entry is an afterAll hook. if it is, we need to run it before we run anything in the extra_queue.
         @panic("TODO: implement extra_queue");
     }
     if (this.index >= this.order.len) return .done;
     const entry = this.order[this.index];
     this.index += 1;
 
-    const callback = entry.callback.swap();
+    // if the callback is only called once, we can remove the strong reference to allow the gc to collect it.
+    // TODO: at the end of a describe scope, we should be able to clean up any beforeAll/afterAll hooks. we can add this as a schedule entry with 'cleanup_describe' tag for example. it has to be at the end of the describe scope
+    // because otherwise we might clean up a beforeAll hook that we still need if a test were to call test() within itself.
+    const callback = if (entry.tag.isCalledMultipleTimes()) (entry.callback.get() orelse jsc.JSValue.zero) else entry.callback.swap();
     if (callback == .zero) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
 
     // TODO: catch errors
@@ -52,6 +52,7 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!enu
 pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     _ = this;
     _ = globalThis;
+    @panic("TODO testCallbackThen");
 }
 
 pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
@@ -81,7 +82,7 @@ pub fn generateOrderDescribe(current: *DescribeScope, order: *std.ArrayList(*Exe
     }
 }
 pub fn generateOrderTest(current: *ExecutionEntry, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
-    // gather beforeAll
+    // gather beforeAll (alternatively, this could be implemented recursively to make it less complicated)
     {
         // determine length of beforeAll
         var beforeAllLen: usize = 0;

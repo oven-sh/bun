@@ -22,19 +22,22 @@ describe("sub", () => {
     console.log("beforeAll 4");
   });
 
+  test("main", () => {
+    console.log("executed test");
+  });
+
+  describe("sub2", () => {
+    test("mainsub", () => {
+      console.log("executed sub-test");
+    });
+  });
+
   afterAll(() => {
     console.log("afterAll 4");
   });
   afterAll(() => {
     console.log("afterAll 3");
   });
-
-  test("main", () => {
-    console.log("test");
-  });
 });
 
-console.log("ready to run tests now");
-
 await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();

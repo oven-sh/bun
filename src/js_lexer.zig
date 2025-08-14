@@ -1859,9 +1859,28 @@ fn NewLexer_(
             }
         }
 
+        fn isLegalComment(text: []const u8) bool {
+            // Already have legal annotation (/*! or //!)
+            if (text.len > 2 and text[2] == '!') {
+                return true;
+            }
+
+            // Check for JSDoc legal comment patterns like esbuild
+            if (text.len > 3) {
+                // Check for @license, @preserve, @copyright
+                if (std.mem.indexOf(u8, text, "@license") != null or
+                    std.mem.indexOf(u8, text, "@preserve") != null or
+                    std.mem.indexOf(u8, text, "@copyright") != null) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         fn scanCommentText(noalias lexer: *LexerType, for_pragma: bool) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
-            const has_legal_annotation = text.len > 2 and text[2] == '!';
+            const has_legal_annotation = isLegalComment(text);
             const is_multiline_comment = text.len > 1 and text[1] == '*';
 
             if (lexer.track_comments)

@@ -351,3 +351,213 @@ describe("single-line comments", () => {
     },
   });
 });
+
+describe("legal comments", () => {
+  itBundled("preserve /*! style comments", {
+    files: {
+      "/entry.js": `/*!
+ * This is a legal comment with ! - should be preserved
+ * Copyright 2024 Test Corp
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("This is a legal comment with ! - should be preserved");
+      api.expectFile("/out.js").toContain("Copyright 2024 Test Corp");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("preserve //! style comments", {
+    files: {
+      "/entry.js": `//! This is a line comment with ! - should be preserved
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("//! This is a line comment with ! - should be preserved");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("preserve @license comments", {
+    files: {
+      "/entry.js": `/**
+ * @license MIT
+ * This should be preserved as it contains @license
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("@license MIT");
+      api.expectFile("/out.js").toContain("This should be preserved as it contains @license");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("preserve @preserve comments", {
+    files: {
+      "/entry.js": `/**
+ * @preserve
+ * This should be preserved as it contains @preserve
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("@preserve");
+      api.expectFile("/out.js").toContain("This should be preserved as it contains @preserve");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("preserve @copyright comments", {
+    files: {
+      "/entry.js": `/**
+ * @copyright
+ * This should be preserved as it contains @copyright
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("@copyright");
+      api.expectFile("/out.js").toContain("This should be preserved as it contains @copyright");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("remove regular JSDoc comments", {
+    files: {
+      "/entry.js": `/**
+ * This is a regular JSDoc comment - should be removed
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").not.toContain("This is a regular JSDoc comment - should be removed");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("remove regular line comments", {
+    files: {
+      "/entry.js": `// This is a regular line comment - should be removed
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").not.toContain("This is a regular line comment - should be removed");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("mixed legal and regular comments", {
+    files: {
+      "/entry.js": `/*!
+ * Legal comment with ! - preserved
+ */
+/**
+ * @license MIT
+ * Legal @license comment - preserved
+ */
+/**
+ * Regular JSDoc comment - removed
+ */
+// Regular line comment - removed
+//! Legal line comment - preserved
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      // Should preserve legal comments
+      api.expectFile("/out.js").toContain("Legal comment with ! - preserved");
+      api.expectFile("/out.js").toContain("@license MIT");
+      api.expectFile("/out.js").toContain("Legal @license comment - preserved");
+      api.expectFile("/out.js").toContain("//! Legal line comment - preserved");
+      
+      // Should remove regular comments
+      api.expectFile("/out.js").not.toContain("Regular JSDoc comment - removed");
+      api.expectFile("/out.js").not.toContain("Regular line comment - removed");
+      
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("legal comments with minification", {
+    files: {
+      "/entry.js": `/*!
+ * Legal comment - should be preserved even with minification
+ */
+/**
+ * @license MIT
+ * License comment - preserved
+ */
+/**
+ * Regular comment - should be removed
+ */
+console.log("hello");`,
+    },
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      // Legal comments should still be preserved
+      api.expectFile("/out.js").toContain("Legal comment - should be preserved even with minification");
+      api.expectFile("/out.js").toContain("@license MIT");
+      api.expectFile("/out.js").toContain("License comment - preserved");
+      
+      // Regular comments should be removed
+      api.expectFile("/out.js").not.toContain("Regular comment - should be removed");
+      
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("case sensitivity in legal comments", {
+    files: {
+      "/entry.js": `/**
+ * @LICENSE MIT (uppercase)
+ * @PRESERVE (uppercase)
+ * @COPYRIGHT (uppercase)
+ */
+/**
+ * @License MIT (mixed case)
+ * @Preserve (mixed case)  
+ * @Copyright (mixed case)
+ */
+console.log("hello");`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      // Should preserve exact case and not do case-insensitive matching
+      api.expectFile("/out.js").not.toContain("@LICENSE MIT (uppercase)");
+      api.expectFile("/out.js").not.toContain("@PRESERVE (uppercase)");
+      api.expectFile("/out.js").not.toContain("@COPYRIGHT (uppercase)");
+      api.expectFile("/out.js").not.toContain("@License MIT (mixed case)");
+      api.expectFile("/out.js").not.toContain("@Preserve (mixed case)");
+      api.expectFile("/out.js").not.toContain("@Copyright (mixed case)");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("legal comments in nested positions", {
+    files: {
+      "/entry.js": `function test() {
+  /*!
+   * Legal comment inside function - should be preserved
+   */
+  return "hello";
+}
+console.log(test());`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      api.expectFile("/out.js").toContain("Legal comment inside function - should be preserved");
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+});

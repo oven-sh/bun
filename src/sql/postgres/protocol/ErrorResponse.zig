@@ -48,6 +48,8 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     var detail: String = String.dead;
     var hint: String = String.dead;
     var position: String = String.dead;
+    var internalPosition: String = String.dead;
+    var internal: String = String.dead;
     var where: String = String.dead;
     var schema: String = String.dead;
     var table: String = String.dead;
@@ -66,6 +68,8 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
             .detail => |str| detail = str,
             .hint => |str| hint = str,
             .position => |str| position = str,
+            .internal_position => |str| internalPosition = str,
+            .internal => |str| internal = str,
             .where => |str| where = str,
             .schema => |str| schema = str,
             .table => |str| table = str,
@@ -106,44 +110,36 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
         }
     }
 
-    const possible_fields = .{
-        .{ "detail", detail, void },
-        .{ "hint", hint, void },
-        .{ "column", column, void },
-        .{ "constraint", constraint, void },
-        .{ "datatype", datatype, void },
-        // in the past this was set to i32 but postgres returns a strings lets keep it compatible
-        .{ "errno", code, void },
-        .{ "position", position, i32 },
-        .{ "schema", schema, void },
-        .{ "table", table, void },
-        .{ "where", where, void },
+    // these probably shouldnt be catch unreachable - what should they be?
+    const bun_ns = globalObject.toJSValue().get(globalObject, "Bun") catch unreachable orelse unreachable;
+    const sql_constructor = bun_ns.get(globalObject, "SQL") catch unreachable orelse unreachable;
+    const pg_error_constructor = sql_constructor.get(globalObject, "PostgresError") catch unreachable orelse unreachable;
+
+    const options = JSValue.createEmptyObject(globalObject, 0);
+    options.put(globalObject, jsc.ZigString.static("code"), code.toJS(globalObject));
+    options.put(globalObject, jsc.ZigString.static("detail"), detail.toJS(globalObject));
+    options.put(globalObject, jsc.ZigString.static("hint"), hint.toJS(globalObject));
+    options.put(globalObject, jsc.ZigString.static("severity"), severity.toJS(globalObject));
+
+    if (!position.isEmpty()) options.put(globalObject, jsc.ZigString.static("position"), position.toJS(globalObject));
+    if (!internalPosition.isEmpty()) options.put(globalObject, jsc.ZigString.static("internalPosition"), internalPosition.toJS(globalObject));
+    if (!internal.isEmpty()) options.put(globalObject, jsc.ZigString.static("internalQuery"), internal.toJS(globalObject));
+    if (!where.isEmpty()) options.put(globalObject, jsc.ZigString.static("where"), where.toJS(globalObject));
+    if (!schema.isEmpty()) options.put(globalObject, jsc.ZigString.static("schema"), schema.toJS(globalObject));
+    if (!table.isEmpty()) options.put(globalObject, jsc.ZigString.static("table"), table.toJS(globalObject));
+    if (!column.isEmpty()) options.put(globalObject, jsc.ZigString.static("column"), column.toJS(globalObject));
+    if (!datatype.isEmpty()) options.put(globalObject, jsc.ZigString.static("dataType"), datatype.toJS(globalObject));
+    if (!constraint.isEmpty()) options.put(globalObject, jsc.ZigString.static("constraint"), constraint.toJS(globalObject));
+    if (!file.isEmpty()) options.put(globalObject, jsc.ZigString.static("file"), file.toJS(globalObject));
+    if (!line.isEmpty()) options.put(globalObject, jsc.ZigString.static("line"), line.toJS(globalObject));
+    if (!routine.isEmpty()) options.put(globalObject, jsc.ZigString.static("routine"), routine.toJS(globalObject));
+
+    const args = [_]JSValue{
+        jsc.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject),
+        options,
     };
-    const error_code: jsc.Error =
-        // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-        if (code.eqlComptime("42601"))
-            .POSTGRES_SYNTAX_ERROR
-        else
-            .POSTGRES_SERVER_ERROR;
-    const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
 
-    inline for (possible_fields) |field| {
-        if (!field.@"1".isEmpty()) {
-            const value = brk: {
-                if (field.@"2" == i32) {
-                    if (field.@"1".toInt32()) |val| {
-                        break :brk jsc.JSValue.jsNumberFromInt32(val);
-                    }
-                }
-
-                break :brk field.@"1".toJS(globalObject);
-            };
-
-            err.put(globalObject, jsc.ZigString.static(field.@"0"), value);
-        }
-    }
-
-    return err;
+    return pg_error_constructor.call(globalObject, .js_undefined, &args) catch unreachable;
 }
 
 const std = @import("std");

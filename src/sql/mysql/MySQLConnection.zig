@@ -21,6 +21,7 @@ js_value: JSValue = .js_undefined,
 
 is_ready_for_query: bool = false,
 has_backpressure: bool = false,
+is_processing_data: bool = false,
 
 server_version: bun.ByteList = .{},
 connection_id: u32 = 0,
@@ -31,17 +32,42 @@ status_flags: StatusFlags = .{},
 auth_plugin: ?AuthMethod = null,
 auth_state: AuthState = .{ .pending = {} },
 
-tls_ctx: ?*uws.SocketContext = null,
-tls_config: jsc.API.ServerConfig.SSLConfig = .{},
-tls_status: TLSStatus = .none,
-ssl_mode: SSLMode = .disable,
-
 auth_data: []const u8 = "",
 database: []const u8 = "",
 user: []const u8 = "",
 password: []const u8 = "",
 options: []const u8 = "",
 options_buf: []const u8 = "",
+
+tls_ctx: ?*uws.SocketContext = null,
+tls_config: jsc.API.ServerConfig.SSLConfig = .{},
+tls_status: TLSStatus = .none,
+ssl_mode: SSLMode = .disable,
+
+idle_timeout_interval_ms: u32 = 0,
+connection_timeout_ms: u32 = 0,
+
+/// Before being connected, this is a connection timeout timer.
+/// After being connected, this is an idle timeout timer.
+timer: bun.api.Timer.EventLoopTimer = .{
+    .tag = .PostgresSQLConnectionTimeout,
+    .next = .{
+        .sec = 0,
+        .nsec = 0,
+    },
+},
+
+/// This timer controls the maximum lifetime of a connection.
+/// It starts when the connection successfully starts (i.e. after handshake is complete).
+/// It stops when the connection is closed.
+max_lifetime_interval_ms: u32 = 0,
+max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
+    .tag = .PostgresSQLConnectionMaxLifetime,
+    .next = .{
+        .sec = 0,
+        .nsec = 0,
+    },
+},
 
 auto_flusher: AutoFlusher = .{},
 
@@ -113,6 +139,79 @@ fn unregisterAutoFlusher(this: *@This()) void {
     }
 }
 
+fn getTimeoutInterval(this: *const @This()) u32 {
+    return switch (this.status) {
+        .connected => this.idle_timeout_interval_ms,
+        .failed => 0,
+        else => this.connection_timeout_ms,
+    };
+}
+pub fn disableConnectionTimeout(this: *@This()) void {
+    if (this.timer.state == .ACTIVE) {
+        this.vm.timer.remove(&this.timer);
+    }
+    this.timer.state = .CANCELLED;
+}
+pub fn resetConnectionTimeout(this: *@This()) void {
+    // if we are processing data, don't reset the timeout, wait for the data to be processed
+    if (this.is_processing_data) return;
+    const interval = this.getTimeoutInterval();
+    if (this.timer.state == .ACTIVE) {
+        this.vm.timer.remove(&this.timer);
+    }
+    if (interval == 0) {
+        return;
+    }
+
+    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.vm.timer.insert(&this.timer);
+}
+
+fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
+    if (this.max_lifetime_interval_ms == 0) return;
+    if (this.max_lifetime_timer.state == .ACTIVE) return;
+
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.vm.timer.insert(&this.max_lifetime_timer);
+}
+
+pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
+    debug("onConnectionTimeout", .{});
+
+    this.timer.state = .FIRED;
+    if (this.is_processing_data) {
+        return .disarm;
+    }
+
+    if (this.getTimeoutInterval() == 0) {
+        this.resetConnectionTimeout();
+        return .disarm;
+    }
+
+    switch (this.status) {
+        .connected => {
+            this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+        },
+        else => {
+            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+        },
+        .handshaking,
+        .authenticating,
+        .authentication_awaiting_pk,
+        => {
+            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+        },
+    }
+    return .disarm;
+}
+
+pub fn onMaxLifetimeTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
+    debug("onMaxLifetimeTimeout", .{});
+    this.max_lifetime_timer.state = .FIRED;
+    if (this.status == .failed) return .disarm;
+    this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    return .disarm;
+}
 fn drainInternal(this: *@This()) void {
     debug("drainInternal", .{});
     if (this.vm.isShuttingDown()) return this.close();
@@ -209,7 +308,9 @@ pub fn flushData(this: *@This()) void {
 pub fn getQueriesArray(this: *const @This()) JSValue {
     return js.queriesGetCached(this.js_value) orelse .zero;
 }
-
+pub fn failFmt(this: *@This(), comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {
+    this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
+}
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer this.updateHasPendingActivity();
     if (this.status == .failed) return;
@@ -438,9 +539,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     const on_connect = arguments[9];
     const on_close = arguments[10];
-    // const idle_timeout = arguments[11].toInt32();
-    // const connection_timeout = arguments[12].toInt32();
-    // const max_lifetime = arguments[13].toInt32();
+    const idle_timeout = arguments[11].toInt32();
+    const connection_timeout = arguments[12].toInt32();
+    const max_lifetime = arguments[13].toInt32();
     // const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
@@ -460,9 +561,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .tls_ctx = tls_ctx,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
-        // .idle_timeout_interval_ms = @intCast(idle_timeout),
-        // .connection_timeout_ms = @intCast(connection_timeout),
-        // .max_lifetime_interval_ms = @intCast(max_lifetime),
+        .idle_timeout_interval_ms = @intCast(idle_timeout),
+        .connection_timeout_ms = @intCast(connection_timeout),
+        .max_lifetime_interval_ms = @intCast(max_lifetime),
         .character_set = CharacterSet.default,
     };
 
@@ -503,6 +604,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     }
 
     ptr.updateHasPendingActivity();
+    ptr.resetConnectionTimeout();
     ptr.poll_ref.ref(vm);
     const js_value = ptr.toJS(globalObject);
     js_value.ensureStillAlive();
@@ -542,14 +644,12 @@ pub fn deinit(this: *MySQLConnection) void {
 }
 
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
+    this.setupMaxLifetimeTimerIfNecessary();
+    this.resetConnectionTimeout();
     this.socket = socket;
     this.setStatus(.handshaking);
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
-
-    // Do nothing, the server will start the handshake process.
-    // Set a timeout so that we at least don't do nothing forever.
-    socket.setTimeout(120);
 }
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -590,6 +690,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
 pub fn onData(this: *MySQLConnection, data: []const u8) void {
     debug("onData: {d}", .{data.len});
     this.ref();
+    this.is_processing_data = true;
     const vm = this.vm;
     // Clear the timeout.
     this.socket.setTimeout(0);
@@ -602,7 +703,9 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
             // Keep the process alive if there's something to do.
             this.poll_ref.ref(vm);
         }
-
+        // reset the connection timeout after we're done processing the data
+        this.is_processing_data = false;
+        this.resetConnectionTimeout();
         this.deref();
     }
 
@@ -780,21 +883,6 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
     this.flushData();
 }
 
-// pub fn resetConnectionTimeout(this: *@This()) void {
-//     // if we are processing data, don't reset the timeout, wait for the data to be processed
-//     if (this.flags.is_processing_data) return;
-//     const interval = this.getTimeoutInterval();
-//     if (this.timer.state == .ACTIVE) {
-//         this.vm.timer.remove(&this.timer);
-//     }
-//     if (interval == 0) {
-//         return;
-//     }
-
-//     this.timer.next = bun.timespec.msFromNow(@intCast(interval));
-//     this.vm.timer.insert(&this.timer);
-// }
-
 pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
     const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
@@ -817,7 +905,7 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
     defer this.updateHasPendingActivity();
 
     this.status = status;
-    // this.resetConnectionTimeout();
+    this.resetConnectionTimeout();
     if (this.vm.isShuttingDown()) return;
 
     switch (status) {
@@ -1033,8 +1121,6 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
     try response.write(this.writer());
     this.capabilities = response.capability_flags;
     this.flushData();
-
-    this.socket.setTimeout(0);
 }
 
 pub fn sendAuthSwitchResponse(this: *MySQLConnection, auth_method: AuthMethod, plugin_data: []const u8) !void {
@@ -1198,7 +1284,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
                 if (request.status == .pending) {
                     try request.bindAndExecute(this.writer(), statement, this.globalObject);
-                    this.flushData();
+                    this.registerAutoFlusher();
                 }
             } else {
                 debug("Unexpected prepared statement packet", .{});
@@ -1238,6 +1324,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 
             this.status_flags = ok.status_flags;
             this.is_ready_for_query = true;
+            this.registerAutoFlusher();
 
             if (this.requests.readItem()) |request| {
                 request.onSuccess(this.globalObject);
@@ -1291,6 +1378,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                             // Update status flags and finish
                             this.status_flags = eof.status_flags;
                             this.is_ready_for_query = true;
+                            this.registerAutoFlusher();
                             this.requests.discard(1);
 
                             request.onSuccess(this.globalObject);
@@ -1354,6 +1442,7 @@ pub fn closeStatement(this: *MySQLConnection, statement: *MySQLStatement) !void 
 
     try _close.write(this.writer());
     this.flushData();
+    this.registerAutoFlusher();
 }
 
 pub fn resetStatement(this: *MySQLConnection, statement: *MySQLStatement) !void {
@@ -1363,6 +1452,7 @@ pub fn resetStatement(this: *MySQLConnection, statement: *MySQLStatement) !void 
 
     try reset.write(this.writer());
     this.flushData();
+    this.registerAutoFlusher();
 }
 
 pub fn getQueries(_: *@This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

@@ -32,12 +32,12 @@ console.log(data);`;
 
   test("WebAssembly import attributes should be preserved", () => {
     const transpiler = new Bun.Transpiler({ loader: "js" });
-    
+
     const input = `import module from "./module.wasm" with { type: "webassembly" };
 console.log(module);`;
-    
+
     const result = transpiler.transformSync(input, "js");
-    
+
     // WebAssembly import attributes should be preserved (web standard)
     expect(result).toContain('with { type: "webassembly" }');
     expect(result).toContain('import module from "./module.wasm" with { type: "webassembly" };');
@@ -65,9 +65,9 @@ import wasmModule from "./module.wasm" with { type: "webassembly" };
 import utils from "./utils.toml" with { type: "toml" };
 document.adoptedStyleSheets = [styles];
 console.log(config, wasmModule, utils);`;
-    
+
     const result = transpiler.transformSync(input, "js");
-    
+
     // Web standard attributes preserved
     expect(result).toContain('with { type: "css" }');
     expect(result).toContain('with { type: "json" }');

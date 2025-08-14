@@ -198,7 +198,7 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
     const resolutions = pm.lockfile.buffers.resolutions.items;
     const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
 
-    var queue = std.ArrayList(u32).init(allocator);
+    var queue = std.fifo.LinearFifo(u32, .Dynamic).init(allocator);
     defer queue.deinit();
 
     const root_deps = pkg_dependencies[root_id];
@@ -211,13 +211,12 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
             if (resolved_pkg_id < pkg_names.len) {
                 const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
                 try prod_set.put(pkg_name, {});
-                try queue.append(resolved_pkg_id);
+                try queue.writeItem(resolved_pkg_id);
             }
         }
     }
 
-    while (queue.items.len > 0) {
-        const current_pkg_id = queue.orderedRemove(0);
+    while (queue.readItem()) |current_pkg_id| {
         if (current_pkg_id >= pkg_names.len) continue;
 
         const current_deps = pkg_dependencies[current_pkg_id];
@@ -231,7 +230,7 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
             const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
             if (!prod_set.contains(pkg_name)) {
                 try prod_set.put(pkg_name, {});
-                try queue.append(resolved_pkg_id);
+                try queue.writeItem(resolved_pkg_id);
             }
         }
     }

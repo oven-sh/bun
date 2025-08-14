@@ -247,12 +247,15 @@ pub const AuditLevel = enum {
     high,
     critical,
 
+    const Map = bun.ComptimeStringMap(AuditLevel, .{
+        .{ "low", .low },
+        .{ "moderate", .moderate },
+        .{ "high", .high },
+        .{ "critical", .critical },
+    });
+
     pub fn fromString(str: []const u8) ?AuditLevel {
-        if (bun.strings.eqlComptime(str, "low")) return .low;
-        if (bun.strings.eqlComptime(str, "moderate")) return .moderate;
-        if (bun.strings.eqlComptime(str, "high")) return .high;
-        if (bun.strings.eqlComptime(str, "critical")) return .critical;
-        return null;
+        return Map.get(str);
     }
 
     pub fn shouldIncludeSeverity(self: AuditLevel, severity: []const u8) bool {

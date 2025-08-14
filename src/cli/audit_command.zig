@@ -224,7 +224,7 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
 
         for (current_dep_slice, current_res_slice) |_, resolved_pkg_id| {
             if (resolved_pkg_id >= packages.len) continue;
-            
+
             const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
             if (!prod_set.contains(pkg_name)) {
                 try prod_set.put(pkg_name, {});

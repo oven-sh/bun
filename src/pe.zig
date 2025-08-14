@@ -371,6 +371,9 @@ pub const PEFile = struct {
         const updated_optional_header = self.getOptionalHeader();
         updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
         updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
+        
+        // Update PE checksum - critical for Windows to accept the executable
+        self.updateChecksum();
     }
 
     /// Find the .bun section and return its data
@@ -423,6 +426,59 @@ pub const PEFile = struct {
             }
         }
         return error.BunSectionNotFound;
+    }
+
+    /// Calculate PE checksum using the standard Windows algorithm
+    pub fn calculateChecksum(self: *const PEFile) u32 {
+        const data = self.data.items;
+        const file_size = data.len;
+        
+        // Find checksum field offset
+        const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
+        
+        var checksum: u64 = 0;
+        var i: usize = 0;
+        
+        // Process file as 16-bit words
+        while (i + 1 < file_size) : (i += 2) {
+            // Skip the checksum field itself (4 bytes)
+            if (i >= checksum_offset and i < checksum_offset + 4) {
+                continue;
+            }
+            
+            // Add 16-bit word to checksum
+            const word = std.mem.readInt(u16, data[i..][0..2], .little);
+            checksum += word;
+            
+            // Handle overflow - fold back the carry
+            if (checksum > 0xFFFF) {
+                checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            }
+        }
+        
+        // If file size is odd, last byte is treated as if followed by 0x00
+        if (file_size & 1 != 0) {
+            checksum += data[file_size - 1];
+            if (checksum > 0xFFFF) {
+                checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            }
+        }
+        
+        // Final fold
+        checksum = (checksum & 0xFFFF) + (checksum >> 16);
+        checksum = (checksum + (checksum >> 16)) & 0xFFFF;
+        
+        // Add file size to checksum
+        checksum += file_size;
+        
+        return @intCast(checksum);
+    }
+    
+    /// Update the PE checksum field
+    pub fn updateChecksum(self: *PEFile) void {
+        const checksum = self.calculateChecksum();
+        const optional_header = self.getOptionalHeader();
+        optional_header.checksum = checksum;
     }
 
     /// Write the modified PE file
@@ -591,6 +647,9 @@ pub const PEFile = struct {
 
         // Update the resource section
         try self.updateResourceSection(rsrc_section.?, resource_data);
+        
+        // Update PE checksum after all modifications
+        self.updateChecksum();
     }
 
     fn createResourceSection(self: *PEFile) !void {
@@ -784,12 +843,11 @@ const ResourceBuilder = struct {
             
             // Add individual icon to RT_ICON table
             const id_table = try self.getOrCreateTable(icon_table, icon_id);
-            const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
             
-            // Add the actual icon data
+            // At the language level, add data directly instead of creating another table
             const data_copy = try self.allocator.dupe(u8, image_data);
-            try lang_table.entries.append(.{
-                .id = 0,
+            try id_table.entries.append(.{
+                .id = PEFile.LANGUAGE_ID_EN_US,
                 .data = data_copy,
                 .data_size = @intCast(data_copy.len),
                 .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -812,12 +870,11 @@ const ResourceBuilder = struct {
         // Get or create RT_GROUP_ICON table
         const group_table = try self.getOrCreateTable(&self.root, PEFile.RT_GROUP_ICON);
         const name_table = try self.getOrCreateTable(group_table, 1); // MAINICON ID
-        const lang_table = try self.getOrCreateTable(name_table, PEFile.LANGUAGE_ID_EN_US);
         
-        // Add group icon data
+        // At the language level, add data directly instead of creating another table
         const group_data_copy = try group_icon_data.toOwnedSlice();
-        try lang_table.entries.append(.{
-            .id = 0,
+        try name_table.entries.append(.{
+            .id = PEFile.LANGUAGE_ID_EN_US,
             .data = group_data_copy,
             .data_size = @intCast(group_data_copy.len),
             .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -992,11 +1049,10 @@ const ResourceBuilder = struct {
         // Add to resource table
         const version_table = try self.getOrCreateTable(&self.root, PEFile.RT_VERSION);
         const id_table = try self.getOrCreateTable(version_table, 1);
-        const lang_table = try self.getOrCreateTable(id_table, PEFile.LANGUAGE_ID_EN_US);
 
         const version_bytes = try data.toOwnedSlice();
-        try lang_table.entries.append(.{
-            .id = 0,
+        try id_table.entries.append(.{
+            .id = PEFile.LANGUAGE_ID_EN_US,
             .data = version_bytes,
             .data_size = @intCast(version_bytes.len),
             .code_page = PEFile.CODE_PAGE_ID_EN_US,
@@ -1044,7 +1100,7 @@ const ResourceBuilder = struct {
         // Now build with known offsets
         var tables_offset: u32 = 0;
         var data_entries_offset = total_table_size;
-        var data_offset = total_table_size + total_data_entries;
+        var data_offset = total_table_size + (total_data_entries * @sizeOf(PEFile.ResourceDataEntry));
         
         try self.writeTableRecursive(&tables, &data_entries, &data_bytes,
                                     virtual_address, &self.root, 
@@ -1068,7 +1124,7 @@ const ResourceBuilder = struct {
             if (entry.subtable) |subtable| {
                 self.calculateTableSizes(subtable, table_size, data_entries);
             } else if (entry.data != null) {
-                data_entries.* += @sizeOf(PEFile.ResourceDataEntry);
+                data_entries.* += 1; // Count the number of data entries, not their size
             }
         }
     }
@@ -1120,10 +1176,11 @@ const ResourceBuilder = struct {
                 try subdirs.append(.{ .entry = entry, .offset = next_table_offset });
                 next_table_offset += subdir_size;
             } else if (entry.data) |_| {
-                const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len * @sizeOf(PEFile.ResourceDataEntry)));
+                // Calculate offset to the ResourceDataEntry from start of resource section
+                const data_entry_offset = data_entries_offset.* + @as(u32, @intCast(data_entries.items.len));
                 const dir_entry = PEFile.ResourceDirectoryEntry{
                     .name_or_id = entry.id,
-                    .offset_to_data = data_entry_offset | 0x80000000, // Set high bit to indicate data entry
+                    .offset_to_data = data_entry_offset, // No high bit for data entry (points to ResourceDataEntry)
                 };
                 try tables.appendSlice(std.mem.asBytes(&dir_entry));
                 

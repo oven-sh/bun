@@ -343,8 +343,8 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
                 bun.FileDescriptor => rawfd,
-                *bun.MovableFD, bun.MovableFD => rawfd.get().?,
-                else => @compileError("Expected `bun.FileDescriptor`, `*bun.MovableFD` or `bun.MovableFD` but got: " ++ @typeName(rawfd)),
+                *bun.MovableIfWindowsFd, bun.MovableIfWindowsFd => rawfd.getPosix(),
+                else => @compileError("Expected `bun.FileDescriptor`, `*bun.MovableIfWindowsFd` or `bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             this.pollable = pollable;
             if (!pollable) {
@@ -898,8 +898,8 @@ fn BaseWindowsPipeWriter(
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
                 bun.FileDescriptor => rawfd,
-                *bun.MovableFD => rawfd.get().?,
-                else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableFD` but got: " ++ @typeName(rawfd)),
+                *bun.MovableIfWindowsFd => rawfd.get().?,
+                else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             bun.assert(this.source == null);
             const source = switch (Source.open(uv.Loop.get(), fd)) {
@@ -912,8 +912,8 @@ fn BaseWindowsPipeWriter(
             if (switch (source) {
                 .pipe, .tty => true,
                 else => false,
-            } and FDType == *bun.MovableFD) {
-                _ = rawfd.move();
+            } and FDType == *bun.MovableIfWindowsFd) {
+                _ = rawfd.take();
             }
             source.setData(this);
             this.source = source;

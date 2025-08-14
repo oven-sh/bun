@@ -653,78 +653,78 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_in
     return out;
 }
 
-/// - On Windows we use libuv
-/// - `uv_pipe` takes ownership over the file descriptor when initialized
-/// - This can easily cause use-after-frees if the pipe is closed and then we
-///   use the file descriptor or we close it again
+/// On Windows we use libuv and often pass file descriptors to functions
+/// like `uv_pipe_open`, `uv_tty_init`.
 ///
-/// **IMPORTANT**: On Posix builds, this type is always `__owned` and therefore just a simple wrapper.
-pub const MovableFD = union(enum) {
-    __owned: FD,
-    __moved,
+/// But `uv_pipe` and `uv_tty` **take ownership of the file descriptor**.
+///
+/// This can easily cause use-after-frees, double closing the FD, etc.
+///
+/// So this type represents an FD that could possibly be moved to libuv.
+///
+/// Note that on Posix, this is just a wrapper over FD and does nothing.
+pub const MovableIfWindowsFd = union(enum) {
+    const Self = @This();
 
-    pub fn isValid(this: MovableFD) bool {
-        return switch (this) {
-            .__owned => |fd| fd.isValid(),
-            .__moved => false,
-        };
+    _inner: if (bun.Environment.isWindows) ?FD else FD,
+
+    pub fn init(fd: FD) Self {
+        return .{ ._inner = fd };
     }
 
-    pub fn close(this: MovableFD) void {
-        switch (this) {
-            .__owned => |fd| fd.close(),
-            .__moved => {},
-        }
+    pub fn get(self: *const Self) ?FD {
+        return self._inner;
     }
 
-    pub fn dupOnWindowsDoNothingPosix(self: MovableFD) bun.sys.Maybe(FD) {
+    pub fn getPosix(self: *const Self) FD {
+        if (comptime bun.Environment.isWindows)
+            @compileError("MovableIfWindowsFd.getPosix is not available on Windows");
+
+        return self._inner;
+    }
+
+    pub fn close(self: *Self) void {
         if (comptime bun.Environment.isPosix) {
-            return .{ .result = self.__owned };
+            self._inner.close();
+            self._inner = FD.invalid;
+            return;
         }
-        return bun.sys.dup(self.__owned);
+        if (self._inner) |fd| {
+            fd.close();
+            self._inner = null;
+        }
     }
 
-    pub fn get(self: MovableFD) ?FD {
-        return switch (self) {
-            .__owned => |fd| fd,
-            .__moved => {
-                if (comptime bun.Environment.isPosix) {
-                    unreachable;
-                }
-                return null;
-            },
-        };
+    pub fn isValid(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return self._inner.isValid();
+        return self._inner != null and self._inner.?.isValid();
     }
 
-    pub fn init(fd: FD) MovableFD {
-        return MovableFD{ .__owned = fd };
+    pub fn isOwned(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return true;
+        return self._inner != null;
     }
 
-    pub fn isOwned(self: MovableFD) bool {
-        return switch (self) {
-            .__owned => true,
-            .__moved => false,
-        };
+    /// Takes the FD, leaving `self` in a "moved-from" state. Only available on Windows.
+    pub fn take(self: *Self) ?FD {
+        if (comptime bun.Environment.isPosix) {
+            @compileError("MovableIfWindowsFd.take is not available on Posix");
+        }
+        const result = self._inner;
+        self._inner = null;
+        return result;
     }
 
-    pub fn move(self: *MovableFD) FD {
-        if (comptime bun.Environment.isPosix) @compileError("Don't call `.move()` on Posix.");
-
-        bun.assert(self.* == .__owned);
-        const fd = self.__owned;
-        self.* = MovableFD{ .__moved = {} };
-        return fd;
-    }
-
-    pub fn format(self: *const MovableFD, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (comptime bun.Environment.isPosix) {
             try writer.print("{}", .{self.get().?});
             return;
         }
-        switch (self.*) {
-            .__owned => |fd| try writer.print("{}", .{fd}),
-            .__moved => try writer.print("[moved]", .{}),
+        if (self._inner) |fd| {
+            try writer.print("{}", .{fd});
+            return;
         }
+        try writer.print("[moved]", .{});
     }
 };
 

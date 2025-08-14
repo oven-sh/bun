@@ -20,9 +20,12 @@ pub const deref = RefCount.deref;
 
 ref_count: RefCount,
 writer: WriterImpl = if (bun.Environment.isWindows) .{
+    // Tell the Windows PipeWriter impl to *not* close the file descriptor,
+    // unfortunately this won't work if it creates a uv_pipe or uv_tty as those
+    // types own their file descriptor
     .owns_fd = false,
 } else .{ .close_fd = false },
-fd: MovableFD,
+fd: MovableIfWindowsFd,
 writers: Writers = .{ .inlined = .{} },
 buf: std.ArrayListUnmanaged(u8) = .{},
 /// quick hack to get windows working
@@ -83,7 +86,7 @@ pub const Flags = packed struct(u8) {
 pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) *IOWriter {
     const this = bun.new(IOWriter, .{
         .ref_count = .init(),
-        .fd = MovableFD.init(fd),
+        .fd = MovableIfWindowsFd.init(fd),
         .evtloop = evtloop,
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .concurrent_task2 = jsc.EventLoopTask.fromEventLoop(evtloop),
@@ -852,7 +855,7 @@ const log = bun.Output.scoped(.IOWriter, true);
 const std = @import("std");
 
 const bun = @import("bun");
-const MovableFD = bun.MovableFD;
+const MovableIfWindowsFd = bun.MovableIfWindowsFd;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;

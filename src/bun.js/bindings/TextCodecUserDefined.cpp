@@ -54,8 +54,14 @@ String TextCodecUserDefined::decode(std::span<const uint8_t> bytes, bool, bool, 
 {
     StringBuilder result;
     result.reserveCapacity(bytes.size());
-    for (char byte : bytes)
-        result.append(static_cast<char16_t>(byte & 0xF7FF));
+    for (const uint8_t byte : bytes) {
+        // x-user-defined maps 0x80-0xFF to U+F780-U+F7FF
+        // ASCII range (0x00-0x7F) maps directly
+        if (byte < 0x80)
+            result.append(static_cast<char16_t>(byte));
+        else
+            result.append(static_cast<char16_t>(0xF700 | byte));
+    }
     return result.toString();
 }
 

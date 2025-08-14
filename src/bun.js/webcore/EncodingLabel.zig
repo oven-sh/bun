@@ -36,7 +36,7 @@ pub const EncodingLabel = enum {
     // Big5,
     // @"EUC-JP",
     // @"ISO-2022-JP",
-    // Shift_JIS,
+    Shift_JIS,
     // @"EUC-KR",
     @"UTF-16BE",
     @"UTF-16LE",
@@ -48,6 +48,7 @@ pub const EncodingLabel = enum {
             .@"UTF-16LE" => "utf-16le",
             .@"UTF-16BE" => "utf-16be",
             .@"windows-1252" => "windows-1252",
+            .Shift_JIS => "shift_jis",
         };
     }
 
@@ -88,6 +89,15 @@ pub const EncodingLabel = enum {
         .{ "unicode20utf8", .@"UTF-8" },
         .{ "x-unicode20utf8", .@"UTF-8" },
         .{ "unicode-1-1-utf-8", .@"UTF-8" },
+
+        .{ "csshiftjis", .Shift_JIS },
+        .{ "ms932", .Shift_JIS },
+        .{ "ms_kanji", .Shift_JIS },
+        .{ "shift-jis", .Shift_JIS },
+        .{ "shift_jis", .Shift_JIS },
+        .{ "sjis", .Shift_JIS },
+        .{ "windows-31j", .Shift_JIS },
+        .{ "x-sjis", .Shift_JIS },
     });
 
     pub fn which(input_: string) ?EncodingLabel {

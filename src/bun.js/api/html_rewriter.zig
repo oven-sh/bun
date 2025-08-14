@@ -60,12 +60,19 @@ pub const HTMLRewriter = struct {
         listener: JSValue,
     ) bun.JSError!JSValue {
         const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch bun.outOfMemory();
+        defer bun.default_allocator.free(selector_slice);
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
-            return createLOLHTMLError(global);
+            return global.throwValue(createLOLHTMLError(global));
+        errdefer selector.deinit();
+        
         const handler_ = try ElementHandler.init(global, listener);
         const handler = bun.default_allocator.create(ElementHandler) catch bun.outOfMemory();
         handler.* = handler_;
+        errdefer {
+            handler.deinit();
+            bun.default_allocator.destroy(handler);
+        }
 
         this.builder.addElementContentHandlers(
             selector,
@@ -91,8 +98,7 @@ pub const HTMLRewriter = struct {
             else
                 null,
         ) catch {
-            selector.deinit();
-            return createLOLHTMLError(global);
+            return global.throwValue(createLOLHTMLError(global));
         };
 
         this.context.selectors.append(bun.default_allocator, selector) catch bun.outOfMemory();
@@ -110,6 +116,10 @@ pub const HTMLRewriter = struct {
 
         const handler = bun.default_allocator.create(DocumentHandler) catch bun.outOfMemory();
         handler.* = handler_;
+        errdefer {
+            handler.deinit();
+            bun.default_allocator.destroy(handler);
+        }
 
         // If this fails, subsequent calls to write or end should throw
         this.builder.addDocumentContentHandlers(

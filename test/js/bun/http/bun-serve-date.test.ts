@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Date header is not updated every request", async () => {
   const twoSecondsAgo = new Date(Date.now() - 2 * 1000);

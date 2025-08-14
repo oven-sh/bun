@@ -624,6 +624,7 @@ const Environment = bun.Environment;
 const JSError = bun.JSError;
 const assert = bun.assert;
 const timespec = bun.timespec;
+const uws = bun.uws;
 const heap = bun.io.heap;
 const uv = bun.windows.libuv;
 
@@ -631,4 +632,3 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const uws = bun.uws;

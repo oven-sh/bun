@@ -71,10 +71,12 @@ pub export fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop: *uws.Loop) call
     }
 }
 
-const bun = @import("bun");
-const jsc = bun.jsc;
-const VirtualMachine = jsc.VirtualMachine;
+const log = bun.Output.scoped(.DateHeaderTimer, .visible);
+
 const std = @import("std");
 
+const bun = @import("bun");
 const uws = bun.uws;
-const log = bun.Output.scoped(.DateHeaderTimer, .visible);
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

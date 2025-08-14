@@ -140,8 +140,13 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
-curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
+if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
+else
+    wget --quiet --show-progress --output-document="$exe.zip" "$bun_uri" ||
+    error "Failed to download bun from \"$bun_uri\""
+fi
 
 unzip -oqd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'

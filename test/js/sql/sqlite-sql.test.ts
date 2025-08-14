@@ -289,8 +289,9 @@ describe("Connection & Initialization", () => {
       const result = await sql`SELECT * FROM test`;
       expect(result).toHaveLength(1);
 
-      // Should not be able to write
-      expect(sql`INSERT INTO test VALUES (2)`).rejects.toThrow();
+      expect(sql`INSERT INTO test VALUES (2)`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+        `"attempt to write a readonly database"`,
+      );
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -639,17 +640,25 @@ describe("Connection & Initialization", () => {
       expect(() => new SQL({ adapter: "mysql" as any })).toThrow("Unsupported adapter");
     });
 
-    test("should throw for postgres URL without postgres in URL", () => {
-      expect(() => new SQL("localhost:5432/mydb")).toThrow("Invalid URL");
+    test("should interpret ambiguous strings as postgres connection", () => {
+      // This gets interpreted as postgres with hostname "localhost" and database "432/mydb"
+      const sql = new SQL("localhost:5432/mydb");
+      expect(sql.options.adapter).toBe("postgres");
+      sql.close();
     });
 
-    test("should not throw for readonly database that doesn't exist with mode=ro", async () => {
+    test("SQLite readonly mode creates connection but fails on missing file access", async () => {
       const dir = tempDirWithFiles("ro-nonexist-test", {});
       const dbPath = path.join(dir, "nonexistent.db");
 
-      // SQLite will throw when trying to open non-existent DB in readonly mode
-      expect(() => new SQL(`sqlite://${dbPath}?mode=ro`)).toThrow();
+      const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(true);
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
 
+      expect(sql`SELECT 1`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(`"unable to open database file"`);
+
+      await sql.close();
       await rm(dir, { recursive: true });
     });
   });

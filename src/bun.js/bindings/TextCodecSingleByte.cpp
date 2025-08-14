@@ -278,7 +278,7 @@ static String decode(const SingleByteDecodeTable& table, std::span<const uint8_t
 {
     StringBuilder result;
     result.reserveCapacity(bytes.size());
-    auto parseByte = [&] (uint8_t byte) {
+    auto parseByte = [&](uint8_t byte) {
         if (isASCII(byte)) {
             result.append(byte);
             return;
@@ -319,12 +319,11 @@ TextCodecSingleByte::TextCodecSingleByte(Encoding encoding)
 void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
 {
     // https://encoding.spec.whatwg.org/#names-and-labels
-    auto registerAliases = [&] (std::initializer_list<ASCIILiteral> list) {
+    auto registerAliases = [&](std::initializer_list<ASCIILiteral> list) {
         for (auto& alias : list)
             registrar(alias, *list.begin());
     };
-    registerAliases({
-        "ISO-8859-3"_s,
+    registerAliases({ "ISO-8859-3"_s,
         "csisolatin3"_s,
         "iso-ir-109"_s,
         "iso8859-3"_s,
@@ -332,11 +331,9 @@ void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
         "iso_8859-3"_s,
         "iso_8859-3:1988"_s,
         "l3"_s,
-        "latin3"_s
-    });
+        "latin3"_s });
 
-    registerAliases({
-        "ISO-8859-6"_s,
+    registerAliases({ "ISO-8859-6"_s,
         "arabic"_s,
         "asmo-708"_s,
         "csiso88596e"_s,
@@ -349,11 +346,9 @@ void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
         "iso8859-6"_s,
         "iso88596"_s,
         "iso_8859-6"_s,
-        "iso_8859-6:1987"_s
-    });
+        "iso_8859-6:1987"_s });
 
-    registerAliases({
-        "ISO-8859-7"_s,
+    registerAliases({ "ISO-8859-7"_s,
         "csisolatingreek"_s,
         "ecma-118"_s,
         "elot_928"_s,
@@ -364,11 +359,9 @@ void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
         "iso88597"_s,
         "iso_8859-7"_s,
         "iso_8859-7:1987"_s,
-        "sun_eu_greek"_s
-    });
+        "sun_eu_greek"_s });
 
-    registerAliases({
-        "ISO-8859-8"_s,
+    registerAliases({ "ISO-8859-8"_s,
         "csiso88598e"_s,
         "csisolatinhebrew"_s,
         "hebrew"_s,
@@ -378,53 +371,38 @@ void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
         "iso88598"_s,
         "iso_8859-8"_s,
         "iso_8859-8:1988"_s,
-        "visual"_s
-    });
+        "visual"_s });
 
-    registerAliases({
-        "ISO-8859-8-I"_s,
+    registerAliases({ "ISO-8859-8-I"_s,
         "csiso88598i"_s,
-        "logical"_s
-    });
+        "logical"_s });
 
-    registerAliases({
-        "windows-874"_s,
+    registerAliases({ "windows-874"_s,
         "dos-874"_s,
         "iso-8859-11"_s,
         "iso8859-11"_s,
         "iso885911"_s,
-        "tis-620"_s
-    });
+        "tis-620"_s });
 
-    registerAliases({
-        "windows-1253"_s,
+    registerAliases({ "windows-1253"_s,
         "cp1253"_s,
-        "x-cp1253"_s
-    });
-    
-    registerAliases({
-        "windows-1255"_s,
-        "cp1255"_s,
-        "x-cp1255"_s
-    });
-    
-    registerAliases({
-        "windows-1257"_s,
-        "cp1257"_s,
-        "x-cp1257"_s
-    });
-    
-    registerAliases({
-        "KOI8-U"_s,
-        "koi8-ru"_s
-    });
+        "x-cp1253"_s });
 
-    registerAliases({
-        "IBM866"_s,
+    registerAliases({ "windows-1255"_s,
+        "cp1255"_s,
+        "x-cp1255"_s });
+
+    registerAliases({ "windows-1257"_s,
+        "cp1257"_s,
+        "x-cp1257"_s });
+
+    registerAliases({ "KOI8-U"_s,
+        "koi8-ru"_s });
+
+    registerAliases({ "IBM866"_s,
         "866"_s,
         "cp866"_s,
-        "csibm866"_s
-    });
+        "csibm866"_s });
 }
 
 void TextCodecSingleByte::registerCodecs(TextCodecRegistrar registrar)

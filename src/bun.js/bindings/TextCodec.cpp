@@ -58,7 +58,8 @@ std::span<char> TextCodec::getUnencodableReplacement(char32_t codePoint, Unencod
         int count = SAFE_SPRINTF(std::span { replacement }, "%%26%%23%u%%3B", static_cast<unsigned>(codePoint));
         ASSERT(count >= 0);
         return std::span { replacement }.first(std::max<int>(0, count));
-    } }
+    }
+    }
 
     ASSERT_NOT_REACHED();
     replacement[0] = '\0';

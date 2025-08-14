@@ -29,7 +29,7 @@ namespace PAL {
 
 // Specifies what will happen when a character is encountered that is
 // not encodable in the character set.
-enum class UnencodableHandling: bool {
+enum class UnencodableHandling : bool {
     // Encodes the character as an XML entity. For example, U+06DE
     // would be "&#1758;" (0x6DE = 1758 in octal).
     Entities,

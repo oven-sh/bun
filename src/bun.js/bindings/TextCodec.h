@@ -21,7 +21,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
@@ -44,11 +44,12 @@ using UnencodableReplacementArray = std::array<char, 32>;
 class TextCodec {
     WTF_MAKE_TZONE_ALLOCATED(TextCodec);
     WTF_MAKE_NONCOPYABLE(TextCodec);
+
 public:
     TextCodec() = default;
     virtual ~TextCodec() = default;
 
-    virtual void stripByteOrderMark() { }
+    virtual void stripByteOrderMark() {}
     virtual String decode(std::span<const uint8_t> data, bool flush, bool stopOnError, bool& sawError) = 0;
 
     virtual Vector<uint8_t> encode(StringView, UnencodableHandling) const = 0;

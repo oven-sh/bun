@@ -52,7 +52,7 @@ template<typename CollectionType, typename KeyType> static auto findFirstInSorte
 template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& sortedPairsCollection, const KeyType&) -> std::span<std::remove_reference_t<decltype(*std::begin(sortedPairsCollection))>>;
 
 #if !ASSERT_ENABLED
-inline void checkEncodingTableInvariants() { }
+inline void checkEncodingTableInvariants() {}
 #endif
 
 struct CompareFirst {
@@ -94,22 +94,22 @@ template<typename T> SecondAdapter<T> makeSecondAdapter(const T& value)
 
 template<typename CollectionType> void sortByFirst(CollectionType& collection)
 {
-    std::sort(std::begin(collection), std::end(collection), CompareFirst { });
+    std::sort(std::begin(collection), std::end(collection), CompareFirst {});
 }
 
 template<typename CollectionType> void stableSortByFirst(CollectionType& collection)
 {
-    std::stable_sort(std::begin(collection), std::end(collection), CompareFirst { });
+    std::stable_sort(std::begin(collection), std::end(collection), CompareFirst {});
 }
 
 template<typename CollectionType> bool isSortedByFirst(const CollectionType& collection)
 {
-    return std::is_sorted(std::begin(collection), std::end(collection), CompareFirst { });
+    return std::is_sorted(std::begin(collection), std::end(collection), CompareFirst {});
 }
 
 template<typename CollectionType> bool sortedFirstsAreUnique(const CollectionType& collection)
 {
-    return std::adjacent_find(std::begin(collection), std::end(collection), EqualFirst { }) == std::end(collection);
+    return std::adjacent_find(std::begin(collection), std::end(collection), EqualFirst {}) == std::end(collection);
 }
 
 template<typename CollectionType, typename KeyType> static auto findFirstInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::optional<decltype(std::begin(collection)->second)>
@@ -118,18 +118,19 @@ template<typename CollectionType, typename KeyType> static auto findFirstInSorte
         if (key != decltype(std::begin(collection)->first)(key))
             return std::nullopt;
     }
-    auto iterator = std::lower_bound(std::begin(collection), std::end(collection), makeFirstAdapter(key), CompareFirst { });
+    auto iterator = std::lower_bound(std::begin(collection), std::end(collection), makeFirstAdapter(key), CompareFirst {});
     if (iterator == std::end(collection) || key < iterator->first)
         return std::nullopt;
     return iterator->second;
 }
 
-template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::span<std::remove_reference_t<decltype(*std::begin(collection))>> {
+template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::span<std::remove_reference_t<decltype(*std::begin(collection))>>
+{
     if constexpr (std::is_integral_v<KeyType>) {
         if (key != decltype(std::begin(collection)->first)(key))
-            return { };
+            return {};
     }
-    return std::ranges::equal_range(collection, makeFirstAdapter(key), CompareFirst { });
+    return std::ranges::equal_range(collection, makeFirstAdapter(key), CompareFirst {});
 }
 
 }

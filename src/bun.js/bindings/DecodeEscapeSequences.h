@@ -174,7 +174,7 @@ inline Vector<uint8_t> decodeURLEscapeSequencesAsData(StringView string)
 
         if (encodedRunPosition == notFound)
             return result;
-        
+
         // Bytes go through as-is.
         auto decodedEscapeSequence = URLEscapeSequence::decodeRun(string.substring(encodedRunPosition, encodedRunEnd - encodedRunPosition));
         ASSERT(!decodedEscapeSequence.isEmpty());

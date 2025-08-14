@@ -37,7 +37,7 @@ template<> struct UCharByteFiller<4> {
     {
         memcpySpan(destination, source.first(4));
     }
-    
+
     static void copy(std::span<char16_t> destination, std::span<const uint8_t> source)
     {
         destination[0] = source[0];

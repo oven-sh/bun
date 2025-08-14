@@ -21,7 +21,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 // config.h removed - not needed in Bun
@@ -272,7 +272,7 @@ static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     // ISO-8859-2, 4, 5, 10, 13, 14, 15, 16
     // Windows-1250, 1251, 1254, 1256, 1258
     // KOI8-R, macintosh, x-mac-cyrillic
-    
+
     TextCodecCJK::registerEncodingNames(addToTextEncodingNameMap);
     TextCodecCJK::registerCodecs(addToTextCodecMap);
 
@@ -308,7 +308,7 @@ std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
 static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
 {
     if (name.empty())
-        return { };
+        return {};
 
     Locker locker { encodingRegistryLock };
 
@@ -319,7 +319,7 @@ static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
     if (ASCIILiteral atomName = textEncodingNameMap.get<HashTranslatorTextEncodingName>(name))
         return atomName;
     if (didExtendTextCodecMaps)
-        return { };
+        return {};
 
     extendTextCodecMaps();
     didExtendTextCodecMaps = true;
@@ -329,7 +329,7 @@ static ASCIILiteral atomCanonicalTextEncodingName(std::span<const LChar> name)
 static ASCIILiteral atomCanonicalTextEncodingName(std::span<const char16_t> characters)
 {
     if (characters.size() > maxEncodingNameLength)
-        return { };
+        return {};
 
     std::array<LChar, maxEncodingNameLength> buffer;
     for (size_t i = 0; i < characters.size(); ++i)
@@ -346,7 +346,7 @@ ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral name)
 ASCIILiteral atomCanonicalTextEncodingName(StringView alias)
 {
     if (alias.isEmpty() || !alias.containsOnlyASCII())
-        return { };
+        return {};
 
     if (alias.is8Bit())
         return atomCanonicalTextEncodingName(alias.span8());

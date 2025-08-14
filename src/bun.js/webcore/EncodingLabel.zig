@@ -98,13 +98,13 @@ pub const EncodingLabel = enum {
         .{ "unicode20utf8", .@"UTF-8" },
         .{ "x-unicode20utf8", .@"UTF-8" },
         .{ "unicode-1-1-utf-8", .@"UTF-8" },
-        
+
         // IBM866 aliases
         .{ "ibm866", .IBM866 },
         .{ "cp866", .IBM866 },
         .{ "866", .IBM866 },
         .{ "csibm866", .IBM866 },
-        
+
         // ISO-8859-3 aliases
         .{ "iso-8859-3", .@"ISO-8859-3" },
         .{ "iso8859-3", .@"ISO-8859-3" },
@@ -113,7 +113,7 @@ pub const EncodingLabel = enum {
         .{ "csisolatin3", .@"ISO-8859-3" },
         .{ "iso-ir-109", .@"ISO-8859-3" },
         .{ "l3", .@"ISO-8859-3" },
-        
+
         // ISO-8859-6 aliases
         .{ "iso-8859-6", .@"ISO-8859-6" },
         .{ "iso8859-6", .@"ISO-8859-6" },
@@ -123,7 +123,7 @@ pub const EncodingLabel = enum {
         .{ "iso-ir-127", .@"ISO-8859-6" },
         .{ "asmo-708", .@"ISO-8859-6" },
         .{ "ecma-114", .@"ISO-8859-6" },
-        
+
         // ISO-8859-7 aliases
         .{ "iso-8859-7", .@"ISO-8859-7" },
         .{ "iso8859-7", .@"ISO-8859-7" },
@@ -134,7 +134,7 @@ pub const EncodingLabel = enum {
         .{ "iso-ir-126", .@"ISO-8859-7" },
         .{ "ecma-118", .@"ISO-8859-7" },
         .{ "elot_928", .@"ISO-8859-7" },
-        
+
         // ISO-8859-8 aliases
         .{ "iso-8859-8", .@"ISO-8859-8" },
         .{ "iso8859-8", .@"ISO-8859-8" },
@@ -143,16 +143,16 @@ pub const EncodingLabel = enum {
         .{ "csisolatinhebrew", .@"ISO-8859-8" },
         .{ "iso-ir-138", .@"ISO-8859-8" },
         .{ "visual", .@"ISO-8859-8" },
-        
+
         // ISO-8859-8-I aliases
         .{ "iso-8859-8-i", .@"ISO-8859-8-I" },
         .{ "logical", .@"ISO-8859-8-I" },
         .{ "csiso88598i", .@"ISO-8859-8-I" },
-        
+
         // KOI8-U aliases
         .{ "koi8-u", .@"KOI8-U" },
         .{ "koi8-ru", .@"KOI8-U" },
-        
+
         // Windows code pages
         .{ "windows-874", .@"windows-874" },
         .{ "dos-874", .@"windows-874" },
@@ -161,33 +161,33 @@ pub const EncodingLabel = enum {
         .{ "iso885911", .@"windows-874" },
         .{ "iso_8859-11", .@"windows-874" },
         .{ "tis-620", .@"windows-874" },
-        
+
         .{ "windows-1253", .@"windows-1253" },
         .{ "cp1253", .@"windows-1253" },
         .{ "x-cp1253", .@"windows-1253" },
-        
+
         .{ "windows-1255", .@"windows-1255" },
         .{ "cp1255", .@"windows-1255" },
         .{ "x-cp1255", .@"windows-1255" },
-        
+
         .{ "windows-1257", .@"windows-1257" },
         .{ "cp1257", .@"windows-1257" },
         .{ "x-cp1257", .@"windows-1257" },
-        
+
         // CJK encodings
         .{ "big5", .Big5 },
         .{ "big5-hkscs", .Big5 },
         .{ "cn-big5", .Big5 },
         .{ "csbig5", .Big5 },
         .{ "x-x-big5", .Big5 },
-        
+
         .{ "euc-jp", .@"EUC-JP" },
         .{ "cseucpkdfmtjapanese", .@"EUC-JP" },
         .{ "x-euc-jp", .@"EUC-JP" },
-        
+
         .{ "iso-2022-jp", .@"ISO-2022-JP" },
         .{ "csiso2022jp", .@"ISO-2022-JP" },
-        
+
         .{ "shift_jis", .Shift_JIS },
         .{ "shift-jis", .Shift_JIS },
         .{ "sjis", .Shift_JIS },
@@ -196,7 +196,7 @@ pub const EncodingLabel = enum {
         .{ "ms_kanji", .Shift_JIS },
         .{ "windows-31j", .Shift_JIS },
         .{ "x-sjis", .Shift_JIS },
-        
+
         .{ "euc-kr", .@"EUC-KR" },
         .{ "cseuckr", .@"EUC-KR" },
         .{ "csksc56011987", .@"EUC-KR" },
@@ -207,7 +207,7 @@ pub const EncodingLabel = enum {
         .{ "ksc5601", .@"EUC-KR" },
         .{ "ksc_5601", .@"EUC-KR" },
         .{ "windows-949", .@"EUC-KR" },
-        
+
         // Chinese encodings
         .{ "gbk", .GBK },
         .{ "gb2312", .GBK },
@@ -218,9 +218,9 @@ pub const EncodingLabel = enum {
         .{ "gb_2312-80", .GBK },
         .{ "iso-ir-58", .GBK },
         .{ "x-gbk", .GBK },
-        
+
         .{ "gb18030", .GB18030 },
-        
+
         // Other
         .{ "x-user-defined", .@"x-user-defined" },
         .{ "replacement", .replacement },

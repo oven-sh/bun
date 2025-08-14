@@ -33,6 +33,7 @@ namespace PAL {
 
 class TextCodecCJK final : public TextCodec {
     WTF_MAKE_TZONE_ALLOCATED(TextCodecCJK);
+
 public:
     static void registerEncodingNames(EncodingNameRegistrar);
     static void registerCodecs(TextCodecRegistrar);
@@ -44,7 +45,8 @@ private:
     String decode(std::span<const uint8_t>, bool flush, bool stopOnError, bool& sawError) final;
     Vector<uint8_t> encode(StringView, UnencodableHandling) const final;
 
-    enum class SawError : bool { No, Yes };
+    enum class SawError : bool { No,
+        Yes };
     String decodeCommon(std::span<const uint8_t>, bool, bool, bool&, NOESCAPE const Function<SawError(uint8_t, StringBuilder&)>&);
 
     String eucJPDecode(std::span<const uint8_t>, bool, bool, bool&);
@@ -59,7 +61,13 @@ private:
 
     bool m_jis0212 { false };
 
-    enum class ISO2022JPDecoderState : uint8_t { ASCII, Roman, Katakana, LeadByte, TrailByte, EscapeStart, Escape };
+    enum class ISO2022JPDecoderState : uint8_t { ASCII,
+        Roman,
+        Katakana,
+        LeadByte,
+        TrailByte,
+        EscapeStart,
+        Escape };
     ISO2022JPDecoderState m_iso2022JPDecoderState { ISO2022JPDecoderState::ASCII };
     ISO2022JPDecoderState m_iso2022JPDecoderOutputState { ISO2022JPDecoderState::ASCII };
     bool m_iso2022JPOutput { false };

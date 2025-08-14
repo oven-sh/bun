@@ -63,7 +63,7 @@ pub const TextCodec = struct {
         jsc.markBinding(@src());
         var sawError: bool = false;
         const result = Bun__decodeWithTextCodec(self.ptr, data.ptr, data.len, flush, stopOnError, &sawError);
-        
+
         return .{ .result = result, .sawError = sawError };
     }
 

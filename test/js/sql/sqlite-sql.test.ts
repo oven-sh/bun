@@ -378,7 +378,9 @@ describe("Template Literal Security", () => {
   test("dynamic SQL structure is not allowed in template literals", async () => {
     const columns = "id INTEGER, name TEXT";
 
-    expect(sql`CREATE TABLE dynamic_structure (${columns})`.execute()).rejects.toThrow();
+    expect(sql`CREATE TABLE dynamic_structure (${columns})`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"near "?": syntax error"`,
+    );
 
     await sql.unsafe(`CREATE TABLE dynamic_structure (${columns})`);
     const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='dynamic_structure'`;
@@ -482,9 +484,14 @@ describe("Transactions", () => {
 
   // SQLite doesn't support read-only transactions via BEGIN syntax
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
-  test.skip("read-only transactions", async () => {
-    // This test is skipped because SQLite doesn't have a direct "readonly" transaction mode
-    // Using PRAGMA query_only would be too brittle and add unnecessary complexity
+  test("read-only transactions throw appropriate error", async () => {
+    expect(
+      sql.begin("readonly", async tx => {
+        return await tx`SELECT * FROM accounts`;
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"SQLite doesn't support 'readonly' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE."`,
+    );
   });
 
   test("deferred vs immediate transactions", async () => {
@@ -782,7 +789,9 @@ describe("Connection management", () => {
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    await expect(sql.reserve()).rejects.toThrow("SQLite doesn't support connection reservation (no connection pool)");
+    expect(sql.reserve()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"SQLite doesn't support connection reservation (no connection pool)"`,
+    );
 
     await sql.close();
   });

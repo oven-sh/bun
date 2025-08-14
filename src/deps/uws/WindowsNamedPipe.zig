@@ -573,7 +573,7 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
-const log = bun.Output.scoped(.WindowsNamedPipe, false);
+const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
 
 const std = @import("std");
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

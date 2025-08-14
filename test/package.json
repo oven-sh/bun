@@ -90,6 +90,7 @@
     "string-width": "7.0.0",
     "strip-ansi": "7.1.0",
     "stripe": "15.4.0",
+    "p-queue": "8.1.0",
     "superagent": "10.2.2",
     "supertest": "6.3.3",
     "svelte": "5.20.4",

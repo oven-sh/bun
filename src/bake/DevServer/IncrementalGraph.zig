@@ -182,7 +182,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    if (@import("builtin").mode == .ReleaseFast or @import("builtin").mode == .ReleaseSmall) {
+                    if (!Environment.ci_assert) {
                         bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
                         bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }
@@ -614,7 +614,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundle_graph_index: bun.ast.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
                 @panic("unresolved index"); // do not process for failed chunks
             log("index id={d} {}:", .{
@@ -715,7 +715,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
             const edge = &g.edges.items[edge_index.get()];
             const imported = edge.imported.get();
-            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, true);
+            const log = bun.Output.scoped(.disconnectEdgeFromDependencyList, .hidden);
             log("detach edge={d} | id={d} {} -> id={d} {} (first_dep={d})", .{
                 edge_index.get(),
                 edge.dependency.get(),
@@ -804,7 +804,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 css,
             },
         ) bun.OOM!enum { @"continue", stop } {
-            const log = bun.Output.scoped(.processEdgeAttachment, false);
+            const log = bun.Output.scoped(.processEdgeAttachment, .visible);
 
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
@@ -923,7 +923,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // don't call this function for CSS sources
             bun.assert(ctx.loaders[index.get()] != .css);
 
-            const log = bun.Output.scoped(.processChunkDependencies, false);
+            const log = bun.Output.scoped(.processChunkDependencies, .visible);
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 // When an import record is duplicated, it gets marked unused.
                 // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
@@ -1413,8 +1413,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // the error list as it changes while also supporting a REPL
             log.print(Output.errorWriter()) catch {};
             const failure = failure: {
-                const relative_path_buf = dev.relative_path_buf.lock();
-                defer dev.relative_path_buf.unlock();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
                 // this string is just going to be memcpy'd into the log buffer
                 const owner_display_name = dev.relativePath(relative_path_buf, gop.key_ptr.*);
                 break :failure try SerializedFailure.initFromLog(
@@ -1637,8 +1637,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.writeAll("}, {\n  main: ");
                         const initial_response_entry_point = options.initial_response_entry_point;
                         if (initial_response_entry_point.len > 0) {
-                            const relative_path_buf = g.owner().relative_path_buf.lock();
-                            defer g.owner().relative_path_buf.unlock();
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
                                 g.owner().relativePath(relative_path_buf, initial_response_entry_point),
                                 @TypeOf(w),
@@ -1663,8 +1663,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
-                            const relative_path_buf = g.owner().relative_path_buf.lock();
-                            defer g.owner().relative_path_buf.unlock();
+                            const relative_path_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(relative_path_buf);
                             try bun.js_printer.writeJSONString(
                                 g.owner().relativePath(relative_path_buf, options.react_refresh_entry_point),
                                 @TypeOf(w),

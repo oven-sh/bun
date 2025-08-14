@@ -547,7 +547,7 @@ pub fn generateChunksInParallel(
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const debugPartRanges = Output.scoped(.PartRanges, true);
+const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
 const std = @import("std");
 

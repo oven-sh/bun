@@ -46,7 +46,7 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SYS, .visible);
 pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {
@@ -1553,7 +1553,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
-                adjusted_len,
+                @as(u32, @truncate(adjusted_len)),
                 &bytes_written,
                 null,
             );
@@ -1836,7 +1836,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             sys_uv.read(fd, buf)
         else {
             var amount_read: u32 = 0;
-            const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
+            const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @truncate(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
                 const ret: Maybe(usize) = .{
                     .err = sys.Error{

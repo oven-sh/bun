@@ -535,6 +535,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.lockfile_only) {
+            this.do.prefetch_resolved_tarballs = false;
+        }
+
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
         }
@@ -568,6 +572,7 @@ pub fn load(
         }
 
         this.do.update_to_latest = cli.latest;
+        this.do.recursive = cli.recursive;
 
         if (cli.positionals.len > 0) {
             this.positionals = cli.positionals;
@@ -666,7 +671,9 @@ pub const Do = packed struct(u16) {
     trust_dependencies_from_args: bool = false,
     update_to_latest: bool = false,
     analyze: bool = false,
-    _: u4 = 0,
+    recursive: bool = false,
+    prefetch_resolved_tarballs: bool = true,
+    _: u2 = 0,
 };
 
 pub const Enable = packed struct(u16) {

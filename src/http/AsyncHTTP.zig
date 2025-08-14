@@ -468,7 +468,7 @@ pub fn onStart(this: *AsyncHTTP) void {
     this.client.start(this.request_body, this.response_buffer);
 }
 
-const log = bun.Output.scoped(.AsyncHTTP, false);
+const log = bun.Output.scoped(.AsyncHTTP, .visible);
 
 const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
 pub const HTTPChannel = Channel(HTTPCallbackPair, .{ .Static = 1000 });

@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.parseArgs, true);
+const log = bun.Output.scoped(.parseArgs, .hidden);
 
 /// Represents a slice of a JSValue array
 const ArgsSlice = struct {

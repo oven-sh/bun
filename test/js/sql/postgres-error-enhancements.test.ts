@@ -259,12 +259,11 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       expect(error).toBeDefined();
       expect(error.errno).toBe("23505");
       expect(error.condition).toBe("unique_violation");
-      // For compound keys, the detail format might be different,
-      // so we check if key and value are present when available
-      if (error.key && error.value) {
-        expect(typeof error.key).toBe("string");
-        expect(typeof error.value).toBe("string");
-      }
+      // For compound keys, these should always be present
+      expect(error.key).toBeDefined();
+      expect(error.value).toBeDefined();
+      expect(typeof error.key).toBe("string");
+      expect(typeof error.value).toBe("string");
     } finally {
       await sql`DROP TABLE IF EXISTS test_multi_unique`;
     }
@@ -331,7 +330,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
     expect(syntaxError.errno).toBe("42601");
     expect(syntaxError.condition).toBe("syntax_error");
     expect(syntaxError.code).toBe("ERR_POSTGRES_SERVER_ERROR");
-    expect(typeof syntaxError.message).toBe("string");
+    expect(syntaxError.message).toMatchInlineSnapshot();
     // Syntax errors shouldn't have parsed key/value details
     expect(syntaxError.key).toBeUndefined();
     expect(syntaxError.value).toBeUndefined();

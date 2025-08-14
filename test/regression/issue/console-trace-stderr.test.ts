@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("console.trace() should output to stderr, not stdout", async () => {
@@ -17,10 +17,10 @@ test("console.trace() should output to stderr, not stdout", async () => {
   ]);
 
   expect(exitCode).toBe(0);
-  
+
   // stdout should be empty
   expect(stdout).toBe("");
-  
+
   // stderr should contain the trace output
   expect(stderr).toContain("test trace message");
   expect(stderr).toContain("at /workspace/bun/[eval]:");
@@ -30,7 +30,7 @@ test("console.trace() with multiple arguments should output to stderr", async ()
   const proc = spawn({
     cmd: [bunExe(), "-e", "console.trace('arg1', 'arg2', { key: 'value' })"],
     stdout: "pipe",
-    stderr: "pipe", 
+    stderr: "pipe",
     env: bunEnv,
   });
 
@@ -77,7 +77,7 @@ test("console.trace() inside a function should show proper stack trace in stderr
     }
     outer();
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -125,7 +125,7 @@ test("console methods routing: log->stdout, error->stderr, trace->stderr", async
     console.error('error message');
     console.trace('trace message');
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -140,18 +140,17 @@ test("console methods routing: log->stdout, error->stderr, trace->stderr", async
   ]);
 
   expect(exitCode).toBe(0);
-  
+
   // stdout should only contain log output
   expect(stdout).toContain("log message");
   expect(stdout).not.toContain("error message");
   expect(stdout).not.toContain("trace message");
-  
+
   // stderr should contain error and trace output
   expect(stderr).toContain("error message");
   expect(stderr).toContain("trace message");
   expect(stderr).not.toContain("log message");
 });
-
 
 test("console.trace() performance doesn't regress", async () => {
   // Test that trace doesn't significantly slow down due to the stderr routing change
@@ -163,7 +162,7 @@ test("console.trace() performance doesn't regress", async () => {
     const end = Date.now();
     console.log('Time taken:', end - start, 'ms');
   `;
-  
+
   const proc = spawn({
     cmd: [bunExe(), "-e", code],
     stdout: "pipe",
@@ -180,7 +179,7 @@ test("console.trace() performance doesn't regress", async () => {
   expect(exitCode).toBe(0);
   expect(stdout).toContain("Time taken:");
   expect(stderr).toContain("perf test");
-  
+
   // Should complete in reasonable time (this is mostly a smoke test)
   const timeMatch = stdout.match(/Time taken: (\d+) ms/);
   if (timeMatch) {

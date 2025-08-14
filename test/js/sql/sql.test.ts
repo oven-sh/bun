@@ -2,7 +2,7 @@ import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
-const postgres = (...args: ConstructorParameters<typeof Bun.SQL>) => new SQL(...args);
+const postgres = (...args) => new SQL(...args);
 
 import { exec, execSync } from "child_process";
 import net from "net";

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("navigator properties should be getter-only like Node.js", () => {
   const originalUserAgent = navigator.userAgent;
@@ -25,11 +25,11 @@ test("navigator properties should have getter-only descriptors like Node.js", ()
   expect(userAgentDescriptor?.get).toBeTypeOf("function");
   expect(userAgentDescriptor?.set).toBeUndefined();
   expect(userAgentDescriptor?.configurable).toBe(false);
-  
+
   expect(platformDescriptor?.get).toBeTypeOf("function");
   expect(platformDescriptor?.set).toBeUndefined();
   expect(platformDescriptor?.configurable).toBe(false);
-  
+
   expect(hardwareConcurrencyDescriptor?.get).toBeTypeOf("function");
   expect(hardwareConcurrencyDescriptor?.set).toBeUndefined();
   expect(hardwareConcurrencyDescriptor?.configurable).toBe(false);
@@ -37,14 +37,14 @@ test("navigator properties should have getter-only descriptors like Node.js", ()
 
 test("Object.defineProperty should not be able to modify navigator properties", () => {
   const originalUserAgent = navigator.userAgent;
-  
+
   expect(() => {
     Object.defineProperty(navigator, "userAgent", {
       value: "modified",
       writable: true,
-      configurable: true
+      configurable: true,
     });
   }).toThrow();
-  
+
   expect(navigator.userAgent).toBe(originalUserAgent);
 });

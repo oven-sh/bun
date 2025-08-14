@@ -26,7 +26,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/test/parallel/test-http-server-connections-checking-leak.js [ FAIL ]
 [ ASAN ] test/js/node/test/parallel/test-zlib-invalid-input-memory.js [ FAIL ]
 [ ASAN ] test/js/node/test/parallel/test-https-server-connections-checking-leak.js [ FAIL ]
-[ ASAN ] test/js/bun/sqlite/sqlite.test.js [ FAIL ] # can continue to use existing statements after database has been GC'd
 [ ASAN ] test/bake/dev/stress.test.ts [ FLAKY ] # DEV:stress-1: crash #18910
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed

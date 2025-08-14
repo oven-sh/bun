@@ -9,183 +9,13 @@ namespace Bun {
 using namespace WTF;
 
 // Regex pattern from ansi-regex:
-// [\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?(?:\u0007|\u001B\u005C|\u009C))|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))
-
-template<typename CharacterType>
-static inline bool isPrefixChar(const CharacterType c)
-{
-    // [[\]()#;?]*
-    switch (c) {
-    case '[':
-    case ']':
-    case '(':
-    case ')':
-    case '#':
-    case ';':
-    case '?':
-        return true;
-    default:
-        return false;
-    }
-}
+// The pattern has two main alternatives after the prefix:
+// 1. OSC-style: (?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?ST
+//    where ST = (?:\u0007|\u001B\u005C|\u009C)
+// 2. CSI-style: (?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]
 
 // Add back the OSC payload char class exactly as ansi-regex expects:
 // [-a-zA-Z\d\/#&.:=?%@~_]
-template<typename CharacterType>
-static inline bool isOSCChar(const CharacterType c)
-{
-    return c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '#' || c == '&' || c == '.' || c == ':' || c == '=' || c == '?' || c == '%' || c == '@' || c == '~' || c == '_';
-}
-
-template<typename CharacterType>
-static inline bool isStringTerminator(const CharacterType c)
-{
-    // BEL (0x07) or C1 ST (0x9C)
-    return c == static_cast<CharacterType>(0x07) || c == static_cast<CharacterType>(0x9C);
-}
-
-template<typename CharacterType>
-static inline bool isCSIFinalByte(const CharacterType c)
-{
-    // [\dA-PR-TZcf-nq-uy=><~]
-    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'P') || (c >= 'R' && c <= 'T') || c == 'Z' || (c >= 'c' && c <= 'n') || (c >= 'q' && c <= 'u') || c == 'y' || c == '=' || c == '>' || c == '<' || c == '~';
-}
-
-template<typename CharacterType>
-static inline bool isAlphaNumeric(const CharacterType c)
-{
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-}
-
-template<typename CharacterType>
-static inline bool isDigit(const CharacterType c)
-{
-    return c >= '0' && c <= '9';
-}
-
-template<typename CharacterType>
-static const CharacterType* matchAnsiRegex(const CharacterType* const start, const CharacterType* const end)
-{
-    const CharacterType* p = start;
-
-    // Must start with ESC (0x1B) or C1 CSI (0x9B)
-    if (p >= end || (*p != static_cast<CharacterType>(0x1B) && *p != static_cast<CharacterType>(0x9B)))
-        return nullptr;
-
-    ++p;
-
-    // Consume prefix: [[\]()#;?]*
-    while (p < end && isPrefixChar(*p))
-        ++p;
-
-    const CharacterType* afterPrefix = p;
-
-    // ---- Alternative 1: OSC-style with strict payload and required terminator ----
-    // Structure:
-    //    ( ( ; [oscChars]+ )* | ( [a-zA-Z\d]+ ( ; [oscChars]* )* ) )?  ( BEL | ESC\ | 0x9C )
-    {
-        const CharacterType* q = afterPrefix;
-
-        // Immediate terminator allowed (empty payload)
-        if (q < end) {
-            if (isStringTerminator(*q))
-                return q + 1;
-            if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
-                return q + 2; // ESC
-        }
-
-        // Try branch B: [a-zA-Z\d]+ ( ; [oscChars]* )*
-        if (q < end && isAlphaNumeric(*q)) {
-            do {
-                ++q;
-            } while (q < end && isAlphaNumeric(*q));
-            while (q < end && *q == static_cast<CharacterType>(';')) {
-                ++q; // ';'
-                while (q < end && isOSCChar(*q))
-                    ++q; // zero-or-more osc chars
-            }
-            if (q < end) {
-                if (isStringTerminator(*q))
-                    return q + 1;
-                if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
-                    return q + 2; // ESC
-            }
-        }
-
-        // Try branch A: ( ; [oscChars]+ )*
-        q = afterPrefix;
-        bool sawAnyGroup = false;
-        while (q < end && *q == static_cast<CharacterType>(';')) {
-            const CharacterType* groupStart = q; // at ';'
-            ++q; // consume ';'
-            const CharacterType* before = q;
-            while (q < end && isOSCChar(*q))
-                ++q; // require at least one char
-            if (q == before) {
-                // This branch requires '+' after ';' — zero length breaks the branch.
-                // Rewind to before this ';' and stop trying branch A.
-                q = groupStart;
-                break;
-            }
-            sawAnyGroup = true;
-        }
-        if (sawAnyGroup && q < end) {
-            if (isStringTerminator(*q))
-                return q + 1;
-            if (*q == static_cast<CharacterType>(0x1B) && q + 1 < end && q[1] == static_cast<CharacterType>('\\'))
-                return q + 2; // ESC
-        }
-        // If OSC payload doesn't satisfy the strict class or lacks a terminator, alt 1 fails.
-    }
-
-    // ---- Alternative 2: CSI/other with greedy optional digits and backtracking ----
-    // (?:(?:\d{1,4}(?:;\d{0,4})*)? [\dA-PR-TZcf-nq-uy=><~])
-    {
-        const CharacterType* q = afterPrefix;
-
-        // If next is a digit, try the greedy "digits present" path first (like JS regex does)
-        if (q < end && isDigit(*q)) {
-            const CharacterType* lastDigit = nullptr;
-
-            // \d{1,4}
-            int dcount = 0;
-            while (q < end && isDigit(*q) && dcount < 4) {
-                lastDigit = q;
-                ++q;
-                ++dcount;
-            }
-            // (;\d{0,4})*
-            while (q < end && *q == static_cast<CharacterType>(';')) {
-                ++q; // ';'
-                int k = 0;
-                while (q < end && isDigit(*q) && k < 4) {
-                    lastDigit = q;
-                    ++q;
-                    ++k;
-                }
-            }
-
-            // Prefer final byte immediately after the digits block
-            if (q < end && isCSIFinalByte(*q))
-                return q + 1;
-
-            // Backtrack: the last digit might be a CSI final byte
-            // This happens when we have patterns like \x1b]52;c where 'c' should be the final byte
-            // but was consumed as part of the parameter
-            if (lastDigit && isCSIFinalByte(*lastDigit))
-                return lastDigit + 1;
-
-            // Fall through to "no-digits" variant if something odd happened
-        }
-
-        // No digits present: final byte must be the very next char
-        if (q < end && isCSIFinalByte(*q))
-            return q + 1;
-    }
-
-    return nullptr;
-}
-
 template<typename CharacterType>
 static inline bool isEscapeCharacter(const CharacterType c)
 {
@@ -226,6 +56,145 @@ static const CharacterType* findEscapeCharacter(const CharacterType* const start
             return searchStart;
         }
         searchStart++;
+    }
+
+    return nullptr;
+}
+
+template<typename CharacterType>
+static inline bool isOSCChar(const CharacterType c)
+{
+    return c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '#' || c == '&' || c == '.' || c == ':' || c == '=' || c == '?' || c == '%' || c == '@' || c == '~' || c == '_';
+}
+
+template<typename CharacterType>
+static inline bool isStringTerminator(const CharacterType c)
+{
+    return c == static_cast<CharacterType>(0x07) || c == static_cast<CharacterType>(0x9C);
+}
+
+template<typename CharacterType>
+static inline bool isCSIFinalByte(const CharacterType c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'P') || (c >= 'R' && c <= 'T') || c == 'Z' || (c >= 'c' && c <= 'n') || (c >= 'q' && c <= 'u') || c == 'y' || c == '=' || c == '>' || c == '<' || c == '~';
+}
+
+template<typename CharacterType>
+static inline bool isAlphaNumeric(const CharacterType c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+template<typename CharacterType>
+static inline bool isDigit(const CharacterType c) { return c >= '0' && c <= '9'; }
+
+template<typename CharacterType>
+static inline bool oscPayloadMatches(const CharacterType* s, const CharacterType* e)
+{
+    // Form B: [a-zA-Z\d]+ ( ; [-…]* )*
+    const CharacterType* p = s;
+    if (p < e && isAlphaNumeric(*p)) {
+        do {
+            ++p;
+        } while (p < e && isAlphaNumeric(*p));
+        while (p < e && *p == static_cast<CharacterType>(';')) {
+            ++p;
+            while (p < e && isOSCChar(*p))
+                ++p; // *
+        }
+        if (p == e) return true;
+    }
+    // Form A: ( ; [-…]+ )*
+    p = s;
+    while (p < e) {
+        if (*p != static_cast<CharacterType>(';')) return false;
+        ++p;
+        if (p >= e || !isOSCChar(*p)) return false; // '+'
+        do {
+            ++p;
+        } while (p < e && isOSCChar(*p));
+    }
+    return p == e;
+}
+
+template<typename CharacterType>
+static const CharacterType* matchAnsiRegex(const CharacterType* const start, const CharacterType* const end)
+{
+    const CharacterType* p = start;
+    if (p >= end || (*p != static_cast<CharacterType>(0x1B) && *p != static_cast<CharacterType>(0x9B)))
+        return nullptr;
+    ++p;
+
+    // [[\]()#;?]*
+    while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))
+        ++p;
+
+    const CharacterType* const afterPrefix = p;
+
+    // ---- 1) CSI/other first: greedy single pass with rightmost-candidate tracking (no array)
+    {
+        const CharacterType* q = afterPrefix;
+        const CharacterType* lastGood = nullptr;
+
+        // zero-digits candidate
+        if (q < end && isCSIFinalByte(*q)) {
+            lastGood = q;
+            // save/restore quirk: prefer the next byte if it's ALSO a valid final
+            // (e.g., ESC [ s t ... -> choose 't' as final to match strip-ansi behavior)
+            if ((q + 1) < end && isCSIFinalByte(*(q + 1)))
+                lastGood = q + 1;
+        }
+
+        // \d{1,4}
+        int d = 0;
+        while (q < end && isDigit(*q) && d < 4) {
+            ++q;
+            ++d;
+            if (q < end && isCSIFinalByte(*q))
+                lastGood = q;
+        }
+
+        // (;\d{0,4})*
+        while (q < end && *q == static_cast<CharacterType>(';')) {
+            ++q;
+            if (q < end && isCSIFinalByte(*q))
+                lastGood = q; // zero digits in this group
+            int k = 0;
+            while (q < end && isDigit(*q) && k < 4) {
+                ++q;
+                ++k;
+                if (q < end && isCSIFinalByte(*q))
+                    lastGood = q;
+            }
+        }
+
+        if (lastGood)
+            return lastGood + 1;
+    }
+
+    // ---- 2) OSC with required ST; but reject the hyperlink corner that strip-ansi routes to CSI
+    {
+        const CharacterType* q = afterPrefix;
+        while (q < end) {
+            // BEL or ST (0x9C)
+            if (isStringTerminator(*q)) {
+                if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
+                    return q + 1;
+                break;
+            }
+            // ESC
+            if (*q == static_cast<CharacterType>(0x1B)) {
+                if (q + 1 < end && q[1] == static_cast<CharacterType>('\\')) {
+                    // strip-ansi quirk: if payload starts with digit and then ';', prefer CSI (do NOT consume as OSC)
+                    if (!(afterPrefix < q && isDigit(*afterPrefix) && (afterPrefix + 1) < q && afterPrefix[1] == static_cast<CharacterType>(';'))) {
+                        if (q == afterPrefix || oscPayloadMatches(afterPrefix, q))
+                            return q + 2;
+                    }
+                    break;
+                }
+            }
+            ++q;
+        }
     }
 
     return nullptr;
@@ -327,5 +296,4 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
 
     return JSC::JSValue::encode(JSC::jsString(vm, result));
 }
-
 }

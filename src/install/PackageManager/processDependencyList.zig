@@ -66,6 +66,12 @@ pub fn processExtractedTarballPackage(
 
                 var pkg = Lockfile.Package{};
                 if (data.json) |json| {
+                    if (comptime Environment.isDebug) {
+                        Output.prettyErrorln("[processExtractedTarballPackage] Has package.json: path={s}, buf_len={}", .{json.path, json.buf.len});
+                        if (json.buf.len < 500) {
+                            Output.prettyErrorln("[processExtractedTarballPackage] JSON content: {s}", .{json.buf});
+                        }
+                    }
                     const package_json_source = &logger.Source.initPathString(
                         json.path,
                         json.buf,
@@ -89,6 +95,10 @@ pub fn processExtractedTarballPackage(
                         }
                         Global.crash();
                     };
+
+                    if (comptime Environment.isDebug) {
+                        Output.prettyErrorln("[processExtractedTarballPackage] After parse: dependencies.len={}", .{pkg.dependencies.len});
+                    }
 
                     const has_scripts = pkg.scripts.hasAny() or brk: {
                         const dir = std.fs.path.dirname(json.path) orelse "";
@@ -136,8 +146,19 @@ pub fn processExtractedTarballPackage(
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;
 
+            if (comptime Environment.isDebug) {
+                const string_buf = manager.lockfile.buffers.string_bytes.items;
+                Output.prettyErrorln("[git-checkout] Package {s} has {} dependencies", .{ 
+                    package.name.slice(string_buf), 
+                    package.dependencies.len 
+                });
+            }
+
             if (package.dependencies.len > 0) {
                 manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch bun.outOfMemory();
+                if (comptime Environment.isDebug) {
+                    Output.prettyErrorln("[git-checkout] Added {} dependencies to queue", .{package.dependencies.len});
+                }
             }
 
             return package;

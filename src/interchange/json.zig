@@ -699,6 +699,13 @@ pub fn parsePackageJSONUTF8(
     allocator: std.mem.Allocator,
 ) !Expr {
     const len = source.contents.len;
+    
+    if (comptime Environment.isDebug) {
+        Output.prettyErrorln("[parsePackageJSONUTF8] Parsing JSON, length={}, path={s}", .{len, source.path.text});
+        if (len > 0 and len < 500) {
+            Output.prettyErrorln("[parsePackageJSONUTF8] Content: {s}", .{source.contents});
+        }
+    }
 
     switch (len) {
         // This is to be consisntent with how disabled JS files are handled

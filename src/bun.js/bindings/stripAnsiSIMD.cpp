@@ -123,7 +123,7 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
     const CharacterType* p = start;
     if (p >= end || (*p != static_cast<CharacterType>(0x1B) && *p != static_cast<CharacterType>(0x9B)))
         return nullptr;
-    
+
     const CharacterType escChar = *p;
     ++p;
 
@@ -173,12 +173,12 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
     // Check for CSI introducer '['
     if (*p == '[') {
         ++p;
-        
+
         // Skip any private parameters (like ? ! > < =)
         while (p < end && (*p == '?' || *p == '!' || *p == '>' || *p == '<' || *p == '=')) {
             ++p;
         }
-        
+
         // CSI pattern: (?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])
         const CharacterType* q = p;
         const CharacterType* lastGood = nullptr;
@@ -214,14 +214,14 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
         if (lastGood)
             return lastGood + 1;
     }
-    
+
     // Check for OSC introducer ']'
     else if (*p == ']') {
         ++p;
-        
+
         // Try incremental OSC payload validation
         const CharacterType* q = p;
-        
+
         // First, find the terminator
         const CharacterType* terminator = nullptr;
         size_t terminatorLength = 0;
@@ -238,7 +238,7 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
             }
             ++q;
         }
-        
+
         if (terminator) {
             // Check for digit + semicolon quirk first
             if (p < terminator && isDigit(*p) && (p + 1) < terminator && p[1] == static_cast<CharacterType>(';')) {
@@ -247,20 +247,20 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
             } else {
                 // Incrementally validate the payload - consume until we hit invalid character
                 const CharacterType* validEnd = p;
-                
+
                 // Form B: [a-zA-Z\d]+ ( ; [-…]* )*
                 if (validEnd < terminator && isAlphaNumeric(*validEnd)) {
                     // Consume initial alphanumeric characters
                     while (validEnd < terminator && isAlphaNumeric(*validEnd))
                         ++validEnd;
-                    
+
                     // Consume (';' + OSC chars)*
                     while (validEnd < terminator && *validEnd == static_cast<CharacterType>(';')) {
                         ++validEnd;
                         while (validEnd < terminator && isOSCChar(*validEnd))
                             ++validEnd;
                     }
-                    
+
                     // If we consumed everything, it's a valid payload
                     if (validEnd == terminator) {
                         return terminator + terminatorLength;
@@ -268,7 +268,7 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
                     // Otherwise, we consumed a partial valid prefix
                     return validEnd;
                 }
-                
+
                 // Form A: ( ; [-…]+ )*
                 validEnd = p;
                 while (validEnd < terminator && *validEnd == static_cast<CharacterType>(';')) {
@@ -277,11 +277,11 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
                     while (validEnd < terminator && isOSCChar(*validEnd))
                         ++validEnd;
                 }
-                
+
                 if (validEnd == terminator) {
                     return terminator + terminatorLength;
                 }
-                
+
                 // No valid pattern matched - consume just ESC] and return
                 return p;
             }
@@ -290,26 +290,23 @@ static const CharacterType* matchAnsiRegex(const CharacterType* const start, con
             return end;
         }
     }
-    
+
     // Handle other escape sequences - single character escapes like \e(B, \e=, etc.
     else {
         // Single character escape sequences
         if (p < end) {
             CharacterType c = *p;
             // Check for common single-character escape sequences
-            if (c == '(' || c == ')' || c == '*' || c == '+' || c == '=' || c == '>' || 
-                c == 'D' || c == 'E' || c == 'H' || c == 'M' || c == '7' || c == '8' || 
-                c == '#' || c == '%') {
+            if (c == '(' || c == ')' || c == '*' || c == '+' || c == '=' || c == '>' || c == 'D' || c == 'E' || c == 'H' || c == 'M' || c == '7' || c == '8' || c == '#' || c == '%') {
                 // For sequences like \e(B, \e)B, etc., consume one more character if present
-                if ((c == '(' || c == ')' || c == '*' || c == '+' || c == '#' || c == '%') && 
-                    (p + 1) < end) {
+                if ((c == '(' || c == ')' || c == '*' || c == '+' || c == '#' || c == '%') && (p + 1) < end) {
                     return p + 2; // ESC + char + next char
                 } else {
                     return p + 1; // ESC + char
                 }
             }
         }
-        
+
         // If not a single-char escape, try prefix parsing for complex sequences
         // Consume prefix characters: []\()#;?
         while (p < end && (*p == '[' || *p == ']' || *p == '(' || *p == ')' || *p == '#' || *p == ';' || *p == '?'))

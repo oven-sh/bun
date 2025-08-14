@@ -130,7 +130,7 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
         group.log("callDescribeCallback -> got promise", .{});
         bun.assert(this._previous_scope == null);
         this._previous_scope = previous_scope;
-        result.then(globalThis, buntest.ref(), describeCallbackThen, describeCallbackThen); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
+        buntest.addThen(globalThis, result);
         return this.drainedPromise(globalThis);
     } else {
         this.executing = false;
@@ -139,15 +139,10 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
         return .js_undefined;
     }
 }
-export const Bun__TestScope__Describe2__describeCallbackThen = jsc.toJSHostFn(describeCallbackThen);
-fn describeCallbackThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
-    var buntest: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
-    defer buntest.unref();
-
-    const this = &buntest.collection;
     this.executing = false;
 
     bun.assert(this._previous_scope != null);
@@ -155,7 +150,6 @@ fn describeCallbackThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     this._previous_scope = null;
     try this.describeCallbackCompleted(globalThis, prev_scope);
     try this.run(globalThis, prev_scope);
-    return .js_undefined;
 }
 pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
     group.begin(@src());

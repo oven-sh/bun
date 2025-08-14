@@ -1,9 +1,11 @@
+executing: bool,
 order: []*ExecutionEntry,
 index: usize,
 extra_queue: std.ArrayList(*ExecutionEntry), // for if test() is called inside a test. we will need to queue beforeEach/afterEach for these tests. this can be done by calling generateOrderSub on the TestScheduleEntry2 and passing extra_queue as the out parameter.
 
 pub fn init(gpa: std.mem.Allocator) Execution {
     return .{
+        .executing = false,
         .order = &.{},
         .index = 0,
         .extra_queue = .init(gpa),
@@ -21,20 +23,35 @@ fn bunTest(this: *Execution) *BunTest {
     return @fieldParentPtr("execution", this);
 }
 
-pub fn runLoop(this: *Execution) bun.JSError!void {
-    while (this.index < this.order.len) |current| {
-        switch (this.runOne(current)) {
-            .async_ => return,
-            .sync => {
-                this.index += 1;
-            },
-        }
-    }
+pub fn runLoop(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    while (try this.runOne(globalThis) == .continue_sync) {}
 }
 
-pub fn runOne(this: *Execution, current: *DescribeScope) bun.JSError!enum { sync, async_ } {
+pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { done, continue_sync, continue_async } {
+    if (this.extra_queue.items.len > 0) {
+        @panic("TODO: implement extra_queue");
+    }
+    if (this.index >= this.order.len) return .done;
+    const entry = this.order[this.index];
+    this.index += 1;
+
+    const callback = entry.callback.swap();
+    if (callback == .zero) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
+
+    // TODO: catch errors
+    const result = try callback.call(globalThis, .js_undefined, &.{});
+
+    if (result.asPromise()) |_| {
+        this.bunTest().addThen(globalThis, result);
+        return .continue_async;
+    }
+
+    return .continue_sync;
+}
+
+pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     _ = this;
-    _ = current;
+    _ = globalThis;
 }
 
 pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {

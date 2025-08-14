@@ -201,32 +201,30 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
     var queue = std.fifo.LinearFifo(u32, .Dynamic).init(allocator);
     defer queue.deinit();
 
+    // Start with non-dev dependencies from root package
     const root_deps = pkg_dependencies[root_id];
     const root_resolutions = pkg_resolutions[root_id];
     const dep_slice = root_deps.get(dependencies);
     const res_slice = root_resolutions.get(resolutions);
 
     for (dep_slice, res_slice) |dep, resolved_pkg_id| {
-        if (!dep.behavior.isDev()) {
-            if (resolved_pkg_id < pkg_names.len) {
-                const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
-                try prod_set.put(pkg_name, {});
-                try queue.writeItem(resolved_pkg_id);
-            }
+        if (!dep.behavior.isDev() and resolved_pkg_id < packages.len) {
+            const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
+            try prod_set.put(pkg_name, {});
+            try queue.writeItem(resolved_pkg_id);
         }
     }
 
+    // BFS to find all transitive dependencies
     while (queue.readItem()) |current_pkg_id| {
-        if (current_pkg_id >= pkg_names.len) continue;
-
         const current_deps = pkg_dependencies[current_pkg_id];
         const current_resolutions = pkg_resolutions[current_pkg_id];
         const current_dep_slice = current_deps.get(dependencies);
         const current_res_slice = current_resolutions.get(resolutions);
 
         for (current_dep_slice, current_res_slice) |_, resolved_pkg_id| {
-            if (resolved_pkg_id >= pkg_names.len) continue;
-
+            if (resolved_pkg_id >= packages.len) continue;
+            
             const pkg_name = pkg_names[resolved_pkg_id].slice(buf);
             if (!prod_set.contains(pkg_name)) {
                 try prod_set.put(pkg_name, {});

@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-
 extern fn Bun__createTextCodec(encodingName: [*]const u8, encodingNameLen: usize) ?*TextCodec;
 extern fn Bun__decodeWithTextCodec(codec: *TextCodec, data: [*]const u8, length: usize, flush: bool, stopOnError: bool, outSawError: *bool) bun.String;
 extern fn Bun__deleteTextCodec(codec: *TextCodec) void;
@@ -24,7 +20,7 @@ pub const TextCodec = opaque {
         jsc.markBinding(@src());
         var sawError: bool = false;
         const result = Bun__decodeWithTextCodec(self, data.ptr, data.len, flush, stopOnError, &sawError);
-        
+
         return .{ .result = result, .sawError = sawError };
     }
 
@@ -45,3 +41,6 @@ pub const TextCodec = opaque {
         return name[0..len];
     }
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;

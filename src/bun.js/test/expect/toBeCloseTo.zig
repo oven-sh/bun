@@ -5,6 +5,8 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     const thisArguments = callFrame.arguments_old(2);
     const arguments = thisArguments.ptr[0..thisArguments.len];
 
+    incrementExpectCallCounter();
+
     if (arguments.len < 1) {
         return globalThis.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
     }
@@ -86,3 +88,4 @@ const JSValue = bun.jsc.JSValue;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
+const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;

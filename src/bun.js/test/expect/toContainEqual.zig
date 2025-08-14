@@ -12,7 +12,7 @@ pub fn toContainEqual(
         return globalThis.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
     }
 
-    bun.jsc.Expect.active_test_expectation_counter.actual += 1;
+    incrementExpectCallCounter();
 
     const expected = arguments[0];
     expected.ensureStillAlive();
@@ -111,3 +111,4 @@ const JSValue = bun.jsc.JSValue;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;
+const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;

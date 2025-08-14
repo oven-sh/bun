@@ -957,24 +957,11 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[Package.parse] Parsing JSON from source: path={s}, content_len={}", .{ source.path.text, source.contents.len });
-            if (source.contents.len < 500) {
-                Output.prettyErrorln("[Package.parse] Content: {s}", .{source.contents});
-            }
-        }
         const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
             log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };
-
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[Package.parse] JSON parsed successfully, is_object={}", .{json.data == .e_object});
-            if (json.data == .e_object) {
-                Output.prettyErrorln("[Package.parse] Object has {} properties", .{json.data.e_object.properties.len});
-            }
-        }
 
         try package.parseWithJSON(
             lockfile,
@@ -1288,9 +1275,6 @@ pub const Package = extern struct {
         resolver: *ResolverContext,
         comptime features: Features,
     ) !void {
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[parseWithJSON] Starting parse for package", .{});
-        }
         var string_builder = lockfile.stringBuilder();
         var total_dependencies_count: u32 = 0;
 
@@ -1446,18 +1430,8 @@ pub const Package = extern struct {
             }
         }
 
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[parseWithJSON] About to check {} dependency groups", .{dependency_groups.len});
-        }
-
         inline for (dependency_groups) |group| {
-            if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[parseWithJSON] Checking for {s} dependencies", .{group.prop});
-            }
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
-                if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("[parseWithJSON] Found {s} property, type={s}", .{ group.prop, @tagName(dependencies_q.expr.data) });
-                }
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
                         if (!group.behavior.isWorkspace()) {
@@ -1539,10 +1513,6 @@ pub const Package = extern struct {
                             }
                         }
                         total_dependencies_count += @as(u32, @truncate(obj.properties.len));
-
-                        if (comptime Environment.isDebug) {
-                            Output.prettyErrorln("[parse-deps] Group {s}: found {} dependencies", .{ group.prop, obj.properties.len });
-                        }
                     },
                     else => {
                         if (group.behavior.isWorkspace()) {
@@ -1605,10 +1575,6 @@ pub const Package = extern struct {
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
             }
-        }
-
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[parseWithJSON] Total dependencies count: {}", .{total_dependencies_count});
         }
 
         try string_builder.allocate();

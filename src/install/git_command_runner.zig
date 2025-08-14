@@ -110,9 +110,6 @@ pub const GitCommandRunner = struct {
         operation: Operation,
     ) void {
         // GitCommandRunner.spawn called
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[GitCommandRunner] ASYNC git operation using bun.spawn - operation: {s}", .{@tagName(operation)});
-        }
 
         const runner = bun.new(GitCommandRunner, .{
             .manager = manager,
@@ -704,40 +701,18 @@ pub const GitCommandRunner = struct {
                                 }
 
                                 // Read package.json if it exists
-                                if (comptime Environment.isDebug) {
-                                    Output.prettyErrorln("[git-checkout] Looking for package.json in {s}", .{folder_name});
-                                }
                                 if (bun.sys.File.readFileFrom(package_dir, "package.json", this.manager.allocator).unwrap()) |result| {
                                     const json_file, const json_buf_original = result;
                                     // Make a copy of the buffer to ensure it's not corrupted
                                     const json_buf = this.manager.allocator.dupe(u8, json_buf_original) catch json_buf_original;
-                                    if (comptime Environment.isDebug) {
-                                        Output.prettyErrorln("[git-checkout] Found package.json, size={}", .{json_buf.len});
-                                        // Check if it starts with { or [ (valid JSON)
-                                        if (json_buf.len > 0) {
-                                            const first_non_space = std.mem.indexOfNone(u8, json_buf, " \t\r\n") orelse 0;
-                                            if (first_non_space < json_buf.len) {
-                                                Output.prettyErrorln("[git-checkout] First char: '{c}' (0x{x})", .{ json_buf[first_non_space], json_buf[first_non_space] });
-                                            }
-                                            // Print first 200 chars
-                                            const preview_len = @min(200, json_buf.len);
-                                            Output.prettyErrorln("[git-checkout] First {} chars: {s}", .{ preview_len, json_buf[0..preview_len] });
-                                        }
-                                    }
                                     // Don't close the file yet - we're passing the buffer to the task
                                     // The file descriptor is just for reading, closing it shouldn't affect the buffer
                                     json_file.close();
 
                                     var json_path_buf: bun.PathBuffer = undefined;
                                     if (json_file.getPath(&json_path_buf).unwrap()) |json_path| {
-                                        if (comptime Environment.isDebug) {
-                                            Output.prettyErrorln("[git-checkout] JSON path: {s}", .{json_path});
-                                        }
                                         const FileSystem = @import("../fs.zig").FileSystem;
                                         if (FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path)) |ret_json_path| {
-                                            if (comptime Environment.isDebug) {
-                                                Output.prettyErrorln("[git-checkout] Stored JSON path: {s}", .{ret_json_path});
-                                            }
                                             task.data = .{ .git_checkout = .{
                                                 .url = checkout.url.slice(),
                                                 .resolved = checkout.resolved.slice(),
@@ -758,9 +733,6 @@ pub const GitCommandRunner = struct {
                                         task.data = .{ .git_checkout = .{} };
                                     }
                                 } else |err| {
-                                    if (comptime Environment.isDebug) {
-                                        Output.prettyErrorln("[git-checkout] Failed to read package.json: {}", .{err});
-                                    }
                                     if (err == error.ENOENT) {
                                         // Allow git dependencies without package.json
                                         task.data = .{ .git_checkout = .{

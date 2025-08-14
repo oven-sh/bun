@@ -956,4 +956,90 @@ export { greeting };`,
       process.chdir(originalCwd);
     }
   });
+
+  test("legalComments option", async () => {
+    const dir = tempDirWithFiles("bun-build-api-legal-comments", {
+      "entry.js": `/*!
+ * Legal comment with ! - should be preserved
+ * Copyright 2024 Test Corp
+ */
+
+/**
+ * @license MIT
+ * This should be preserved as it contains @license
+ */
+
+/**
+ * @preserve
+ * This should be preserved as it contains @preserve
+ */
+
+/**
+ * This is a regular JSDoc comment - should be removed
+ */
+
+//! Legal line comment - should be preserved
+
+// Regular line comment - should be removed
+
+console.log("hello world");`,
+    });
+
+    // Test default behavior (should preserve legal comments)
+    const build1 = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+    });
+
+    expect(build1.success).toBe(true);
+    expect(build1.outputs).toHaveLength(1);
+    const output1 = await build1.outputs[0].text();
+    
+    // Should preserve legal comments
+    expect(output1).toContain("Legal comment with ! - should be preserved");
+    expect(output1).toContain("@license MIT");
+    expect(output1).toContain("@preserve");
+    expect(output1).toContain("//! Legal line comment - should be preserved");
+    
+    // Should remove regular comments
+    expect(output1).not.toContain("This is a regular JSDoc comment - should be removed");
+    expect(output1).not.toContain("Regular line comment - should be removed");
+
+    // Test legalComments: "eof" (explicit)
+    const build2 = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      legalComments: "eof",
+    });
+
+    expect(build2.success).toBe(true);
+    expect(build2.outputs).toHaveLength(1);
+    const output2 = await build2.outputs[0].text();
+    
+    // Should still preserve legal comments
+    expect(output2).toContain("Legal comment with ! - should be preserved");
+    expect(output2).toContain("@license MIT");
+    expect(output2).toContain("@preserve");
+
+    // Test legalComments: "inline" 
+    const build3 = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      legalComments: "inline",
+    });
+
+    expect(build3.success).toBe(true);
+    expect(build3.outputs).toHaveLength(1);
+    const output3 = await build3.outputs[0].text();
+    
+    // Should still preserve legal comments
+    expect(output3).toContain("Legal comment with ! - should be preserved");
+    expect(output3).toContain("@license MIT");
+    expect(output3).toContain("@preserve");
+
+    // Test invalid legalComments value (should throw)
+    await expect(async () => {
+      await Bun.build({
+        entrypoints: [join(dir, "entry.js")],
+        legalComments: "invalid" as any,
+      });
+    }).toThrow();
+  });
 });

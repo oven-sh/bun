@@ -84,6 +84,7 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
     auto& vm = JSC::getVM(globalObject);
+    // DISABLED FOR GO COMPATIBILITY:
     // Do not create a new handle scope while a finalizer is in progress
     // This state is possible because we call napi finalizers immediately
     // so a finalizer can be called while an allocation is in progress.
@@ -92,9 +93,14 @@ NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool
     // 2. Do an allocation in a hot code path
     // 3. the napi_ref finalizer is called while the constructor is running
     // 4. The finalizer creates a new handle scope (yes, it should not do that. No, we can't change that.)
+    //
+    // However, Go's CGO runtime requires creating handle scopes during module initialization,
+    // which can happen during GC sweep phase. Disabling this check allows Go modules to load.
+    /*
     if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) {
         return nullptr;
     }
+    */
 
     auto* impl = NapiHandleScopeImpl::create(vm,
         globalObject->NapiHandleScopeImplStructure(),

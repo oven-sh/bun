@@ -40,4 +40,6 @@ describe("sub", () => {
   });
 });
 
-await describe.forDebuggingExecuteTestsNow();
+if ("forDebuggingExecuteTestsNow" in describe) {
+  await describe.forDebuggingExecuteTestsNow();
+}

@@ -201,7 +201,6 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
     var queue = std.fifo.LinearFifo(u32, .Dynamic).init(allocator);
     defer queue.deinit();
 
-    // Start with non-dev dependencies from root package
     const root_deps = pkg_dependencies[root_id];
     const root_resolutions = pkg_resolutions[root_id];
     const dep_slice = root_deps.get(dependencies);
@@ -215,7 +214,6 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
         }
     }
 
-    // BFS to find all transitive dependencies
     while (queue.readItem()) |current_pkg_id| {
         const current_deps = pkg_dependencies[current_pkg_id];
         const current_resolutions = pkg_resolutions[current_pkg_id];

@@ -1,10 +1,10 @@
-import { test, expect } from "bun:test";
-import { request as httpsRequest } from "https";
+import { expect, test } from "bun:test";
 import { request as httpRequest } from "http";
+import { request as httpsRequest } from "https";
 
 test("https.request URL property should be empty string like Node.js - issue #13820", async () => {
   const url = await new Promise<string>((resolve, reject) => {
-    const req = httpsRequest("https://google.com", (res) => {
+    const req = httpsRequest("https://google.com", res => {
       resolve(res.url);
       res.resume(); // Drain response to avoid hanging
     });
@@ -19,7 +19,7 @@ test("https.request URL property should be empty string like Node.js - issue #13
 
 test("https.request URL property for root path with explicit slash", async () => {
   const url = await new Promise<string>((resolve, reject) => {
-    const req = httpsRequest("https://google.com/", (res) => {
+    const req = httpsRequest("https://google.com/", res => {
       resolve(res.url);
       res.resume();
     });
@@ -33,7 +33,7 @@ test("https.request URL property for root path with explicit slash", async () =>
 
 test("https.request URL property for path", async () => {
   const url = await new Promise<string>((resolve, reject) => {
-    const req = httpsRequest("https://httpbin.org/json", (res) => {
+    const req = httpsRequest("https://httpbin.org/json", res => {
       resolve(res.url);
       res.resume();
     });
@@ -47,7 +47,7 @@ test("https.request URL property for path", async () => {
 
 test("http.request URL property should also be empty string", async () => {
   const url = await new Promise<string>((resolve, reject) => {
-    const req = httpRequest("http://httpbin.org/json", (res) => {
+    const req = httpRequest("http://httpbin.org/json", res => {
       resolve(res.url);
       res.resume();
     });
@@ -61,7 +61,7 @@ test("http.request URL property should also be empty string", async () => {
 
 test("https.request URL property with redirect", async () => {
   const url = await new Promise<string>((resolve, reject) => {
-    const req = httpsRequest("https://httpbin.org/redirect/1", (res) => {
+    const req = httpsRequest("https://httpbin.org/redirect/1", res => {
       resolve(res.url);
       res.resume();
     });
@@ -77,7 +77,7 @@ test("https.request URL property with redirect", async () => {
 test("https.request URL property consistency across multiple requests", async () => {
   const urls = await Promise.all([
     new Promise<string>((resolve, reject) => {
-      const req = httpsRequest("https://httpbin.org/status/200", (res) => {
+      const req = httpsRequest("https://httpbin.org/status/200", res => {
         resolve(res.url);
         res.resume();
       });
@@ -86,7 +86,7 @@ test("https.request URL property consistency across multiple requests", async ()
       req.end();
     }),
     new Promise<string>((resolve, reject) => {
-      const req = httpsRequest("https://httpbin.org/status/404", (res) => {
+      const req = httpsRequest("https://httpbin.org/status/404", res => {
         resolve(res.url);
         res.resume();
       });
@@ -102,7 +102,7 @@ test("https.request URL property consistency across multiple requests", async ()
 
 test("https.request URL property type should be string", async () => {
   const url = await new Promise<any>((resolve, reject) => {
-    const req = httpsRequest("https://httpbin.org/json", (res) => {
+    const req = httpsRequest("https://httpbin.org/json", res => {
       resolve(res.url);
       res.resume();
     });
@@ -117,7 +117,7 @@ test("https.request URL property type should be string", async () => {
 
 test("https.request response object should have url property", async () => {
   const hasUrlProperty = await new Promise<boolean>((resolve, reject) => {
-    const req = httpsRequest("https://httpbin.org/json", (res) => {
+    const req = httpsRequest("https://httpbin.org/json", res => {
       resolve("url" in res);
       res.resume();
     });

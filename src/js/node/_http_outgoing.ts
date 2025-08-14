@@ -275,7 +275,7 @@ const OutgoingMessagePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("set");
     }
     validateHeaderName(name);
-    
+
     // Handle arrays like Node.js - preserve them for getHeaders() but join for actual HTTP
     if (Array.isArray(value)) {
       // Validate each array element

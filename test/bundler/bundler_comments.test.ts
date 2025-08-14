@@ -478,11 +478,11 @@ console.log("hello");`,
       api.expectFile("/out.js").toContain("@license MIT");
       api.expectFile("/out.js").toContain("Legal @license comment - preserved");
       api.expectFile("/out.js").toContain("//! Legal line comment - preserved");
-      
+
       // Should remove regular comments
       api.expectFile("/out.js").not.toContain("Regular JSDoc comment - removed");
       api.expectFile("/out.js").not.toContain("Regular line comment - removed");
-      
+
       api.expectFile("/out.js").toContain("hello");
     },
   });
@@ -509,10 +509,10 @@ console.log("hello");`,
       api.expectFile("/out.js").toContain("Legal comment - should be preserved even with minification");
       api.expectFile("/out.js").toContain("@license MIT");
       api.expectFile("/out.js").toContain("License comment - preserved");
-      
+
       // Regular comments should be removed
       api.expectFile("/out.js").not.toContain("Regular comment - should be removed");
-      
+
       api.expectFile("/out.js").toContain("hello");
     },
   });

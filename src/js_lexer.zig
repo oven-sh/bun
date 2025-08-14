@@ -1870,7 +1870,8 @@ fn NewLexer_(
                 // Check for @license, @preserve, @copyright
                 if (std.mem.indexOf(u8, text, "@license") != null or
                     std.mem.indexOf(u8, text, "@preserve") != null or
-                    std.mem.indexOf(u8, text, "@copyright") != null) {
+                    std.mem.indexOf(u8, text, "@copyright") != null)
+                {
                     return true;
                 }
             }

@@ -2388,7 +2388,7 @@ pub fn printErrorlikeObject(
 
         const errors_array = value.getErrorsProperty(this.global);
         if (!errors_array.isEmptyOrUndefinedOrNull()) {
-            writer.writeAll("\n\n") catch return;
+            writer.writeAll("\n") catch return;
 
             const AggregateErrorIterator = struct {
                 writer: Writer,
@@ -2403,20 +2403,27 @@ pub fn printErrorlikeObject(
                 pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(vm, globalObject, nextValue, ctx.?, false);
                 }
-                fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime _: bool) void {
+                fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime allow_colors: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
 
-                    // Determine if this is the last error for tree formatting
-                    const is_last = this_.current_index + 1 >= this_.total_errors;
-                    const tree_prefix = if (is_last) "└─ " else "├─ ";
+                    // Simple indentation without tree characters
+                    const error_indent = "  ";
+                    const stack_indent = "    ";
 
-                    // Try to get error name and message
+                    // Format the error line with simple indentation
+                    this_.writer.writeAll(error_indent) catch return;
+
+                    // Get error name and message to format them with the proper prefix
                     var error_name = bun.String.empty;
                     var error_message = bun.String.empty;
+                    var stack_trace = bun.String.empty;
                     defer {
                         error_name.deref();
                         error_message.deref();
+                        stack_trace.deref();
                     }
+
+                    const is_error_instance = nextValue.jsType() == .ErrorInstance;
 
                     if (nextValue.isObject()) {
                         // Get name property
@@ -2432,19 +2439,31 @@ pub fn printErrorlikeObject(
                                 error_message = message_val.toBunString(globalObject) catch bun.String.empty;
                             }
                         }
+
+                        // Get stack property for error instances
+                        if (is_error_instance) {
+                            if (nextValue.get(globalObject, "stack") catch null) |stack_val| {
+                                if (stack_val.isString()) {
+                                    stack_trace = stack_val.toBunString(globalObject) catch bun.String.empty;
+                                }
+                            }
+                        }
                     }
 
-                    // Format the error line
-                    this_.writer.writeAll(tree_prefix) catch return;
+                    // Print with "error: " prefix for consistency
+                    if (allow_colors) {
+                        this_.writer.writeAll(Output.prettyFmt("<r><red>error<r><d>:<r> ", true)) catch return;
+                    } else {
+                        this_.writer.writeAll("error: ") catch return;
+                    }
 
-                    if (!error_name.isEmpty()) {
+                    if (!error_name.isEmpty() and !error_name.eqlComptime("Error")) {
                         this_.writer.writeAll(error_name.byteSlice()) catch return;
                         if (!error_message.isEmpty()) {
                             this_.writer.writeAll(": ") catch return;
                             this_.writer.writeAll(error_message.byteSlice()) catch return;
                         }
                     } else if (!error_message.isEmpty()) {
-                        this_.writer.writeAll("Error: ") catch return;
                         this_.writer.writeAll(error_message.byteSlice()) catch return;
                     } else {
                         // Fallback for non-Error objects
@@ -2459,6 +2478,26 @@ pub fn printErrorlikeObject(
                     }
 
                     this_.writer.writeAll("\n") catch return;
+
+                    // Print the stack trace with proper indentation if it exists
+                    if (!stack_trace.isEmpty()) {
+                        const stack_slice = stack_trace.byteSlice();
+
+                        // Find the first newline to skip the error header line that's already printed
+                        var start_idx: usize = 0;
+                        if (std.mem.indexOf(u8, stack_slice, "\n")) |first_newline| {
+                            start_idx = first_newline + 1;
+                        }
+
+                        // Print each line of the stack trace with simple indentation
+                        var iter = std.mem.tokenizeScalar(u8, stack_slice[start_idx..], '\n');
+                        while (iter.next()) |line| {
+                            this_.writer.writeAll(stack_indent) catch return;
+                            this_.writer.writeAll(line) catch return;
+                            this_.writer.writeAll("\n") catch return;
+                        }
+                    }
+
                     this_.current_index += 1;
                 }
             };

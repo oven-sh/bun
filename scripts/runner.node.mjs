@@ -82,6 +82,10 @@ function getNodeParallelTestTimeout(testPath) {
   return 10_000;
 }
 
+process.on("SIGTRAP", () => {
+  console.warn("Test runner received SIGTRAP. Doing nothing.");
+});
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
@@ -420,6 +424,7 @@ async function runTests() {
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
+        break;
       }
     }
 

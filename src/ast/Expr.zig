@@ -19,7 +19,7 @@ pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
     };
 }
 
-pub fn deepClone(this: Expr, allocator: std.mem.Allocator) anyerror!Expr {
+pub fn deepClone(this: Expr, allocator: std.mem.Allocator) OOM!Expr {
     return .{
         .loc = this.loc,
         .data = try this.data.deepClone(allocator),

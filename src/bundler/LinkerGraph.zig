@@ -1,6 +1,6 @@
 pub const LinkerGraph = @This();
 
-const debug = Output.scoped(.LinkerGraph, false);
+const debug = Output.scoped(.LinkerGraph, .visible);
 
 files: File.List = .{},
 files_live: BitSet = undefined,

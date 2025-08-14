@@ -130,10 +130,6 @@ public:
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
-    // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(EventLoopTask* task, Seconds timeout);
-    // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)

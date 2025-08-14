@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.mimalloc, true);
+const log = bun.Output.scoped(.mimalloc, .hidden);
 
 fn mimalloc_free(
     _: *anyopaque,
@@ -23,7 +23,6 @@ fn mimalloc_free(
 }
 
 const MimallocAllocator = struct {
-    pub const supports_posix_memalign = true;
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
@@ -75,8 +74,6 @@ const c_allocator_vtable = &Allocator.VTable{
 };
 
 const ZAllocator = struct {
-    pub const supports_posix_memalign = true;
-
     fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
@@ -139,6 +136,11 @@ const z_allocator_vtable = Allocator.VTable{
     .remap = &std.mem.Allocator.noRemap,
     .free = &ZAllocator.free_with_z_allocator,
 };
+
+/// mimalloc can free allocations without being given their size.
+pub fn freeWithoutSize(ptr: ?*anyopaque) void {
+    mimalloc.mi_free(ptr);
+}
 
 const Environment = @import("../env.zig");
 const std = @import("std");

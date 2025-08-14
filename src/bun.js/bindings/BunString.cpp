@@ -743,10 +743,15 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
-    if (wtf->bufferOwnership() != StringImpl::BufferOwnership::BufferInternal)
+    if (wtf->isSymbol())
         return false;
 
-    return !(wtf->isSymbol() || wtf->isAtom());
+    if (wtf->isAtom()) {
+        // AtomString destructor would destruct on the wrong string table.
+        return false;
+    }
+
+    return true;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)

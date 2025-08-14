@@ -78,12 +78,6 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *jsc.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
 }
 
-pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *jsc.CppTask, milliseconds: i32) void {
-    jsc.markBinding(@src());
-
-    global.bunVM().eventLoop().enqueueTaskWithTimeout(jsc.Task.init(task), milliseconds);
-}
-
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     jsc.markBinding(@src());
 

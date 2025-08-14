@@ -289,7 +289,7 @@ const c = struct {
     pub extern fn uws_res_clear_corked_socket(loop: *Loop) void;
 };
 
-const log = bun.Output.scoped(.Loop, false);
+const log = bun.Output.scoped(.Loop, .visible);
 
 const std = @import("std");
 

@@ -10,7 +10,7 @@ pub fn ResumableSink(
     comptime onEnd: fn (context: *Context, err: ?jsc.JSValue) void,
 ) type {
     return struct {
-        const log = bun.Output.scoped(.ResumableSink, false);
+        const log = bun.Output.scoped(.ResumableSink, .visible);
         pub const toJS = js.toJS;
         pub const fromJS = js.fromJS;
         pub const fromJSDirect = js.fromJSDirect;

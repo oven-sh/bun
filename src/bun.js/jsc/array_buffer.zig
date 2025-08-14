@@ -248,7 +248,7 @@ pub const ArrayBuffer = extern struct {
         );
     }
 
-    const log = Output.scoped(.ArrayBuffer, false);
+    const log = Output.scoped(.ArrayBuffer, .visible);
 
     pub fn toJS(this: ArrayBuffer, ctx: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         if (this.value != .zero) {

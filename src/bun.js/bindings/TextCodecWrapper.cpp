@@ -1,8 +1,9 @@
+#include "root.h"
+
 /*
  * Wrapper functions for Text Codecs to allow access from Zig
  */
 
-// config.h removed - not needed in Bun
 #include "TextCodec.h"
 #include "TextCodecSingleByte.h"
 #include "TextCodecCJK.h"

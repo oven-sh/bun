@@ -1,3 +1,5 @@
+#include "root.h"
+
 /*
  * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
  *

@@ -1,3 +1,5 @@
+#include "root.h"
+
 /*
  * Copyright (C) 2004-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov <ap@nypop.com>

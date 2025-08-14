@@ -1,3 +1,5 @@
+#include "root.h"
+
 /*
  * Copyright (C) 2006-2017 Apple Inc. All rights reserved.
  * Copyright (C) 2007-2009 Torch Mobile, Inc.

@@ -1,3 +1,5 @@
+#include "root.h"
+
 /*
  * Copyright (C) 2008, 2009 Google Inc. All rights reserved.
  *

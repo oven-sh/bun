@@ -494,6 +494,16 @@ export type OnConnected<Connection> = (
   ...args: [error: null, connection: Connection] | [error: Error, connection: null]
 ) => void;
 
+export interface TransactionCommands {
+  BEGIN: string;
+  COMMIT: string;
+  ROLLBACK: string;
+  SAVEPOINT: string;
+  RELEASE_SAVEPOINT: string | null;
+  ROLLBACK_TO_SAVEPOINT: string;
+  BEFORE_COMMIT_OR_ROLLBACK?: string | null;
+}
+
 export interface DatabaseAdapter<Connection, Handle> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): Handle;
@@ -503,6 +513,15 @@ export interface DatabaseAdapter<Connection, Handle> {
   flush(): void;
   isConnected(): boolean;
   get closed(): boolean;
+
+  getTransactionCommands(options?: string): TransactionCommands;
+  getDistributedTransactionCommands?(name: string): TransactionCommands | null;
+
+  validateTransactionOptions?(options: string): { valid: boolean; error?: string };
+  validateDistributedTransactionName?(name: string): { valid: boolean; error?: string };
+
+  getCommitDistributedSQL?(name: string): string;
+  getRollbackDistributedSQL?(name: string): string;
 }
 
 export default {

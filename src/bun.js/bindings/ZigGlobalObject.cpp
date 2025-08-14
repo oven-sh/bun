@@ -2645,6 +2645,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
         return {};
     }
 
+    if (!callSites) {
+        throwTypeError(lexicalGlobalObject, scope, "Second argument must be an array of call sites"_s);
+        return {};
+    }
+
     JSValue result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, jsUndefined());
 
     RETURN_IF_EXCEPTION(scope, {});

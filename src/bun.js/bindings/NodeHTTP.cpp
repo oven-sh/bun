@@ -1037,12 +1037,26 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
                 res->writeMark();
             }
         }
+        
+        // Prevent automatic Date header insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+            }
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
         const auto& value = header.value;
+
+        // Prevent automatic Date header insertion when user provides one in uncommon headers
+        if (WTF::equalIgnoringASCIICase(name, "date"_s)) {
+            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+            }
+        }
 
         writeResponseHeader<isSSL>(res, name, value);
     }

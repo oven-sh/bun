@@ -211,28 +211,15 @@ fn deinit(this: *PipeReader) void {
 }
 
 const bun = @import("bun");
-const Async = bun.Async;
 const Environment = bun.Environment;
-const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const strings = bun.strings;
 const uws = bun.uws;
-const webcore = bun.webcore;
-const which = bun.which;
-const CowString = bun.ptr.CowString;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 
-const PosixSpawn = bun.spawn;
-const Process = bun.spawn.Process;
-const Rusage = bun.spawn.Rusage;
-const Stdio = bun.spawn.Stdio;
-
-const windows = bun.windows;
-const uv = windows.libuv;
 const Subprocess = jsc.API.Subprocess;
-const StdioResult = Subprocess.StdioResult;
 const MaxBuf = Subprocess.MaxBuf;
 const StdioKind = Subprocess.StdioKind;
+const StdioResult = Subprocess.StdioResult;

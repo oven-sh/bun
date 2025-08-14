@@ -284,10 +284,10 @@ const ERROR_CODE_MAP = std.StaticStringMap([]const u8).initComptime(.{
 
 fn getConditionName(error_code: String) ?[]const u8 {
     if (error_code.isEmpty()) return null;
-    
+
     const code_str = error_code.toUTF8WithoutRef(bun.default_allocator);
     defer code_str.deinit();
-    
+
     return ERROR_CODE_MAP.get(code_str.slice());
 }
 
@@ -309,11 +309,11 @@ const ErrorDetailInfo = struct {
 
 fn parseDetailForErrorType(error_code: String, detail: String, allocator: std.mem.Allocator) ?ErrorDetailInfo {
     if (detail.isEmpty()) return null;
-    
+
     const detail_str = detail.toUTF8WithoutRef(allocator);
     defer detail_str.deinit();
     const detail_slice = detail_str.slice();
-    
+
     if (error_code.eqlComptime(UNIQUE_VIOLATION)) {
         // Parse unique constraint violation: "Key (column_name)=(value) already exists."
         return parseUniqueViolationDetail(detail_slice, allocator);
@@ -327,7 +327,7 @@ fn parseDetailForErrorType(error_code: String, detail: String, allocator: std.me
         // Parse check constraint violation: 'new row for relation "table" violates check constraint "constraint_name"'
         return parseCheckViolationDetail(detail_slice, allocator);
     }
-    
+
     return null;
 }
 
@@ -338,19 +338,19 @@ fn parseUniqueViolationDetail(detail_slice: []const u8, allocator: std.mem.Alloc
         if (std.mem.indexOf(u8, detail_slice[after_key..], ")=(")) |end_key_relative| {
             const end_key = after_key + end_key_relative;
             const key = detail_slice[after_key..end_key];
-            
+
             const value_start = end_key + 3; // ")=(".len
             if (std.mem.indexOf(u8, detail_slice[value_start..], ") ")) |end_value_relative| {
                 const end_value = value_start + end_value_relative;
                 const value = detail_slice[value_start..end_value];
-                
+
                 // Allocate and copy the strings
                 const key_copy = allocator.dupe(u8, key) catch return null;
                 const value_copy = allocator.dupe(u8, value) catch {
                     allocator.free(key_copy);
                     return null;
                 };
-                
+
                 return ErrorDetailInfo{
                     .key_value = KeyValuePair{ .key = key_copy, .value = value_copy },
                 };
@@ -362,19 +362,19 @@ fn parseUniqueViolationDetail(detail_slice: []const u8, allocator: std.mem.Alloc
 
 fn parseForeignKeyViolationDetail(detail_slice: []const u8, allocator: std.mem.Allocator) ?ErrorDetailInfo {
     var result = ErrorDetailInfo{};
-    
+
     // Parse format: "Key (column)=(value) is not present in table "table_name"."
     if (std.mem.indexOf(u8, detail_slice, "Key (")) |start| {
         const after_key = start + 5; // "Key (".len
         if (std.mem.indexOf(u8, detail_slice[after_key..], ")=(")) |end_key_relative| {
             const end_key = after_key + end_key_relative;
             const key = detail_slice[after_key..end_key];
-            
+
             const value_start = end_key + 3; // ")=(".len
             if (std.mem.indexOf(u8, detail_slice[value_start..], ") ")) |end_value_relative| {
                 const end_value = value_start + end_value_relative;
                 const value = detail_slice[value_start..end_value];
-                
+
                 // Allocate key/value
                 const key_copy = allocator.dupe(u8, key) catch return null;
                 const value_copy = allocator.dupe(u8, value) catch {
@@ -385,7 +385,7 @@ fn parseForeignKeyViolationDetail(detail_slice: []const u8, allocator: std.mem.A
             }
         }
     }
-    
+
     // Parse referenced table: 'in table "table_name"'
     if (std.mem.indexOf(u8, detail_slice, "in table \"")) |table_start| {
         const table_name_start = table_start + 10; // "in table \"".len
@@ -395,7 +395,7 @@ fn parseForeignKeyViolationDetail(detail_slice: []const u8, allocator: std.mem.A
             result.referenced_table = allocator.dupe(u8, table_name) catch return result;
         }
     }
-    
+
     return result;
 }
 
@@ -406,7 +406,7 @@ fn parseNotNullViolationDetail(detail_slice: []const u8, allocator: std.mem.Allo
         if (std.mem.indexOf(u8, detail_slice[column_start..], "\"")) |column_end_relative| {
             const column_end = column_start + column_end_relative;
             const column_name = detail_slice[column_start..column_end];
-            
+
             const column_copy = allocator.dupe(u8, column_name) catch return null;
             return ErrorDetailInfo{
                 .column = column_copy,
@@ -418,7 +418,7 @@ fn parseNotNullViolationDetail(detail_slice: []const u8, allocator: std.mem.Allo
 
 fn parseCheckViolationDetail(detail_slice: []const u8, allocator: std.mem.Allocator) ?ErrorDetailInfo {
     var result = ErrorDetailInfo{};
-    
+
     // Parse format: 'new row for relation "table_name" violates check constraint "constraint_name"'
     if (std.mem.indexOf(u8, detail_slice, "violates check constraint \"")) |constraint_start| {
         const constraint_name_start = constraint_start + 27; // "violates check constraint \"".len
@@ -428,7 +428,7 @@ fn parseCheckViolationDetail(detail_slice: []const u8, allocator: std.mem.Alloca
             result.check_constraint = allocator.dupe(u8, constraint_name) catch return result;
         }
     }
-    
+
     // Parse table name: 'new row for relation "table_name"'
     if (std.mem.indexOf(u8, detail_slice, "new row for relation \"")) |table_start| {
         const table_name_start = table_start + 22; // "new row for relation \"".len
@@ -438,7 +438,7 @@ fn parseCheckViolationDetail(detail_slice: []const u8, allocator: std.mem.Alloca
             result.table = allocator.dupe(u8, table_name) catch return result;
         }
     }
-    
+
     return result;
 }
 
@@ -538,7 +538,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     defer if (error_detail_info) |info| {
         deinitErrorDetailInfo(info, bun.default_allocator);
     };
-    
+
     if (!code.isEmpty() and !detail.isEmpty()) {
         error_detail_info = parseDetailForErrorType(code, detail, bun.default_allocator);
     }
@@ -594,35 +594,35 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
             err.put(globalObject, jsc.ZigString.static("key"), jsc.ZigString.init(kv.key).toJS(globalObject));
             err.put(globalObject, jsc.ZigString.static("value"), jsc.ZigString.init(kv.value).toJS(globalObject));
         }
-        
+
         // Add column field (for not null violations, etc.)
         if (info.column) |col| {
             err.put(globalObject, jsc.ZigString.static("failing_column"), jsc.ZigString.init(col).toJS(globalObject));
         }
-        
+
         // Add referenced table field (for foreign key violations)
         if (info.referenced_table) |ref_tbl| {
             err.put(globalObject, jsc.ZigString.static("referenced_table"), jsc.ZigString.init(ref_tbl).toJS(globalObject));
         }
-        
+
         // Add other parsed fields as needed
         if (info.table) |tbl| {
             err.put(globalObject, jsc.ZigString.static("failing_table"), jsc.ZigString.init(tbl).toJS(globalObject));
         }
-        
+
         if (info.constraint) |cst| {
             err.put(globalObject, jsc.ZigString.static("failing_constraint"), jsc.ZigString.init(cst).toJS(globalObject));
         }
-        
+
         if (info.referenced_column) |ref_col| {
             err.put(globalObject, jsc.ZigString.static("referenced_column"), jsc.ZigString.init(ref_col).toJS(globalObject));
         }
-        
+
         // Add check constraint specific fields
         if (info.check_constraint) |check_cst| {
             err.put(globalObject, jsc.ZigString.static("check_constraint"), jsc.ZigString.init(check_cst).toJS(globalObject));
         }
-        
+
         if (info.violating_value) |val| {
             err.put(globalObject, jsc.ZigString.static("violating_value"), jsc.ZigString.init(val).toJS(globalObject));
         }

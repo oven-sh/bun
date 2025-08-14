@@ -1,7 +1,7 @@
-import { $, sql, SQL } from "bun";
+import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
+import { isCI } from "harness";
 import net from "net";
 import { promisify } from "util";
 
@@ -94,14 +94,14 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("unique_violation error includes condition name", async () => {
     await using sql = new SQL(options);
-    
+
     // Create table with unique constraint
     await sql`CREATE TABLE test_unique (id SERIAL PRIMARY KEY, email VARCHAR(255) UNIQUE)`;
-    
+
     try {
       // Insert first record
       await sql`INSERT INTO test_unique (email) VALUES ('test@example.com')`;
-      
+
       // Try to insert duplicate email
       let error: any;
       try {
@@ -109,14 +109,13 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23505");
       expect(error.condition).toBe("unique_violation");
       expect(error.constraint).toBe("test_unique_email_key");
       expect(error.key).toBe("email");
       expect(error.value).toBe("test@example.com");
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_unique`;
     }
@@ -124,10 +123,10 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("not_null_violation error includes condition name and parsed column", async () => {
     await using sql = new SQL(options);
-    
+
     // Create table with not null constraint
     await sql`CREATE TABLE test_not_null (id SERIAL PRIMARY KEY, name VARCHAR(255) NOT NULL)`;
-    
+
     try {
       let error: any;
       try {
@@ -135,14 +134,13 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23502");
       expect(error.condition).toBe("not_null_violation");
       expect(error.column).toBe("name");
       // Should also have the parsed failing column
       expect(error.failing_column).toBe("name");
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_not_null`;
     }
@@ -150,11 +148,11 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("foreign_key_violation error includes condition name and parsed details", async () => {
     await using sql = new SQL(options);
-    
+
     // Create tables with foreign key constraint
     await sql`CREATE TABLE test_parent (id SERIAL PRIMARY KEY, name VARCHAR(255))`;
     await sql`CREATE TABLE test_child (id SERIAL PRIMARY KEY, parent_id INTEGER REFERENCES test_parent(id))`;
-    
+
     try {
       let error: any;
       try {
@@ -162,7 +160,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23503");
       expect(error.condition).toBe("foreign_key_violation");
@@ -170,7 +168,6 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       expect(error.key).toBe("parent_id");
       expect(error.value).toBe("999");
       expect(error.referenced_table).toBe("test_parent");
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_child`;
       await sql`DROP TABLE IF EXISTS test_parent`;
@@ -179,14 +176,14 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("syntax_error includes condition name", async () => {
     await using sql = new SQL(options);
-    
+
     let error: any;
     try {
       await sql`SELEC 1`;
     } catch (e) {
       error = e;
     }
-    
+
     expect(error).toBeDefined();
     expect(error.errno).toBe("42601");
     expect(error.condition).toBe("syntax_error");
@@ -194,14 +191,14 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("undefined_table error includes condition name", async () => {
     await using sql = new SQL(options);
-    
+
     let error: any;
     try {
       await sql`SELECT * FROM nonexistent_table`;
     } catch (e) {
       error = e;
     }
-    
+
     expect(error).toBeDefined();
     expect(error.errno).toBe("42P01");
     expect(error.condition).toBe("undefined_table");
@@ -209,14 +206,14 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("check_violation error includes condition name and parsed details", async () => {
     await using sql = new SQL(options);
-    
+
     // Create table with named check constraint
     await sql`CREATE TABLE test_check (
       id SERIAL PRIMARY KEY, 
       age INTEGER,
       CONSTRAINT age_positive CHECK (age > 0)
     )`;
-    
+
     try {
       let error: any;
       try {
@@ -224,14 +221,13 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23514");
       expect(error.condition).toBe("check_violation");
       // Should have parsed check constraint name and table
       expect(error.check_constraint).toBe("age_positive");
       expect(error.failing_table).toBe("test_check");
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_check`;
     }
@@ -239,7 +235,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("key/value parsing works with different formats", async () => {
     await using sql = new SQL(options);
-    
+
     // Create table with unique constraint on multiple columns
     await sql`CREATE TABLE test_multi_unique (
       id SERIAL PRIMARY KEY, 
@@ -247,11 +243,11 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       domain VARCHAR(255),
       UNIQUE(username, domain)
     )`;
-    
+
     try {
       // Insert first record
       await sql`INSERT INTO test_multi_unique (username, domain) VALUES ('john', 'example.com')`;
-      
+
       // Try to insert duplicate
       let error: any;
       try {
@@ -259,17 +255,16 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23505");
       expect(error.condition).toBe("unique_violation");
-      // For compound keys, the detail format might be different, 
+      // For compound keys, the detail format might be different,
       // so we check if key and value are present when available
       if (error.key && error.value) {
         expect(typeof error.key).toBe("string");
         expect(typeof error.value).toBe("string");
       }
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_multi_unique`;
     }
@@ -277,16 +272,16 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("key/value parsing handles special characters", async () => {
     await using sql = new SQL(options);
-    
+
     // Create table with unique constraint
     await sql`CREATE TABLE test_special_chars (id SERIAL PRIMARY KEY, data VARCHAR(255) UNIQUE)`;
-    
+
     try {
       const specialValue = "test@email.com (with) special=chars";
-      
+
       // Insert first record with special characters
       await sql`INSERT INTO test_special_chars (data) VALUES (${specialValue})`;
-      
+
       // Try to insert duplicate
       let error: any;
       try {
@@ -294,13 +289,12 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
       } catch (e) {
         error = e;
       }
-      
+
       expect(error).toBeDefined();
       expect(error.errno).toBe("23505");
       expect(error.condition).toBe("unique_violation");
       expect(error.key).toBe("data");
       expect(error.value).toBe(specialValue);
-      
     } finally {
       await sql`DROP TABLE IF EXISTS test_special_chars`;
     }
@@ -308,7 +302,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("errors without known condition codes still work", async () => {
     await using sql = new SQL(options);
-    
+
     let error: any;
     try {
       // This should trigger an error that doesn't have a mapped condition name
@@ -316,7 +310,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
     } catch (e) {
       error = e;
     }
-    
+
     expect(error).toBeDefined();
     expect(error.errno).toBe("22012");
     expect(error.condition).toBe("division_by_zero");
@@ -324,7 +318,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("all error enhancements work together", async () => {
     await using sql = new SQL(options);
-    
+
     // Test syntax error has condition but no parsed details
     let syntaxError: any;
     try {
@@ -332,7 +326,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
     } catch (e) {
       syntaxError = e;
     }
-    
+
     expect(syntaxError).toBeDefined();
     expect(syntaxError.errno).toBe("42601");
     expect(syntaxError.condition).toBe("syntax_error");
@@ -345,7 +339,7 @@ describe.skipIf(!dockerCLI || isCI)("PostgreSQL Error Enhancements", () => {
 
   test("comprehensive error field verification", async () => {
     await using sql = new SQL(options);
-    
+
     // Test that all field types work correctly
     const errorMappings = [
       { errno: "23505", condition: "unique_violation" },

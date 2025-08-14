@@ -20,7 +20,7 @@ pub const EncodingLabel = enum {
     // @"KOI8-U",
     // macintosh,
     // @"windows-874",
-    // @"windows-1250",
+    @"windows-1250",
     // @"windows-1251",
     /// Also known as
     /// - ASCII
@@ -48,6 +48,7 @@ pub const EncodingLabel = enum {
             .@"UTF-16LE" => "utf-16le",
             .@"UTF-16BE" => "utf-16be",
             .@"windows-1252" => "windows-1252",
+            .@"windows-1250" => "windows-1250",
         };
     }
 
@@ -71,6 +72,10 @@ pub const EncodingLabel = enum {
         .{ "windows-1252", latin1 },
         .{ "ansi_x3.4-1968", latin1 },
         .{ "iso_8859-1:1987", latin1 },
+
+        .{ "cp1250", .@"windows-1250" },
+        .{ "x-cp1250", .@"windows-1250" },
+        .{ "windows-1250", .@"windows-1250" },
 
         .{ "ucs-2", .@"UTF-16LE" },
         .{ "utf-16", .@"UTF-16LE" },

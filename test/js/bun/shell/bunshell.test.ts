@@ -448,10 +448,10 @@ describe("bunshell", () => {
     test("should be set to Bun executable path", async () => {
       const { stdout } = await $`echo $SHELL`;
       const shellPath = stdout.toString().trim();
-      
+
       // Should contain "bun" in the path
       expect(shellPath).toContain("bun");
-      
+
       // Should be an absolute path
       expect(shellPath).toMatch(/^\/|^[A-Z]:\\/);
     });
@@ -459,12 +459,12 @@ describe("bunshell", () => {
     test("should be set in shell scripts", async () => {
       const tempdir = tmpdirSync();
       const scriptPath = join(tempdir, "test_shell.sh");
-      
+
       // Create a shell script that prints SHELL
       await Bun.write(scriptPath, 'echo "SHELL: $SHELL"');
-      
+
       const result = await $`bun ${scriptPath}`.text();
-      
+
       expect(result).toContain("SHELL:");
       expect(result).toContain("bun");
     });

@@ -777,13 +777,13 @@ pub const Interpreter = struct {
                 var env_map = if (export_env_) |e| e else env_blk: {
                     // Initialize with current process environment for Bun.$ when no env provided
                     var env = EnvMap.init(allocator);
-                    
+
                     // Copy current process environment
                     for (std.os.environ) |env_ptr| {
                         const env_str = bun.span(env_ptr);
                         if (bun.strings.indexOfChar(env_str, '=')) |eq_index| {
                             const key = env_str[0..eq_index];
-                            const value = env_str[eq_index + 1..];
+                            const value = env_str[eq_index + 1 ..];
                             if (key.len > 0) {
                                 const key_envstr = EnvStr.initSlice(key);
                                 const value_envstr = EnvStr.initSlice(value);
@@ -791,10 +791,10 @@ pub const Interpreter = struct {
                             }
                         }
                     }
-                    
+
                     break :env_blk env;
                 };
-                
+
                 // Always set SHELL environment variable to Bun executable path for Bun.$
                 if (bun.selfExePath()) |self_exe_path| {
                     const shell_key = EnvStr.initSlice("SHELL");
@@ -806,7 +806,7 @@ pub const Interpreter = struct {
                     const shell_value = EnvStr.initSlice("bun");
                     env_map.insert(shell_key, shell_value);
                 }
-                
+
                 break :brk env_map;
             }
 

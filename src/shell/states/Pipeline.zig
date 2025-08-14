@@ -39,6 +39,7 @@ pub const ChildPtr = StatePtrUnion(.{
 
 const PipelineItem = bun.TaggedPointerUnion(.{
     Cmd,
+    Assigns,
     If,
     CondExpr,
     Subshell,

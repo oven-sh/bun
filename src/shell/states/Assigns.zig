@@ -24,6 +24,7 @@ pub const ParentPtr = StatePtrUnion(.{
     Binary,
     Cmd,
     Pipeline,
+    Async,
 });
 
 pub const ChildPtr = StatePtrUnion(.{
@@ -205,6 +206,16 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
     @panic("Invalid child to Assigns expression, this indicates a bug in Bun. Please file a report on Github.");
 }
 
+pub fn onIOWriterChunk(this: *Assigns, _: usize, err: ?jsc.SystemError) Yield {
+    if (err) |e| {
+        this.base.throw(&bun.shell.ShellErr.newSys(e));
+        return .failed;
+    }
+    // In pipeline expressions, assignments are essentially no-ops,
+    // so we just continue with the next item in the pipeline
+    return this.parent.childDone(this, 0);
+}
+
 pub const AssignCtx = enum {
     cmd,
     shell,
@@ -213,12 +224,14 @@ pub const AssignCtx = enum {
 
 const bun = @import("bun");
 const std = @import("std");
+const jsc = bun.jsc;
 
 const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;
 const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
+const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
 const Cmd = bun.shell.Interpreter.Cmd;
 const Expansion = bun.shell.Interpreter.Expansion;

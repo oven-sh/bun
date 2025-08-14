@@ -22,6 +22,7 @@ pub const ParentPtr = StatePtrUnion(.{
 pub const ChildPtr = StatePtrUnion(.{
     Pipeline,
     Cmd,
+    Assigns,
     If,
     CondExpr,
 });
@@ -99,6 +100,14 @@ pub fn next(this: *Async) Yield {
                         CondExpr.ParentPtr.init(this),
                         this.io.copy(),
                     )),
+                    .assign => break :brk ChildPtr.init(Assigns.init(
+                        this.base.interpreter,
+                        this.base.shell,
+                        this.node.assign,
+                        .shell,
+                        Assigns.ParentPtr.init(this),
+                        this.io.copy(),
+                    )),
                     else => {
                         @panic("Encountered an unexpected child of an async command, this indicates a bug in Bun. Please open a GitHub issue.");
                     },
@@ -166,6 +175,7 @@ const Yield = bun.shell.Yield;
 const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
+const Assigns = bun.shell.Interpreter.Assigns;
 const Binary = bun.shell.Interpreter.Binary;
 const Cmd = bun.shell.Interpreter.Cmd;
 const CondExpr = bun.shell.Interpreter.CondExpr;

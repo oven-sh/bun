@@ -653,7 +653,7 @@ pub const AST = struct {
                     return .{ .cmd = cmd_ptr };
                 },
                 .assigns => |assigns| {
-                    return .{ .assign = assigns };
+                    return .{ .assigns = assigns };
                 },
             }
         }

@@ -700,6 +700,7 @@ pub const IOWriterChildPtr = struct {
 pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
     Interpreter.Cmd,
     Interpreter.Pipeline,
+    Interpreter.Assigns,
     Interpreter.CondExpr,
     Interpreter.Subshell,
     Interpreter.Builtin.Cd,

@@ -36,9 +36,6 @@ tls_config: jsc.API.ServerConfig.SSLConfig = .{},
 tls_status: TLSStatus = .none,
 ssl_mode: SSLMode = .disable,
 
-on_connect: jsc.Strong.Optional = .empty,
-on_close: jsc.Strong.Optional = .empty,
-
 auth_data: []const u8 = "",
 database: []const u8 = "",
 user: []const u8 = "",
@@ -403,6 +400,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     var password: []const u8 = "";
     var database: []const u8 = "";
     var options: []const u8 = "";
+    var path: []const u8 = "";
 
     const options_str = try arguments[7].toBunString(globalObject);
     defer options_str.deref();
@@ -412,7 +410,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     const options_buf: []u8 = brk: {
         var b = bun.StringBuilder{};
-        b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
+        b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1 + path_str.utf8ByteLength() + 1;
 
         b.allocate(bun.default_allocator) catch {};
         var u = username_str.toUTF8WithoutRef(bun.default_allocator);
@@ -431,6 +429,10 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         defer o.deinit();
         options = b.append(o.slice());
 
+        var _path = path_str.toUTF8WithoutRef(bun.default_allocator);
+        defer _path.deinit();
+        path = b.append(_path.slice());
+
         break :brk b.allocatedSlice();
     };
 
@@ -445,24 +447,23 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     ptr.* = MySQLConnection{
         .globalObject = globalObject,
-        .on_connect = .create(on_connect, globalObject),
-        .on_close = .create(on_close, globalObject),
+        .vm = vm,
         .database = database,
         .user = username,
         .password = password,
         .options = options,
         .options_buf = options_buf,
-        .socket = .{
-            .SocketTCP = .{ .socket = .{ .detached = {} } },
-        },
+        .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
         .requests = Queue.init(bun.default_allocator),
         .statements = PreparedStatementsMap{},
         .tls_config = tls_config,
         .tls_ctx = tls_ctx,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
+        // .idle_timeout_interval_ms = @intCast(idle_timeout),
+        // .connection_timeout_ms = @intCast(connection_timeout),
+        // .max_lifetime_interval_ms = @intCast(max_lifetime),
         .character_set = CharacterSet.default,
-        .vm = vm,
     };
 
     {
@@ -475,16 +476,30 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             vm.rareData().mysql_context.tcp = ctx_;
             break :brk ctx_;
         };
-        ptr.socket = .{
-            .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                tls_config.deinit();
-                if (tls_ctx) |tls| {
-                    tls.deinit(true);
-                }
-                ptr.deinit();
-                return globalObject.throwError(err, "failed to connect to mysql");
-            },
-        };
+
+        if (path.len > 0) {
+            ptr.socket = .{
+                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                    tls_config.deinit();
+                    if (tls_ctx) |tls| {
+                        tls.deinit(true);
+                    }
+                    ptr.deinit();
+                    return globalObject.throwError(err, "failed to connect to postgresql");
+                },
+            };
+        } else {
+            ptr.socket = .{
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                    tls_config.deinit();
+                    if (tls_ctx) |tls| {
+                        tls.deinit(true);
+                    }
+                    ptr.deinit();
+                    return globalObject.throwError(err, "failed to connect to mysql");
+                },
+            };
+        }
     }
 
     ptr.updateHasPendingActivity();
@@ -492,6 +507,8 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const js_value = ptr.toJS(globalObject);
     js_value.ensureStillAlive();
     ptr.js_value = js_value;
+    js.onconnectSetCached(js_value, globalObject, on_connect);
+    js.oncloseSetCached(js_value, globalObject, on_close);
 
     return js_value;
 }

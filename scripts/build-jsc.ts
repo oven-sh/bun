@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { spawnSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
+import { arch, platform } from "os";
 import { join, resolve } from "path";
-import { platform, arch } from "os";
 
 // Build configurations
 type BuildConfig = "debug" | "release" | "lto";
@@ -72,7 +72,8 @@ const getCommonFlags = () => {
     "-DUSE_BUN_JSC_ADDITIONS=ON",
     "-DUSE_BUN_EVENT_LOOP=ON",
     "-DENABLE_FTL_JIT=ON",
-    "-G", "Ninja",
+    "-G",
+    "Ninja",
     `-DCMAKE_C_COMPILER=${CC}`,
     `-DCMAKE_CXX_COMPILER=${CXX}`,
   ];
@@ -82,13 +83,13 @@ const getCommonFlags = () => {
       "-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON",
       "-DBUN_FAST_TLS=ON",
       "-DPTHREAD_JIT_PERMISSIONS_API=1",
-      "-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON"
+      "-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON",
     );
   } else if (IS_LINUX) {
     flags.push(
       "-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION",
       "-DUSE_VISIBILITY_ATTRIBUTE=1",
-      "-DENABLE_REMOTE_INSPECTOR=ON"
+      "-DENABLE_REMOTE_INSPECTOR=ON",
     );
   }
 
@@ -106,9 +107,9 @@ const getBuildFlags = (config: BuildConfig) => {
         "-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DENABLE_REMOTE_INSPECTOR=ON",
-        "-DUSE_VISIBILITY_ATTRIBUTE=1"
+        "-DUSE_VISIBILITY_ATTRIBUTE=1",
       );
-      
+
       if (IS_MAC) {
         // Enable address sanitizer by default on Mac debug builds
         flags.push("-DENABLE_SANITIZERS=address");
@@ -118,11 +119,7 @@ const getBuildFlags = (config: BuildConfig) => {
       break;
 
     case "lto":
-      flags.push(
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_C_FLAGS=-flto=full",
-        "-DCMAKE_CXX_FLAGS=-flto=full"
-      );
+      flags.push("-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_FLAGS=-flto=full", "-DCMAKE_CXX_FLAGS=-flto=full");
       break;
 
     default: // release
@@ -136,7 +133,7 @@ const getBuildFlags = (config: BuildConfig) => {
 // Environment variables for the build
 const getBuildEnv = () => {
   const env = { ...process.env };
-  
+
   const cflags = ["-ffat-lto-objects"];
   const cxxflags = ["-ffat-lto-objects"];
 
@@ -194,36 +191,19 @@ function buildJSC() {
 
   // Configure with CMake
   console.log("\n📦 Configuring with CMake...");
-  runCommand(
-    "cmake",
-    [
-      ...cmakeFlags,
-      WEBKIT_DIR,
-      buildDir,
-    ],
-    {
-      cwd: buildDir,
-      env,
-    }
-  );
+  runCommand("cmake", [...cmakeFlags, WEBKIT_DIR, buildDir], {
+    cwd: buildDir,
+    env,
+  });
 
   // Build with CMake
   console.log("\n🔨 Building JSC...");
-  const buildType = buildConfig === "debug" ? "Debug" : 
-                   buildConfig === "lto" ? "Release" : "RelWithDebInfo";
-  
-  runCommand(
-    "cmake",
-    [
-      "--build", buildDir,
-      "--config", buildType,
-      "--target", "jsc",
-    ],
-    {
-      cwd: buildDir,
-      env,
-    }
-  );
+  const buildType = buildConfig === "debug" ? "Debug" : buildConfig === "lto" ? "Release" : "RelWithDebInfo";
+
+  runCommand("cmake", ["--build", buildDir, "--config", buildType, "--target", "jsc"], {
+    cwd: buildDir,
+    env,
+  });
 
   console.log(`\n✅ JSC build completed successfully!`);
   console.log(`Build output: ${buildDir}`);

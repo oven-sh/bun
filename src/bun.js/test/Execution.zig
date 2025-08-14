@@ -33,8 +33,8 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     this.index += 1;
 
     // if the callback is only called once, we can remove the strong reference to allow the gc to collect it.
-    // TODO: at the end of a describe scope, we should be able to clean up any beforeAll/afterAll hooks. we can add this as a schedule entry with 'cleanup_describe' tag for example. it has to be at the end of the describe scope
-    // because otherwise we might clean up a beforeAll hook that we still need if a test were to call test() within itself.
+    // TODO: at the end of a describe scope, we should be able to clean up any beforeEach/afterEach hooks. we can add this as a schedule entry with 'cleanup_describe' tag for example. it has to be at the end of the describe scope
+    // because otherwise we might clean up a beforeEach hook that we still need if a test were to call test() within itself.
     const callback = if (entry.tag.isCalledMultipleTimes()) (entry.callback.get() orelse jsc.JSValue.zero) else entry.callback.swap();
     if (callback == .zero) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
 
@@ -66,9 +66,8 @@ pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*Exec
     }
 }
 pub fn generateOrderDescribe(current: *DescribeScope, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
-    // gather beforeEach
-    for (current.beforeEach.items) |entry| {
-        // todo queue
+    // gather beforeAll
+    for (current.beforeAll.items) |entry| {
         try order.append(entry);
     }
 
@@ -76,30 +75,30 @@ pub fn generateOrderDescribe(current: *DescribeScope, order: *std.ArrayList(*Exe
         try generateOrderSub(entry, order);
     }
 
-    // gather afterEach
-    for (current.afterEach.items) |entry| {
+    // gather afterAll
+    for (current.afterAll.items) |entry| {
         try order.append(entry);
     }
 }
 pub fn generateOrderTest(current: *ExecutionEntry, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
-    // gather beforeAll (alternatively, this could be implemented recursively to make it less complicated)
+    // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
     {
-        // determine length of beforeAll
-        var beforeAllLen: usize = 0;
+        // determine length of beforeEach
+        var beforeEachLen: usize = 0;
         {
             var parent: ?*DescribeScope = current.parent;
             while (parent) |p| : (parent = p.parent) {
-                beforeAllLen += p.beforeAll.items.len;
+                beforeEachLen += p.beforeEach.items.len;
             }
         }
-        // copy beforeAll entries
-        const beforeAllSlice = try order.addManyAsSlice(beforeAllLen);
+        // copy beforeEach entries
+        const beforeEachSlice = try order.addManyAsSlice(beforeEachLen);
         {
             var parent: ?*DescribeScope = current.parent;
-            var i: usize = beforeAllLen;
+            var i: usize = beforeEachLen;
             while (parent) |p| : (parent = p.parent) {
-                i -= p.beforeAll.items.len;
-                @memcpy(beforeAllSlice[i..][0..p.beforeAll.items.len], p.beforeAll.items);
+                i -= p.beforeEach.items.len;
+                @memcpy(beforeEachSlice[i..][0..p.beforeEach.items.len], p.beforeEach.items);
             }
         }
     }
@@ -107,11 +106,11 @@ pub fn generateOrderTest(current: *ExecutionEntry, order: *std.ArrayList(*Execut
     // append test
     try order.append(current);
 
-    // gather afterAll
+    // gather afterEach
     {
         var parent: ?*DescribeScope = current.parent;
         while (parent) |p| : (parent = p.parent) {
-            for (p.afterAll.items) |entry| {
+            for (p.afterEach.items) |entry| {
                 try order.append(entry);
             }
         }

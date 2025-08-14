@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 
 test("CSS file has correct MIME type in Bun.build result", async () => {
   const dir = tempDirWithFiles("css-mime-type-test", {

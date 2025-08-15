@@ -85,8 +85,9 @@ declare module "bun" {
     class SQLiteError extends SQLError {
       public readonly code: string;
       public readonly errno: number;
+      public readonly byteOffset?: number | undefined;
 
-      constructor(message: string, options: { code: string; errno: number });
+      constructor(message: string, options: { code: string; errno: number; byteOffset?: number | undefined });
     }
 
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {

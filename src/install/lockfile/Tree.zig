@@ -581,7 +581,7 @@ fn hoistDependencyWithVisited(
     if (visited_packages.contains(package_id)) {
         return .dependency_loop;
     }
-    
+
     // Mark this package as visited
     try visited_packages.put(package_id, {});
     // Ensure we remove this package from visited set when function exits
@@ -656,7 +656,7 @@ fn hoistDependencyWithVisited(
         ) catch unreachable;
         if (!as_defined or id != .dependency_loop) return id; // 1 or 2
     }
-    
+
     // place the dependency in the current tree
     return .{ .placement = .{ .id = this.id } }; // 2
 }
@@ -675,6 +675,8 @@ pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 const string = []const u8;
 const stringZ = [:0]const u8;
 
+pub const PackageID = install.PackageID;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -692,7 +694,6 @@ const String = bun.Semver.String;
 const install = bun.install;
 const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
-pub const PackageID = install.PackageID;
 const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const invalid_dependency_id = install.invalid_dependency_id;

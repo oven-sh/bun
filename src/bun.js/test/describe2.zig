@@ -241,7 +241,7 @@ pub const BunTest = struct {
         }
     }
 
-    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, _: struct { done_parameter: bool }) bun.JSError!RunOneResult {
+    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, cfg: struct { done_parameter: bool }) bun.JSError!RunOneResult {
         group.begin(@src());
         defer group.end();
 
@@ -249,6 +249,14 @@ pub const BunTest = struct {
         // - in tests, (done) => {} callbacks
         // - for test.concurrent, we will have multiple 'then's active at once, and they will
         //   need to be able to pass context information to runOneCompleted
+
+        if (cfg.done_parameter) {
+            const length = callback.getLength(globalThis);
+            if (length > 0) {
+                // TODO: support done parameter
+                group.log("TODO: support done parameter", .{});
+            }
+        }
 
         var is_error = false;
         const result = callback.call(globalThis, .js_undefined, &.{}) catch |e| blk: {

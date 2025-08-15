@@ -1,5 +1,5 @@
 import type * as BunSQLiteModule from "bun:sqlite";
-import type { BaseQueryHandle, Query } from "./query";
+import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
 import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray } from "./shared";
 
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
@@ -144,7 +144,90 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-export interface SQLiteQueryHandle extends BaseQueryHandle<BunSQLiteModule.Database> {}
+export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+  private mode = SQLQueryResultMode.objects;
+
+  private readonly sql: string;
+  private readonly values: unknown[];
+
+  public constructor(sql: string, values: unknown[]) {
+    this.sql = sql;
+    this.values = values;
+  }
+
+  setMode(mode: SQLQueryResultMode) {
+    this.mode = mode;
+  }
+
+  run(db: BunSQLiteModule.Database, query: Query<any, any>) {
+    if (!db) {
+      throw new SQLiteError("SQLite database not initialized", {
+        code: "SQLITE_CONNECTION_CLOSED",
+        errno: 0,
+      });
+    }
+
+    const { sql, values, mode } = this;
+
+    try {
+      const commandMatch = sql.trim().match(/^(\w+)/i);
+      const command = commandMatch ? commandMatch[1].toUpperCase() : "";
+
+      // For SELECT queries, we need to use a prepared statement
+      // For other queries, we can check if there are multiple statements and use db.run() if so
+      if (
+        command === "SELECT" ||
+        sql.trim().toUpperCase().includes("RETURNING") ||
+        command === "PRAGMA" ||
+        command === "WITH" ||
+        command === "EXPLAIN"
+      ) {
+        // SELECT queries must use prepared statements for results
+        const stmt = db.prepare(sql);
+        let result: unknown[] | undefined;
+
+        if (mode === SQLQueryResultMode.values) {
+          result = stmt.values(...values);
+        } else if (mode === SQLQueryResultMode.raw) {
+          result = stmt.raw(...values);
+        } else {
+          result = stmt.all(...values);
+        }
+
+        const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
+
+        sqlResult.command = command;
+        sqlResult.count = $isArray(result) ? result.length : 1;
+
+        stmt.finalize();
+        query.resolve(sqlResult);
+      } else {
+        // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
+        const changes = db.run(sql, ...values);
+        const sqlResult = new SQLResultArray();
+
+        sqlResult.command = command;
+        sqlResult.count = changes.changes;
+        sqlResult.lastInsertRowid = changes.lastInsertRowid;
+
+        query.resolve(sqlResult);
+      }
+    } catch (err) {
+      // Convert bun:sqlite errors to SQLiteError
+      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+        // Extract SQLite error properties
+        const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
+        const errno = "errno" in err ? Number(err.errno) : 1;
+        const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
+        const message = "message" in err ? String(err.message) : "SQLite error";
+
+        throw new SQLiteError(message, { code, errno, byteOffset });
+      }
+      // Re-throw if it's not a SQLite error
+      throw err;
+    }
+  }
+}
 
 export class SQLiteAdapter
   implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
@@ -199,80 +282,8 @@ export class SQLiteAdapter
     }
   }
 
-  createQueryHandle(sql: string, values: any[] | undefined | null = []): SQLiteQueryHandle {
-    let resultMode = SQLQueryResultMode.objects;
-
-    return {
-      run: (db: BunSQLiteModule.Database, query: Query<any, any>) => {
-        if (!db) {
-          throw new SQLiteError("SQLite database not initialized", {
-            code: "SQLITE_CONNECTION_CLOSED",
-            errno: 0,
-          });
-        }
-
-        try {
-          const commandMatch = sql.trim().match(/^(\w+)/i);
-          const command = commandMatch ? commandMatch[1].toUpperCase() : "";
-
-          // For SELECT queries, we need to use a prepared statement
-          // For other queries, we can check if there are multiple statements and use db.run() if so
-          if (
-            command === "SELECT" ||
-            sql.trim().toUpperCase().includes("RETURNING") ||
-            command === "PRAGMA" ||
-            command === "WITH" ||
-            command === "EXPLAIN"
-          ) {
-            // SELECT queries must use prepared statements for results
-            const stmt = db.prepare(sql);
-            let result: unknown[] | undefined;
-
-            if (resultMode === SQLQueryResultMode.values) {
-              result = stmt.values(...(values ?? []));
-            } else if (resultMode === SQLQueryResultMode.raw) {
-              result = stmt.raw(...(values ?? []));
-            } else {
-              result = stmt.all(...(values ?? []));
-            }
-
-            const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
-
-            sqlResult.command = command;
-            sqlResult.count = $isArray(result) ? result.length : 1;
-
-            stmt.finalize();
-            query.resolve(sqlResult);
-          } else {
-            // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-            const changes = db.run(sql, ...(values ?? []));
-            const sqlResult = new SQLResultArray();
-
-            sqlResult.command = command;
-            sqlResult.count = changes.changes;
-            sqlResult.lastInsertRowid = changes.lastInsertRowid;
-
-            query.resolve(sqlResult);
-          }
-        } catch (err) {
-          // Convert bun:sqlite errors to SQLiteError
-          if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
-            // Extract SQLite error properties
-            const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
-            const errno = "errno" in err ? Number(err.errno) : 1;
-            const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
-            const message = "message" in err ? String(err.message) : "SQLite error";
-
-            throw new SQLiteError(message, { code, errno, byteOffset });
-          }
-          // Re-throw if it's not a SQLite error
-          throw err;
-        }
-      },
-      setMode: mode => {
-        resultMode = mode;
-      },
-    };
+  createQueryHandle(sql: string, values: unknown[] | undefined | null = []): SQLiteQueryHandle {
+    return new SQLiteQueryHandle(sql, values ?? []);
   }
 
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {

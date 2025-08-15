@@ -136,10 +136,8 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
     defer {
         if (message == null) bun.default_allocator.free(msg);
     }
-    return createPostgresError(globalObject, msg, .{ .code = code }) catch {
-        // If we fail to create the error, return a generic error
-        return globalObject.createErrorInstance("PostgreSQL error: {s}", .{msg});
-    };
+
+    return createPostgresError(globalObject, msg, .{ .code = code }) catch |e| globalObject.takeError(e);
 }
 
 const bun = @import("bun");

@@ -276,44 +276,45 @@ pub const DescribeScope = struct {
         buntest.gpa.destroy(this);
     }
 };
+pub const ExecutionEntryTag = enum {
+    test_callback,
+    beforeAll,
+    beforeEach,
+    afterEach,
+    afterAll,
+
+    executing,
+    pass,
+    fail,
+    skip,
+    todo,
+    timeout,
+    skipped_because_label,
+    fail_because_failing_test_passed,
+    fail_because_todo_passed,
+    fail_because_expected_has_assertions,
+    fail_because_expected_assertion_count,
+
+    pub fn isCalledMultipleTimes(this: @This()) bool {
+        return switch (this) {
+            .beforeEach, .afterEach => true,
+            else => false,
+        };
+    }
+    pub fn shouldExecute(this: @This()) bool {
+        return switch (this) {
+            .test_callback, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
+            .skip, .todo, .skipped_because_label => false,
+            .executing, .pass, .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => {
+                bun.assert(false);
+                return false;
+            },
+        };
+    }
+};
 pub const ExecutionEntry = struct {
     parent: *DescribeScope,
-    tag: enum {
-        test_callback,
-        beforeAll,
-        beforeEach,
-        afterEach,
-        afterAll,
-
-        executing,
-        pass,
-        fail,
-        skip,
-        todo,
-        timeout,
-        skipped_because_label,
-        fail_because_failing_test_passed,
-        fail_because_todo_passed,
-        fail_because_expected_has_assertions,
-        fail_because_expected_assertion_count,
-
-        pub fn isCalledMultipleTimes(this: @This()) bool {
-            return switch (this) {
-                .beforeEach, .afterEach => true,
-                else => false,
-            };
-        }
-        pub fn shouldExecute(this: @This()) bool {
-            return switch (this) {
-                .test_callback, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
-                .skip, .todo, .skipped_because_label => false,
-                .executing, .pass, .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => {
-                    bun.assert(false);
-                    return false;
-                },
-            };
-        }
-    },
+    tag: ExecutionEntryTag,
     callback: Strong.Optional,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();

@@ -1,12 +1,12 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("--use-system-ca CLI flag", () => {
   test("should enable system CA with --use-system-ca flag", async () => {
     const testDir = tempDirWithFiles("use-system-ca-cli", {});
-    
+
     const testScript = `
 async function testSystemCA() {
   try {
@@ -24,7 +24,7 @@ testSystemCA();
 `;
 
     await fs.writeFile(join(testDir, "test-cli-flag.js"), testScript);
-    
+
     // Test with --use-system-ca CLI flag
     const proc = Bun.spawn({
       cmd: [bunExe(), "--use-system-ca", "test-cli-flag.js"],
@@ -34,11 +34,7 @@ testSystemCA();
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("CLI flag test output:", stdout);
     console.log("CLI flag test errors:", stderr);
@@ -50,7 +46,7 @@ testSystemCA();
 
   test("should work with both CLI flag and environment variable", async () => {
     const testDir = tempDirWithFiles("use-system-ca-both", {});
-    
+
     const testScript = `
 console.log('Testing CLI flag with environment variable');
 
@@ -71,7 +67,7 @@ testBothMethods();
 `;
 
     await fs.writeFile(join(testDir, "test-both.js"), testScript);
-    
+
     // Test with both --use-system-ca flag and NODE_USE_SYSTEM_CA=1
     const proc = Bun.spawn({
       cmd: [bunExe(), "--use-system-ca", "test-both.js"],
@@ -84,11 +80,7 @@ testBothMethods();
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("Both methods test output:", stdout);
 
@@ -99,7 +91,7 @@ testBothMethods();
 
   test("should show CLI flag takes priority over missing env var", async () => {
     const testDir = tempDirWithFiles("use-system-ca-priority", {});
-    
+
     const testScript = `
 console.log('Testing CLI flag priority over environment');
 
@@ -119,7 +111,7 @@ testPriority();
 `;
 
     await fs.writeFile(join(testDir, "test-priority.js"), testScript);
-    
+
     // Test with only --use-system-ca flag (no NODE_USE_SYSTEM_CA env var)
     const proc = Bun.spawn({
       cmd: [bunExe(), "--use-system-ca", "test-priority.js"],
@@ -129,11 +121,7 @@ testPriority();
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("Priority test output:", stdout);
 
@@ -144,7 +132,7 @@ testPriority();
 
   test("should handle TLS connections with CLI flag", async () => {
     const testDir = tempDirWithFiles("use-system-ca-tls", {});
-    
+
     const testScript = `
 const tls = require('tls');
 
@@ -189,7 +177,7 @@ testTLSWithCLI()
 `;
 
     await fs.writeFile(join(testDir, "test-tls-cli.js"), testScript);
-    
+
     const proc = Bun.spawn({
       cmd: [bunExe(), "--use-system-ca", "test-tls-cli.js"],
       env: bunEnv,
@@ -198,14 +186,10 @@ testTLSWithCLI()
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("TLS CLI test output:", stdout);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("SUCCESS: TLS connection with --use-system-ca worked");
     expect(stdout).toContain("TLS test with CLI flag completed successfully");
@@ -220,11 +204,7 @@ testTLSWithCLI()
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should not have any argument parsing errors
     expect(exitCode).toBe(0);

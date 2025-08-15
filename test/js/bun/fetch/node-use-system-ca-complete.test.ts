@@ -1,14 +1,13 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { platform } from "os";
+import { join } from "path";
 
 describe("NODE_USE_SYSTEM_CA Complete Implementation", () => {
   test("should work with standard HTTPS sites", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-basic", {});
-    
+
     const testScript = `
 async function testHttpsRequest() {
   try {
@@ -25,7 +24,7 @@ testHttpsRequest();
 `;
 
     await fs.writeFile(join(testDir, "test.js"), testScript);
-    
+
     // Test with NODE_USE_SYSTEM_CA=1
     const proc1 = Bun.spawn({
       cmd: [bunExe(), "test.js"],
@@ -38,15 +37,11 @@ testHttpsRequest();
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
-      proc1.stdout.text(),
-      proc1.stderr.text(),
-      proc1.exited,
-    ]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
     expect(exitCode1).toBe(0);
     expect(stdout1).toContain("SUCCESS");
-    
+
     // Test without NODE_USE_SYSTEM_CA
     const proc2 = Bun.spawn({
       cmd: [bunExe(), "test.js"],
@@ -56,11 +51,7 @@ testHttpsRequest();
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
-      proc2.stdout.text(),
-      proc2.stderr.text(),
-      proc2.exited,
-    ]);
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
     expect(exitCode2).toBe(0);
     expect(stdout2).toContain("SUCCESS");
@@ -68,7 +59,7 @@ testHttpsRequest();
 
   test("should properly parse NODE_USE_SYSTEM_CA environment variable", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-env-parsing", {});
-    
+
     const testScript = `
 const testCases = [
   { env: '1', description: 'string "1"' },
@@ -96,7 +87,7 @@ process.exit(0);
 `;
 
     await fs.writeFile(join(testDir, "test-env.js"), testScript);
-    
+
     const proc = Bun.spawn({
       cmd: [bunExe(), "test-env.js"],
       env: bunEnv,
@@ -105,11 +96,7 @@ process.exit(0);
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Environment variable parsing test completed successfully");
@@ -117,7 +104,7 @@ process.exit(0);
 
   test("should handle platform-specific behavior correctly", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-platform", {});
-    
+
     const testScript = `
 const { platform } = require('os');
 
@@ -154,7 +141,7 @@ testPlatformBehavior();
 `;
 
     await fs.writeFile(join(testDir, "test-platform.js"), testScript);
-    
+
     const proc = Bun.spawn({
       cmd: [bunExe(), "test-platform.js"],
       env: {
@@ -166,28 +153,24 @@ testPlatformBehavior();
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("Platform test output:", stdout);
     console.log("Platform test errors:", stderr);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("SUCCESS: Platform-specific certificate loading working");
-    
-    if (platform() === 'darwin') {
+
+    if (platform() === "darwin") {
       expect(stdout).toContain("macOS Security framework integration should be active");
-    } else if (platform() === 'linux') {
+    } else if (platform() === "linux") {
       expect(stdout).toContain("Linux system certificate loading should be active");
     }
   });
 
   test("should work with TLS connections", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-tls", {});
-    
+
     const testScript = `
 const tls = require('tls');
 
@@ -232,7 +215,7 @@ testTLSConnection()
 `;
 
     await fs.writeFile(join(testDir, "test-tls.js"), testScript);
-    
+
     const proc = Bun.spawn({
       cmd: [bunExe(), "test-tls.js"],
       env: {
@@ -244,14 +227,10 @@ testTLSConnection()
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("TLS test output:", stdout);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("SUCCESS: TLS connection established");
     expect(stdout).toContain("TLS test completed successfully");

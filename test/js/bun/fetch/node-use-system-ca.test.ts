@@ -1,13 +1,12 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 describe("NODE_USE_SYSTEM_CA", () => {
   test("should use system CA when NODE_USE_SYSTEM_CA=1", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca", {});
-    
+
     // Create a simple test script that tries to make an HTTPS request
     const testScript = `
 const https = require('https');
@@ -27,7 +26,7 @@ testHttpsRequest();
 `;
 
     await fs.writeFile(join(testDir, "test-system-ca.js"), testScript);
-    
+
     // Test with NODE_USE_SYSTEM_CA=1
     const proc1 = Bun.spawn({
       cmd: [bunExe(), "test-system-ca.js"],
@@ -40,11 +39,7 @@ testHttpsRequest();
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
-      proc1.stdout.text(),
-      proc1.stderr.text(),
-      proc1.exited,
-    ]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
     console.log("With NODE_USE_SYSTEM_CA=1:");
     console.log("stdout:", stdout1);
@@ -63,11 +58,7 @@ testHttpsRequest();
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
-      proc2.stdout.text(),
-      proc2.stderr.text(),
-      proc2.exited,
-    ]);
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
     console.log("\nWithout NODE_USE_SYSTEM_CA:");
     console.log("stdout:", stdout2);
@@ -83,7 +74,7 @@ testHttpsRequest();
 
   test("should validate NODE_USE_SYSTEM_CA environment variable parsing", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-env", {});
-    
+
     const testScript = `
 // Test that the environment variable is read correctly
 const testCases = [
@@ -119,7 +110,7 @@ process.exit(allPassed ? 0 : 1);
 `;
 
     await fs.writeFile(join(testDir, "test-env-parsing.js"), testScript);
-    
+
     const proc = Bun.spawn({
       cmd: [bunExe(), "test-env-parsing.js"],
       env: bunEnv,
@@ -128,23 +119,19 @@ process.exit(allPassed ? 0 : 1);
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     console.log("Environment variable parsing test:");
     console.log("stdout:", stdout);
     console.log("stderr:", stderr);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("PASS");
   });
 
   test("should work with Bun.serve and fetch using system certificates", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-serve", {});
-    
+
     const serverScript = `
 const server = Bun.serve({
   port: 0,
@@ -202,7 +189,7 @@ testClient();
     let serverPort;
     const serverOutput = [];
     const reader = serverProc.stdout.getReader();
-    
+
     const timeout = setTimeout(() => {
       serverProc.kill();
     }, 10000);
@@ -211,10 +198,10 @@ testClient();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
+
         const chunk = new TextDecoder().decode(value);
         serverOutput.push(chunk);
-        
+
         const match = chunk.match(/Server listening on port (\d+)/);
         if (match) {
           serverPort = match[1];
@@ -252,7 +239,7 @@ testClient();
 
     console.log("Client output:", clientStdout);
     console.log("Client errors:", clientStderr);
-    
+
     expect(clientExitCode).toBe(0);
     expect(clientStdout).toContain("Local HTTP request successful");
     expect(clientStdout).toContain("External HTTPS request successful");

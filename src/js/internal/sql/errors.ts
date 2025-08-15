@@ -3,14 +3,6 @@ class SQLError extends Error {
     super(message);
     this.name = "SQLError";
   }
-
-  toJSON() {
-    return {
-      name: this.name,
-      message: this.message,
-      stack: this.stack,
-    };
-  }
 }
 
 class PostgresError extends SQLError {

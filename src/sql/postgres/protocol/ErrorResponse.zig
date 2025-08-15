@@ -147,8 +147,8 @@ const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
 const NewReader = @import("./NewReader.zig").NewReader;
 
 const bun = @import("bun");
+const JSError = bun.JSError;
 const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const JSError = bun.JSError;

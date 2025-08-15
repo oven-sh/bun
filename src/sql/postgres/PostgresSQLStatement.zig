@@ -175,8 +175,8 @@ const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
 
 const bun = @import("bun");
+const JSError = bun.JSError;
 const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const JSError = bun.JSError;

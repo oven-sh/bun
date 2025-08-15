@@ -1,6 +1,6 @@
-const bloblog = bun.Output.scoped(.WriteFile, true);
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
-const log = bun.Output.scoped(.ReadFile, true);
+const log = bun.Output.scoped(.ReadFile, .hidden);
 
 pub fn NewReadFileHandler(comptime Function: anytype) type {
     return struct {

@@ -1888,6 +1888,25 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   unix?: string;
+
+  /**
+   * Control automatic decompression of the response body.
+   * When set to `false`, the response body will not be automatically decompressed,
+   * and the `Content-Encoding` header will be preserved. This can improve performance
+   * when you need to handle compressed data manually or forward it as-is.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default true
+   * @example
+   * ```js
+   * // Disable automatic decompression for a proxy server
+   * const response = await fetch("https://example.com/api", {
+   *   decompress: false
+   * });
+   * // response.headers.get('content-encoding') might be 'gzip' or 'br'
+   * ```
+   */
+  decompress?: boolean;
 }
 
 /**

@@ -1,4 +1,4 @@
-const debug = Output.scoped(.TCC, false);
+const debug = Output.scoped(.TCC, .visible);
 
 extern fn pthread_jit_write_protect_np(enable: c_int) void;
 

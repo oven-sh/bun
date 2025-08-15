@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.PipeSource, true);
+const log = bun.Output.scoped(.PipeSource, .hidden);
 
 pub const Source = union(enum) {
     pipe: *Pipe,

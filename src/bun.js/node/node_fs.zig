@@ -288,6 +288,8 @@ pub const Async = struct {
             }
 
             pub fn runFromJSThread(this: *Task) void {
+                defer this.deinit();
+
                 const globalObject = this.globalObject;
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
@@ -304,7 +306,6 @@ pub const Async = struct {
                 tracker.willDispatch(globalObject);
                 defer tracker.didDispatch(globalObject);
 
-                this.deinit();
                 switch (success) {
                     false => {
                         promise.reject(globalObject, result);
@@ -387,7 +388,13 @@ pub const Async = struct {
             }
 
             pub fn runFromJSThread(this: *Task) void {
+                defer this.deinit();
                 const globalObject = this.globalObject;
+
+                const tracker = this.tracker;
+                tracker.willDispatch(globalObject);
+                defer tracker.didDispatch(globalObject);
+
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
@@ -399,20 +406,14 @@ pub const Async = struct {
                 };
                 promise_value.ensureStillAlive();
 
-                const tracker = this.tracker;
-                tracker.willDispatch(globalObject);
-                defer tracker.didDispatch(globalObject);
-
                 if (have_abort_signal) check_abort: {
                     const signal = this.args.signal orelse break :check_abort;
                     if (signal.reasonIfAborted(globalObject)) |reason| {
-                        this.deinit();
                         promise.reject(globalObject, reason.toJS(globalObject));
                         return;
                     }
                 }
 
-                this.deinit();
                 switch (success) {
                     false => {
                         promise.reject(globalObject, result);

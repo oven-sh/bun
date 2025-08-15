@@ -3,11 +3,6 @@ pub const TerminalHyperlink = struct {
     text: []const u8,
     enabled: bool,
 
-    const Protocol = enum {
-        vscode,
-        cursor,
-    };
-
     pub fn new(link: []const u8, text: []const u8, enabled: bool) TerminalHyperlink {
         return TerminalHyperlink{
             .link = link,
@@ -43,7 +38,79 @@ pub const UpdateInteractiveCommand = struct {
         behavior: Behavior,
         use_latest: bool = false,
         manager: *PackageManager,
+        is_catalog: bool = false,
+        catalog_name: ?[]const u8 = null,
     };
+
+    const CatalogUpdate = struct {
+        version: []const u8,
+        workspace_path: []const u8,
+    };
+
+    // Common utility functions to reduce duplication
+
+    fn buildPackageJsonPath(root_dir: []const u8, workspace_path: []const u8, path_buf: *bun.PathBuffer) []const u8 {
+        if (workspace_path.len > 0) {
+            return bun.path.joinAbsStringBuf(
+                root_dir,
+                path_buf,
+                &[_]string{ workspace_path, "package.json" },
+                .auto,
+            );
+        } else {
+            return bun.path.joinAbsStringBuf(
+                root_dir,
+                path_buf,
+                &[_]string{"package.json"},
+                .auto,
+            );
+        }
+    }
+
+    // Helper to update a catalog entry at a specific path in the package.json AST
+    fn savePackageJson(
+        manager: *PackageManager,
+        package_json: anytype, // MapEntry from WorkspacePackageJSONCache
+        package_json_path: []const u8,
+    ) !void {
+        const preserve_trailing_newline = package_json.*.source.contents.len > 0 and
+            package_json.*.source.contents[package_json.*.source.contents.len - 1] == '\n';
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.*.source.contents.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            package_json.*.root,
+            &package_json.*.source,
+            .{
+                .indent = package_json.*.indentation,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.errGeneric("Failed to serialize package.json: {s}", .{@errorName(err)});
+            return err;
+        };
+
+        const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        defer manager.allocator.free(new_package_json_source);
+
+        // Write the updated package.json
+        const write_file = std.fs.cwd().createFile(package_json_path, .{}) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+            return err;
+        };
+        defer write_file.close();
+
+        write_file.writeAll(new_package_json_source) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+            return err;
+        };
+    }
+
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
             const catalog_dep = manager.lockfile.catalogs.get(
@@ -76,90 +143,185 @@ pub const UpdateInteractiveCommand = struct {
         try updateInteractive(ctx, original_cwd, manager);
     }
 
-    fn updatePackages(
+    const PackageUpdate = struct {
+        name: []const u8,
+        target_version: []const u8,
+        dep_type: []const u8, // "dependencies", "devDependencies", etc.
+        workspace_path: []const u8,
+        original_version: []const u8,
+        package_id: PackageID,
+    };
+
+    fn updatePackageJsonFilesFromUpdates(
         manager: *PackageManager,
-        ctx: Command.Context,
-        updates: []UpdateRequest,
-        original_cwd: string,
+        updates: []const PackageUpdate,
     ) !void {
-        // This function follows the same pattern as updatePackageJSONAndInstallWithManagerWithUpdates
-        // from updatePackageJSONAndInstall.zig
+        // Group updates by workspace
+        var workspace_groups = bun.StringHashMap(std.ArrayList(PackageUpdate)).init(bun.default_allocator);
+        defer {
+            var it = workspace_groups.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            workspace_groups.deinit();
+        }
 
-        // Load and parse the current package.json
-        var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
-            manager.allocator,
-            manager.log,
-            manager.original_package_json_path,
-            .{ .guess_indentation = true },
-        )) {
-            .parse_err => |err| {
-                manager.log.print(Output.errorWriter()) catch {};
-                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                    manager.original_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .read_err => |err| {
-                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                    manager.original_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .entry => |entry| entry,
-        };
+        // Group updates by workspace path
+        for (updates) |update| {
+            const result = try workspace_groups.getOrPut(update.workspace_path);
+            if (!result.found_existing) {
+                result.value_ptr.* = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+            }
+            try result.value_ptr.append(update);
+        }
 
-        const current_package_json_indent = current_package_json.indentation;
-        const preserve_trailing_newline = current_package_json.source.contents.len > 0 and
-            current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
+        // Process each workspace
+        var it = workspace_groups.iterator();
+        while (it.next()) |entry| {
+            const workspace_path = entry.key_ptr.*;
+            const workspace_updates = entry.value_ptr.items;
 
-        // Set update mode
-        manager.to_update = true;
-        manager.update_requests = updates;
+            // Build the package.json path for this workspace
+            const root_dir = FileSystem.instance.top_level_dir;
+            var path_buf: bun.PathBuffer = undefined;
+            const package_json_path = buildPackageJsonPath(root_dir, workspace_path, &path_buf);
 
-        // Edit the package.json with all updates
-        // For interactive mode, we'll edit all as dependencies
-        // TODO: preserve original dependency types
-        var updates_mut = updates;
-        try PackageJSONEditor.edit(
-            manager,
-            &updates_mut,
-            &current_package_json.root,
-            "dependencies",
-            .{
-                .exact_versions = manager.options.enable.exact_versions,
-                .before_install = true,
-            },
-        );
+            // Load and parse the package.json
+            var package_json = switch (manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                package_json_path,
+                .{ .guess_indentation = true },
+            )) {
+                .parse_err => |err| {
+                    Output.errGeneric("Failed to parse package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .read_err => |err| {
+                    Output.errGeneric("Failed to read package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .entry => |package_entry| package_entry,
+            };
 
-        // Serialize the updated package.json
-        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
-        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
-        buffer_writer.append_newline = preserve_trailing_newline;
-        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+            var modified = false;
 
-        _ = JSPrinter.printJSON(
-            @TypeOf(&package_json_writer),
-            &package_json_writer,
-            current_package_json.root,
-            &current_package_json.source,
-            .{
-                .indent = current_package_json_indent,
-                .mangled_props = null,
-            },
-        ) catch |err| {
-            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-            Global.crash();
-        };
+            // Update each package in this workspace's package.json
+            for (workspace_updates) |update| {
+                // Find the package in the correct dependency section
+                if (package_json.root.data == .e_object) {
+                    if (package_json.root.asProperty(update.dep_type)) |section_query| {
+                        if (section_query.expr.data == .e_object) {
+                            const dep_obj = &section_query.expr.data.e_object;
+                            if (section_query.expr.asProperty(update.name)) |version_query| {
+                                if (version_query.expr.data == .e_string) {
+                                    // Get the original version to preserve prefix
+                                    const original_version = version_query.expr.data.e_string.data;
 
-        const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+                                    // Preserve the version prefix from the original
+                                    const version_with_prefix = try preserveVersionPrefix(original_version, update.target_version, manager.allocator);
 
-        // Call installWithManager to perform the installation
-        try manager.installWithManager(ctx, new_package_json_source, original_cwd);
+                                    // Update the version using hash map put
+                                    const new_expr = try Expr.init(
+                                        E.String,
+                                        E.String{ .data = version_with_prefix },
+                                        version_query.expr.loc,
+                                    ).clone(manager.allocator);
+                                    try dep_obj.*.put(manager.allocator, update.name, new_expr);
+                                    modified = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Write the updated package.json if modified
+            if (modified) {
+                try savePackageJson(manager, &package_json, package_json_path);
+            }
+        }
+    }
+
+    fn updateCatalogDefinitions(
+        manager: *PackageManager,
+        catalog_updates: bun.StringHashMap(CatalogUpdate),
+    ) !void {
+
+        // Group catalog updates by workspace path
+        var workspace_catalog_updates = bun.StringHashMap(std.ArrayList(CatalogUpdateRequest)).init(bun.default_allocator);
+        defer {
+            var it = workspace_catalog_updates.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            workspace_catalog_updates.deinit();
+        }
+
+        // Group updates by workspace
+        var catalog_it = catalog_updates.iterator();
+        while (catalog_it.next()) |entry| {
+            const catalog_key = entry.key_ptr.*;
+            const update = entry.value_ptr.*;
+
+            const result = try workspace_catalog_updates.getOrPut(update.workspace_path);
+            if (!result.found_existing) {
+                result.value_ptr.* = std.ArrayList(CatalogUpdateRequest).init(bun.default_allocator);
+            }
+
+            // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
+            const colon_index = std.mem.indexOf(u8, catalog_key, ":");
+            const package_name = if (colon_index) |idx| catalog_key[0..idx] else catalog_key;
+            const catalog_name = if (colon_index) |idx| catalog_key[idx + 1 ..] else null;
+
+            try result.value_ptr.append(.{
+                .package_name = package_name,
+                .new_version = update.version,
+                .catalog_name = catalog_name,
+            });
+        }
+
+        // Update catalog definitions for each workspace
+        var workspace_it = workspace_catalog_updates.iterator();
+        while (workspace_it.next()) |workspace_entry| {
+            const workspace_path = workspace_entry.key_ptr.*;
+            const updates_for_workspace = workspace_entry.value_ptr.*;
+
+            // Build the package.json path for this workspace
+            const root_dir = FileSystem.instance.top_level_dir;
+            var path_buf: bun.PathBuffer = undefined;
+            const package_json_path = buildPackageJsonPath(root_dir, workspace_path, &path_buf);
+
+            // Load and parse the package.json properly
+            var package_json = switch (manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                package_json_path,
+                .{ .guess_indentation = true },
+            )) {
+                .parse_err => |err| {
+                    Output.errGeneric("Failed to parse package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .read_err => |err| {
+                    Output.errGeneric("Failed to read package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
+                    continue;
+                },
+                .entry => |entry| entry,
+            };
+
+            // Use the PackageJSONEditor to update catalogs
+            try editCatalogDefinitions(manager, updates_for_workspace.items, &package_json.root);
+
+            // Save the updated package.json
+            try savePackageJson(manager, &package_json, package_json_path);
+        }
     }
 
     fn updateInteractive(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
+        // make the package manager things think we are actually in root dir
+        // _ = bun.sys.chdir(manager.root_dir.dir, manager.root_dir.dir);
+
         const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
@@ -201,149 +363,208 @@ pub const UpdateInteractiveCommand = struct {
             .ok => |ok| ok.lockfile,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |_| {
-                const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
-                    const filters = manager.options.filter_patterns;
-                    break :blk findMatchingWorkspaces(
-                        bun.default_allocator,
-                        original_cwd,
-                        manager,
-                        filters,
-                    ) catch bun.outOfMemory();
-                } else blk: {
-                    // just the current workspace
-                    const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
-                    if (root_pkg_id == invalid_package_id) return;
-                    const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
-                    ids[0] = root_pkg_id;
-                    break :blk ids;
-                };
-                defer bun.default_allocator.free(workspace_pkg_ids);
+        const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
+            const filters = manager.options.filter_patterns;
+            break :blk findMatchingWorkspaces(
+                bun.default_allocator,
+                original_cwd,
+                manager,
+                filters,
+            ) catch bun.outOfMemory();
+        } else if (manager.options.do.recursive) blk: {
+            break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+        } else blk: {
+            const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+            if (root_pkg_id == invalid_package_id) return;
 
-                try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
+            const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
+            ids[0] = root_pkg_id;
+            break :blk ids;
+        };
+        defer bun.default_allocator.free(workspace_pkg_ids);
 
-                // Get outdated packages
-                const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
-                defer {
-                    for (outdated_packages) |pkg| {
-                        bun.default_allocator.free(pkg.name);
-                        bun.default_allocator.free(pkg.current_version);
-                        bun.default_allocator.free(pkg.latest_version);
-                        bun.default_allocator.free(pkg.update_version);
-                        bun.default_allocator.free(pkg.workspace_name);
+        try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
+
+        // Get outdated packages
+        const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
+        defer {
+            for (outdated_packages) |pkg| {
+                bun.default_allocator.free(pkg.name);
+                bun.default_allocator.free(pkg.current_version);
+                bun.default_allocator.free(pkg.latest_version);
+                bun.default_allocator.free(pkg.update_version);
+                bun.default_allocator.free(pkg.workspace_name);
+            }
+            bun.default_allocator.free(outdated_packages);
+        }
+
+        if (outdated_packages.len == 0) {
+            // No packages need updating - just exit silently
+            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
+            return;
+        }
+
+        // Prompt user to select packages
+        const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
+        defer bun.default_allocator.free(selected);
+
+        // Create package specifier array from selected packages
+        // Group selected packages by workspace
+        var workspace_updates = bun.StringHashMap(std.ArrayList([]const u8)).init(bun.default_allocator);
+        defer {
+            var it = workspace_updates.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            workspace_updates.deinit();
+        }
+
+        // Track catalog updates separately (catalog_key -> {version, workspace_path})
+        var catalog_updates = bun.StringHashMap(CatalogUpdate).init(bun.default_allocator);
+        defer {
+            var it = catalog_updates.iterator();
+            while (it.next()) |entry| {
+                bun.default_allocator.free(entry.key_ptr.*);
+                bun.default_allocator.free(entry.value_ptr.*.version);
+                bun.default_allocator.free(entry.value_ptr.*.workspace_path);
+            }
+            catalog_updates.deinit();
+        }
+
+        // Collect all package updates with full information
+        var package_updates = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+        defer package_updates.deinit();
+
+        // Process selected packages
+        for (outdated_packages, selected) |pkg, is_selected| {
+            if (!is_selected) continue;
+
+            // Use latest version if requested
+            const target_version = if (pkg.use_latest)
+                pkg.latest_version
+            else
+                pkg.update_version;
+
+            if (strings.eql(pkg.current_version, target_version)) {
+                continue;
+            }
+
+            // For catalog dependencies, we need to collect them separately
+            // to update the catalog definitions in the root or workspace package.json
+            if (pkg.is_catalog) {
+                // Store catalog updates for later processing
+                const catalog_key = if (pkg.catalog_name) |catalog_name|
+                    try std.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, catalog_name })
+                else
+                    pkg.name;
+
+                // For catalog dependencies, we always update the root package.json
+                // (or the workspace root where the catalog is defined)
+                const catalog_workspace_path = try bun.default_allocator.dupe(u8, ""); // Always root for now
+
+                try catalog_updates.put(try bun.default_allocator.dupe(u8, catalog_key), .{
+                    .version = try bun.default_allocator.dupe(u8, target_version),
+                    .workspace_path = catalog_workspace_path,
+                });
+                continue;
+            }
+
+            // Get the workspace path for this package
+            const workspace_resolution = manager.lockfile.packages.items(.resolution)[pkg.workspace_pkg_id];
+            const workspace_path = if (workspace_resolution.tag == .workspace)
+                workspace_resolution.value.workspace.slice(manager.lockfile.buffers.string_bytes.items)
+            else
+                ""; // Root workspace
+
+            // Add package update with full information
+            try package_updates.append(.{
+                .name = try bun.default_allocator.dupe(u8, pkg.name),
+                .target_version = try bun.default_allocator.dupe(u8, target_version),
+                .dep_type = try bun.default_allocator.dupe(u8, pkg.dependency_type),
+                .workspace_path = try bun.default_allocator.dupe(u8, workspace_path),
+                .original_version = try bun.default_allocator.dupe(u8, pkg.current_version),
+                .package_id = pkg.package_id,
+            });
+        }
+
+        // Check if we have any updates
+        const has_package_updates = package_updates.items.len > 0;
+        const has_catalog_updates = catalog_updates.count() > 0;
+
+        if (!has_package_updates and !has_catalog_updates) {
+            Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
+            return;
+        }
+
+        // Actually update the selected packages
+        if (has_package_updates or has_catalog_updates) {
+            if (manager.options.dry_run) {
+                Output.prettyln("\n<r><yellow>Dry run mode: showing what would be updated<r>", .{});
+
+                // In dry-run mode, just show what would be updated without modifying files
+                for (package_updates.items) |update| {
+                    const workspace_display = if (update.workspace_path.len > 0) update.workspace_path else "root";
+                    Output.prettyln("→ Would update {s} to {s} in {s} ({s})", .{ update.name, update.target_version, workspace_display, update.dep_type });
+                }
+
+                if (has_catalog_updates) {
+                    var it = catalog_updates.iterator();
+                    while (it.next()) |entry| {
+                        const catalog_key = entry.key_ptr.*;
+                        const catalog_update = entry.value_ptr.*;
+                        Output.prettyln("→ Would update catalog {s} to {s}", .{ catalog_key, catalog_update.version });
                     }
-                    bun.default_allocator.free(outdated_packages);
                 }
 
-                if (outdated_packages.len == 0) {
-                    // Check if we're using --latest flag
-                    const is_latest_mode = manager.options.do.update_to_latest;
-
-                    if (is_latest_mode) {
-                        Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
-                    } else {
-                        // Count how many packages have newer versions available
-                        var packages_with_newer_versions: usize = 0;
-
-                        // We need to check all packages for newer versions
-                        for (workspace_pkg_ids) |workspace_pkg_id| {
-                            const pkg_deps = manager.lockfile.packages.items(.dependencies)[workspace_pkg_id];
-                            for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
-                                const package_id = manager.lockfile.buffers.resolutions.items[dep_id];
-                                if (package_id == invalid_package_id) continue;
-                                const dep = manager.lockfile.buffers.dependencies.items[dep_id];
-                                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
-                                const resolution = manager.lockfile.packages.items(.resolution)[package_id];
-                                if (resolution.tag != .npm) continue;
-
-                                const package_name = manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items);
-
-                                var expired = false;
-                                const manifest = manager.manifests.byNameAllowExpired(
-                                    manager,
-                                    manager.scopeForPackageName(package_name),
-                                    package_name,
-                                    &expired,
-                                    .load_from_memory_fallback_to_disk,
-                                ) orelse continue;
-
-                                const latest = manifest.findByDistTag("latest") orelse continue;
-
-                                // Check if current version is less than latest
-                                if (resolution.value.npm.version.order(latest.version, manager.lockfile.buffers.string_bytes.items, manifest.string_buf) == .lt) {
-                                    packages_with_newer_versions += 1;
-                                }
-                            }
-                        }
-
-                        if (packages_with_newer_versions > 0) {
-                            Output.prettyln("<r><green>✓<r> All packages are up to date!\n", .{});
-                            Output.prettyln("<r><d>Excluded {d} package{s} with potentially breaking changes. Run <cyan>`bun update -i --latest`<r><d> to update<r>", .{ packages_with_newer_versions, if (packages_with_newer_versions == 1) "" else "s" });
-                        } else {
-                            Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
-                        }
-                    }
-                    return;
-                }
-
-                // Prompt user to select packages
-                const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
-                defer bun.default_allocator.free(selected);
-
-                // Create package specifier array from selected packages
-                var package_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
-                defer package_specifiers.deinit();
-
-                // Create a map to track dependency types for packages
-                var dep_types = bun.StringHashMap([]const u8).init(bun.default_allocator);
-                defer dep_types.deinit();
-
-                for (outdated_packages, selected) |pkg, is_selected| {
-                    if (!is_selected) continue;
-
-                    try dep_types.put(pkg.name, pkg.dependency_type);
-
-                    // Use latest version if user selected it with 'l' key
-                    const target_version = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
-
-                    // Create a full package specifier string for UpdateRequest.parse
-                    const package_specifier = try std.fmt.allocPrint(bun.default_allocator, "{s}@{s}", .{ pkg.name, target_version });
-
-                    try package_specifiers.append(package_specifier);
-                }
-
-                // dep_types will be freed when we exit this scope
-
-                if (package_specifiers.items.len == 0) {
-                    Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
-                    return;
-                }
-
-                // Parse the package specifiers into UpdateRequests
-                var update_requests_array = UpdateRequest.Array{};
-                const update_requests = UpdateRequest.parse(
-                    bun.default_allocator,
-                    manager,
-                    manager.log,
-                    package_specifiers.items,
-                    &update_requests_array,
-                    .update,
-                );
-
-                // Perform the update
+                Output.prettyln("\n<r><yellow>Dry run complete - no changes made<r>", .{});
+            } else {
                 Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
                 Output.flush();
 
-                try updatePackages(
-                    manager,
-                    ctx,
-                    update_requests,
-                    original_cwd,
-                );
-            },
+                // Update catalog definitions first if needed
+                if (has_catalog_updates) {
+                    try updateCatalogDefinitions(manager, catalog_updates);
+                }
+
+                // Update all package.json files directly (fast!)
+                if (has_package_updates) {
+                    try updatePackageJsonFilesFromUpdates(manager, package_updates.items);
+                }
+
+                // Get the root package.json from cache (should be updated after our saves)
+                const package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
+                    if (manager.options.log_level != .silent) {
+                        Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+                        Output.flush();
+                    }
+                    return;
+                };
+                manager.to_update = true;
+
+                // Reset the timer to show actual install time instead of total command time
+                var install_ctx = ctx;
+                install_ctx.start_time = std.time.nanoTimestamp();
+
+                try PackageManager.installWithManager(manager, install_ctx, package_json_contents, manager.root_dir.dir);
+            }
         }
+    }
+
+    fn getAllWorkspaces(
+        allocator: std.mem.Allocator,
+        manager: *PackageManager,
+    ) OOM![]const PackageID {
+        const lockfile = manager.lockfile;
+        const packages = lockfile.packages.slice();
+        const pkg_resolutions = packages.items(.resolution);
+
+        var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
+        for (pkg_resolutions, 0..) |resolution, pkg_id| {
+            if (resolution.tag != .workspace and resolution.tag != .root) continue;
+            try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
+        }
+
+        return workspace_pkg_ids.toOwnedSlice(allocator);
     }
 
     fn findMatchingWorkspaces(
@@ -428,6 +649,85 @@ pub const UpdateInteractiveCommand = struct {
         return workspace_pkg_ids.items;
     }
 
+    fn groupCatalogDependencies(
+        allocator: std.mem.Allocator,
+        packages: []OutdatedPackage,
+    ) ![]OutdatedPackage {
+        // Create a map to track catalog dependencies by name
+        var catalog_map = bun.StringHashMap(std.ArrayList(OutdatedPackage)).init(allocator);
+        defer catalog_map.deinit();
+        defer {
+            var iter = catalog_map.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+        }
+
+        var result = std.ArrayList(OutdatedPackage).init(allocator);
+        defer result.deinit();
+
+        // Group catalog dependencies
+        for (packages) |pkg| {
+            if (pkg.is_catalog) {
+                const entry = try catalog_map.getOrPut(pkg.name);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = std.ArrayList(OutdatedPackage).init(allocator);
+                }
+                try entry.value_ptr.append(pkg);
+            } else {
+                try result.append(pkg);
+            }
+        }
+
+        // Add grouped catalog dependencies
+        var iter = catalog_map.iterator();
+        while (iter.next()) |entry| {
+            const catalog_packages = entry.value_ptr.items;
+            if (catalog_packages.len > 0) {
+                // Use the first package as the base, but combine workspace names
+                var first = catalog_packages[0];
+
+                // Build combined workspace name
+                var workspace_names = std.ArrayList(u8).init(allocator);
+                defer workspace_names.deinit();
+
+                if (catalog_packages.len > 0) {
+                    if (catalog_packages[0].catalog_name) |catalog_name| {
+                        try workspace_names.appendSlice("catalog:");
+                        try workspace_names.appendSlice(catalog_name);
+                    } else {
+                        try workspace_names.appendSlice("catalog");
+                    }
+                    try workspace_names.appendSlice(" (");
+                } else {
+                    try workspace_names.appendSlice("catalog (");
+                }
+                for (catalog_packages, 0..) |cat_pkg, i| {
+                    if (i > 0) try workspace_names.appendSlice(", ");
+                    try workspace_names.appendSlice(cat_pkg.workspace_name);
+                }
+                try workspace_names.append(')');
+
+                // Free the old workspace_name and replace with combined
+                allocator.free(first.workspace_name);
+                first.workspace_name = try workspace_names.toOwnedSlice();
+
+                try result.append(first);
+
+                // Free the other catalog packages
+                for (catalog_packages[1..]) |cat_pkg| {
+                    allocator.free(cat_pkg.name);
+                    allocator.free(cat_pkg.current_version);
+                    allocator.free(cat_pkg.latest_version);
+                    allocator.free(cat_pkg.update_version);
+                    allocator.free(cat_pkg.workspace_name);
+                }
+            }
+        }
+
+        return result.toOwnedSlice();
+    }
+
     fn getOutdatedPackages(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -472,27 +772,30 @@ pub const UpdateInteractiveCommand = struct {
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
 
-                const update_version = if (manager.options.do.update_to_latest)
-                    latest
-                else if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                // In interactive mode, show the constrained update version as "Target"
+                // but always include packages (don't filter out breaking changes)
+                const update_version = if (resolved_version.tag == .npm)
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse latest
                 else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse latest;
 
-                // Skip if current version is already the latest
-                if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
-
-                // Skip if update version is the same as current version
-                // Note: Current version is in lockfile's string_buf, update version is in manifest's string_buf
+                // Skip only if both the constrained update AND the latest version are the same as current
+                // This ensures we show packages where latest is newer even if constrained update isn't
                 const current_ver = resolution.value.npm.version;
                 const update_ver = update_version.version;
+                const latest_ver = latest.version;
 
-                // Compare the actual version numbers
-                if (current_ver.major == update_ver.major and
+                const update_is_same = (current_ver.major == update_ver.major and
                     current_ver.minor == update_ver.minor and
                     current_ver.patch == update_ver.patch and
-                    current_ver.tag.eql(update_ver.tag))
-                {
+                    current_ver.tag.eql(update_ver.tag));
+
+                const latest_is_same = (current_ver.major == latest_ver.major and
+                    current_ver.minor == latest_ver.minor and
+                    current_ver.patch == latest_ver.patch and
+                    current_ver.tag.eql(latest_ver.tag));
+
+                if (update_is_same and latest_is_same) {
                     continue;
                 }
 
@@ -520,6 +823,13 @@ pub const UpdateInteractiveCommand = struct {
                 else
                     "";
 
+                const catalog_name_str = if (dep.version.tag == .catalog)
+                    dep.version.value.catalog.slice(string_buf)
+                else
+                    "";
+
+                const catalog_name: ?[]const u8 = if (catalog_name_str.len > 0) try allocator.dupe(u8, catalog_name_str) else null;
+
                 try outdated_packages.append(.{
                     .name = try allocator.dupe(u8, name_slice),
                     .current_version = try allocator.dupe(u8, current_version_buf),
@@ -532,14 +842,20 @@ pub const UpdateInteractiveCommand = struct {
                     .workspace_name = try allocator.dupe(u8, workspace_name),
                     .behavior = dep.behavior,
                     .manager = manager,
+                    .is_catalog = dep.version.tag == .catalog,
+                    .catalog_name = catalog_name,
+                    .use_latest = manager.options.do.update_to_latest, // default to --latest flag value
                 });
             }
         }
 
         const result = try outdated_packages.toOwnedSlice();
 
+        // Group catalog dependencies
+        const grouped_result = try groupCatalogDependencies(allocator, result);
+
         // Sort packages: dependencies first, then devDependencies, etc.
-        std.sort.pdq(OutdatedPackage, result, {}, struct {
+        std.sort.pdq(OutdatedPackage, grouped_result, {}, struct {
             fn lessThan(_: void, a: OutdatedPackage, b: OutdatedPackage) bool {
                 // First sort by dependency type
                 const a_priority = depTypePriority(a.dependency_type);
@@ -559,7 +875,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }.lessThan);
 
-        return result;
+        return grouped_result;
     }
 
     const ColumnWidths = struct {
@@ -567,17 +883,23 @@ pub const UpdateInteractiveCommand = struct {
         current: usize,
         target: usize,
         latest: usize,
+        workspace: usize,
+        show_workspace: bool,
     };
 
     const MultiSelectState = struct {
         packages: []OutdatedPackage,
         selected: []bool,
         cursor: usize = 0,
+        viewport_start: usize = 0,
+        viewport_height: usize = 20, // Default viewport height
         toggle_all: bool = false,
         max_name_len: usize = 0,
         max_current_len: usize = 0,
         max_update_len: usize = 0,
         max_latest_len: usize = 0,
+        max_workspace_len: usize = 0,
+        show_workspace: bool = false,
     };
 
     fn calculateColumnWidths(packages: []OutdatedPackage) ColumnWidths {
@@ -586,6 +908,8 @@ pub const UpdateInteractiveCommand = struct {
         var max_current_len: usize = "Current".len;
         var max_target_len: usize = "Target".len;
         var max_latest_len: usize = "Latest".len;
+        var max_workspace_len: usize = "Workspace".len;
+        var has_workspaces = false;
 
         for (packages) |pkg| {
             // Include dev tag length in max calculation
@@ -602,15 +926,123 @@ pub const UpdateInteractiveCommand = struct {
             max_current_len = @max(max_current_len, pkg.current_version.len);
             max_target_len = @max(max_target_len, pkg.update_version.len);
             max_latest_len = @max(max_latest_len, pkg.latest_version.len);
+            max_workspace_len = @max(max_workspace_len, pkg.workspace_name.len);
+
+            // Check if we have any non-empty workspace names
+            if (pkg.workspace_name.len > 0) {
+                has_workspaces = true;
+            }
         }
 
-        // Use natural widths without any limits
+        // Get terminal width to apply smart limits if needed
+        const term_size = getTerminalSize();
+
+        // Apply smart column width limits based on terminal width
+        if (term_size.width < 60) {
+            // Very narrow terminal - aggressive truncation, hide workspace
+            max_name_len = @min(max_name_len, 12);
+            max_current_len = @min(max_current_len, 7);
+            max_target_len = @min(max_target_len, 7);
+            max_latest_len = @min(max_latest_len, 7);
+            has_workspaces = false;
+        } else if (term_size.width < 80) {
+            // Narrow terminal - moderate truncation, hide workspace
+            max_name_len = @min(max_name_len, 20);
+            max_current_len = @min(max_current_len, 10);
+            max_target_len = @min(max_target_len, 10);
+            max_latest_len = @min(max_latest_len, 10);
+            has_workspaces = false;
+        } else if (term_size.width < 120) {
+            // Medium terminal - light truncation
+            max_name_len = @min(max_name_len, 35);
+            max_current_len = @min(max_current_len, 15);
+            max_target_len = @min(max_target_len, 15);
+            max_latest_len = @min(max_latest_len, 15);
+            max_workspace_len = @min(max_workspace_len, 15);
+            // Show workspace only if terminal is wide enough for all columns
+            if (term_size.width < 100) {
+                has_workspaces = false;
+            }
+        } else if (term_size.width < 160) {
+            // Wide terminal - minimal truncation for very long names
+            max_name_len = @min(max_name_len, 45);
+            max_current_len = @min(max_current_len, 20);
+            max_target_len = @min(max_target_len, 20);
+            max_latest_len = @min(max_latest_len, 20);
+            max_workspace_len = @min(max_workspace_len, 20);
+        }
+        // else: wide terminal - use natural widths
+
         return ColumnWidths{
             .name = max_name_len,
             .current = max_current_len,
             .target = max_target_len,
             .latest = max_latest_len,
+            .workspace = max_workspace_len,
+            .show_workspace = has_workspaces,
         };
+    }
+
+    const TerminalSize = struct {
+        height: usize,
+        width: usize,
+    };
+
+    fn getTerminalSize() TerminalSize {
+        // Try to get terminal size
+        if (comptime Environment.isPosix) {
+            var size: std.posix.winsize = undefined;
+            if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0) {
+                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
+                const usable_height = if (size.row > 6) size.row - 4 else 20;
+                return .{
+                    .height = usable_height,
+                    .width = size.col,
+                };
+            }
+        } else if (comptime Environment.isWindows) {
+            const windows = std.os.windows;
+            const handle = windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) catch {
+                return .{ .height = 20, .width = 80 };
+            };
+
+            var csbi: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+            const kernel32 = windows.kernel32;
+            if (kernel32.GetConsoleScreenBufferInfo(handle, &csbi) != windows.FALSE) {
+                const width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                const height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                // Reserve space for prompt + scroll indicators + buffer
+                const usable_height = if (height > 6) height - 4 else 20;
+                return .{
+                    .height = @intCast(usable_height),
+                    .width = @intCast(width),
+                };
+            }
+        }
+        return .{ .height = 20, .width = 80 }; // Default fallback
+    }
+
+    fn truncateWithEllipsis(allocator: std.mem.Allocator, text: []const u8, max_width: usize, only_end: bool) ![]const u8 {
+        if (text.len <= max_width) {
+            return try allocator.dupe(u8, text);
+        }
+
+        if (max_width <= 3) {
+            return try allocator.dupe(u8, "…");
+        }
+
+        // Put ellipsis in the middle to show both start and end of package name
+        const ellipsis = "…";
+        const available_chars = max_width - 1; // Reserve 1 char for ellipsis
+        const start_chars = if (only_end) available_chars else available_chars / 2;
+        const end_chars = available_chars - start_chars;
+
+        const result = try allocator.alloc(u8, start_chars + ellipsis.len + end_chars);
+        @memcpy(result[0..start_chars], text[0..start_chars]);
+        @memcpy(result[start_chars .. start_chars + ellipsis.len], ellipsis);
+        @memcpy(result[start_chars + ellipsis.len ..], text[text.len - end_chars ..]);
+
+        return result;
     }
 
     fn promptForUpdates(allocator: std.mem.Allocator, packages: []OutdatedPackage) ![]bool {
@@ -626,13 +1058,19 @@ pub const UpdateInteractiveCommand = struct {
         // Calculate optimal column widths based on terminal width and content
         const columns = calculateColumnWidths(packages);
 
+        // Get terminal size for viewport and width optimization
+        const terminal_size = getTerminalSize();
+
         var state = MultiSelectState{
             .packages = packages,
             .selected = selected,
+            .viewport_height = terminal_size.height,
             .max_name_len = columns.name,
             .max_current_len = columns.current,
             .max_update_len = columns.target,
             .max_latest_len = columns.latest,
+            .max_workspace_len = columns.workspace,
+            .show_workspace = columns.show_workspace, // Show workspace if packages have workspaces
         };
 
         // Set raw mode
@@ -659,7 +1097,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
 
-        const result = processMultiSelect(&state) catch |err| {
+        const result = processMultiSelect(&state, terminal_size) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 Output.prettyln("\n<r><red>x<r> Cancelled", .{});
@@ -672,7 +1110,76 @@ pub const UpdateInteractiveCommand = struct {
         return result;
     }
 
-    fn processMultiSelect(state: *MultiSelectState) ![]bool {
+    fn ensureCursorInViewport(state: *MultiSelectState) void {
+        // If cursor is not in viewport, position it sensibly
+        if (state.cursor < state.viewport_start) {
+            // Cursor is above viewport - put it at the start of viewport
+            state.cursor = state.viewport_start;
+        } else if (state.cursor >= state.viewport_start + state.viewport_height) {
+            // Cursor is below viewport - put it at the end of viewport
+            if (state.packages.len > 0) {
+                const max_cursor = if (state.packages.len > 1) state.packages.len - 1 else 0;
+                const viewport_end = state.viewport_start + state.viewport_height;
+                state.cursor = @min(viewport_end - 1, max_cursor);
+            }
+        }
+    }
+
+    fn updateViewport(state: *MultiSelectState) void {
+        // Ensure cursor is visible with context (2 packages below, 2 above if possible)
+        const context_below: usize = 2;
+        const context_above: usize = 1;
+
+        // If cursor is below viewport
+        if (state.cursor >= state.viewport_start + state.viewport_height) {
+            // Scroll down to show cursor with context
+            const desired_start = if (state.cursor + context_below + 1 > state.packages.len)
+                // Can't show full context, align bottom
+                if (state.packages.len > state.viewport_height)
+                    state.packages.len - state.viewport_height
+                else
+                    0
+            else
+                // Show cursor with context below
+                if (state.viewport_height > context_below and state.cursor > state.viewport_height - context_below)
+                    state.cursor - (state.viewport_height - context_below)
+                else
+                    0;
+
+            state.viewport_start = desired_start;
+        }
+        // If cursor is above viewport
+        else if (state.cursor < state.viewport_start) {
+            // Scroll up to show cursor with context above
+            if (state.cursor >= context_above) {
+                state.viewport_start = state.cursor - context_above;
+            } else {
+                state.viewport_start = 0;
+            }
+        }
+        // If cursor is near bottom of viewport, adjust to maintain context
+        else if (state.viewport_height > context_below and state.cursor > state.viewport_start + state.viewport_height - context_below) {
+            const max_start = if (state.packages.len > state.viewport_height)
+                state.packages.len - state.viewport_height
+            else
+                0;
+            const desired_start = if (state.viewport_height > context_below)
+                state.cursor - (state.viewport_height - context_below)
+            else
+                state.cursor;
+            state.viewport_start = @min(desired_start, max_start);
+        }
+        // If cursor is near top of viewport, adjust to maintain context
+        else if (state.cursor < state.viewport_start + context_above and state.viewport_start > 0) {
+            if (state.cursor >= context_above) {
+                state.viewport_start = state.cursor - context_above;
+            } else {
+                state.viewport_start = 0;
+            }
+        }
+    }
+
+    fn processMultiSelect(state: *MultiSelectState, initial_terminal_size: TerminalSize) ![]bool {
         const colors = Output.enable_ansi_colors;
 
         // Clear any previous progress output
@@ -680,21 +1187,26 @@ pub const UpdateInteractiveCommand = struct {
         Output.print("\x1B[1A\x1B[2K", .{}); // Move up one line and clear it too
         Output.flush();
 
-        // Print the prompt
-        Output.prettyln("<r><cyan>?<r> Select packages to update<d> - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest<r>", .{});
-
-        Output.prettyln("", .{});
-
-        if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
-        defer if (colors) Output.print("\x1b[?25h", .{}); // show cursor
+        // Enable mouse tracking for scrolling (if terminal supports it)
+        if (colors) {
+            Output.print("\x1b[?25l", .{}); // hide cursor
+            Output.print("\x1b[?1000h", .{}); // Enable basic mouse tracking
+            Output.print("\x1b[?1006h", .{}); // Enable SGR extended mouse mode
+        }
+        defer if (colors) {
+            Output.print("\x1b[?25h", .{}); // show cursor
+            Output.print("\x1b[?1000l", .{}); // Disable mouse tracking
+            Output.print("\x1b[?1006l", .{}); // Disable SGR extended mouse mode
+        };
 
         var initial_draw = true;
         var reprint_menu = true;
         var total_lines: usize = 0;
+        var last_terminal_width = initial_terminal_size.width;
         errdefer reprint_menu = false;
         defer {
             if (!initial_draw) {
-                Output.up(total_lines + 2);
+                Output.up(total_lines);
             }
             Output.clearToEnd();
 
@@ -708,26 +1220,76 @@ pub const UpdateInteractiveCommand = struct {
         }
 
         while (true) {
+            // Check for terminal resize
+            const current_size = getTerminalSize();
+            if (current_size.width != last_terminal_width) {
+                // Terminal was resized, update viewport and redraw
+                state.viewport_height = current_size.height;
+                const columns = calculateColumnWidths(state.packages);
+                state.show_workspace = columns.show_workspace and current_size.width > 100;
+                state.max_name_len = columns.name;
+                state.max_current_len = columns.current;
+                state.max_update_len = columns.target;
+                state.max_latest_len = columns.latest;
+                state.max_workspace_len = columns.workspace;
+                last_terminal_width = current_size.width;
+                updateViewport(state);
+                // Force full redraw
+                initial_draw = true;
+            }
+
             if (!initial_draw) {
                 Output.up(total_lines);
+                Output.print("\x1B[1G", .{});
                 Output.clearToEnd();
             }
             initial_draw = false;
-            total_lines = 0;
 
-            var displayed_lines: usize = 0;
+            const help_text = "Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
+            const elipsised_help_text = try truncateWithEllipsis(bun.default_allocator, help_text, current_size.width - "? Select packages to update - ".len, true);
+            defer bun.default_allocator.free(elipsised_help_text);
+            Output.prettyln("<r><cyan>?<r> Select packages to update<d> - {s}<r>", .{elipsised_help_text});
+
+            // Calculate how many lines the prompt will actually take due to terminal wrapping
+            total_lines = 1;
+
+            // Calculate available space for packages (reserve space for scroll indicators if needed)
+            const needs_scrolling = state.packages.len > state.viewport_height;
+            const show_top_indicator = needs_scrolling and state.viewport_start > 0;
+
+            // First calculate preliminary viewport end to determine if we need bottom indicator
+            const preliminary_viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
+            const show_bottom_indicator = needs_scrolling and preliminary_viewport_end < state.packages.len;
+
+            // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
+
+            // Show top scroll indicator if needed
+            if (show_top_indicator) {
+                Output.pretty("  <d>↑ {d} more package{s} above<r>", .{ state.viewport_start, if (state.viewport_start == 1) "" else "s" });
+            }
+
+            // Calculate how many packages we can actually display
+            // The simple approach: just try to show viewport_height packages
+            // The display loop will stop when it runs out of room
+            const viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
 
             // Group by dependency type
             var current_dep_type: ?[]const u8 = null;
 
-            for (state.packages, state.selected, 0..) |*pkg, selected, i| {
-                // Print dependency type header with column headers if changed
-                if (current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type)) {
-                    if (displayed_lines > 0) {
-                        Output.print("\n", .{});
-                        displayed_lines += 1;
-                    }
+            // Track how many lines we've actually displayed (headers take 2 lines)
+            var lines_displayed: usize = 0;
+            var packages_displayed: usize = 0;
 
+            // Only display packages within viewport
+            for (state.viewport_start..viewport_end) |i| {
+                const pkg = &state.packages[i];
+                const selected = state.selected[i];
+
+                // Check if we need a header and if we have room for it
+                const needs_header = current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type);
+
+                // Print dependency type header with column headers if changed
+                if (needs_header) {
                     // Count selected packages in this dependency type
                     var selected_count: usize = 0;
                     for (state.packages, state.selected) |p, sel| {
@@ -737,7 +1299,7 @@ pub const UpdateInteractiveCommand = struct {
                     }
 
                     // Print dependency type - bold if any selected
-                    Output.print("  ", .{});
+                    Output.print("\n  ", .{});
                     if (selected_count > 0) {
                         Output.pretty("<r><b>{s} {d}<r>", .{ pkg.dependency_type, selected_count });
                     } else {
@@ -776,10 +1338,19 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print(" ", .{});
                     }
                     Output.print("Latest", .{});
+                    if (state.show_workspace) {
+                        j = 0;
+                        while (j < state.max_latest_len - "Latest".len + 2) : (j += 1) {
+                            Output.print(" ", .{});
+                        }
+                        Output.print("Workspace", .{});
+                    }
                     Output.print("\x1B[0K\n", .{});
-                    displayed_lines += 1;
+
+                    lines_displayed += 2;
                     current_dep_type = pkg.dependency_type;
                 }
+
                 const is_cursor = i == state.cursor;
                 const checkbox = if (selected) "■" else "□";
 
@@ -861,7 +1432,12 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print("{s} ", .{checkbox});
                 }
 
-                // Package name - make it a hyperlink if colors are enabled and using default registry
+                // Package name - truncate if needed and make it a hyperlink if colors are enabled and using default registry
+                // Calculate available space for name (accounting for dev/peer/optional tags)
+                const available_name_width = if (state.max_name_len > dev_tag_len) state.max_name_len - dev_tag_len else state.max_name_len;
+                const display_name = try truncateWithEllipsis(bun.default_allocator, pkg.name, available_name_width, false);
+                defer bun.default_allocator.free(display_name);
+
                 const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                     pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
                 const package_url = if (Output.enable_ansi_colors and uses_default_registry)
@@ -880,7 +1456,7 @@ pub const UpdateInteractiveCommand = struct {
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
+                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
 
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -909,11 +1485,13 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print(" ", .{});
                 }
 
-                // Current version
-                Output.pretty("<r>{s}<r>", .{pkg.current_version});
+                // Current version - truncate if needed
+                const truncated_current = try truncateWithEllipsis(bun.default_allocator, pkg.current_version, state.max_current_len, false);
+                defer bun.default_allocator.free(truncated_current);
+                Output.pretty("<r>{s}<r>", .{truncated_current});
 
                 // Print padding after current version (2 spaces)
-                const current_padding = if (pkg.current_version.len >= state.max_current_len) 0 else state.max_current_len - pkg.current_version.len;
+                const current_padding = if (truncated_current.len >= state.max_current_len) 0 else state.max_current_len - truncated_current.len;
                 j = 0;
                 while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
@@ -922,9 +1500,12 @@ pub const UpdateInteractiveCommand = struct {
                 // Target version with diffFmt coloring - bold if not using latest
                 const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
 
-                // For width calculation, use the plain version string length
-                // since diffFmt only adds colors, not visible characters
-                const target_width: usize = pkg.update_version.len;
+                // Truncate target version if needed
+                const truncated_target = try truncateWithEllipsis(bun.default_allocator, pkg.update_version, state.max_update_len, false);
+                defer bun.default_allocator.free(truncated_target);
+
+                // For width calculation, use the truncated version string length
+                const target_width: usize = truncated_target.len;
 
                 if (current_ver_parsed.valid and target_ver_parsed.valid) {
                     const current_full = Semver.Version{
@@ -940,15 +1521,21 @@ pub const UpdateInteractiveCommand = struct {
                         .tag = target_ver_parsed.version.tag,
                     };
 
-                    // Print target version
+                    // Print target version (use truncated version for narrow terminals)
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("{}", .{target_full.diffFmt(
-                        current_full,
-                        pkg.update_version,
-                        pkg.current_version,
-                    )});
+                    if (truncated_target.len < pkg.update_version.len) {
+                        // If truncated, use plain display instead of diffFmt to avoid confusion
+                        Output.pretty("<r>{s}<r>", .{truncated_target});
+                    } else {
+                        // Use diffFmt for full versions
+                        Output.pretty("{}", .{target_full.diffFmt(
+                            current_full,
+                            pkg.update_version,
+                            pkg.current_version,
+                        )});
+                    }
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -957,7 +1544,7 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("<r>{s}<r>", .{pkg.update_version});
+                    Output.pretty("<r>{s}<r>", .{truncated_target});
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -971,6 +1558,10 @@ pub const UpdateInteractiveCommand = struct {
 
                 // Latest version with diffFmt coloring - bold if using latest
                 const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
+
+                // Truncate latest version if needed
+                const truncated_latest = try truncateWithEllipsis(bun.default_allocator, pkg.latest_version, state.max_latest_len, false);
+                defer bun.default_allocator.free(truncated_latest);
                 if (current_ver_parsed.valid and latest_ver_parsed.valid) {
                     const current_full = Semver.Version{
                         .major = current_ver_parsed.version.major orelse 0,
@@ -994,11 +1585,17 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("{}", .{latest_full.diffFmt(
-                        current_full,
-                        pkg.latest_version,
-                        pkg.current_version,
-                    )});
+                    if (truncated_latest.len < pkg.latest_version.len) {
+                        // If truncated, use plain display instead of diffFmt to avoid confusion
+                        Output.pretty("<r>{s}<r>", .{truncated_latest});
+                    } else {
+                        // Use diffFmt for full versions
+                        Output.pretty("{}", .{latest_full.diffFmt(
+                            current_full,
+                            pkg.latest_version,
+                            pkg.current_version,
+                        )});
+                    }
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1014,7 +1611,7 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("<r>{s}<r>", .{pkg.latest_version});
+                    Output.pretty("<r>{s}<r>", .{truncated_latest});
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1023,11 +1620,32 @@ pub const UpdateInteractiveCommand = struct {
                     }
                 }
 
+                // Workspace column
+                if (state.show_workspace) {
+                    const latest_width: usize = truncated_latest.len;
+                    const latest_padding = if (latest_width >= state.max_latest_len) 0 else state.max_latest_len - latest_width;
+                    j = 0;
+                    while (j < latest_padding + 2) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+                    // Truncate workspace name if needed
+                    const truncated_workspace = try truncateWithEllipsis(bun.default_allocator, pkg.workspace_name, state.max_workspace_len, true);
+                    defer bun.default_allocator.free(truncated_workspace);
+                    Output.pretty("<r><d>{s}<r>", .{truncated_workspace});
+                }
+
                 Output.print("\x1B[0K\n", .{});
-                displayed_lines += 1;
+                lines_displayed += 1;
+                packages_displayed += 1;
             }
 
-            total_lines = displayed_lines;
+            // Show bottom scroll indicator if needed
+            if (show_bottom_indicator) {
+                Output.pretty("  <d>↓ {d} more package{s} below<r>", .{ state.packages.len - viewport_end, if (state.packages.len - viewport_end == 1) "" else "s" });
+                lines_displayed += 1;
+            }
+
+            total_lines = lines_displayed + 1;
             Output.clearToEnd();
             Output.flush();
 
@@ -1039,22 +1657,43 @@ pub const UpdateInteractiveCommand = struct {
                 3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
                 ' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
+                    // if the package only has a latest version, then we should toggle the latest version instead of update
+                    if (strings.eql(state.packages[state.cursor].current_version, state.packages[state.cursor].update_version)) {
+                        state.packages[state.cursor].use_latest = true;
+                    }
+                    state.toggle_all = false;
                     // Don't move cursor on space - let user manually navigate
                 },
                 'a', 'A' => {
                     @memset(state.selected, true);
+                    state.toggle_all = true; // Mark that 'a' was used
                 },
                 'n', 'N' => {
                     @memset(state.selected, false);
+                    state.toggle_all = false; // Reset toggle_all mode
                 },
                 'i', 'I' => {
                     // Invert selection
                     for (state.selected) |*sel| {
                         sel.* = !sel.*;
                     }
+                    state.toggle_all = false; // Reset toggle_all mode
                 },
                 'l', 'L' => {
-                    state.packages[state.cursor].use_latest = !state.packages[state.cursor].use_latest;
+                    // Only affect all packages if 'a' (select all) was used
+                    // Otherwise, just toggle the current cursor package
+                    if (state.toggle_all) {
+                        // All packages were selected with 'a', so toggle latest for all selected packages
+                        const new_latest_state = !state.packages[state.cursor].use_latest;
+                        for (state.selected, state.packages) |sel, *pkg| {
+                            if (sel) {
+                                pkg.use_latest = new_latest_state;
+                            }
+                        }
+                    } else {
+                        // Individual selection mode, just toggle current cursor package
+                        state.packages[state.cursor].use_latest = !state.packages[state.cursor].use_latest;
+                    }
                 },
                 'j' => {
                     if (state.cursor < state.packages.len - 1) {
@@ -1062,6 +1701,8 @@ pub const UpdateInteractiveCommand = struct {
                     } else {
                         state.cursor = 0;
                     }
+                    updateViewport(state);
+                    state.toggle_all = false;
                 },
                 'k' => {
                     if (state.cursor > 0) {
@@ -1069,6 +1710,8 @@ pub const UpdateInteractiveCommand = struct {
                     } else {
                         state.cursor = state.packages.len - 1;
                     }
+                    updateViewport(state);
+                    state.toggle_all = false;
                 },
                 27 => { // escape sequence
                     const seq = std.io.getStdIn().reader().readByte() catch continue;
@@ -1081,6 +1724,7 @@ pub const UpdateInteractiveCommand = struct {
                                 } else {
                                     state.cursor = state.packages.len - 1;
                                 }
+                                updateViewport(state);
                             },
                             'B' => { // down arrow
                                 if (state.cursor < state.packages.len - 1) {
@@ -1088,12 +1732,83 @@ pub const UpdateInteractiveCommand = struct {
                                 } else {
                                     state.cursor = 0;
                                 }
+                                updateViewport(state);
+                            },
+                            'C' => { // right arrow - switch to Latest version and select
+                                state.packages[state.cursor].use_latest = true;
+                                state.selected[state.cursor] = true;
+                            },
+                            'D' => { // left arrow - switch to Target version and select
+                                state.packages[state.cursor].use_latest = false;
+                                state.selected[state.cursor] = true;
+                            },
+                            '5' => { // Page Up
+                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                if (tilde == '~') {
+                                    // Move up by viewport height
+                                    if (state.cursor >= state.viewport_height) {
+                                        state.cursor -= state.viewport_height;
+                                    } else {
+                                        state.cursor = 0;
+                                    }
+                                    updateViewport(state);
+                                }
+                            },
+                            '6' => { // Page Down
+                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                if (tilde == '~') {
+                                    // Move down by viewport height
+                                    if (state.cursor + state.viewport_height < state.packages.len) {
+                                        state.cursor += state.viewport_height;
+                                    } else {
+                                        state.cursor = state.packages.len - 1;
+                                    }
+                                    updateViewport(state);
+                                }
+                            },
+                            '<' => { // SGR extended mouse mode
+                                // Read until 'M' or 'm' for button press/release
+                                var buffer: [32]u8 = undefined;
+                                var buf_idx: usize = 0;
+                                while (buf_idx < buffer.len) : (buf_idx += 1) {
+                                    const c = std.io.getStdIn().reader().readByte() catch break;
+                                    if (c == 'M' or c == 'm') {
+                                        // Parse SGR mouse event: ESC[<button;col;row(M or m)
+                                        // button: 64 = scroll up, 65 = scroll down
+                                        var parts = std.mem.tokenizeScalar(u8, buffer[0..buf_idx], ';');
+                                        if (parts.next()) |button_str| {
+                                            const button = std.fmt.parseInt(u32, button_str, 10) catch 0;
+                                            // Mouse wheel events
+                                            if (button == 64) { // Scroll up
+                                                if (state.viewport_start > 0) {
+                                                    // Scroll up by 3 lines
+                                                    const scroll_amount = @min(1, state.viewport_start);
+                                                    state.viewport_start -= scroll_amount;
+                                                    ensureCursorInViewport(state);
+                                                }
+                                            } else if (button == 65) { // Scroll down
+                                                if (state.viewport_start + state.viewport_height < state.packages.len) {
+                                                    // Scroll down by 3 lines
+                                                    const max_scroll = state.packages.len - (state.viewport_start + state.viewport_height);
+                                                    const scroll_amount = @min(1, max_scroll);
+                                                    state.viewport_start += scroll_amount;
+                                                    ensureCursorInViewport(state);
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    buffer[buf_idx] = c;
+                                }
                             },
                             else => {},
                         }
                     }
+                    state.toggle_all = false;
                 },
-                else => {},
+                else => {
+                    state.toggle_all = false;
+                },
             }
         }
     }
@@ -1102,6 +1817,185 @@ pub const UpdateInteractiveCommand = struct {
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
 const string = []const u8;
+
+pub const CatalogUpdateRequest = struct {
+    package_name: string,
+    new_version: string,
+    catalog_name: ?string = null,
+};
+
+/// Edit catalog definitions in package.json
+pub fn editCatalogDefinitions(
+    manager: *PackageManager,
+    updates: []CatalogUpdateRequest,
+    current_package_json: *Expr,
+) !void {
+    // using data store is going to result in undefined memory issues as
+    // the store is cleared in some workspace situations. the solution
+    // is to always avoid the store
+    Expr.Disabler.disable();
+    defer Expr.Disabler.enable();
+
+    const allocator = manager.allocator;
+
+    for (updates) |update| {
+        if (update.catalog_name) |catalog_name| {
+            try updateNamedCatalog(allocator, current_package_json, catalog_name, update.package_name, update.new_version);
+        } else {
+            try updateDefaultCatalog(allocator, current_package_json, update.package_name, update.new_version);
+        }
+    }
+}
+
+fn updateDefaultCatalog(
+    allocator: std.mem.Allocator,
+    package_json: *Expr,
+    package_name: string,
+    new_version: string,
+) !void {
+    // Get or create the catalog object
+    // First check if catalog is under workspaces.catalog
+    var catalog_obj = brk: {
+        if (package_json.asProperty("workspaces")) |workspaces_query| {
+            if (workspaces_query.expr.data == .e_object) {
+                if (workspaces_query.expr.asProperty("catalog")) |catalog_query| {
+                    if (catalog_query.expr.data == .e_object)
+                        break :brk catalog_query.expr.data.e_object.*;
+                }
+            }
+        }
+        // Fallback to root-level catalog
+        if (package_json.asProperty("catalog")) |catalog_query| {
+            if (catalog_query.expr.data == .e_object)
+                break :brk catalog_query.expr.data.e_object.*;
+        }
+        break :brk E.Object{};
+    };
+
+    // Get original version to preserve prefix if it exists
+    var version_with_prefix = new_version;
+    if (catalog_obj.get(package_name)) |existing_prop| {
+        if (existing_prop.data == .e_string) {
+            const original_version = existing_prop.data.e_string.data;
+            version_with_prefix = try preserveVersionPrefix(original_version, new_version, allocator);
+        }
+    }
+
+    // Update or add the package version
+    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, logger.Loc.Empty);
+    try catalog_obj.put(allocator, package_name, new_expr);
+
+    // Check if we need to update under workspaces.catalog or root-level catalog
+    if (package_json.asProperty("workspaces")) |workspaces_query| {
+        if (workspaces_query.expr.data == .e_object) {
+            if (workspaces_query.expr.asProperty("catalog")) |_| {
+                // Update under workspaces.catalog
+                try workspaces_query.expr.data.e_object.put(
+                    allocator,
+                    "catalog",
+                    Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+                );
+                return;
+            }
+        }
+    }
+
+    // Otherwise update at root level
+    try package_json.data.e_object.put(
+        allocator,
+        "catalog",
+        Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+    );
+}
+
+fn updateNamedCatalog(
+    allocator: std.mem.Allocator,
+    package_json: *Expr,
+    catalog_name: string,
+    package_name: string,
+    new_version: string,
+) !void {
+
+    // Get or create the catalogs object
+    // First check if catalogs is under workspaces.catalogs (newer structure)
+    var catalogs_obj = brk: {
+        if (package_json.asProperty("workspaces")) |workspaces_query| {
+            if (workspaces_query.expr.data == .e_object) {
+                if (workspaces_query.expr.asProperty("catalogs")) |catalogs_query| {
+                    if (catalogs_query.expr.data == .e_object)
+                        break :brk catalogs_query.expr.data.e_object.*;
+                }
+            }
+        }
+        // Fallback to root-level catalogs
+        if (package_json.asProperty("catalogs")) |catalogs_query| {
+            if (catalogs_query.expr.data == .e_object)
+                break :brk catalogs_query.expr.data.e_object.*;
+        }
+        break :brk E.Object{};
+    };
+
+    // Get or create the specific catalog
+    var catalog_obj = brk: {
+        if (catalogs_obj.get(catalog_name)) |catalog_query| {
+            if (catalog_query.data == .e_object)
+                break :brk catalog_query.data.e_object.*;
+        }
+        break :brk E.Object{};
+    };
+
+    // Get original version to preserve prefix if it exists
+    var version_with_prefix = new_version;
+    if (catalog_obj.get(package_name)) |existing_prop| {
+        if (existing_prop.data == .e_string) {
+            const original_version = existing_prop.data.e_string.data;
+            version_with_prefix = try preserveVersionPrefix(original_version, new_version, allocator);
+        }
+    }
+
+    // Update or add the package version
+    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, logger.Loc.Empty);
+    try catalog_obj.put(allocator, package_name, new_expr);
+
+    // Update the catalog in catalogs object
+    try catalogs_obj.put(
+        allocator,
+        catalog_name,
+        Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+    );
+
+    // Check if we need to update under workspaces.catalogs or root-level catalogs
+    if (package_json.asProperty("workspaces")) |workspaces_query| {
+        if (workspaces_query.expr.data == .e_object) {
+            if (workspaces_query.expr.asProperty("catalogs")) |_| {
+                // Update under workspaces.catalogs
+                try workspaces_query.expr.data.e_object.put(
+                    allocator,
+                    "catalogs",
+                    Expr.allocate(allocator, E.Object, catalogs_obj, logger.Loc.Empty),
+                );
+                return;
+            }
+        }
+    }
+
+    // Otherwise update at root level
+    try package_json.data.e_object.put(
+        allocator,
+        "catalogs",
+        Expr.allocate(allocator, E.Object, catalogs_obj, logger.Loc.Empty),
+    );
+}
+
+fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
+    if (original_version.len > 0) {
+        const first_char = original_version[0];
+        if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
+            return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+        }
+    }
+    return try allocator.dupe(u8, new_version);
+}
 
 const std = @import("std");
 
@@ -1113,12 +2007,18 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
 const glob = bun.glob;
+const logger = bun.logger;
 const path = bun.path;
 const strings = bun.strings;
 const FileSystem = bun.fs.FileSystem;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
+const String = Semver.String;
+
+const JSAst = bun.ast;
+const E = JSAst.E;
+const Expr = JSAst.Expr;
 
 const Command = bun.cli.Command;
 const OutdatedCommand = bun.cli.OutdatedCommand;
@@ -1131,5 +2031,4 @@ const Behavior = Install.Dependency.Behavior;
 
 const PackageManager = Install.PackageManager;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;

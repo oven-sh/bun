@@ -303,7 +303,7 @@ const StreamTransfer = struct {
         has_ended_response: bool = false,
         _: u7 = 0,
     } = .{},
-    const log = Output.scoped(.StreamTransfer, false);
+    const log = Output.scoped(.StreamTransfer, .visible);
 
     pub fn create(
         fd: bun.FileDescriptor,

@@ -1,6 +1,6 @@
 pub const Stdio = union(enum) {
     inherit,
-    capture: struct { fd: bun.FileDescriptor, buf: *bun.ByteList },
+    capture: struct { buf: *bun.ByteList },
     ignore,
     fd: bun.FileDescriptor,
     dup2: struct {

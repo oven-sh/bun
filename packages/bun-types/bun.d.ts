@@ -597,6 +597,23 @@ declare module "bun" {
   ): number;
 
   /**
+   * Remove ANSI escape codes from a string.
+   *
+   * @category Utilities
+   *
+   * @param input The string to remove ANSI escape codes from.
+   * @returns The string with ANSI escape codes removed.
+   *
+   * @example
+   * ```ts
+   * import { stripANSI } from "bun";
+   *
+   * console.log(stripANSI("\u001b[31mhello\u001b[39m")); // "hello"
+   * ```
+   */
+  function stripANSI(input: string): string;
+
+  /**
    * TOML related APIs
    */
   namespace TOML {
@@ -7529,10 +7546,11 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
+    options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -7564,8 +7582,9 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
     /**
      * The command to run
@@ -7582,7 +7601,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

@@ -292,7 +292,25 @@ function ClientRequest(input, options, cb) {
           // getters can throw
           const agentProxy = this[kAgent]?.proxy;
           // this should work for URL like objects and strings
-          proxy = agentProxy?.href || agentProxy;
+          if (agentProxy?.href) {
+            proxy = agentProxy.href;
+          } else if (typeof agentProxy === "string") {
+            proxy = agentProxy;
+          } else if (agentProxy && typeof agentProxy === "object") {
+            // Handle SocksProxyAgent-style proxy objects
+            // These have format: { host, port, type, userId?, password? }
+            // where type: 4 = SOCKS4, 5 = SOCKS5
+            if (agentProxy.host && agentProxy.port && agentProxy.type) {
+              const socksVersion = agentProxy.type === 4 ? "socks4" : "socks5";
+              let auth = "";
+              if (agentProxy.userId && agentProxy.password) {
+                auth = `${agentProxy.userId}:${agentProxy.password}@`;
+              } else if (agentProxy.userId) {
+                auth = `${agentProxy.userId}@`;
+              }
+              proxy = `${socksVersion}://${auth}${agentProxy.host}:${agentProxy.port}`;
+            }
+          }
         } catch {}
         return [url, proxy];
       }

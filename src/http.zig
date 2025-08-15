@@ -326,6 +326,65 @@ fn writeProxyConnect(
     _ = writer.write("\r\n") catch 0;
 }
 
+fn writeSocksConnect(
+    comptime Writer: type,
+    writer: Writer,
+    client: *HTTPClient,
+) !void {
+    // For now, implement a simplified SOCKS5 connection request
+    // In a full implementation, this would need to be a multi-step state machine
+    // with proper handshake responses, but this is a minimal proof of concept
+    
+    var port: u16 = undefined;
+    if (client.url.getPort()) |_| {
+        port = std.fmt.parseInt(u16, client.url.port, 10) catch if (client.url.isHTTPS()) 443 else 80;
+    } else {
+        port = if (client.url.isHTTPS()) 443 else 80;
+    }
+    
+    // SOCKS5 initial handshake - version 5, 1 method, no authentication
+    const greeting = [_]u8{ 0x05, 0x01, 0x00 };
+    _ = writer.write(&greeting) catch 0;
+    
+    // Note: In a real implementation, we would need to wait for the server response
+    // before sending the connection request. For now, we'll send both together
+    // which may work with some SOCKS proxies but is not strictly correct.
+    
+    // SOCKS5 connection request
+    // +----+-----+-------+------+----------+----------+
+    // |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+    // +----+-----+-------+------+----------+----------+
+    // | 1  |  1  | X'00' |  1   | Variable |    2     |
+    // +----+-----+-------+------+----------+----------+
+    
+    var connect_request: [256]u8 = undefined;
+    var offset: usize = 0;
+    
+    connect_request[offset] = 0x05; // Version 5
+    offset += 1;
+    connect_request[offset] = 0x01; // CMD: CONNECT
+    offset += 1;
+    connect_request[offset] = 0x00; // Reserved
+    offset += 1;
+    connect_request[offset] = 0x03; // ATYP: Domain name
+    offset += 1;
+    
+    // Domain name length and domain name
+    const hostname = client.url.hostname;
+    connect_request[offset] = @intCast(hostname.len);
+    offset += 1;
+    @memcpy(connect_request[offset..offset + hostname.len], hostname);
+    offset += hostname.len;
+    
+    // Port (big endian)
+    connect_request[offset] = @intCast((port >> 8) & 0xFF);
+    offset += 1;
+    connect_request[offset] = @intCast(port & 0xFF);
+    offset += 1;
+    
+    _ = writer.write(connect_request[0..offset]) catch 0;
+}
+
 fn writeProxyRequest(
     comptime Writer: type,
     writer: Writer,
@@ -403,7 +462,8 @@ pub const Flags = packed struct(u16) {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
-    _padding: u5 = 0,
+    is_socks_proxy: bool = false,
+    _padding: u4 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -885,7 +945,11 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
     const request = this.buildRequest(this.state.original_request_body.len());
 
     if (this.http_proxy) |_| {
-        if (this.url.isHTTPS()) {
+        if (this.flags.is_socks_proxy) {
+            log("start SOCKS proxy tunneling", .{});
+            this.flags.proxy_tunneling = true;
+            try writeSocksConnect(@TypeOf(writer), writer, this);
+        } else if (this.url.isHTTPS()) {
             log("start proxy tunneling (https proxy)", .{});
             //DO the tunneling!
             this.flags.proxy_tunneling = true;

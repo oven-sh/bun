@@ -263,6 +263,8 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 // https://github.com/oven-sh/bun/issues/11343
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
                     return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                } else if (strings.eqlComptime(url.protocol, "socks4") or strings.eqlComptime(url.protocol, "socks5")) {
+                    return try this.connectSocksProxy(client, url, is_ssl);
                 }
                 return error.UnsupportedProxyProtocol;
             }
@@ -274,11 +276,20 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             // https://github.com/oven-sh/bun/issues/11343
             if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
                 return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            } else if (strings.eqlComptime(url.protocol, "socks4") or strings.eqlComptime(url.protocol, "socks5")) {
+                return try this.connectSocksProxy(client, url, is_ssl);
             }
             return error.UnsupportedProxyProtocol;
         }
     }
     return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
+}
+
+fn connectSocksProxy(this: *@This(), client: *HTTPClient, proxy_url: URL, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+    // For now, just connect to the SOCKS proxy like a regular HTTP proxy
+    // The actual SOCKS handshake will be handled in the HTTPClient
+    client.flags.is_socks_proxy = true;
+    return try this.context(is_ssl).connect(client, proxy_url.hostname, proxy_url.getPortAuto());
 }
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
@@ -483,3 +494,4 @@ const HTTPClient = bun.http;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const InitError = HTTPClient.InitError;
 const NewHTTPContext = bun.http.NewHTTPContext;
+const URL = @import("../url.zig").URL;

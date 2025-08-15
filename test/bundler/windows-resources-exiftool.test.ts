@@ -39,7 +39,19 @@ describe.skipIf(isWindows)("Windows Resource Editing with exiftool", () => {
       console.error("stderr:", stderr);
     }
     expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
+    
+    // Filter out mimalloc warnings which are expected for large allocations (Windows PE files ~118MB)
+    const filteredStderr = stderr
+      .split('\n')
+      .filter(line => 
+        !line.includes('mimalloc: warning:') && 
+        !line.includes('(this may still be a valid very large allocation') &&
+        !line.includes('(yes, the previous pointer') &&
+        line.trim() !== ''
+      )
+      .join('\n')
+      .trim();
+    expect(filteredStderr).toBe("");
 
     return join(dir, outfile);
   }

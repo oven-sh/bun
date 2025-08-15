@@ -3041,6 +3041,8 @@ pub const api = struct {
 
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
+        bin_links: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -3112,6 +3114,9 @@ pub const api = struct {
                     },
                     21 => {
                         this.concurrent_scripts = try reader.readValue(u32);
+                    },
+                    22 => {
+                        this.bin_links = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3205,6 +3210,10 @@ pub const api = struct {
             if (this.concurrent_scripts) |concurrent_scripts| {
                 try writer.writeFieldID(21);
                 try writer.writeInt(concurrent_scripts);
+            }
+            if (this.bin_links) |bin_links| {
+                try writer.writeFieldID(22);
+                try writer.writeInt(@as(u8, @intFromBool(bin_links)));
             }
             try writer.endMessage();
         }

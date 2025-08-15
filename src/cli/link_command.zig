@@ -151,7 +151,9 @@ fn link(ctx: Command.Context) !void {
                 .abs_dest_buf = &link_dest_buf,
                 .rel_buf = &link_rel_buf,
             };
-            bin_linker.link(true);
+            if (manager.options.bin_links) {
+                bin_linker.link(true);
+            }
 
             if (bin_linker.err) |err| {
                 if (manager.options.log_level != .silent)

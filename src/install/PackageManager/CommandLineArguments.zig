@@ -50,6 +50,8 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--bin-links                           Create symlinks (or .cmd shims on Windows) for package executables (default true)") catch unreachable,
+    clap.parseParam("--no-bin-links                        Don't create symlinks for package executables") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -226,6 +228,8 @@ save_text_lockfile: ?bool = null,
 lockfile_only: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
+
+bin_links: ?bool = null,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -764,6 +768,12 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.option("--linker")) |linker| {
         cli.node_linker = .fromStr(linker);
+    }
+
+    if (args.flag("--bin-links")) {
+        cli.bin_links = true;
+    } else if (args.flag("--no-bin-links")) {
+        cli.bin_links = false;
     }
 
     if (args.option("--cache-dir")) |cache_dir| {

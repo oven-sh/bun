@@ -112,7 +112,9 @@ fn unlink(ctx: Command.Context) !void {
                 .abs_dest_buf = &link_dest_buf,
                 .rel_buf = &link_rel_buf,
             };
-            bin_linker.unlink(true);
+            if (manager.options.bin_links) {
+                bin_linker.unlink(true);
+            }
         }
 
         // delete it if it exists

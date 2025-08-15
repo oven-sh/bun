@@ -609,6 +609,18 @@ pub const Bunfig = struct {
                             install.link_workspace_packages = value;
                         }
                     }
+
+                    if (install_obj.get("binLinks")) |bin_links| {
+                        if (bin_links.asBool()) |value| {
+                            install.bin_links = value;
+                        }
+                    }
+
+                    if (install_obj.get("bin-links")) |bin_links| {
+                        if (bin_links.asBool()) |value| {
+                            install.bin_links = value;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {

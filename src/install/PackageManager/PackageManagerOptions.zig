@@ -71,6 +71,9 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+/// whether to create symlinks (or .cmd shims on Windows) for package executables
+bin_links: bool = true,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -279,6 +282,10 @@ pub fn load(
             this.node_linker = node_linker;
         }
 
+        if (config.bin_links) |bin_links| {
+            this.bin_links = bin_links;
+        }
+
         if (config.cafile) |cafile| {
             this.ca_file_name = cafile;
         }
@@ -450,6 +457,26 @@ pub fn load(
         this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
     }
 
+    // Load bin-links from environment variables
+    {
+        const bin_links_keys = [_]string{
+            "BUN_CONFIG_BIN_LINKS",
+            "NPM_CONFIG_BIN_LINKS",
+            "npm_config_bin_links",
+        };
+
+        inline for (bin_links_keys) |key| {
+            if (env.get(key)) |value| {
+                if (strings.eqlComptime(value, "false") or strings.eqlComptime(value, "0")) {
+                    this.bin_links = false;
+                } else if (strings.eqlComptime(value, "true") or strings.eqlComptime(value, "1")) {
+                    this.bin_links = true;
+                }
+                break;
+            }
+        }
+    }
+
     // Update should never read from manifest cache
     if (subcommand == .update) {
         this.enable.manifest_cache = false;
@@ -541,6 +568,10 @@ pub fn load(
 
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (cli.bin_links) |bin_links| {
+            this.bin_links = bin_links;
         }
 
         const disable_progress_bar = default_disable_progress_bar or cli.no_progress;

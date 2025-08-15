@@ -592,6 +592,7 @@ message BunInstall {
   bool frozen_lockfile = 19;
   bool exact = 20;
   uint32 concurrent_scripts = 21;
+  bool bin_links = 22;
 }
 
 struct ClientServerModule {

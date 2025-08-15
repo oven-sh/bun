@@ -141,13 +141,11 @@ public:
     /// In release builds, duplicates are allowed to match Node.js behavior.
     void addCleanupHook(void (*function)(void*), void* data)
     {
-#if ASSERT_ENABLED
         // Only check for duplicates in debug builds, like Node.js
         // See: /vendor/node/src/cleanup_queue-inl.h:24 (CHECK_EQ only active in debug)
         for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
+            ASSERT(function != existing_function || data != existing_data);
         }
-#endif
 
         m_cleanupHooks.emplace_back(function, data);
     }
@@ -167,13 +165,11 @@ public:
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
-#if ASSERT_ENABLED
         // Only check for duplicates in debug builds, like Node.js
         // Node.js async cleanup hooks also use the same CleanupQueue with CHECK_EQ
         for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
+            ASSERT(function != existing_function || data != existing_data);
         }
-#endif
 
         auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
         iter->handle = new napi_async_cleanup_hook_handle__(this, iter);

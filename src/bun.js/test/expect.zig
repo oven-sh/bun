@@ -731,6 +731,14 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
+            // Prevent inline snapshot updates in CI environments unless --update-snapshots is used
+            if (ci_info.detectCI()) |_| {
+                if (!Jest.runner.?.test_options.update_snapshots) {
+                    const signature = comptime getSignature(fn_name, "", true);
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments unless --update-snapshots is used\n", .{});
+                }
+            }
+
             if (this.testScope() == null) {
                 const signature = comptime getSignature(fn_name, "", true);
                 return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
@@ -814,6 +822,7 @@ pub const Expect = struct {
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used", .{}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             };
         };
@@ -2198,6 +2207,7 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 const string = []const u8;
 
+const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 

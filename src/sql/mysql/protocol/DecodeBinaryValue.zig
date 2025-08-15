@@ -51,11 +51,8 @@ pub fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime C
         .MYSQL_TYPE_BLOB,
         .MYSQL_TYPE_JSON,
         => blk: {
-            if (decodeLengthInt(reader.peek())) |result| {
-                reader.skip(result.bytes_read);
-                const val = try reader.read(@intCast(result.value));
-                break :blk .{ .bytes_data = val };
-            } else return error.InvalidBinaryValue;
+            const val = try reader.encodeLenString();
+            break :blk .{ .bytes_data = val };
         },
         else => return error.UnsupportedColumnType,
     };

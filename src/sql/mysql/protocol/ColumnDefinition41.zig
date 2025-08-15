@@ -47,43 +47,27 @@ pub fn deinit(this: *ColumnDefinition41) void {
     this.org_name.deinit();
 }
 
-fn readEncodeLenString(comptime Context: type, reader: NewReader(Context)) !Data {
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        return try reader.read(@intCast(result.value));
-    }
-    return error.InvalidColumnDefinition;
-}
-
-fn readEncodeLenInt(comptime Context: type, reader: NewReader(Context)) !u64 {
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        return result.value;
-    }
-    return error.InvalidColumnDefinition;
-}
-
 pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader: NewReader(Context)) !void {
     // Length encoded strings
-    this.catalog = try readEncodeLenString(Context, reader);
+    this.catalog = try reader.encodeLenString();
     debug("catalog: {s}", .{this.catalog.slice()});
 
-    this.schema = try readEncodeLenString(Context, reader);
+    this.schema = try reader.encodeLenString();
     debug("schema: {s}", .{this.schema.slice()});
 
-    this.table = try readEncodeLenString(Context, reader);
+    this.table = try reader.encodeLenString();
     debug("table: {s}", .{this.table.slice()});
 
-    this.org_table = try readEncodeLenString(Context, reader);
+    this.org_table = try reader.encodeLenString();
     debug("org_table: {s}", .{this.org_table.slice()});
 
-    this.name = try readEncodeLenString(Context, reader);
+    this.name = try reader.encodeLenString();
     debug("name: {s}", .{this.name.slice()});
 
-    this.org_name = try readEncodeLenString(Context, reader);
+    this.org_name = try reader.encodeLenString();
     debug("org_name: {s}", .{this.org_name.slice()});
 
-    this.fixed_length_fields_length = try readEncodeLenInt(Context, reader);
+    this.fixed_length_fields_length = try reader.encodeLenInt();
     this.character_set = try reader.int(u16);
     this.column_length = try reader.int(u32);
     this.column_type = @enumFromInt(try reader.int(u8));
@@ -104,4 +88,3 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const Data = @import("../../shared/Data.zig").Data;
 const types = @import("../MySQLTypes.zig");
-const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;

@@ -20,20 +20,10 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
     }
 
     // Affected rows (length encoded integer)
-    if (decodeLengthInt(reader.peek())) |result| {
-        this.affected_rows = result.value;
-        reader.skip(result.bytes_read);
-    } else {
-        return error.InvalidOKPacket;
-    }
+    this.affected_rows = try reader.encodeLenInt();
 
     // Last insert ID (length encoded integer)
-    if (decodeLengthInt(reader.peek())) |result| {
-        this.last_insert_id = result.value;
-        reader.skip(result.bytes_read);
-    } else {
-        return error.InvalidOKPacket;
-    }
+    this.last_insert_id = try reader.encodeLenInt();
 
     // Status flags
     this.status_flags = StatusFlags.fromInt(try reader.int(u16));
@@ -48,11 +38,7 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
 
     // Session state changes if SESSION_TRACK_STATE_CHANGE is set
     if (this.status_flags.SERVER_SESSION_STATE_CHANGED) {
-        if (decodeLengthInt(reader.peek())) |result| {
-            const state_data = try reader.read(@intCast(result.value));
-            this.session_state_changes = state_data;
-            reader.skip(result.bytes_read);
-        }
+        this.session_state_changes = try reader.encodeLenString();
     }
 }
 
@@ -64,4 +50,3 @@ const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
-const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;

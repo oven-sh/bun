@@ -3,10 +3,24 @@ fields: []const FieldType = &.{},
 name: []const u8 = "",
 query: []const u8 = "",
 
+pub fn empty() Signature {
+    return Signature{
+        .fields = &.{},
+        .name = "",
+        .query = "",
+    };
+}
+
 pub fn deinit(this: *Signature) void {
-    bun.default_allocator.free(this.fields);
-    bun.default_allocator.free(this.name);
-    bun.default_allocator.free(this.query);
+    if (this.fields.len > 0) {
+        bun.default_allocator.free(this.fields);
+    }
+    if (this.name.len > 0) {
+        bun.default_allocator.free(this.name);
+    }
+    if (this.query.len > 0) {
+        bun.default_allocator.free(this.query);
+    }
 }
 
 pub fn hash(this: *const Signature) u64 {

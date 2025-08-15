@@ -165,7 +165,7 @@ const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
-const DataCell = @import("./DataCell.zig").DataCell;
+const DataCell = @import("./DataCell.zig").SQLDataCell;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;

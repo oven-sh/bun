@@ -24,4 +24,4 @@ const std = @import("std");
 const bun = @import("bun");
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;

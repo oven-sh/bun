@@ -158,6 +158,7 @@ pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
         .CLIENT_CONNECT_WITH_DB = has_db_name,
         .CLIENT_DEPRECATE_EOF = true,
         .CLIENT_SSL = ssl,
+        .CLIENT_QUERY_ATTRIBUTES = true,
         // .CLIENT_TRANSACTIONS = true,
         // .CLIENT_MULTI_STATEMENTS = true,
         // .CLIENT_MULTI_RESULTS = true,

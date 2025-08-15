@@ -66,6 +66,7 @@ pub const Row = struct {
                 if (result.value == 0xfb) { // NULL value
                     value.* = .{ .null = {} };
                 } else {
+                    // TODO: check to parse number date etc from this.columns info, you can check postgres to see more text parsing
                     value.* = .{
                         .string_data = try reader.read(@intCast(result.value)),
                     };

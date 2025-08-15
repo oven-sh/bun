@@ -101,7 +101,7 @@ pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
 
 const std = @import("std");
 const bun = @import("bun");
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
 const debug = bun.Output.scoped(.MySQLConnection, false);

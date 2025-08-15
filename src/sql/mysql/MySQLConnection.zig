@@ -10,6 +10,11 @@ last_message_start: u32 = 0,
 sequence_id: u8 = 0,
 
 requests: Queue = Queue.init(bun.default_allocator),
+// number of pipelined requests (Bind/Execute/Prepared statements)
+pipelined_requests: u32 = 0,
+// number of non-pipelined requests (Simple/Copy)
+nonpipelinable_requests: u32 = 0,
+
 statements: PreparedStatementsMap = .{},
 
 poll_ref: bun.Async.KeepAlive = .{},
@@ -18,10 +23,6 @@ vm: *jsc.VirtualMachine,
 
 pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 js_value: JSValue = .js_undefined,
-
-is_ready_for_query: bool = false,
-has_backpressure: bool = false,
-is_processing_data: bool = false,
 
 server_version: bun.ByteList = .{},
 connection_id: u32 = 0,
@@ -46,6 +47,8 @@ ssl_mode: SSLMode = .disable,
 
 idle_timeout_interval_ms: u32 = 0,
 connection_timeout_ms: u32 = 0,
+
+flags: ConnectionFlags = .{},
 
 /// Before being connected, this is a connection timeout timer.
 /// After being connected, this is an idle timeout timer.
@@ -75,7 +78,7 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 pub fn onAutoFlush(this: *@This()) bool {
-    if (this.has_backpressure) {
+    if (this.flags.has_backpressure) {
         debug("onAutoFlush: has backpressure", .{});
         this.auto_flusher.registered = false;
         // if we have backpressure, wait for onWritable
@@ -88,12 +91,24 @@ pub fn onAutoFlush(this: *@This()) bool {
     this.drainInternal();
 
     // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-    const keep_flusher_registered = !this.has_backpressure and this.write_buffer.len() > 0;
+    const keep_flusher_registered = !this.flags.has_backpressure and this.write_buffer.len() > 0;
     debug("onAutoFlush: keep_flusher_registered: {}", .{keep_flusher_registered});
     this.auto_flusher.registered = keep_flusher_registered;
     return keep_flusher_registered;
 }
 
+pub fn canPipeline(this: *@This()) bool {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+        @branchHint(.unlikely);
+        return false;
+    }
+
+    return this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+        !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
+        !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
+        !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
+        this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+}
 pub const AuthState = union(enum) {
     pending: void,
     native_password: void,
@@ -119,10 +134,10 @@ fn updateHasPendingActivity(this: *MySQLConnection) void {
 
 fn registerAutoFlusher(this: *@This()) void {
     const data_to_send = this.write_buffer.len();
-    debug("registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}", .{ this.has_backpressure, this.auto_flusher.registered, data_to_send });
+    debug("registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}", .{ this.flags.has_backpressure, this.auto_flusher.registered, data_to_send });
 
     if (!this.auto_flusher.registered and // should not be registered
-        !this.has_backpressure and // if has backpressure we need to wait for onWritable event
+        !this.flags.has_backpressure and // if has backpressure we need to wait for onWritable event
         data_to_send > 0 and // we need data to send
         this.status == .connected //and we need to be connected
     ) {
@@ -159,7 +174,7 @@ pub fn disableConnectionTimeout(this: *@This()) void {
 }
 pub fn resetConnectionTimeout(this: *@This()) void {
     // if we are processing data, don't reset the timeout, wait for the data to be processed
-    if (this.is_processing_data) return;
+    if (this.flags.is_processing_data) return;
     const interval = this.getTimeoutInterval();
     if (this.timer.state == .ACTIVE) {
         this.vm.timer.remove(&this.timer);
@@ -184,7 +199,7 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
     debug("onConnectionTimeout", .{});
 
     this.timer.state = .FIRED;
-    if (this.is_processing_data) {
+    if (this.flags.is_processing_data) {
         return .disarm;
     }
 
@@ -227,7 +242,7 @@ fn drainInternal(this: *@This()) void {
 
     this.flushData();
 
-    if (!this.has_backpressure) {
+    if (!this.flags.has_backpressure) {
         // no backpressure yet so pipeline more if possible and flush again
         // this.advance();
         this.flushData();
@@ -291,7 +306,7 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame)
 
 pub fn flushData(this: *@This()) void {
     // we know we still have backpressure so just return we will flush later
-    if (this.has_backpressure) {
+    if (this.flags.has_backpressure) {
         debug("flushData: has backpressure", .{});
         return;
     }
@@ -303,10 +318,10 @@ pub fn flushData(this: *@This()) void {
     }
 
     const wrote = this.socket.write(chunk);
-    this.has_backpressure = wrote < chunk.len;
+    this.flags.has_backpressure = wrote < chunk.len;
     debug("flushData: wrote {d}/{d} bytes", .{ wrote, chunk.len });
     if (wrote > 0) {
-        // SocketMonitor.write(chunk[0..@intCast(wrote)]);
+        SocketMonitor.write(chunk[0..@intCast(wrote)]);
         this.write_buffer.consume(@intCast(wrote));
     }
 }
@@ -401,15 +416,13 @@ pub fn disconnect(this: *@This()) void {
 }
 
 fn cleanupSuccessQuery(this: *@This(), item: *MySQLQuery) void {
-    // if (item.flags.simple) {
-    //     this.nonpipelinable_requests -= 1;
-    // } else if (item.flags.pipelined) {
-    //     this.pipelined_requests -= 1;
-    // } else if (this.flags.waiting_to_prepare) {
-    //     this.flags.waiting_to_prepare = false;
-    // }
-    _ = item;
-    _ = this;
+    if (item.flags.simple) {
+        this.nonpipelinable_requests -= 1;
+    } else if (item.flags.pipelined) {
+        this.pipelined_requests -= 1;
+    } else if (this.flags.waiting_to_prepare) {
+        this.flags.waiting_to_prepare = false;
+    }
 }
 
 fn current(this: *@This()) ?*MySQLQuery {
@@ -418,6 +431,11 @@ fn current(this: *@This()) ?*MySQLQuery {
     }
 
     return this.requests.peekItem(0);
+}
+
+pub fn hasQueryRunning(this: *@This()) bool {
+    if (this.status != .connected) return true;
+    return !this.flags.is_ready_for_query or this.current() != null;
 }
 
 fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
@@ -488,11 +506,32 @@ fn advance(this: *@This()) void {
         var req: *MySQLQuery = this.requests.peekItem(offset);
         switch (req.status) {
             .pending => {
-                // if (req.flags.simple) {
-                //     if (this.nonpipelinable_requests > 0 or !this.flags.is_ready_for_query) {
-                //         return;
-                //     }
-                // }
+                if (req.flags.simple) {
+                    if (this.nonpipelinable_requests > 0 or !this.flags.is_ready_for_query) {
+                        return;
+                    }
+                }
+
+                var query_str = req.query.toUTF8(bun.default_allocator);
+                defer query_str.deinit();
+                this.sequence_id = 0;
+                debug("execute simple query: {d} {s}", .{ this.sequence_id, query_str.slice() });
+
+                MySQLRequest.executeQuery(query_str.slice(), 0, MySQLConnection.Writer, this.writer()) catch |err| {
+                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                    if (offset == 0) {
+                        req.deref();
+                        this.requests.discard(1);
+                    } else {
+                        // deinit later
+                        req.status = .fail;
+                    }
+                    debug("executeQuery failed: {s}", .{@errorName(err)});
+                    continue;
+                };
+                this.nonpipelinable_requests += 1;
+                this.flags.is_ready_for_query = false;
+                req.status = .running;
             },
             else => break,
 
@@ -848,9 +887,9 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
 }
 
 pub fn onData(this: *MySQLConnection, data: []const u8) void {
-    debug("onData: {d}", .{data.len});
+    debug("onData: {d} {s}", .{ data.len, std.fmt.fmtSliceHexUpper(data) });
     this.ref();
-    this.is_processing_data = true;
+    this.flags.is_processing_data = true;
     const vm = this.vm;
     // Clear the timeout.
     this.socket.setTimeout(0);
@@ -864,7 +903,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
             this.poll_ref.ref(vm);
         }
         // reset the connection timeout after we're done processing the data
-        this.is_processing_data = false;
+        this.flags.is_processing_data = false;
         this.resetConnectionTimeout();
         this.deref();
     }
@@ -873,7 +912,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
     event_loop.enter();
     defer event_loop.exit();
 
-    // SocketMonitor.read(data);
+    SocketMonitor.read(data);
 
     if (this.read_buffer.remaining().len == 0) {
         var consumed: usize = 0;
@@ -1104,7 +1143,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             this.setStatus(.connected);
             defer this.updateRef();
             this.status_flags = ok.status_flags;
-            this.is_ready_for_query = true;
+            this.flags.is_ready_for_query = true;
             // this.advance();
 
             this.registerAutoFlusher();
@@ -1139,7 +1178,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                 debug("success", .{});
                                 this.setStatus(.connected);
                                 defer this.updateRef();
-                                this.is_ready_for_query = true;
+                                this.flags.is_ready_for_query = true;
                                 // this.advance();
                                 this.registerAutoFlusher();
                             },
@@ -1213,34 +1252,33 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
 
     // Get the current request if any
-    if (this.requests.readableLength() == 0) {
+    const request = this.current() orelse {
         debug("Received unexpected command response", .{});
         return error.UnexpectedPacket;
-    }
+    };
     debug("handleCommand", .{});
-    const request = this.requests.peekItem(0);
-
-    // Handle based on request type
-    if (request.statement) |statement| {
-        switch (statement.status) {
-            .parsing => {
-                // We're waiting for prepare response
-                try this.handlePreparedStatement(Context, reader);
-            },
-            .prepared => {
-                // We're waiting for execute response
-                try this.handleResultSet(Context, reader);
-            },
-            .failed => {
-                // Statement failed, clean up
-                if (this.requests.readItem()) |req| {
-                    req.onError(statement.error_response, this.globalObject);
-                }
-            },
+    if (!request.flags.simple) {
+        // Handle based on request type
+        if (request.statement) |statement| {
+            switch (statement.status) {
+                .parsing => {
+                    // We're waiting for prepare response
+                    try this.handlePreparedStatement(Context, reader);
+                },
+                .prepared => {
+                    // We're waiting for execute response
+                    try this.handleResultSet(Context, reader);
+                },
+                .failed => {
+                    // Statement failed, clean up
+                    if (this.requests.readItem()) |req| {
+                        req.onError(statement.error_response, this.globalObject);
+                    }
+                },
+            }
+            return;
         }
-        return;
     }
-
     // Regular query response
     try this.handleResultSet(Context, reader);
 }
@@ -1281,8 +1319,8 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
     defer response.deinit();
 
     // Add some basic connect attributes like mysql2
-    // try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_name"), try bun.default_allocator.dupe(u8, "Bun"));
-    // try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_version"), try bun.default_allocator.dupe(u8, bun.Global.package_json_version_with_revision));
+    try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_name"), try bun.default_allocator.dupe(u8, "Bun"));
+    try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_version"), try bun.default_allocator.dupe(u8, bun.Global.package_json_version_with_revision));
 
     // Generate auth response based on plugin
     var scrambled_buf: [32]u8 = undefined;
@@ -1491,9 +1529,15 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 }
 
 pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
-    debug("handleResultSet", .{});
     const first_byte = try reader.int(u8);
+    debug("handleResultSet: {x:0>2}", .{first_byte});
+
     reader.skip(-1);
+
+    var request = this.current() orelse {
+        debug("Unexpected result set packet", .{});
+        return error.UnexpectedPacket;
+    };
 
     switch (first_byte) {
         @intFromEnum(PacketType.OK) => {
@@ -1502,12 +1546,10 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             defer ok.deinit();
 
             this.status_flags = ok.status_flags;
-            this.is_ready_for_query = true;
+            this.flags.is_ready_for_query = true;
             this.registerAutoFlusher();
 
-            if (this.requests.readItem()) |request| {
-                request.onResult("", this.globalObject, request.thisValue.get(), true);
-            }
+            request.onResult("", this.globalObject, request.thisValue.get(), true);
         },
 
         @intFromEnum(PacketType.ERROR) => {
@@ -1515,95 +1557,111 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             try err.decode(reader);
             defer err.deinit();
 
-            if (this.requests.readItem()) |request| {
-                request.onError(err, this.globalObject);
-            }
+            request.onError(err, this.globalObject);
         },
 
         else => {
-            // This is likely a result set header
-            var header = ResultSetHeader{};
-            try header.decode(reader);
-
-            if (this.requests.readableLength() > 0) {
-                const request = this.requests.peekItem(0);
-
-                // Read column definitions
-                const columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
-                var columns_read: u32 = 0;
-                errdefer {
-                    for (columns[0..columns_read]) |*column| {
-                        column.deinit();
-                    }
-                    bun.default_allocator.free(columns);
-                }
-
-                for (columns) |*column| {
-                    try column.decode(reader);
-                    columns_read += 1;
-                }
-
-                const globalThis = this.globalObject;
-                // Start reading rows
-                while (true) {
-                    const row_first_byte = try reader.byte();
-                    reader.skip(-1);
-
-                    switch (row_first_byte) {
-                        @intFromEnum(PacketType.EOF) => {
-                            var eof = EOFPacket{};
-                            try eof.decode(reader);
-
-                            // Update status flags and finish
-                            this.status_flags = eof.status_flags;
-                            this.is_ready_for_query = true;
-                            this.registerAutoFlusher();
-                            this.requests.discard(1);
-
-                            request.onResult("", this.globalObject, request.thisValue.get(), true);
-                            break;
-                        },
-
-                        @intFromEnum(PacketType.ERROR) => {
-                            var err = ErrorPacket{};
-                            try err.decode(reader);
-                            defer err.deinit();
-                            this.requests.discard(1);
-                            request.onError(err, this.globalObject);
-                            break;
-                        },
-
-                        else => {
-                            var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
-                            const allocator = stack_fallback.get();
-
-                            // Read row data
-                            var row = ResultSet.Row{
-                                .columns = columns,
-                                .binary = request.flags.binary,
-                            };
-                            defer row.deinit(allocator);
-                            try row.decode(allocator, reader);
-
-                            const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
-
-                            // Process row data
-                            const structure = request.statement.?.structure(request.thisValue.get(), globalThis);
-                            const row_value = row.toJS(structure.jsValue() orelse .js_undefined, pending_value, globalThis);
-                            if (globalThis.hasException()) {
-                                request.onJSError(globalThis.tryTakeException().?, globalThis);
-                                return error.JSError;
-                            }
-
-                            if (pending_value == .zero) {
-                                MySQLQuery.js.pendingValueSetCached(request.thisValue.get(), globalThis, row_value);
-                            }
-                        },
-                    }
-                }
-            } else {
+            const statement = request.statement orelse {
                 debug("Unexpected result set packet", .{});
+                return error.UnexpectedPacket;
+            };
+            if (statement.columns.len == 0) {
+                // This is likely a result set header
+                var header = ResultSetHeader{};
+                try header.decode(reader);
+
+                statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
+                return;
+            } else if (statement.columns_received < statement.columns.len) {
+                try statement.columns[statement.columns_received].decode(reader);
+                statement.columns_received += 1;
+            } else {
+                // Read Row
+                var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+                const allocator = stack_fallback.get();
+                var row = ResultSet.Row{
+                    .columns = statement.columns,
+                    .binary = request.flags.binary,
+                };
+                defer row.deinit(allocator);
+                try row.decode(allocator, reader);
+
+                const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
+
+                // Process row data
+                const structure = request.statement.?.structure(request.thisValue.get(), this.globalObject);
+                const row_value = row.toJS(structure.jsValue() orelse .js_undefined, pending_value, this.globalObject);
+                if (this.globalObject.hasException()) {
+                    request.onJSError(this.globalObject.tryTakeException().?, this.globalObject);
+                    return error.JSError;
+                }
+
+                if (pending_value == .zero) {
+                    MySQLQuery.js.pendingValueSetCached(request.thisValue.get(), this.globalObject, row_value);
+                }
             }
+
+            //
+            // request.status
+
+            // const globalThis = this.globalObject;
+            // // Start reading rows
+            // while (true) {
+            //     const row_first_byte = try reader.byte();
+
+            //     switch (row_first_byte) {
+            //         @intFromEnum(PacketType.EOF) => {
+            //             var eof = EOFPacket{};
+            //             try eof.decode(reader);
+
+            //             // Update status flags and finish
+            //             this.status_flags = eof.status_flags;
+            //             this.flags.is_ready_for_query = true;
+            //             this.registerAutoFlusher();
+            //             this.requests.discard(1);
+
+            //             request.onResult("", this.globalObject, request.thisValue.get(), true);
+            //             break;
+            //         },
+
+            //         @intFromEnum(PacketType.ERROR) => {
+            //             var err = ErrorPacket{};
+            //             try err.decode(reader);
+            //             defer err.deinit();
+            //             this.requests.discard(1);
+            //             request.onError(err, this.globalObject);
+            //             break;
+            //         },
+
+            //         else => {
+            //             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+            //             const allocator = stack_fallback.get();
+
+            //             // Read row data
+            //             var row = ResultSet.Row{
+            //                 .columns = columns,
+            //                 .binary = request.flags.binary,
+            //             };
+            //             defer row.deinit(allocator);
+            //             try row.decode(allocator, reader);
+
+            //             const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
+
+            //             // Process row data
+            //             const structure = request.statement.?.structure(request.thisValue.get(), globalThis);
+            //             const row_value = row.toJS(structure.jsValue() orelse .js_undefined, pending_value, globalThis);
+            //             if (globalThis.hasException()) {
+            //                 request.onJSError(globalThis.tryTakeException().?, globalThis);
+            //                 return error.JSError;
+            //             }
+
+            //             if (pending_value == .zero) {
+            //                 MySQLQuery.js.pendingValueSetCached(request.thisValue.get(), globalThis, row_value);
+            //             }
+            //         },
+            //     }
+            // }
+
         },
     }
 }
@@ -1673,6 +1731,7 @@ pub const js = jsc.Codegen.JSMySQLConnection;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
+const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
 const std = @import("std");
 const bun = @import("bun");
@@ -1694,7 +1753,7 @@ const debug = bun.Output.scoped(.MySQLConnection, false);
 const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
 const NewReader = @import("./protocol/NewReader.zig").NewReader;
 const BoringSSL = bun.BoringSSL;
-const Data = @import("./protocol/Data.zig").Data;
+const Data = @import("../shared/Data.zig").Data;
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const CharacterSet = @import("./protocol/CharacterSet.zig").CharacterSet;
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
@@ -1717,3 +1776,6 @@ const MySQLQuery = @import("./MySQLQuery.zig");
 const AutoFlusher = jsc.WebCore.AutoFlusher;
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
+const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
+const MySQLRequest = @import("./MySQLRequest.zig");
+const SocketMonitor = @import("../postgres/SocketMonitor.zig");

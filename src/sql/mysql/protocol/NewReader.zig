@@ -57,7 +57,8 @@ pub fn NewReaderWrap(
             if (comptime Int == u8) {
                 return @as(Int, data.slice()[0]);
             }
-            return @as(Int, @bitCast(data.slice()[0..@sizeOf(Int)].*));
+            const size = @divExact(@typeInfo(Int).int.bits, 8);
+            return @as(Int, @bitCast(data.slice()[0..size].*));
         }
     };
 }
@@ -92,4 +93,4 @@ pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     };
 }
 const std = @import("std");
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;

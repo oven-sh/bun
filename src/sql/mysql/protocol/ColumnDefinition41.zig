@@ -5,6 +5,7 @@ table: Data = .{ .empty = {} },
 org_table: Data = .{ .empty = {} },
 name: Data = .{ .empty = {} },
 org_name: Data = .{ .empty = {} },
+fixed_length_fields_length: u64 = 0,
 character_set: u16 = 0,
 column_length: u32 = 0,
 column_type: types.FieldType = .MYSQL_TYPE_NULL,
@@ -46,49 +47,51 @@ pub fn deinit(this: *ColumnDefinition41) void {
     this.org_name.deinit();
 }
 
+fn readEncodeLenString(comptime Context: type, reader: NewReader(Context)) !Data {
+    if (decodeLengthInt(reader.peek())) |result| {
+        reader.skip(result.bytes_read);
+        return try reader.read(@intCast(result.value));
+    }
+    return error.InvalidColumnDefinition;
+}
+
+fn readEncodeLenInt(comptime Context: type, reader: NewReader(Context)) !u64 {
+    if (decodeLengthInt(reader.peek())) |result| {
+        reader.skip(result.bytes_read);
+        return result.value;
+    }
+    return error.InvalidColumnDefinition;
+}
+
 pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader: NewReader(Context)) !void {
     // Length encoded strings
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.catalog = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.catalog = try readEncodeLenString(Context, reader);
+    debug("catalog: {s}", .{this.catalog.slice()});
 
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.schema = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.schema = try readEncodeLenString(Context, reader);
+    debug("schema: {s}", .{this.schema.slice()});
 
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.table = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.table = try readEncodeLenString(Context, reader);
+    debug("table: {s}", .{this.table.slice()});
 
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.org_table = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.org_table = try readEncodeLenString(Context, reader);
+    debug("org_table: {s}", .{this.org_table.slice()});
 
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.name = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.name = try readEncodeLenString(Context, reader);
+    debug("name: {s}", .{this.name.slice()});
 
-    if (decodeLengthInt(reader.peek())) |result| {
-        reader.skip(result.bytes_read);
-        this.org_name = try reader.read(@intCast(result.value));
-    } else return error.InvalidColumnDefinition;
+    this.org_name = try readEncodeLenString(Context, reader);
+    debug("org_name: {s}", .{this.org_name.slice()});
 
-    // Fixed length fields
-    const next_length = try reader.int(u8);
-    if (next_length != 0x0c) return error.InvalidColumnDefinition;
-
+    this.fixed_length_fields_length = try readEncodeLenInt(Context, reader);
     this.character_set = try reader.int(u16);
     this.column_length = try reader.int(u32);
     this.column_type = @enumFromInt(try reader.int(u8));
     this.flags = ColumnFlags.fromInt(try reader.int(u16));
     this.decimals = try reader.int(u8);
 
-    // Skip filler
+    // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
+    // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
     reader.skip(2);
 }
 
@@ -96,8 +99,9 @@ pub const decode = decoderWrap(ColumnDefinition41, decodeInternal).decode;
 
 const std = @import("std");
 const bun = @import("bun");
+const debug = bun.Output.scoped(.ColumnDefinition41, false);
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const types = @import("../MySQLTypes.zig");
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;

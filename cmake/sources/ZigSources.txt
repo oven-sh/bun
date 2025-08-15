@@ -3791,6 +3791,7 @@ src/sql/mysql/ConnectionState.zig
 src/sql/mysql/MySQLConnection.zig
 src/sql/mysql/MySQLContext.zig
 src/sql/mysql/MySQLQuery.zig
+src/sql/mysql/MySQLRequest.zig
 src/sql/mysql/MySQLStatement.zig
 src/sql/mysql/MySQLTypes.zig
 src/sql/mysql/protocol/Auth.zig
@@ -3799,7 +3800,6 @@ src/sql/mysql/protocol/AuthSwitchResponse.zig
 src/sql/mysql/protocol/CharacterSet.zig
 src/sql/mysql/protocol/ColumnDefinition41.zig
 src/sql/mysql/protocol/CommandType.zig
-src/sql/mysql/protocol/Data.zig
 src/sql/mysql/protocol/DecodeBinaryValue.zig
 src/sql/mysql/protocol/EncodeInt.zig
 src/sql/mysql/protocol/EOFPacket.zig
@@ -3825,8 +3825,6 @@ src/sql/postgres.zig
 src/sql/postgres/AnyPostgresError.zig
 src/sql/postgres/AuthenticationState.zig
 src/sql/postgres/CommandTag.zig
-src/sql/postgres/ConnectionFlags.zig
-src/sql/postgres/Data.zig
 src/sql/postgres/DataCell.zig
 src/sql/postgres/DebugSocketMonitorReader.zig
 src/sql/postgres/DebugSocketMonitorWriter.zig
@@ -3835,7 +3833,6 @@ src/sql/postgres/PostgresRequest.zig
 src/sql/postgres/PostgresSQLConnection.zig
 src/sql/postgres/PostgresSQLContext.zig
 src/sql/postgres/PostgresSQLQuery.zig
-src/sql/postgres/PostgresSQLQueryResultMode.zig
 src/sql/postgres/PostgresSQLStatement.zig
 src/sql/postgres/PostgresTypes.zig
 src/sql/postgres/protocol/ArrayList.zig
@@ -3890,8 +3887,12 @@ src/sql/postgres/types/numeric.zig
 src/sql/postgres/types/PostgresString.zig
 src/sql/postgres/types/Tag.zig
 src/sql/shared/CachedStructure.zig
+src/sql/shared/ConnectionFlags.zig
+src/sql/shared/Data.zig
 src/sql/shared/ObjectIterator.zig
 src/sql/shared/QueryBindingIterator.zig
+src/sql/shared/SQLDataCell.zig
+src/sql/shared/SQLQueryResultMode.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig
 src/string.zig

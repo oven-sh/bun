@@ -26,6 +26,6 @@ pub const null_int4 = 4294967295;
 
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 
 const NewReader = @import("./NewReader.zig").NewReader;

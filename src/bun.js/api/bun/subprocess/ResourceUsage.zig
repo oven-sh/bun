@@ -67,7 +67,6 @@ pub fn finalize(this: *ResourceUsage) callconv(.C) void {
 }
 
 const bun = @import("bun");
-const default_allocator = bun.default_allocator;
 const Rusage = bun.spawn.Rusage;
 
 const jsc = bun.jsc;

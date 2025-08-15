@@ -1098,13 +1098,11 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
-        const this = bun.cast(*uv.Pipe, handle.data);
-        bun.default_allocator.destroy(this);
+        bun.default_allocator.destroy(handle);
     }
 
     fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
-        const this = bun.cast(*uv.uv_tty_t, handle.data);
-        bun.default_allocator.destroy(this);
+        bun.default_allocator.destroy(handle);
     }
 
     pub fn onRead(this: *WindowsBufferedReader, amount: bun.sys.Maybe(usize), slice: []u8, hasMore: ReadState) void {

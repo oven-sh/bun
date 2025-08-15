@@ -1890,23 +1890,6 @@ interface BunFetchRequestInit extends RequestInit {
   unix?: string;
 
   /**
-   * Set the highWaterMark for the response stream buffer.
-   * This controls the size of the internal buffer used when reading the response body.
-   * Larger values can improve performance for large responses at the cost of memory.
-   * This is a custom property that is not part of the Fetch API specification.
-   *
-   * @default 16384 (16KB)
-   * @example
-   * ```js
-   * // Use a 64KB buffer for better throughput with large files
-   * const response = await fetch("https://example.com/large-file.zip", {
-   *   highWaterMark: 65536
-   * });
-   * ```
-   */
-  highWaterMark?: number;
-
-  /**
    * Control automatic decompression of the response body.
    * When set to `false`, the response body will not be automatically decompressed,
    * and the `Content-Encoding` header will be preserved. This can improve performance

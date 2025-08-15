@@ -256,8 +256,40 @@ extern "C" const char *us_get_default_ciphers() {
 // Platform-specific implementations for loading system certificates
 
 #if defined(_WIN32)
-// Windows implementation is in root_certs_windows.cpp
-extern "C" void us_load_system_certificates_windows(STACK_OF(X509) **system_certs);
+// Windows implementation is split to avoid header conflicts:
+// - root_certs_windows.cpp loads raw certificate data (uses Windows headers)
+// - This file converts raw data to X509* (uses OpenSSL headers)
+
+#include <vector>
+
+struct RawCertificate {
+  std::vector<unsigned char> data;
+};
+
+// Defined in root_certs_windows.cpp - loads raw certificate data
+extern "C" void us_load_system_certificates_windows_raw(
+    std::vector<RawCertificate>* raw_certs);
+
+// Convert raw Windows certificates to OpenSSL X509 format
+void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
+  *system_certs = sk_X509_new_null();
+  if (*system_certs == NULL) {
+    return;
+  }
+  
+  // Load raw certificates from Windows stores
+  std::vector<RawCertificate> raw_certs;
+  us_load_system_certificates_windows_raw(&raw_certs);
+  
+  // Convert each raw certificate to X509
+  for (const auto& raw_cert : raw_certs) {
+    const unsigned char* data = raw_cert.data.data();
+    X509* x509_cert = d2i_X509(NULL, &data, raw_cert.data.size());
+    if (x509_cert != NULL) {
+      sk_X509_push(*system_certs, x509_cert);
+    }
+  }
+}
 
 #else
 // Linux and other Unix-like systems - implementation is in root_certs_linux.cpp

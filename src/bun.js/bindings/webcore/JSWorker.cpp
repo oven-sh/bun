@@ -233,7 +233,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        
+
         // Check if envValue is the SHARE_ENV symbol (nodejs.worker_threads.SHARE_ENV)
         bool isShareEnv = false;
         if (envValue && envValue.isSymbol()) {
@@ -244,7 +244,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 isShareEnv = true;
             }
         }
-        
+
         if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull() || isShareEnv)) {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
         }

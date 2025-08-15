@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
-import { Worker, SHARE_ENV } from "worker_threads";
+import { expect, test } from "bun:test";
+import { SHARE_ENV, Worker } from "worker_threads";
 
 test("SHARE_ENV symbol should be accepted as env option", async () => {
   // This test verifies that the SHARE_ENV symbol is properly accepted
   // as the env option in worker threads, fixing the issue where it was
   // incorrectly rejected as an invalid type
-  
+
   const worker = new Worker(
     `
     const { parentPort } = require('worker_threads');
@@ -17,8 +17,8 @@ test("SHARE_ENV symbol should be accepted as env option", async () => {
     `,
     {
       eval: true,
-      env: SHARE_ENV
-    }
+      env: SHARE_ENV,
+    },
   );
 
   const message = await new Promise((resolve, reject) => {
@@ -38,7 +38,7 @@ test("SHARE_ENV enables true environment sharing", async () => {
   // Set a unique test variable in the parent
   const testVar = `TEST_VAR_${Date.now()}`;
   process.env[testVar] = "parent_value";
-  
+
   const worker = new Worker(
     `
     const { parentPort } = require('worker_threads');
@@ -50,8 +50,8 @@ test("SHARE_ENV enables true environment sharing", async () => {
     `,
     {
       eval: true,
-      env: SHARE_ENV
-    }
+      env: SHARE_ENV,
+    },
   );
 
   const message = await new Promise((resolve, reject) => {
@@ -77,13 +77,15 @@ test("SHARE_ENV should be the correct symbol", () => {
 
 test("non-SHARE_ENV symbols should still be rejected", async () => {
   const someOtherSymbol = Symbol("other.symbol");
-  
+
   expect(() => {
     new Worker("", {
       eval: true,
-      env: someOtherSymbol as any
+      env: someOtherSymbol as any,
     });
-  }).toThrow(/The "options\.env" property must be of type object or one of undefined, null, or worker_threads\.SHARE_ENV/);
+  }).toThrow(
+    /The "options\.env" property must be of type object or one of undefined, null, or worker_threads\.SHARE_ENV/,
+  );
 });
 
 test("other env option types should still work", async () => {
@@ -95,8 +97,8 @@ test("other env option types should still work", async () => {
     `,
     {
       eval: true,
-      env: { CUSTOM_VAR: "custom_value" }
-    }
+      env: { CUSTOM_VAR: "custom_value" },
+    },
   );
 
   const message1 = await new Promise((resolve, reject) => {
@@ -116,8 +118,8 @@ test("other env option types should still work", async () => {
     `,
     {
       eval: true,
-      env: undefined
-    }
+      env: undefined,
+    },
   );
 
   const message2 = await new Promise((resolve, reject) => {
@@ -138,8 +140,8 @@ test("other env option types should still work", async () => {
       `,
       {
         eval: true,
-        env: null
-      }
+        env: null,
+      },
     );
   }).not.toThrow();
 });

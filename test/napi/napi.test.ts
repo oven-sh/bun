@@ -601,7 +601,7 @@ describe("cleanup hooks", () => {
 
   describe("duplicate prevention", () => {
     it("should not crash on duplicate hooks in release builds", async () => {
-      // Test that duplicate hooks don't crash in release builds  
+      // Test that duplicate hooks don't crash in release builds
       await checkSameOutput("test_cleanup_hook_duplicates", []);
     });
   });

@@ -17,7 +17,7 @@ pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 /// macOS-specific structure to track deleted entrypoints
 /// Since macOS watches file descriptors (not paths), we need special handling for deleted files
 pub const DeletedEntrypointWatchlist = struct {
-    const Entry = struct {
+    pub const Entry = struct {
         /// Absolute path to the deleted entrypoint file, allocated using
         /// `dev.allocator`
         abs_path: [:0]const u8,

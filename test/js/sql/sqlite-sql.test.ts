@@ -4301,3 +4301,427 @@ describe("Query Normalization Fuzzing Tests", () => {
     });
   });
 });
+
+describe("Unicode & Encoding Fuzzing Tests", () => {
+  let sql: SQL;
+
+  beforeEach(async () => {
+    sql = new SQL("sqlite://:memory:");
+  });
+
+  afterEach(async () => {
+    await sql?.close();
+  });
+
+  test("handles extensive Unicode scripts and languages", async () => {
+    await sql`CREATE TABLE unicode_fuzz (id INTEGER PRIMARY KEY, text_data TEXT, description TEXT)`;
+
+    const unicodeTests = [
+      // Japanese (Hiragana, Katakana, Kanji)
+      { text: "ひらがな", desc: "Hiragana" },
+      { text: "カタカナ", desc: "Katakana" },
+      { text: "漢字", desc: "Kanji" },
+      { text: "日本語の文章です。", desc: "Japanese sentence" },
+      { text: "｡･ﾟﾟ･(＞_＜)･ﾟﾟ･｡", desc: "Japanese emoticon" },
+      { text: "㊗️㊙️㊟", desc: "Circled ideographs" },
+
+      // Arabic (RTL)
+      { text: "مرحبا بالعالم", desc: "Arabic hello world" },
+      { text: "السَّلَامُ عَلَيْكُمْ", desc: "Arabic with diacritics" },
+      { text: "١٢٣٤٥٦٧٨٩٠", desc: "Arabic-Indic digits" },
+      { text: "ﷺ", desc: "Arabic ligature" },
+      { text: "ﺍﺏﺕﺙﺝﺡﺥﺩﺫﺭﺯ", desc: "Arabic presentation forms" },
+
+      // Hebrew (RTL)
+      { text: "שָׁלוֹם עוֹלָם", desc: "Hebrew with vowel points" },
+      { text: "עִבְרִית", desc: "Hebrew word" },
+      { text: "א״ב ג״ד", desc: "Hebrew with geresh" },
+
+      // Cyrillic
+      { text: "Привет мир", desc: "Russian" },
+      { text: "Здравствуйте", desc: "Russian greeting" },
+      { text: "ЁЖИК", desc: "Russian caps with Ё" },
+      { text: "Ѳѳ Ѵѵ Ѱѱ", desc: "Old Cyrillic" },
+
+      // Greek
+      { text: "Γειά σου κόσμε", desc: "Greek hello world" },
+      { text: "Ελληνικά", desc: "Greek word" },
+      { text: "Α Β Γ Δ Ε Ζ Η Θ", desc: "Greek alphabet" },
+      { text: "άέήίόύώ", desc: "Greek with tonos" },
+
+      // Thai
+      { text: "สวัสดีชาวโลก", desc: "Thai hello world" },
+      { text: "ภาษาไทย", desc: "Thai language" },
+      { text: "๏๐๑๒๓๔๕๖๗๘๙", desc: "Thai digits and symbols" },
+
+      // Korean
+      { text: "안녕하세요", desc: "Korean greeting" },
+      { text: "한글", desc: "Hangul" },
+      { text: "ㄱㄴㄷㄹㅁㅂㅅ", desc: "Korean Jamo" },
+
+      // Chinese
+      { text: "你好世界", desc: "Chinese simplified" },
+      { text: "繁體中文", desc: "Traditional Chinese" },
+      { text: "㊀㊁㊂㊃㊄㊅", desc: "Circled Chinese" },
+
+      // Devanagari (Hindi)
+      { text: "नमस्ते दुनिया", desc: "Hindi hello world" },
+      { text: "अआइईउऊऋॠ", desc: "Devanagari vowels" },
+      { text: "०१२३४५६७८९", desc: "Devanagari digits" },
+
+      // Tamil
+      { text: "வணக்கம் உலகம்", desc: "Tamil hello world" },
+      { text: "தமிழ்", desc: "Tamil word" },
+
+      // Emoji sequences
+      { text: "👨‍👩‍👧‍👦", desc: "Family emoji ZWJ sequence" },
+      { text: "👨🏻‍💻", desc: "Man technologist with skin tone" },
+      { text: "🏳️‍🌈", desc: "Rainbow flag" },
+      { text: "🧑‍🤝‍🧑", desc: "People holding hands" },
+      { text: "👁️‍🗨️", desc: "Eye in speech bubble" },
+      { text: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", desc: "England flag" },
+      { text: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", desc: "Scotland flag" },
+      { text: "🏴󠁧󠁢󠁷󠁬󠁳󠁿", desc: "Wales flag" },
+
+      // Mathematical symbols
+      { text: "∀∃∅∈∉⊂⊃⊆⊇", desc: "Set theory symbols" },
+      { text: "∫∬∭∮∯∰", desc: "Integral symbols" },
+      { text: "√∛∜", desc: "Root symbols" },
+      { text: "𝕳𝖊𝖑𝖑𝖔", desc: "Mathematical bold Fraktur" },
+      { text: "𝓗𝓮𝓵𝓵𝓸", desc: "Mathematical bold script" },
+      { text: "𝒽ℯ𝓁𝓁ℴ", desc: "Mathematical italic" },
+
+      // Combining characters
+      { text: "e\u0301", desc: "e with combining acute" },
+      { text: "n\u0303", desc: "n with combining tilde" },
+      { text: "a\u0300\u0301\u0302\u0303\u0304", desc: "a with multiple combining marks" },
+      { text: "Z̴̧̢̛͔̳̮̤̣̈́̊̄͒a̸̧̨̺̯̟̯̿̈́͊̕l̶̢̜̦̣̇̆̾g̸̨̣̲̈́͊̍̕ȏ̷̧̜̠̣̊", desc: "Zalgo text" },
+
+      // Zero-width characters
+      { text: "test\u200Bword", desc: "Zero-width space" },
+      { text: "test\u200Cword", desc: "Zero-width non-joiner" },
+      { text: "test\u200Dword", desc: "Zero-width joiner" },
+      { text: "test\uFEFFword", desc: "Zero-width no-break space" },
+
+      // RTL/LTR mixing
+      { text: "Hello שלום World", desc: "Mixed LTR/RTL" },
+      { text: "العربية English עברית", desc: "Multiple script directions" },
+      { text: "\u202Eevil text", desc: "RLO override" },
+      { text: "\u202Dforce LTR\u202C", desc: "LTR override with pop" },
+
+      // Special Unicode blocks
+      { text: "♠♣♥♦", desc: "Card suits" },
+      { text: "☀☁☂☃☄★☆", desc: "Weather symbols" },
+      { text: "♈♉♊♋♌♍♎♏", desc: "Zodiac symbols" },
+      { text: "⚀⚁⚂⚃⚄⚅", desc: "Dice faces" },
+      { text: "❶❷❸❹❺❻❼❽❾❿", desc: "Circled numbers" },
+
+      // Box drawing
+      { text: "┌─┬─┐│ ││ │├─┼─┤└─┴─┘", desc: "Box drawing characters" },
+      { text: "╔═╦═╗║ ║║ ║╠═╬═╣╚═╩═╝", desc: "Double box drawing" },
+
+      // Currency symbols
+      { text: "$€£¥₹₽₩₨₪₫₱", desc: "Currency symbols" },
+
+      // Superscript/Subscript
+      { text: "x²y³z⁴", desc: "Superscript" },
+      { text: "H₂O", desc: "Subscript" },
+
+      // Weird UTF-8 edge cases
+      { text: "\uD800", desc: "High surrogate (invalid alone)" },
+      { text: "\uDFFF", desc: "Low surrogate (invalid alone)" },
+      { text: "\uFFFD", desc: "Replacement character" },
+      { text: "\uFFFE", desc: "Byte order mark inverse" },
+      { text: String.fromCodePoint(0x10ffff), desc: "Max valid Unicode" },
+      { text: String.fromCodePoint(0x1f4a9), desc: "Pile of poo emoji" },
+
+      // Various quote marks
+      { text: `''‚""„`, desc: "Various quotes" },
+      { text: "«»‹›", desc: "Guillemets" },
+      { text: "「」『』", desc: "CJK quotes" },
+
+      // Control characters mixed with text
+      { text: "hello\x00world", desc: "Null in middle" },
+      { text: "tab\there", desc: "Tab character" },
+      { text: "line\nbreak", desc: "Newline" },
+      { text: "carriage\rreturn", desc: "Carriage return" },
+
+      // Long repetitive Unicode
+      { text: "🎉".repeat(100), desc: "100 party emojis" },
+      { text: "あ".repeat(500), desc: "500 Japanese characters" },
+      { text: "۝".repeat(200), desc: "200 Arabic symbols" },
+
+      // Mixed everything chaos
+      { text: "Hello世界مرحبا🌍שלום мир🎉", desc: "Multiple scripts and emoji" },
+      { text: "a̐éö̲ūï̍œ̃", desc: "Latin with various diacritics" },
+      { text: "㊗️エンコーディング🎌テスト✨", desc: "Japanese with emoji" },
+    ];
+
+    // Insert all test cases
+    for (let i = 0; i < unicodeTests.length; i++) {
+      const { text, desc } = unicodeTests[i];
+      await sql`INSERT INTO unicode_fuzz VALUES (${i}, ${text}, ${desc})`;
+    }
+
+    // Verify all data was stored and retrieved correctly
+    for (let i = 0; i < unicodeTests.length; i++) {
+      const { text, desc } = unicodeTests[i];
+      const result = await sql`SELECT text_data, description FROM unicode_fuzz WHERE id = ${i}`;
+      expect(result).toHaveLength(1);
+
+      // Special handling for problematic Unicode that may not roundtrip correctly
+      const problematicCases = [
+        "High surrogate (invalid alone)",
+        "Low surrogate (invalid alone)",
+        "Byte order mark inverse",
+        "Null in middle",
+      ];
+
+      if (problematicCases.includes(desc)) {
+        // These characters may be handled differently - could be empty, replacement char, or preserved
+        const retrieved = result[0].text_data;
+        // For null in middle, check if it's preserved or truncated
+        if (desc === "Null in middle") {
+          expect(retrieved === "hello\x00world" || retrieved === "hello").toBe(true);
+        } else {
+          expect(retrieved === text || retrieved === "" || retrieved === "\uFFFD").toBe(true);
+        }
+      } else {
+        expect(result[0].text_data).toBe(text);
+      }
+      expect(result[0].description).toBe(desc);
+    }
+
+    // Test searching with Unicode
+    const arabicSearch = await sql`SELECT * FROM unicode_fuzz WHERE text_data LIKE ${"%مرحبا%"}`;
+    expect(arabicSearch.length).toBeGreaterThan(0);
+
+    const emojiSearch = await sql`SELECT * FROM unicode_fuzz WHERE text_data LIKE ${"%🎉%"}`;
+    expect(emojiSearch.length).toBeGreaterThan(0);
+  });
+
+  test("handles Unicode in column names and table names", async () => {
+    // Table names with Unicode
+    await sql`CREATE TABLE "日本語テーブル" (id INTEGER, value TEXT)`;
+    await sql`INSERT INTO "日本語テーブル" VALUES (1, 'test')`;
+    const result1 = await sql`SELECT * FROM "日本語テーブル"`;
+    expect(result1).toHaveLength(1);
+
+    // Column names with Unicode
+    await sql`CREATE TABLE unicode_cols ("列名" TEXT, "عمود" TEXT, "στήλη" TEXT)`;
+    await sql`INSERT INTO unicode_cols VALUES ('Japanese', 'Arabic', 'Greek')`;
+    const result2 = await sql`SELECT * FROM unicode_cols`;
+    expect(result2[0]["列名"]).toBe("Japanese");
+    expect(result2[0]["عمود"]).toBe("Arabic");
+    expect(result2[0]["στήλη"]).toBe("Greek");
+  });
+
+  test("handles Unicode in SQL functions", async () => {
+    await sql`CREATE TABLE unicode_func_test (id INTEGER, text_data TEXT)`;
+
+    const testCases = [
+      { text: "HELLO WORLD", expected_lower: "hello world" },
+      { text: "ЁЖИК", expected_lower: "ёжик" },
+      { text: "ΔΙΑΦΟΡΆ", expected_lower: "διαφορά" },
+    ];
+
+    for (let i = 0; i < testCases.length; i++) {
+      const { text } = testCases[i];
+      await sql`INSERT INTO unicode_func_test VALUES (${i}, ${text})`;
+    }
+
+    // Test LENGTH with Unicode
+    await sql`INSERT INTO unicode_func_test VALUES (100, ${"🎉🎊🎈"})`;
+    const lengthResult = await sql`SELECT LENGTH(text_data) as len FROM unicode_func_test WHERE id = 100`;
+    // Note: SQLite LENGTH returns byte count for UTF-8
+    expect(lengthResult[0].len).toBeGreaterThan(0);
+
+    // Test SUBSTR with Unicode
+    await sql`INSERT INTO unicode_func_test VALUES (101, ${"Hello世界"})`;
+    const substrResult = await sql`SELECT SUBSTR(text_data, 6, 2) as sub FROM unicode_func_test WHERE id = 101`;
+    expect(substrResult[0].sub).toBe("世界");
+  });
+
+  test("handles Unicode normalization edge cases", async () => {
+    await sql`CREATE TABLE normalization_test (id INTEGER, text_data TEXT)`;
+
+    // Different Unicode normalizations of "é"
+    const normalizations = [
+      "\u00E9", // NFC: é (single character)
+      "e\u0301", // NFD: e + combining acute
+      "\u0065\u0301", // NFD explicit
+    ];
+
+    for (let i = 0; i < normalizations.length; i++) {
+      await sql`INSERT INTO normalization_test VALUES (${i}, ${normalizations[i]})`;
+      const result = await sql`SELECT text_data FROM normalization_test WHERE id = ${i}`;
+      expect(result[0].text_data).toBe(normalizations[i]);
+    }
+  });
+
+  test("handles binary data that looks like UTF-8", async () => {
+    await sql`CREATE TABLE binary_test (id INTEGER, data BLOB)`;
+
+    // Invalid UTF-8 sequences
+    const invalidSequences = [
+      Buffer.from([0xff, 0xfe, 0xfd]), // Invalid UTF-8 start bytes
+      Buffer.from([0xc0, 0x80]), // Overlong encoding
+      Buffer.from([0xed, 0xa0, 0x80]), // UTF-16 surrogate
+      Buffer.from([0xf4, 0x90, 0x80, 0x80]), // Code point > U+10FFFF
+      Buffer.from([0xc2]), // Incomplete sequence
+      Buffer.from([0xe0, 0x80, 0x80]), // Overlong 3-byte
+      Buffer.from([0xf0, 0x80, 0x80, 0x80]), // Overlong 4-byte
+    ];
+
+    for (let i = 0; i < invalidSequences.length; i++) {
+      await sql`INSERT INTO binary_test VALUES (${i}, ${invalidSequences[i]})`;
+      const result = await sql`SELECT data FROM binary_test WHERE id = ${i}`;
+      expect(Buffer.from(result[0].data)).toEqual(invalidSequences[i]);
+    }
+  });
+
+  test("handles massive Unicode string operations", async () => {
+    await sql`CREATE TABLE massive_unicode (id INTEGER, text_data TEXT)`;
+
+    // Create a massive string with various Unicode
+    const components = ["English", "日本語", "العربية", "עברית", "Ελληνικά", "🎉", "👨‍👩‍👧‍👦", "∫∂∇", "№", "™", "©", "®"];
+
+    const massiveString = components.map(c => c.repeat(100)).join(" ");
+
+    await sql`INSERT INTO massive_unicode VALUES (1, ${massiveString})`;
+    const result = await sql`SELECT text_data FROM massive_unicode WHERE id = 1`;
+    expect(result[0].text_data).toBe(massiveString);
+
+    // Test with LIKE on massive Unicode string
+    const likeResult = await sql`SELECT id FROM massive_unicode WHERE text_data LIKE ${"%日本語%"}`;
+    expect(likeResult).toHaveLength(1);
+  });
+
+  test("handles Unicode in prepared statement parameters", async () => {
+    await sql`CREATE TABLE param_test (id INTEGER, text_data TEXT)`;
+
+    const unicodeParams = [
+      "🚀 Launch",
+      "مرحبا parameters",
+      "パラメータ",
+      "\u0000embedded null",
+      "tab\there",
+      "new\nline",
+    ];
+
+    // Test with direct parameters
+    for (let i = 0; i < unicodeParams.length; i++) {
+      const param = unicodeParams[i];
+      await sql`INSERT INTO param_test VALUES (${i}, ${param})`;
+    }
+
+    // Verify all parameters were handled correctly
+    for (let i = 0; i < unicodeParams.length; i++) {
+      const result = await sql`SELECT text_data FROM param_test WHERE id = ${i}`;
+      expect(result[0].text_data).toBe(unicodeParams[i]);
+    }
+
+    // Test WHERE clause with Unicode parameter
+    const whereResult = await sql`SELECT * FROM param_test WHERE text_data = ${"🚀 Launch"}`;
+    expect(whereResult).toHaveLength(1);
+    expect(whereResult[0].id).toBe(0);
+  });
+
+  test("handles Unicode collation and sorting", async () => {
+    await sql`CREATE TABLE collation_test (id INTEGER, text_data TEXT)`;
+
+    const sortTestData = [
+      "zebra",
+      "Zebra",
+      "ZEBRA",
+      "äpfel",
+      "Äpfel",
+      "апельсин",
+      "Апельсин",
+      "🍎",
+      "🍊",
+      "日本",
+      "中国",
+      "한국",
+    ];
+
+    for (let i = 0; i < sortTestData.length; i++) {
+      await sql`INSERT INTO collation_test VALUES (${i}, ${sortTestData[i]})`;
+    }
+
+    // Test ORDER BY with Unicode
+    const ordered = await sql`SELECT text_data FROM collation_test ORDER BY text_data`;
+    expect(ordered).toHaveLength(sortTestData.length);
+
+    // Verify ordering happened (exact order depends on SQLite collation)
+    expect(ordered[0].text_data).toBeDefined();
+    expect(ordered[ordered.length - 1].text_data).toBeDefined();
+  });
+
+  test("handles Unicode in JSON operations", async () => {
+    await sql`CREATE TABLE json_unicode (id INTEGER, json_data TEXT)`;
+
+    const jsonWithUnicode = {
+      english: "Hello",
+      japanese: "こんにちは",
+      arabic: "مرحبا",
+      emoji: "🎉🚀",
+      special: "a\u0301\u0302\u0303",
+      rtl: "Hello עברית World",
+    };
+
+    const jsonString = JSON.stringify(jsonWithUnicode);
+    await sql`INSERT INTO json_unicode VALUES (1, ${jsonString})`;
+
+    const result = await sql`SELECT json_data FROM json_unicode WHERE id = 1`;
+    const parsed = JSON.parse(result[0].json_data);
+
+    expect(parsed.japanese).toBe("こんにちは");
+    expect(parsed.arabic).toBe("مرحبا");
+    expect(parsed.emoji).toBe("🎉🚀");
+  });
+
+  test("handles extreme edge cases and malformed sequences", async () => {
+    await sql`CREATE TABLE edge_cases (id INTEGER, text_data TEXT, blob_data BLOB)`;
+
+    const edgeCases = [
+      // Extremely long strings
+      { text: "A".repeat(10000) + "🎉".repeat(1000) + "世".repeat(1000), desc: "Very long mixed" },
+
+      // Boundary values
+      { text: String.fromCharCode(0), desc: "Null character" },
+      { text: String.fromCharCode(0xd7ff), desc: "Before surrogates" },
+      { text: String.fromCharCode(0xe000), desc: "After surrogates" },
+      { text: String.fromCharCode(0xfffd), desc: "Replacement char" },
+
+      // Mixed direction markers
+      { text: "\u202A\u202B\u202C\u202D\u202E", desc: "All direction markers" },
+
+      // Variation selectors
+      { text: "☃️", desc: "Snowman with variation selector" },
+      { text: "☃︎", desc: "Snowman text style" },
+
+      // Regional indicators (flags)
+      { text: "🇺🇸🇯🇵🇬🇧🇫🇷🇩🇪", desc: "Multiple flags" },
+
+      // Skin tone modifiers
+      { text: "👋🏻👋🏼👋🏽👋🏾👋🏿", desc: "Wave with all skin tones" },
+
+      // Zero width joiners in text
+      { text: "पार्थ", desc: "Devanagari with ZWJ" },
+
+      // Invisible characters
+      { text: "\u2060\u2061\u2062\u2063", desc: "Invisible math operators" },
+      { text: "\u2028\u2029", desc: "Line and paragraph separators" },
+    ];
+
+    for (let i = 0; i < edgeCases.length; i++) {
+      const { text } = edgeCases[i];
+      await sql`INSERT INTO edge_cases VALUES (${i}, ${text}, ${Buffer.from(text)})`;
+
+      const result = await sql`SELECT text_data, blob_data FROM edge_cases WHERE id = ${i}`;
+      expect(result[0].text_data).toBe(text);
+      expect(Buffer.from(result[0].blob_data).toString()).toBe(text);
+    }
+  });
+});

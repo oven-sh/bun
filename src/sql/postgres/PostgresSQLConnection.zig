@@ -1831,7 +1831,6 @@ const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const createPostgresError = @import("./AnyPostgresError.zig").createPostgresError;
-
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 
 const bun = @import("bun");

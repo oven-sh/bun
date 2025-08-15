@@ -457,7 +457,6 @@ pub fn load(
         this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
     }
 
-
     // Update should never read from manifest cache
     if (subcommand == .update) {
         this.enable.manifest_cache = false;

@@ -234,15 +234,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        // Check if envValue is the SHARE_ENV symbol (nodejs.worker_threads.SHARE_ENV)
+        // Check if envValue is the SHARE_ENV symbol using symbol registry comparison
         bool isShareEnv = false;
         if (envValue && envValue.isSymbol()) {
             auto* symbol = asSymbol(envValue);
-            // Check if this is the global symbol for nodejs.worker_threads.SHARE_ENV
-            auto description = symbol->description();
-            if (!description.isEmpty() && description == "nodejs.worker_threads.SHARE_ENV"_s) {
-                isShareEnv = true;
-            }
+            // Get the expected SHARE_ENV symbol from the registry
+            auto* expectedSymbol = Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.worker_threads.SHARE_ENV"_s));
+            // Compare the symbols directly
+            isShareEnv = (symbol == expectedSymbol);
         }
 
         if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull() || isShareEnv)) {

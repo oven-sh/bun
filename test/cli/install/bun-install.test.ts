@@ -8603,7 +8603,7 @@ it("should respect --bin-links and --no-bin-links flags", async () => {
       "prettier": "^2.0.0",
     },
   });
-  
+
   await writeFile(join(package_dir, "package.json"), package_json);
 
   // Test with --no-bin-links
@@ -8620,7 +8620,7 @@ it("should respect --bin-links and --no-bin-links flags", async () => {
     const exitCode = await exited;
     const stderrText = await stderr.text();
     const stdoutText = await stdout.text();
-    
+
     if (exitCode !== 0) {
       console.log("STDERR:", stderrText);
       console.log("STDOUT:", stdoutText);
@@ -8655,14 +8655,14 @@ it("should respect bin-links setting from bunfig.toml", async () => {
       "prettier": "^2.0.0",
     },
   });
-  
+
   await writeFile(join(package_dir, "package.json"), package_json);
 
   // Test with bin-links = false in bunfig.toml
   {
     await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbin-links = false");
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    
+
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
       cwd: package_dir,
@@ -8675,11 +8675,11 @@ it("should respect bin-links setting from bunfig.toml", async () => {
     expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
   }
 
-  // Test with bin-links = true in bunfig.toml  
+  // Test with bin-links = true in bunfig.toml
   {
     await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbin-links = true");
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    
+
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
       cwd: package_dir,
@@ -8692,7 +8692,7 @@ it("should respect bin-links setting from bunfig.toml", async () => {
     expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(true);
     expect(await exists(join(package_dir, "node_modules", ".bin", "prettier"))).toBe(true);
   }
-  
+
   // Clean up bunfig.toml
   await rm(join(package_dir, "bunfig.toml"), { force: true });
 });
@@ -8704,7 +8704,7 @@ it("should respect bin-links setting from environment variables", async () => {
       "prettier": "^2.0.0",
     },
   });
-  
+
   await writeFile(join(package_dir, "package.json"), package_json);
 
   // Test with BUN_CONFIG_BIN_LINKS=false

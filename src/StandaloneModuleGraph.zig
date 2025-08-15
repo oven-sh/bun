@@ -686,110 +686,67 @@ pub const StandaloneModuleGraph = struct {
                 return cloned_executable_fd;
             },
             .windows => {
-                const file = bun.sys.File{ .handle = cloned_executable_fd };
-                {
-                    const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
-                    if (input_result.err) |err| {
-                        Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        Global.exit(1);
-                    }
-                    var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
-                        Output.prettyErrorln("Error initializing PE file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        Global.exit(1);
-                    };
-                    defer pe_file.deinit();
-                    pe_file.addBunSection(bytes) catch |err| {
-                        Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        Global.exit(1);
-                    };
-                    input_result.bytes.deinit();
-
-                    switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
-                        .err => |err| {
-                            Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            Global.exit(1);
-                        },
-                        else => {},
-                    }
-
-                    // Truncate file to the new size to avoid leaving old data at the end
-                    switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
-                        .err => |err| {
-                            Output.prettyErrorln("Error truncating file: {}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            Global.exit(1);
-                        },
-                        else => {},
-                    }
-
-                    const writer = file.writer();
-                    pe_file.write(writer) catch |err| {
-                        Output.prettyErrorln("Error writing PE file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        Global.exit(1);
-                    };
+                // Read the original PE file
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
                 }
+                defer input_result.bytes.deinit();
+
+                // Initialize PE file for processing
+                var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer pe_file.deinit();
+
+                // Add Bun section with module data
+                pe_file.addBunSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+
+                // Apply Windows settings if provided
                 if (inject_options) |opts| {
                     if (opts.description != null or opts.icon != null or opts.publisher != null or opts.title != null or opts.version != null or opts.copyright != null or opts.hide_console) {
-                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
-                            .err => |err| {
-                                Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                                cleanup(zname, cloned_executable_fd);
-                                Global.exit(1);
-                            },
-                            else => {},
-                        }
-                        const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
-                        if (input_result.err) |err| {
-                            Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            Global.exit(1);
-                        }
-                        const pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
-                            Output.prettyErrorln("Error initializing PE file: {}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            Global.exit(1);
-                        };
-                        defer pe_file.deinit();
                         pe_file.applyWindowsSettings(opts, bun.default_allocator) catch |err| {
                             Output.prettyErrorln("Error applying Windows settings to PE file: {}", .{err});
                             cleanup(zname, cloned_executable_fd);
                             Global.exit(1);
                         };
-                        input_result.bytes.deinit();
-
-                        // Seek back to start to write the modified PE file
-                        switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
-                            .err => |err| {
-                                Output.prettyErrorln("Error seeking to start of file for writing: {}", .{err});
-                                cleanup(zname, cloned_executable_fd);
-                                Global.exit(1);
-                            },
-                            else => {},
-                        }
-
-                        // Write the modified PE data
-                        const write_result = bun.sys.File.writeAll(.{ .handle = cloned_executable_fd }, pe_file.data.items);
-                        _ = write_result.unwrap() catch |err| {
-                            Output.prettyErrorln("Error writing PE file: {}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            Global.exit(1);
-                        };
-
-                        // Truncate file to the new size to avoid leaving old data at the end
-                        switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
-                            .err => |err| {
-                                Output.prettyErrorln("Error truncating file: {}", .{err});
-                                cleanup(zname, cloned_executable_fd);
-                                Global.exit(1);
-                            },
-                            else => {},
-                        }
                     }
+                }
+
+                // Seek to start and write the complete modified PE file
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    },
+                    else => {},
+                }
+
+                // Write the complete PE data using the raw buffer to ensure all data is written
+                const write_result = bun.sys.File.writeAll(.{ .handle = cloned_executable_fd }, pe_file.data.items);
+                _ = write_result.unwrap() catch |err| {
+                    Output.prettyErrorln("Error writing PE file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+
+                // Truncate file to the exact size to avoid leaving old data at the end
+                switch (Syscall.ftruncate(cloned_executable_fd, @intCast(pe_file.data.items.len))) {
+                    .err => |err| {
+                        Output.prettyErrorln("Error truncating file: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    },
+                    else => {},
                 }
                 // Set executable permissions when running on POSIX hosts, even for Windows targets
                 if (comptime !Environment.isWindows) {

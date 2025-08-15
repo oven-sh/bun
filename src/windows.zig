@@ -3642,19 +3642,6 @@ pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
     try fd.writer().writeInt(u16, @intFromEnum(subsystem), .little);
 }
 
-pub const rescle = struct {
-    extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
-
-    pub fn setIcon(exe_path: [*:0]const u16, icon: [*:0]const u16) !void {
-        comptime bun.assert(bun.Environment.isWindows);
-        const status = rescle__setIcon(exe_path, icon);
-        return switch (status) {
-            0 => {},
-            else => error.IconEditError,
-        };
-    }
-};
-
 pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: [*]u16, cchFilePath: DWORD, dwFlags: DWORD) callconv(.winapi) DWORD;
 pub extern "kernel32" fn DeleteFileW(lpFileName: [*:0]const u16) callconv(.winapi) BOOL;

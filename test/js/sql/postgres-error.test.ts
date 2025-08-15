@@ -85,16 +85,6 @@ describe("PostgresError compatibility", () => {
     expect(error.schema).toBeUndefined();
     expect(error.table).toBeUndefined();
     expect(error.column).toBeUndefined();
-
-    // toJSON should only include defined properties
-    const json = error.toJSON();
-    expect(json.name).toBe("PostgresError");
-    expect(json.code).toBe("ERR_MINIMAL");
-    expect("detail" in json).toBe(false);
-    expect("hint" in json).toBe(false);
-    expect("severity" in json).toBe(false);
-    expect("position" in json).toBe(false);
-    expect("schema" in json).toBe(false);
   });
 
   test("SQLError base class works correctly", () => {

@@ -100,57 +100,73 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       expect(exists).toBe(false);
     });
 
-    test("GETEX command with expiration parameters", async () => {
-      const key = ctx.generateKey("getex-test");
-      const value = "getex test value";
+    describe("GETEX", () => {
+      test("with expiration parameters", async () => {
+        const key = ctx.generateKey("getex-test");
+        const value = "getex test value";
 
-      // Set up a key first
-      await ctx.redis.set(key, value);
+        // Set up a key first
+        await ctx.redis.set(key, value);
 
-      // Test GETEX without expiration parameters (just get the value)
-      const value1 = await ctx.redis.getex(key);
-      expect(value1).toBe(value);
+        // Test GETEX without expiration parameters (just get the value)
+        const value1 = await ctx.redis.getex(key);
+        expect(value1).toBe(value);
 
-      // Test GETEX with EX (expiration in seconds)
-      const value2 = await ctx.redis.getex(key, "EX", 60);
-      expect(value2).toBe(value);
-      const ttl1 = await ctx.redis.ttl(key);
-      expect(ttl1).toBeGreaterThan(0);
-      expect(ttl1).toBeLessThanOrEqual(60);
+        // Test GETEX with EX (expiration in seconds)
+        const value2 = await ctx.redis.getex(key, "EX", 60);
+        expect(value2).toBe(value);
+        const ttl1 = await ctx.redis.ttl(key);
+        expect(ttl1).toBeGreaterThan(0);
+        expect(ttl1).toBeLessThanOrEqual(60);
 
-      // Test GETEX with PX (expiration in milliseconds)
-      const value3 = await ctx.redis.getex(key, "PX", 30000);
-      expect(value3).toBe(value);
-      const ttl2 = await ctx.redis.ttl(key);
-      expect(ttl2).toBeGreaterThan(0);
-      expect(ttl2).toBeLessThanOrEqual(30);
+        // Test GETEX with PX (expiration in milliseconds)
+        const value3 = await ctx.redis.getex(key, "PX", 30000);
+        expect(value3).toBe(value);
+        const ttl2 = await ctx.redis.ttl(key);
+        expect(ttl2).toBeGreaterThan(0);
+        expect(ttl2).toBeLessThanOrEqual(30);
 
-      // Test GETEX with EXAT (expiration at Unix timestamp in seconds)
-      const futureTimestamp = Math.floor(Date.now() / 1000) + 45;
-      const value4 = await ctx.redis.getex(key, "EXAT", futureTimestamp);
-      expect(value4).toBe(value);
-      const ttl3 = await ctx.redis.ttl(key);
-      expect(ttl3).toBeGreaterThan(0);
-      expect(ttl3).toBeLessThanOrEqual(45);
+        // Test GETEX with EXAT (expiration at Unix timestamp in seconds)
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 45;
+        const value4 = await ctx.redis.getex(key, "EXAT", futureTimestamp);
+        expect(value4).toBe(value);
+        const ttl3 = await ctx.redis.ttl(key);
+        expect(ttl3).toBeGreaterThan(0);
+        expect(ttl3).toBeLessThanOrEqual(45);
 
-      // Test GETEX with PXAT (expiration at Unix timestamp in milliseconds)
-      const futureTimestampMs = Date.now() + 20000;
-      const value5 = await ctx.redis.getex(key, "PXAT", futureTimestampMs);
-      expect(value5).toBe(value);
-      const ttl4 = await ctx.redis.ttl(key);
-      expect(ttl4).toBeGreaterThan(0);
-      expect(ttl4).toBeLessThanOrEqual(20);
+        // Test GETEX with PXAT (expiration at Unix timestamp in milliseconds)
+        const futureTimestampMs = Date.now() + 20000;
+        const value5 = await ctx.redis.getex(key, "PXAT", futureTimestampMs);
+        expect(value5).toBe(value);
+        const ttl4 = await ctx.redis.ttl(key);
+        expect(ttl4).toBeGreaterThan(0);
+        expect(ttl4).toBeLessThanOrEqual(20);
 
-      // Test GETEX with PERSIST (remove expiration)
-      const value6 = await ctx.redis.getex(key, "PERSIST");
-      expect(value6).toBe(value);
-      const ttl5 = await ctx.redis.ttl(key);
-      expect(ttl5).toBe(-1); // -1 means no expiration
+        // Test GETEX with PERSIST (remove expiration)
+        const value6 = await ctx.redis.getex(key, "PERSIST");
+        expect(value6).toBe(value);
+        const ttl5 = await ctx.redis.ttl(key);
+        expect(ttl5).toBe(-1); // -1 means no expiration
 
-      // Test GETEX on non-existent key
-      const nonExistentKey = ctx.generateKey("getex-nonexistent");
-      const value7 = await ctx.redis.getex(nonExistentKey);
-      expect(value7).toBeNull();
+        // Test GETEX on non-existent key
+        const nonExistentKey = ctx.generateKey("getex-nonexistent");
+        const value7 = await ctx.redis.getex(nonExistentKey);
+        expect(value7).toBeNull();
+      });
+
+      test("with non-string keys", async () => {
+        // Test with Buffer key
+        const bufferKey = Buffer.from(ctx.generateKey("getex-buffer"));
+        await ctx.redis.set(bufferKey, "buffer value");
+        const bufferResult = await ctx.redis.getex(bufferKey, "EX", 60);
+        expect(bufferResult).toBe("buffer value");
+
+        // Test with Uint8Array key
+        const uint8Key = new Uint8Array(Buffer.from(ctx.generateKey("getex-uint8")));
+        await ctx.redis.set(uint8Key, "uint8 value");
+        const uint8Result = await ctx.redis.getex(uint8Key, "PX", 5000);
+        expect(uint8Result).toBe("uint8 value");
+      });
     });
 
     test("GETRANGE command", async () => {

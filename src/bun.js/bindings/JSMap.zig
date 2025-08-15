@@ -15,7 +15,7 @@ pub const JSMap = opaque {
 
     pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) ?JSValue {
         const value = get_(this, globalObject, key);
-        if (value.isEmpty()) {
+        if (value == .zero) {
             return null;
         }
         return value;

@@ -187,9 +187,9 @@ let prFileCount = 0;
 if (isBuildkite) {
   try {
     console.log("on buildkite: collecting new files from PR");
-    for (let i = 0; i < 5; i++) {
+    for (let i = 1; i <= 5; i++) {
       const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=100&page=${i}`,
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=50&page=${i}`,
         {
           headers: {
             Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,

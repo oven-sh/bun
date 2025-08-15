@@ -185,7 +185,7 @@ pub fn estimatedSize(this: *PostgresSQLQuery) usize {
 }
 
 pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(6).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const query = args.nextEat() orelse {
@@ -275,8 +275,7 @@ pub fn setMode(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callf
 }
 
 pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    var arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    var arguments = callframe.arguments();
     const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
         return globalObject.throw("connection must be a PostgresSQLConnection", .{});
     };
@@ -522,7 +521,7 @@ const bun = @import("bun");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const CommandTag = @import("./CommandTag.zig").CommandTag;
-const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;

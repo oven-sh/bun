@@ -38,6 +38,7 @@ enum class TrustStatus {
 class SecurityFramework {
 public:
     void* handle;
+    void* cf_handle;
     
     // Core Foundation constants
     CFStringRef kSecClass;
@@ -46,6 +47,21 @@ public:
     CFStringRef kSecMatchLimitAll;
     CFStringRef kSecReturnRef;
     CFBooleanRef kCFBooleanTrue;
+    CFAllocatorRef kCFAllocatorDefault;
+    CFArrayCallBacks* kCFTypeArrayCallBacks;
+    CFDictionaryKeyCallBacks* kCFTypeDictionaryKeyCallBacks;
+    CFDictionaryValueCallBacks* kCFTypeDictionaryValueCallBacks;
+    
+    // Core Foundation function pointers
+    CFMutableArrayRef (*CFArrayCreateMutable)(CFAllocatorRef allocator, CFIndex capacity, const CFArrayCallBacks *callBacks);
+    CFArrayRef (*CFArrayCreate)(CFAllocatorRef allocator, const void **values, CFIndex numValues, const CFArrayCallBacks *callBacks);
+    void (*CFArraySetValueAtIndex)(CFMutableArrayRef theArray, CFIndex idx, const void *value);
+    const void* (*CFArrayGetValueAtIndex)(CFArrayRef theArray, CFIndex idx);
+    CFIndex (*CFArrayGetCount)(CFArrayRef theArray);
+    void (*CFRelease)(CFTypeRef cf);
+    CFDictionaryRef (*CFDictionaryCreate)(CFAllocatorRef allocator, const void **keys, const void **values, CFIndex numValues, const CFDictionaryKeyCallBacks *keyCallBacks, const CFDictionaryValueCallBacks *valueCallBacks);
+    const UInt8* (*CFDataGetBytePtr)(CFDataRef theData);
+    CFIndex (*CFDataGetLength)(CFDataRef theData);
     
     // Security framework function pointers
     OSStatus (*SecItemCopyMatching)(CFDictionaryRef query, CFTypeRef *result);
@@ -55,10 +71,16 @@ public:
     Boolean (*SecTrustEvaluateWithError)(SecTrustRef trust, CFErrorRef *error);
     OSStatus (*SecTrustSettingsCopyTrustSettings)(SecCertificateRef certRef, SecTrustSettingsDomain domain, CFArrayRef *trustSettings);
     
-    SecurityFramework() : handle(nullptr), 
+    SecurityFramework() : handle(nullptr), cf_handle(nullptr),
                          kSecClass(nullptr), kSecClassCertificate(nullptr),
                          kSecMatchLimit(nullptr), kSecMatchLimitAll(nullptr),
                          kSecReturnRef(nullptr), kCFBooleanTrue(nullptr),
+                         kCFAllocatorDefault(nullptr), kCFTypeArrayCallBacks(nullptr),
+                         kCFTypeDictionaryKeyCallBacks(nullptr), kCFTypeDictionaryValueCallBacks(nullptr),
+                         CFArrayCreateMutable(nullptr), CFArrayCreate(nullptr),
+                         CFArraySetValueAtIndex(nullptr), CFArrayGetValueAtIndex(nullptr),
+                         CFArrayGetCount(nullptr), CFRelease(nullptr),
+                         CFDictionaryCreate(nullptr), CFDataGetBytePtr(nullptr), CFDataGetLength(nullptr),
                          SecItemCopyMatching(nullptr), SecCertificateCopyData(nullptr),
                          SecTrustCreateWithCertificates(nullptr), SecPolicyCreateSSL(nullptr),
                          SecTrustEvaluateWithError(nullptr), SecTrustSettingsCopyTrustSettings(nullptr) {}
@@ -67,28 +89,40 @@ public:
         if (handle) {
             dlclose(handle);
         }
+        if (cf_handle) {
+            dlclose(cf_handle);
+        }
     }
     
     bool load() {
-        if (handle) return true; // Already loaded
+        if (handle && cf_handle) return true; // Already loaded
         
+        // Load CoreFoundation framework
+        cf_handle = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
+        if (!cf_handle) {
+            fprintf(stderr, "Failed to load CoreFoundation framework: %s\n", dlerror());
+            return false;
+        }
+        
+        // Load Security framework
         handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY | RTLD_LOCAL);
         if (!handle) {
             fprintf(stderr, "Failed to load Security framework: %s\n", dlerror());
+            dlclose(cf_handle);
+            cf_handle = nullptr;
             return false;
         }
         
-        // Load Security framework constants
-        if (!load_constants()) {
-            dlclose(handle);
-            handle = nullptr;
-            return false;
-        }
-        
-        // Load Security framework functions
-        if (!load_functions()) {
-            dlclose(handle);
-            handle = nullptr;
+        // Load constants and functions
+        if (!load_constants() || !load_functions()) {
+            if (handle) {
+                dlclose(handle);
+                handle = nullptr;
+            }
+            if (cf_handle) {
+                dlclose(cf_handle);
+                cf_handle = nullptr;
+            }
             return false;
         }
         
@@ -97,6 +131,7 @@ public:
 
 private:
     bool load_constants() {
+        // Load Security framework constants
         kSecClass = *(CFStringRef*)dlsym(handle, "kSecClass");
         kSecClassCertificate = *(CFStringRef*)dlsym(handle, "kSecClassCertificate");
         kSecMatchLimit = *(CFStringRef*)dlsym(handle, "kSecMatchLimit");
@@ -104,17 +139,31 @@ private:
         kSecReturnRef = *(CFStringRef*)dlsym(handle, "kSecReturnRef");
         
         // Load CoreFoundation constants
-        void* cf_handle = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
-        if (cf_handle) {
-            kCFBooleanTrue = *(CFBooleanRef*)dlsym(cf_handle, "kCFBooleanTrue");
-            dlclose(cf_handle);
-        }
+        kCFBooleanTrue = *(CFBooleanRef*)dlsym(cf_handle, "kCFBooleanTrue");
+        kCFAllocatorDefault = *(CFAllocatorRef*)dlsym(cf_handle, "kCFAllocatorDefault");
+        kCFTypeArrayCallBacks = (CFArrayCallBacks*)dlsym(cf_handle, "kCFTypeArrayCallBacks");
+        kCFTypeDictionaryKeyCallBacks = (CFDictionaryKeyCallBacks*)dlsym(cf_handle, "kCFTypeDictionaryKeyCallBacks");
+        kCFTypeDictionaryValueCallBacks = (CFDictionaryValueCallBacks*)dlsym(cf_handle, "kCFTypeDictionaryValueCallBacks");
         
         return kSecClass && kSecClassCertificate && kSecMatchLimit && 
-               kSecMatchLimitAll && kSecReturnRef && kCFBooleanTrue;
+               kSecMatchLimitAll && kSecReturnRef && kCFBooleanTrue &&
+               kCFAllocatorDefault && kCFTypeArrayCallBacks &&
+               kCFTypeDictionaryKeyCallBacks && kCFTypeDictionaryValueCallBacks;
     }
     
     bool load_functions() {
+        // Load CoreFoundation functions
+        CFArrayCreateMutable = (CFMutableArrayRef (*)(CFAllocatorRef, CFIndex, const CFArrayCallBacks*))dlsym(cf_handle, "CFArrayCreateMutable");
+        CFArrayCreate = (CFArrayRef (*)(CFAllocatorRef, const void**, CFIndex, const CFArrayCallBacks*))dlsym(cf_handle, "CFArrayCreate");
+        CFArraySetValueAtIndex = (void (*)(CFMutableArrayRef, CFIndex, const void*))dlsym(cf_handle, "CFArraySetValueAtIndex");
+        CFArrayGetValueAtIndex = (const void* (*)(CFArrayRef, CFIndex))dlsym(cf_handle, "CFArrayGetValueAtIndex");
+        CFArrayGetCount = (CFIndex (*)(CFArrayRef))dlsym(cf_handle, "CFArrayGetCount");
+        CFRelease = (void (*)(CFTypeRef))dlsym(cf_handle, "CFRelease");
+        CFDictionaryCreate = (CFDictionaryRef (*)(CFAllocatorRef, const void**, const void**, CFIndex, const CFDictionaryKeyCallBacks*, const CFDictionaryValueCallBacks*))dlsym(cf_handle, "CFDictionaryCreate");
+        CFDataGetBytePtr = (const UInt8* (*)(CFDataRef))dlsym(cf_handle, "CFDataGetBytePtr");
+        CFDataGetLength = (CFIndex (*)(CFDataRef))dlsym(cf_handle, "CFDataGetLength");
+        
+        // Load Security framework functions
         SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef*))dlsym(handle, "SecItemCopyMatching");
         SecCertificateCopyData = (CFDataRef (*)(SecCertificateRef))dlsym(handle, "SecCertificateCopyData");
         SecTrustCreateWithCertificates = (OSStatus (*)(CFArrayRef, CFArrayRef, SecTrustRef*))dlsym(handle, "SecTrustCreateWithCertificates");
@@ -122,7 +171,10 @@ private:
         SecTrustEvaluateWithError = (Boolean (*)(SecTrustRef, CFErrorRef*))dlsym(handle, "SecTrustEvaluateWithError");
         SecTrustSettingsCopyTrustSettings = (OSStatus (*)(SecCertificateRef, SecTrustSettingsDomain, CFArrayRef*))dlsym(handle, "SecTrustSettingsCopyTrustSettings");
         
-        return SecItemCopyMatching && SecCertificateCopyData &&
+        return CFArrayCreateMutable && CFArrayCreate && CFArraySetValueAtIndex &&
+               CFArrayGetValueAtIndex && CFArrayGetCount && CFRelease &&
+               CFDictionaryCreate && CFDataGetBytePtr && CFDataGetLength &&
+               SecItemCopyMatching && SecCertificateCopyData &&
                SecTrustCreateWithCertificates && SecPolicyCreateSSL &&
                SecTrustEvaluateWithError && SecTrustSettingsCopyTrustSettings;
     }
@@ -161,21 +213,21 @@ static bool is_certificate_self_issued(X509* cert) {
 
 // Validate certificate trust using Security framework
 static bool is_certificate_trust_valid(SecurityFramework* security, SecCertificateRef cert_ref) {
-    CFMutableArrayRef subj_certs = CFArrayCreateMutable(nullptr, 1, &kCFTypeArrayCallBacks);
+    CFMutableArrayRef subj_certs = security->CFArrayCreateMutable(nullptr, 1, security->kCFTypeArrayCallBacks);
     if (!subj_certs) return false;
     
-    CFArraySetValueAtIndex(subj_certs, 0, cert_ref);
+    security->CFArraySetValueAtIndex(subj_certs, 0, cert_ref);
     
     SecPolicyRef policy = security->SecPolicyCreateSSL(false, nullptr);
     if (!policy) {
-        CFRelease(subj_certs);
+        security->CFRelease(subj_certs);
         return false;
     }
     
-    CFArrayRef policies = CFArrayCreate(nullptr, (const void**)&policy, 1, &kCFTypeArrayCallBacks);
+    CFArrayRef policies = security->CFArrayCreate(nullptr, (const void**)&policy, 1, security->kCFTypeArrayCallBacks);
     if (!policies) {
-        CFRelease(policy);
-        CFRelease(subj_certs);
+        security->CFRelease(policy);
+        security->CFRelease(subj_certs);
         return false;
     }
     
@@ -188,22 +240,22 @@ static bool is_certificate_trust_valid(SecurityFramework* security, SecCertifica
     }
     
     // Cleanup
-    if (sec_trust) CFRelease(sec_trust);
-    CFRelease(policies);
-    CFRelease(policy);
-    CFRelease(subj_certs);
+    if (sec_trust) security->CFRelease(sec_trust);
+    security->CFRelease(policies);
+    security->CFRelease(policy);
+    security->CFRelease(subj_certs);
     
     return result;
 }
 
 // Check trust settings for policy (simplified version)
-static TrustStatus is_trust_settings_trusted_for_policy(CFArrayRef trust_settings, bool is_self_issued) {
+static TrustStatus is_trust_settings_trusted_for_policy(SecurityFramework* security, CFArrayRef trust_settings, bool is_self_issued) {
     if (!trust_settings) {
         return TrustStatus::UNSPECIFIED;
     }
     
     // Empty trust settings array means "always trust this certificate"
-    if (CFArrayGetCount(trust_settings) == 0) {
+    if (security->CFArrayGetCount(trust_settings) == 0) {
         return is_self_issued ? TrustStatus::TRUSTED : TrustStatus::UNSPECIFIED;
     }
     
@@ -227,8 +279,8 @@ static bool is_certificate_trusted_for_policy(SecurityFramework* security, X509*
         }
         
         if (err == errSecSuccess && trust_settings) {
-            TrustStatus result = is_trust_settings_trusted_for_policy(trust_settings, is_self_issued);
-            CFRelease(trust_settings);
+            TrustStatus result = is_trust_settings_trusted_for_policy(security, trust_settings, is_self_issued);
+            security->CFRelease(trust_settings);
             
             if (result == TrustStatus::TRUSTED) {
                 return true;
@@ -273,13 +325,13 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         security->kCFBooleanTrue
     };
     
-    CFDictionaryRef search = CFDictionaryCreate(
-        kCFAllocatorDefault,
+    CFDictionaryRef search = security->CFDictionaryCreate(
+        security->kCFAllocatorDefault,
         search_keys,
         search_values,
         3,
-        &kCFTypeDictionaryKeyCallBacks,
-        &kCFTypeDictionaryValueCallBacks
+        security->kCFTypeDictionaryKeyCallBacks,
+        security->kCFTypeDictionaryValueCallBacks
     );
 
     if (!search) {
@@ -288,16 +340,16 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
 
     CFArrayRef certificates = nullptr;
     OSStatus status = security->SecItemCopyMatching(search, (CFTypeRef*)&certificates);
-    CFRelease(search);
+    security->CFRelease(search);
 
     if (status != errSecSuccess || !certificates) {
         return;
     }
 
-    CFIndex count = CFArrayGetCount(certificates);
+    CFIndex count = security->CFArrayGetCount(certificates);
     
     for (CFIndex i = 0; i < count; ++i) {
-        SecCertificateRef cert_ref = (SecCertificateRef)CFArrayGetValueAtIndex(certificates, i);
+        SecCertificateRef cert_ref = (SecCertificateRef)security->CFArrayGetValueAtIndex(certificates, i);
         if (!cert_ref) continue;
         
         // Get certificate data
@@ -305,10 +357,10 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         if (!cert_data) continue;
         
         // Convert to X509
-        const unsigned char* data_ptr = CFDataGetBytePtr(cert_data);
-        long data_len = CFDataGetLength(cert_data);
+        const unsigned char* data_ptr = security->CFDataGetBytePtr(cert_data);
+        long data_len = security->CFDataGetLength(cert_data);
         X509* x509_cert = d2i_X509(nullptr, &data_ptr, data_len);
-        CFRelease(cert_data);
+        security->CFRelease(cert_data);
         
         if (!x509_cert) continue;
         
@@ -320,7 +372,7 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         }
     }
     
-    CFRelease(certificates);
+    security->CFRelease(certificates);
 }
 
 // Cleanup function for Security framework

@@ -32,11 +32,11 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     // if the callback is only called once, we can remove the strong reference to allow the gc to collect it.
     // TODO: at the end of a describe scope, we should be able to clean up any beforeEach/afterEach hooks. we can add this as a schedule entry with 'cleanup_describe' tag for example. it has to be at the end of the describe scope
     // because otherwise we might clean up a beforeEach hook that we still need if a test were to call test() within itself.
-    const callback = if (entry.tag.isCalledMultipleTimes()) (entry.callback.get() orelse jsc.JSValue.zero) else entry.callback.swap();
-    if (callback == .zero) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
+    const callback = if (entry.tag.isCalledMultipleTimes()) (entry.callback.get() orelse jsc.JSValue.zero) else entry.callback.swap(this.bunTest().gpa, null);
+    if (callback == null) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
 
     // TODO: catch errors
-    const result = try callback.call(globalThis, .js_undefined, &.{});
+    const result = try callback.?.call(globalThis, .js_undefined, &.{});
 
     if (result.asPromise()) |_| {
         this.bunTest().addThen(globalThis, result);

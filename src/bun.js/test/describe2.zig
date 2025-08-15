@@ -87,7 +87,7 @@ pub const js_fns = struct {
         _ = callframe;
 
         if (buntest.done_promise.get() == null) {
-            buntest.done_promise.set(globalObject, jsc.JSPromise.create(globalObject).toJS());
+            _ = buntest.done_promise.swap(buntest.gpa, jsc.JSPromise.create(globalObject).toJS());
         }
         return buntest.done_promise.get().?; // TODO: return a promise that resolves when done
     }
@@ -98,7 +98,7 @@ pub const BunTest = struct {
     executing: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
-    done_promise: jsc.Strong.Optional = .empty,
+    done_promise: Strong.Optional = .empty,
 
     phase: enum {
         collection,
@@ -248,7 +248,7 @@ pub const DescribeScope = struct {
     beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
     afterAll: std.ArrayList(*ExecutionEntry),
-    name: jsc.Strong.Optional,
+    name: Strong.Optional,
 
     pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
         return .{
@@ -314,7 +314,7 @@ pub const ExecutionEntry = struct {
             };
         }
     },
-    callback: jsc.Strong.Optional,
+    callback: Strong.Optional,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();
         buntest.gpa.destroy(this);
@@ -379,6 +379,66 @@ pub const group = struct {
         std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
         last_was_start = false;
     }
+};
+
+const Strong = struct {
+    _raw: jsc.JSValue,
+    _safety: Safety,
+    const enable_safety = bun.Environment.ci_assert;
+    const Safety = if (enable_safety) ?struct { ptr: *Strong, gpa: std.mem.Allocator } else void;
+    pub fn initNonCell(non_cell: jsc.JSValue) Strong {
+        bun.assert(!non_cell.isCell());
+        const safety: Safety = if (enable_safety) null;
+        return .{ ._raw = non_cell, ._safety = safety };
+    }
+    pub fn init(safety_gpa: std.mem.Allocator, value: jsc.JSValue) Strong {
+        value.protect();
+        const safety: Safety = if (enable_safety) .{ .ptr = bun.create(safety_gpa, Strong, .{ ._raw = @enumFromInt(0xAEBCFA), ._safety = null }), .gpa = safety_gpa };
+        return .{ ._raw = value, ._safety = safety };
+    }
+    pub fn deinit(this: *Strong) void {
+        this._raw.unprotect();
+        if (enable_safety) if (this._safety) |safety| {
+            bun.assert(@intFromEnum(safety.ptr.*._raw) == 0xAEBCFA);
+            safety.gpa.destroy(safety.ptr);
+        };
+    }
+    pub fn get(this: Strong) jsc.JSValue {
+        return this._raw;
+    }
+    pub fn swap(this: *Strong, safety_gpa: std.mem.Allocator, next: jsc.JSValue) jsc.JSValue {
+        const prev = this._raw;
+        this.deinit();
+        this.* = .init(safety_gpa, next);
+        return prev;
+    }
+
+    const Optional = struct {
+        _backing: Strong,
+        pub const empty: Optional = .{ ._backing = .initNonCell(.zero) };
+        pub fn initNonCell(non_cell: jsc.JSValue) Optional {
+            return .{ ._backing = .initNonCell(non_cell) };
+        }
+        pub fn init(safety_gpa: std.mem.Allocator, value: jsc.JSValue) Optional {
+            return .{ ._backing = .init(safety_gpa, value) };
+        }
+        pub fn deinit(this: *Optional) void {
+            this._backing.deinit();
+        }
+        pub fn get(this: Optional) ?jsc.JSValue {
+            const result = this._backing.get();
+            if (result == .zero) return null;
+            return result;
+        }
+        pub fn swap(this: *Optional, safety_gpa: std.mem.Allocator, next: ?jsc.JSValue) ?jsc.JSValue {
+            const result = this._backing.swap(safety_gpa, next orelse .zero);
+            if (result == .zero) return null;
+            return result;
+        }
+        pub fn has(this: Optional) bool {
+            return this._backing.get() != .zero;
+        }
+    };
 };
 
 const std = @import("std");

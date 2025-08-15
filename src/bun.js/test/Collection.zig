@@ -78,7 +78,7 @@ pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, n
     const test_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, .{
         .parent = this.active_scope,
         .tag = .test_callback,
-        .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
+        .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
     });
     try this.active_scope.entries.append(.{ .test_callback = test_callback });
 }
@@ -92,7 +92,7 @@ pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, c
     const hook_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, .{
         .parent = this.active_scope,
         .tag = tag,
-        .callback = .create(callback.withAsyncContextIfNeeded(globalThis), globalThis),
+        .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
     });
     try @field(this.active_scope, @tagName(tag)).append(hook_callback);
 }
@@ -119,7 +119,7 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
 
     const previous_scope = active_scope;
     const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, previous_scope));
-    new_scope.name = .create(name, globalThis);
+    new_scope.name = .init(buntest.gpa, name);
     try previous_scope.entries.append(.{ .describe = new_scope });
 
     this.active_scope = new_scope;

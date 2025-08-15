@@ -38,13 +38,6 @@ pub fn deinit(this: *Collection) void {
     this.describe_callback_queue.deinit();
 }
 
-fn drainedPromise(_: *Collection, globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
-    group.begin(@src());
-    defer group.end();
-
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, .js_undefined); // TODO: return a promise that resolves when the describe queue is drained
-}
-
 fn bunTest(this: *Collection) *BunTest {
     group.begin(@src());
     defer group.end();
@@ -100,33 +93,15 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!de
     group.begin(@src());
     defer group.end();
 
-    if (this.describe_callback_queue.items.len > 0) {
-        group.log("runOne -> call next", .{});
-        var first = this.describe_callback_queue.orderedRemove(0);
-        defer first.deinit();
-        return try this.callDescribeCallback(globalThis, first.name.get(), first.callback.get(), first.active_scope);
-    } else {
-        return .done;
-    }
-}
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
-    group.begin(@src());
-    defer group.end();
+    if (this.describe_callback_queue.items.len == 0) return .done;
 
-    if (result_is_error) {
-        _ = result_value;
-        group.log("TODO: print error", .{});
-    }
+    group.log("runOne -> call next", .{});
+    var first = this.describe_callback_queue.orderedRemove(0);
+    defer first.deinit();
 
-    bun.assert(this._previous_scope != null);
-    const prev_scope = this._previous_scope.?;
-    this._previous_scope = null;
-    try this.describeCallbackCompleted(globalThis, prev_scope);
-}
-
-pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!describe2.RunOneResult {
-    group.begin(@src());
-    defer group.end();
+    const name = first.name.get();
+    const callback = first.callback.get();
+    const active_scope = first.active_scope;
 
     const buntest = this.bunTest();
 
@@ -142,11 +117,19 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
     this._previous_scope = previous_scope;
     return buntest.callTestCallback(globalThis, callback, .{ .done_parameter = false });
 }
-pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
+pub fn runOneCompleted(this: *Collection, _: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
-    this.active_scope = previous_scope;
+    if (result_is_error) {
+        _ = result_value;
+        group.log("TODO: print error", .{});
+    }
+
+    bun.assert(this._previous_scope != null);
+    const prev_scope = this._previous_scope.?;
+    this._previous_scope = null;
+    this.active_scope = prev_scope;
 }
 
 const std = @import("std");

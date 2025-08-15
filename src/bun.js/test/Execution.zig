@@ -25,7 +25,7 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     const entry = this.order[this.index];
 
     if (!entry.tag.shouldExecute()) {
-        try runOneCompleted2(this, globalThis, .skip);
+        this.index += 1;
         return .continue_sync;
     }
 
@@ -41,33 +41,29 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     return this.bunTest().callTestCallback(globalThis, callback.?, .{ .done_parameter = true });
 }
 
-pub fn runOneCompleted2(this: *Execution, globalThis: *jsc.JSGlobalObject, status: ExecutionEntryTag) bun.JSError!void {
-    bun.assert(this.index < this.order.len);
-    const entry = this.order[this.index];
-    this.index += 1;
-
-    if (entry.tag == .executing) {
-        entry.tag = status;
-    }
-    _ = globalThis;
-}
-
 pub fn runOneCompleted(this: *Execution, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     if (result_is_error) {
         _ = result_value;
+        // TODO: print error
         group.log("TODO: print error", .{});
-        try runOneCompleted2(this, globalThis, .fail);
-    } else {
-        try runOneCompleted2(this, globalThis, .pass);
     }
+
+    bun.assert(this.index < this.order.len);
+    const entry = this.order[this.index];
+    this.index += 1;
+
+    if (entry.tag == .executing) {
+        entry.tag = if (result_is_error) .fail else .pass;
+    }
+    _ = globalThis;
 
     group.log("TODO: announce test result", .{});
 }
 
-pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
+pub fn generateOrderSub(current: TestScheduleEntry, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
     switch (current) {
         .describe => |describe| {
             try generateOrderDescribe(describe, order);
@@ -138,7 +134,7 @@ const Execution = describe2.Execution;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.group;
 const TestScope = describe2.TestScope;
-const TestScheduleEntry2 = describe2.TestScheduleEntry2;
+const TestScheduleEntry = describe2.TestScheduleEntry;
 const ExecutionEntry = describe2.ExecutionEntry;
 const ExecutionEntryTag = describe2.ExecutionEntryTag;
 

@@ -339,6 +339,14 @@ pub fn enqueueDependencyToRoot(
                         pub fn isDone(closure: *@This()) bool {
                             const manager = closure.manager;
                             if (manager.pendingTaskCount() > 0) {
+                                // Set up default callback for handling extracted packages
+                                manager.onExtractCallback = .{
+                                    .default = .{
+                                        .ctx = manager,
+                                        .fn_ptr = PackageManager.onExtractDefault,
+                                    },
+                                };
+                                
                                 manager.runTasks(
                                     void,
                                     {},

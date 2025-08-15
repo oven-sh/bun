@@ -615,7 +615,37 @@ pub fn runTasks(
                 manager.extracted_count += 1;
                 bun.analytics.Features.extracted_packages += 1;
 
-                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                // Prioritize runtime callback if available
+                if (manager.onExtractCallback) |callback| {
+                    switch (callback) {
+                        .package_installer => |cb| {
+                            cb.ctx.fixCachedLockfilePackageSlices();
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                        .store_installer => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                            );
+                        },
+                        .default => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                    }
+                } else if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    // Fall back to compile-time callback
                     switch (Ctx) {
                         *PackageInstaller => {
                             extract_ctx.fixCachedLockfilePackageSlices();
@@ -864,12 +894,44 @@ pub fn runTasks(
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                // Prioritize runtime callback if available
+                if (manager.onExtractCallback) |callback| {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
+                    switch (callback) {
+                        .package_installer => |cb| {
+                            // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                            // keeping just in case for now
+                            cb.ctx.fixCachedLockfilePackageSlices();
+
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                        .store_installer => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                            );
+                        },
+                        .default => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                    }
+                } else if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    // Fall back to compile-time callback
                     switch (Ctx) {
                         *PackageInstaller => {
-
                             // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                             // keeping just in case for now
                             extract_ctx.fixCachedLockfilePackageSlices();
@@ -924,14 +986,6 @@ pub fn runTasks(
                                 dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
                             },
                         }
-                    }
-
-                    // Process any remaining items (e.g., dependency_install_context) that were appended back
-                    // This is needed when there's no onExtract callback to handle installation
-                    if (dependency_list_entry.value_ptr.items.len > 0) {
-                        const remaining_list = dependency_list_entry.value_ptr.*;
-                        dependency_list_entry.value_ptr.* = .{};
-                        try manager.processDependencyList(remaining_list, void, {}, {}, install_peer);
                     }
 
                     if (@TypeOf(callbacks.onExtract) != void) {

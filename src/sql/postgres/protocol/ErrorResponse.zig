@@ -110,7 +110,12 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
 
     const createPostgresError = @import("../AnyPostgresError.zig").createPostgresError;
 
-    const code_slice = if (code.isEmpty()) "ERR_POSTGRES_SERVER_ERROR" else code.byteSlice();
+    const errno = if (!code.isEmpty()) code.byteSlice() else null;
+    const error_code = if (code.eqlComptime("42601"))
+        "ERR_POSTGRES_SYNTAX_ERROR"
+    else
+        "ERR_POSTGRES_SERVER_ERROR";
+
     const detail_slice = if (detail.isEmpty()) null else detail.byteSlice();
     const hint_slice = if (hint.isEmpty()) null else hint.byteSlice();
     const severity_slice = if (severity.isEmpty()) null else severity.byteSlice();
@@ -128,7 +133,8 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
     return createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
-        .code = code_slice,
+        .code = error_code,
+        .errno = errno,
         .detail = detail_slice,
         .hint = hint_slice,
         .severity = severity_slice,

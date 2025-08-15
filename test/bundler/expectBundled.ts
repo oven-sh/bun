@@ -149,6 +149,8 @@ export interface BundlerTestInput {
   outputPaths?: string[];
   /** Use --compile */
   compile?: boolean;
+  /** Use --compile-argv to prepend arguments to standalone executable */
+  compileArgv?: string | string[];
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -430,6 +432,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    compileArgv,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -693,6 +696,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              compileArgv ? `--compile-argv=${Array.isArray(compileArgv) ? compileArgv.join(" ") : compileArgv}` : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

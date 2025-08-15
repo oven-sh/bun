@@ -1828,9 +1828,8 @@ const Status = @import("./Status.zig").Status;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
-const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 const createPostgresError = @import("./AnyPostgresError.zig").createPostgresError;
-const PostgresErrorOptions = @import("./AnyPostgresError.zig").PostgresErrorOptions;
+const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;

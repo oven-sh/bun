@@ -557,10 +557,12 @@ fn hoistDependency(
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
-    return hoistDependencyWithDepth(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, 0);
+    var visited_packages = std.AutoHashMap(PackageID, void).init(builder.allocator);
+    defer visited_packages.deinit();
+    return hoistDependencyWithVisited(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, &visited_packages);
 }
 
-fn hoistDependencyWithDepth(
+fn hoistDependencyWithVisited(
     this: *Tree,
     comptime as_defined: bool,
     hoist_root_id: Id,
@@ -570,14 +572,18 @@ fn hoistDependencyWithDepth(
     trees: []Tree,
     comptime method: BuilderMethod,
     builder: *Builder(method),
-    depth: u32,
+    visited_packages: *std.AutoHashMap(PackageID, void),
 ) !HoistDependencyResult {
-    // Prevent infinite recursion by limiting the hoisting depth
-    // This prevents stack overflow in circular dependency scenarios
-    const max_hoisting_depth = 1000;
-    if (depth >= max_hoisting_depth) {
+    // Check if we've already visited this package during hoisting
+    // This prevents infinite recursion in circular dependency scenarios
+    if (visited_packages.contains(package_id)) {
         return .dependency_loop;
     }
+    
+    // Mark this package as visited
+    try visited_packages.put(package_id, {});
+    // Ensure we remove this package from visited set when function exits
+    defer _ = visited_packages.remove(package_id);
     const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
     for (0..this_dependencies.len) |i| {
         const dep_id = this_dependencies[i];
@@ -635,7 +641,7 @@ fn hoistDependencyWithDepth(
 
     // this dependency was not found in this tree, try hoisting or placing in the next parent
     if (this.parent != invalid_id and this.id != hoist_root_id) {
-        const id = trees[this.parent].hoistDependencyWithDepth(
+        const id = trees[this.parent].hoistDependencyWithVisited(
             false,
             hoist_root_id,
             package_id,
@@ -644,11 +650,11 @@ fn hoistDependencyWithDepth(
             trees,
             method,
             builder,
-            depth + 1,
+            visited_packages,
         ) catch unreachable;
         if (!as_defined or id != .dependency_loop) return id; // 1 or 2
     }
-
+    
     // place the dependency in the current tree
     return .{ .placement = .{ .id = this.id } }; // 2
 }

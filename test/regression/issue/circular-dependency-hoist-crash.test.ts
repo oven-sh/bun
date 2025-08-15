@@ -7,6 +7,9 @@ test("circular dependencies should not cause infinite recursion during hoisting"
   // stack overflow and segmentation fault.
   // 
   // The circular dependency pattern is: pkg-a -> pkg-b -> pkg-c -> pkg-a
+  // 
+  // The fix uses cycle detection rather than depth limiting to properly handle
+  // both circular dependencies and legitimately deep dependency trees.
   
   const dir = tempDirWithFiles("circular-deps", {
     "package.json": JSON.stringify({

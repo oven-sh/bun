@@ -246,6 +246,8 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
+        // Reusable set for cycle detection during hoisting to avoid repeated allocations
+        hoist_visited_packages: std.AutoHashMap(PackageID, void),
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -557,9 +559,9 @@ fn hoistDependency(
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
-    var visited_packages = std.AutoHashMap(PackageID, void).init(builder.allocator);
-    defer visited_packages.deinit();
-    return hoistDependencyWithVisited(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, &visited_packages);
+    // Clear the reusable visited set for this top-level hoisting operation
+    builder.hoist_visited_packages.clearRetainingCapacity();
+    return hoistDependencyWithVisited(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, &builder.hoist_visited_packages);
 }
 
 fn hoistDependencyWithVisited(

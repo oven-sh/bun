@@ -65,7 +65,7 @@ pub fn createPostgresError(
 
     const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.put(globalObject, jsc.ZigString.static("code"), jsc.ZigString.init(options.code).toJS(globalObject));
-    
+
     if (options.errno) |errno| opts_obj.put(globalObject, jsc.ZigString.static("errno"), jsc.ZigString.init(errno).toJS(globalObject));
     if (options.detail) |detail| opts_obj.put(globalObject, jsc.ZigString.static("detail"), jsc.ZigString.init(detail).toJS(globalObject));
     if (options.hint) |hint| opts_obj.put(globalObject, jsc.ZigString.static("hint"), jsc.ZigString.init(hint).toJS(globalObject));

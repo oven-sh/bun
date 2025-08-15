@@ -244,6 +244,22 @@ describe("SQLite URL Parsing Matrix", () => {
     });
   });
 
+  describe("import.meta.resolve() compatibility", () => {
+    test("handles URLs from import.meta.resolve()", () => {
+      // Use import.meta.resolve() to get the actual format for the current platform
+      const resolvedUrl = import.meta.resolve("./test.db");
+
+      const sql = new SQL(resolvedUrl);
+      expect(sql.options.adapter).toBe("sqlite");
+
+      const filename = (sql.options as Bun.SQL.SQLiteOptions).filename;
+      const expected = Bun.fileURLToPath(resolvedUrl);
+      expect(filename).toBe(expected);
+
+      sql.close();
+    });
+  });
+
   describe("Edge cases", () => {
     test("handles very long paths", () => {
       const longFilename = "a".repeat(255) + ".db";

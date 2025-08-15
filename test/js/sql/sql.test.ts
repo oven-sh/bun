@@ -11162,6 +11162,20 @@ describe("should proper handle connection errors", () => {
 });
 
 describe("Misc", () => {
+  test("The Bun.SQL.*Error classes exist", () => {
+    expect(Bun.SQL.SQLError).toBeDefined();
+    expect(Bun.SQL.PostgresError).toBeDefined();
+    expect(Bun.SQL.SQLiteError).toBeDefined();
+
+    expect(Bun.SQL.SQLError.name).toBe("SQLError");
+    expect(Bun.SQL.PostgresError.name).toBe("PostgresError");
+    expect(Bun.SQL.SQLiteError.name).toBe("SQLiteError");
+
+    expect(Bun.SQL.SQLError.prototype).toBeInstanceOf(Error);
+    expect(Bun.SQL.PostgresError.prototype).toBeInstanceOf(Bun.SQL.SQLError);
+    expect(Bun.SQL.SQLiteError.prototype).toBeInstanceOf(Bun.SQL.SQLError);
+  });
+
   describe("Adapter override URL parsing", () => {
     test("explicit adapter='sqlite' overrides postgres:// URL", async () => {
       // Even though URL suggests postgres, explicit adapter should win

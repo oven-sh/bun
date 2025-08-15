@@ -137,14 +137,14 @@ public:
         return !m_finalizers.empty();
     }
 
-    /// Will abort the process if a duplicate entry would be added in debug builds.
-    /// In release builds, duplicates are allowed to match Node.js behavior.
+    /// Will abort the process if a duplicate entry would be added.
+    /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
     {
-        // Only check for duplicates in debug builds, like Node.js
-        // See: /vendor/node/src/cleanup_queue-inl.h:24 (CHECK_EQ only active in debug)
+        // Always check for duplicates like Node.js CHECK_EQ
+        // See: node/src/cleanup_queue-inl.h:24 (CHECK_EQ runs in all builds)
         for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            ASSERT(function != existing_function || data != existing_data);
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
         }
 
         m_cleanupHooks.emplace_back(function, data);
@@ -160,15 +160,15 @@ public:
         }
 
         // Node.js silently ignores removal of non-existent hooks
-        // See: /vendor/node/src/cleanup_queue-inl.h:27-30
+        // See: node/src/cleanup_queue-inl.h:27-30
     }
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
-        // Only check for duplicates in debug builds, like Node.js
+        // Always check for duplicates like Node.js CHECK_EQ
         // Node.js async cleanup hooks also use the same CleanupQueue with CHECK_EQ
         for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            ASSERT(function != existing_function || data != existing_data);
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
         }
 
         auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
@@ -191,7 +191,7 @@ public:
         }
 
         // Node.js silently ignores removal of non-existent handles
-        // See: /vendor/node/src/node_api.cc:849-855
+        // See: node/src/node_api.cc:849-855
         return false;
     }
 

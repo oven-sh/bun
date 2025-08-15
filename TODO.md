@@ -52,5 +52,11 @@ Design:
     - this doesn't seem too complicated. pretty simple actually.
     - note that jest currently skips beforeEach/afterEach calls for concurrent tests <https://github.com/jestjs/jest/issues/7997>
     - check what vitest does
+    - handling:
+      - concurrent tests should be added to a concurrent block
+      - a concurrent block has a list of tests
+      - to execute a concurrent block, call each in sequence and add (resolveConcurrent,rejectConcurrent) then handlers to their returned promises
+        - call using callTestCallback(concurrent) which will do that for you
+      - once all have resolved/rejected, call the main 'bunTestThenOrCatch' function
 - multi-file
   - not implemented yet but we'll try to have a different BunTest for each file?

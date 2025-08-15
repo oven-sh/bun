@@ -167,7 +167,8 @@ pub const BunTest = struct {
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         return bunTestThenOrCatch(globalThis, callframe, true);
     }
-    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
+    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, concurrent: bool) void {
+        if (concurrent) @panic("TODO: implement concurrent");
         promise.then(globalThis, this.ref(), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
@@ -241,7 +242,7 @@ pub const BunTest = struct {
         }
     }
 
-    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, cfg: struct { done_parameter: bool }) bun.JSError!RunOneResult {
+    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, cfg: struct { done_parameter: bool, concurrent: bool }) bun.JSError!RunOneResult {
         group.begin(@src());
         defer group.end();
 
@@ -267,7 +268,7 @@ pub const BunTest = struct {
 
         if (!is_error and result.asPromise() != null) {
             group.log("callTestCallback -> promise", .{});
-            this.addThen(globalThis, result);
+            this.addThen(globalThis, result, cfg.concurrent);
             return .continue_async;
         }
 

@@ -111,7 +111,6 @@ interface CppSQLStatement {
   columnTypes: string[];
   declaredTypes: (string | null)[];
   safeIntegers: boolean;
-  hasMultipleStatements: boolean;
 }
 
 interface CppSQL {
@@ -321,10 +320,6 @@ class Statement {
 
   get paramsCount() {
     return this.#raw.paramsCount;
-  }
-
-  get hasMultipleStatements() {
-    return this.#raw.hasMultipleStatements;
   }
 
   finalize(...args) {

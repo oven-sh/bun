@@ -476,7 +476,6 @@ public:
     SQLiteBindingsMap m_bindingNames = { 0, false };
     bool hasExecuted : 1 = false;
     bool useBigInt64 : 1 = false;
-    bool hasMultipleStatements : 1 = false;
 
 protected:
     JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
@@ -611,8 +610,6 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "columnTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnTypes, 0 } },
     { "declaredTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnDeclaredTypes, 0 } },
     { "safeIntegers"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetSafeIntegers, jsSqlStatementSetSafeIntegers } },
-    { "hasMultipleStatements"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetHasMultipleStatements, 0 } },
-
 };
 
 class JSSQLStatementPrototype final : public JSC::JSNonFinalObject {
@@ -1585,35 +1582,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;
-    const char* tail = nullptr;
-    bool hasMultipleStatements = false;
-
     if (
         // fast path: ascii latin1 string is utf8
         sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length())) {
-        const char* sqlData = reinterpret_cast<const char*>(sqlString.span8().data());
-        const char* sqlEnd = sqlData + sqlString.length();
-        rc = sqlite3_prepare_v3(db, sqlData, sqlString.length(), flags, &statement, &tail);
-
-        // Check if there are remaining statements
-        if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
-            while (tail < sqlEnd && *tail && isspace(*tail))
-                tail++;
-            hasMultipleStatements = tail < sqlEnd && *tail != '\0';
-        }
+        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length(), flags, &statement, nullptr);
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();
-        const char* sqlData = utf8.data();
-        const char* sqlEnd = sqlData + utf8.length();
-        rc = sqlite3_prepare_v3(db, sqlData, utf8.length(), flags, &statement, &tail);
-
-        // Check if there are remaining statements
-        if (rc == SQLITE_OK && tail != nullptr && tail < sqlEnd) {
-            while (tail < sqlEnd && *tail && isspace(*tail))
-                tail++;
-            hasMultipleStatements = tail < sqlEnd && *tail != '\0';
-        }
+        rc = sqlite3_prepare_v3(db, utf8.data(), utf8.length(), flags, &statement, nullptr);
     }
 
     if (rc != SQLITE_OK) {
@@ -1625,7 +1601,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
-    sqlStatement->hasMultipleStatements = hasMultipleStatements;
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -2535,15 +2510,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnCount, (JSGlobalObject * lexical
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNumber(sqlite3_column_count(castedThis->stmt))));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetHasMultipleStatements, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    CHECK_THIS
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(castedThis->hasMultipleStatements)));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {

@@ -15,11 +15,11 @@ class SQLError extends Error {
 
 class PostgresError extends SQLError {
   public readonly code: string;
-  public readonly errno: string;
   public readonly detail: string;
   public readonly hint: string;
   public readonly severity: string;
 
+  public readonly errno?: string;
   public readonly position?: string;
   public readonly internalPosition?: string;
   public readonly internalQuery?: string;
@@ -37,6 +37,7 @@ class PostgresError extends SQLError {
     message: string,
     options: {
       code: string;
+      errno?: string;
       detail: string;
       hint: string;
       severity: string;
@@ -58,6 +59,7 @@ class PostgresError extends SQLError {
     this.name = "PostgresError";
 
     this.code = options.code;
+    this.errno = options.errno;
     this.detail = options.detail;
     this.hint = options.hint;
     this.severity = options.severity;

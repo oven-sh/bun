@@ -202,10 +202,12 @@ function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
-  let [
-    stringOrUrl = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL || null,
-    options,
-  ]: [string | URL | null, Bun.SQL.Options] =
+  const env = Bun.env;
+
+  let [stringOrUrl = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || null, options]: [
+    string | URL | null,
+    Bun.SQL.Options,
+  ] =
     typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL
       ? [stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty]
       : stringOrUrlOrOptions
@@ -278,10 +280,10 @@ function parseOptions(
   let sslMode: SSLMode = SSLMode.disable;
 
   if (!stringOrUrl || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
-    let urlString = Bun.env.POSTGRES_URL || Bun.env.DATABASE_URL || Bun.env.PGURL || Bun.env.PG_URL;
+    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
 
     if (!urlString) {
-      urlString = Bun.env.TLS_POSTGRES_DATABASE_URL || Bun.env.TLS_DATABASE_URL;
+      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
       if (urlString) {
         sslMode = SSLMode.require;
       }
@@ -349,9 +351,9 @@ function parseOptions(
     }
     query = query.trim();
   }
-  hostname ||= options.hostname || options.host || Bun.env.PGHOST || "localhost";
+  hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
 
-  port ||= Number(options.port || Bun.env.PGPORT || 5432);
+  port ||= Number(options.port || env.PGPORT || 5432);
 
   path ||= (options as { path?: string }).path || "";
   // add /.s.PGSQL.${port} if it doesn't exist
@@ -360,16 +362,10 @@ function parseOptions(
   }
 
   username ||=
-    options.username ||
-    options.user ||
-    Bun.env.PGUSERNAME ||
-    Bun.env.PGUSER ||
-    Bun.env.USER ||
-    Bun.env.USERNAME ||
-    "postgres";
+    options.username || options.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
   database ||=
-    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || Bun.env.PGDATABASE || username;
-  password ||= options.password || options.pass || Bun.env.PGPASSWORD || "";
+    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
+  password ||= options.password || options.pass || env.PGPASSWORD || "";
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {

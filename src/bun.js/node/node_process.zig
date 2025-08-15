@@ -66,23 +66,23 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             var args = std.ArrayList(bun.String).init(temp_alloc);
             defer args.deinit();
             defer for (args.items) |*arg| arg.deref();
-            
+
             var i: usize = 0;
             while (i < graph.compile_argv.len) {
                 // Skip whitespace
                 while (i < graph.compile_argv.len and std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
                 if (i >= graph.compile_argv.len) break;
-                
+
                 const start = i;
                 // Find end of argument (until next whitespace or end)
                 while (i < graph.compile_argv.len and !std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
-                
+
                 const arg = graph.compile_argv[start..i];
                 if (arg.len > 0) {
                     try args.append(bun.String.cloneUTF8(arg));
                 }
             }
-            
+
             const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
             for (0..args.items.len) |idx| {
                 try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));

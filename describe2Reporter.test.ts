@@ -31,6 +31,9 @@ describe("Another Suite", () => {
     console.log("failing test line 1");
     expect(1 + 1).toBe(3); // This will fail
     // TODO: fix this causing a tickWithoutIdle loop?
+    // the cause is that this is in a then callback. it throws, but that goes uncaught for some reason?
+    // then for some reason it does not trigger an uncaught error handler
+    // and then we are in `await never` which triggers tickWithoutIdle
   });
 });
 
@@ -42,4 +45,5 @@ describe("Skip and Todo tests", () => {
   test.todo("todo test");
 });
 
+setInterval(() => {}, 1000);
 await describe.forDebuggingExecuteTestsNow();

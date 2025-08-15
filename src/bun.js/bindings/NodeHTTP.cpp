@@ -1075,81 +1075,65 @@ static void NodeHTTPServer__writeHead(
     if (headersObject) {
         if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            return;
+        }
 
-            // Check if user provided Connection header in FetchHeaders
-            auto& internalHeaders = fetchHeaders->wrapped().internalHeaders();
-            for (const auto& header : internalHeaders.commonHeaders()) {
-                if (header.key == WebCore::HTTPHeaderName::Connection) {
-                    hasConnectionHeader = true;
-                    break;
-                }
-            }
-            if (!hasConnectionHeader) {
-                for (auto& header : internalHeaders.uncommonHeaders()) {
-                    if (WTF::equalIgnoringASCIICase(header.key, "connection"_s)) {
-                        hasConnectionHeader = true;
-                        break;
-                    }
-                }
-            }
-        } else {
-            if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
-                headersObject->reifyAllStaticProperties(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
+        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
+            headersObject->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
 
-            auto* structure = headersObject->structure();
+        auto* structure = headersObject->structure();
 
-            if (structure->canPerformFastPropertyEnumeration()) {
-                structure->forEachProperty(vm, [&](const auto& entry) {
-                    JSValue headerValue = headersObject->getDirect(entry.offset());
-                    if (!headerValue.isString()) {
-
-                        return true;
-                    }
-
-                    String key = entry.key();
-                    String value = headerValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-
-                    // Check if this is a Connection header
-                    if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
-                        hasConnectionHeader = true;
-                    }
-
-                    writeResponseHeader<isSSL>(response, key, value);
+        if (structure->canPerformFastPropertyEnumeration()) {
+            structure->forEachProperty(vm, [&](const auto& entry) {
+                JSValue headerValue = headersObject->getDirect(entry.offset());
+                if (!headerValue.isString()) {
 
                     return true;
-                });
-            } else {
-                PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                for (unsigned i = 0; i < propertyNames.size(); ++i) {
-                    JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                    RETURN_IF_EXCEPTION(scope, );
-                    if (!headerValue.isString()) {
-                        continue;
-                    }
-
-                    String key = propertyNames[i].string();
-                    String value = headerValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, void());
-
-                    // Check if this is a Connection header
-                    if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
-                        hasConnectionHeader = true;
-                    }
-
-                    writeResponseHeader<isSSL>(response, key, value);
                 }
+
+                String key = entry.key();
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+
+                // Check if this is a Connection header
+                if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
+                    hasConnectionHeader = true;
+                }
+
+                writeResponseHeader<isSSL>(response, key, value);
+
+                return true;
+            });
+        } else {
+            PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            for (unsigned i = 0; i < propertyNames.size(); ++i) {
+                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!headerValue.isString()) {
+                    continue;
+                }
+
+                String key = propertyNames[i].string();
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                
+                // Check if this is a Connection header
+                if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
+                    hasConnectionHeader = true;
+                }
+                
+                writeResponseHeader<isSSL>(response, key, value);
             }
         }
     }
 
-    // Automatically add Connection header if not already set by user and headers were provided
-    if (!hasConnectionHeader && headersObject) {
+    // Automatically add Connection header if not already set by user
+    if (!hasConnectionHeader) {
         auto* data = response->getHttpResponseData();
         bool shouldClose = data->state & uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
 

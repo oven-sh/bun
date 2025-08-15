@@ -891,7 +891,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn deinit(this: *WindowsBufferedReader) void {
         MaxBuf.removeFromPipereader(&this.maxbuf);
-        this.buffer().deinit();
+        this.buffer().clearAndFree();
         const source = this.source orelse return;
         this.source = null;
         if (!source.isClosed()) {
@@ -1068,16 +1068,28 @@ pub const WindowsBufferedReader = struct {
                 },
                 .pipe => |pipe| {
                     this.flags.is_paused = true;
+                    if (comptime callDone) {
+                        this.source = null;
+                        pipe.data = this;
+                        pipe.close(onPipeCloseAndCallDone);
+                        return;
+                    }
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
+                    this.flags.is_paused = true;
+
                     if (tty == &Source.stdin_tty) {
                         Source.stdin_tty = undefined;
                         Source.stdin_tty_init = false;
                     }
+                    if (comptime callDone) {
+                        this.source = null;
+                        tty.data = this;
+                        tty.close(onTTYCloseAndCallDone);
+                        return;
+                    }
 
-                    tty.data = tty;
-                    this.flags.is_paused = true;
                     tty.close(onTTYClose);
                 },
             }
@@ -1101,8 +1113,20 @@ pub const WindowsBufferedReader = struct {
         bun.default_allocator.destroy(handle);
     }
 
+    fn onPipeCloseAndCallDone(handle: *uv.Pipe) callconv(.C) void {
+        const this = bun.cast(*WindowsBufferedReader, handle.data);
+        bun.default_allocator.destroy(handle);
+        this.done();
+    }
+
     fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
         bun.default_allocator.destroy(handle);
+    }
+
+    fn onTTYCloseAndCallDone(handle: *uv.uv_tty_t) callconv(.C) void {
+        const this = bun.cast(*WindowsBufferedReader, handle.data);
+        bun.default_allocator.destroy(handle);
+        this.done();
     }
 
     pub fn onRead(this: *WindowsBufferedReader, amount: bun.sys.Maybe(usize), slice: []u8, hasMore: ReadState) void {

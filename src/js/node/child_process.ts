@@ -1,5 +1,6 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
+const { Readable, Writable } = require("node:stream");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
@@ -1130,17 +1131,37 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const stdin = handle?.stdin;
 
-            if (!stdin)
+            if (!stdin) {
               // This can happen if the process was already killed.
-              return new ShimmedStdin();
+              const stream = new Writable({ 
+                write(chunk, encoding, callback) {
+                  // Gracefully handle writes - stream acts as if it's ended
+                  if (callback) callback();
+                  return false;
+                }
+              });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
             return result;
           }
           case "inherit":
             return null;
-          case "destroyed":
-            return new ShimmedStdin();
+          case "destroyed": {
+            const stream = new Writable({ 
+              write(chunk, encoding, callback) {
+                // Gracefully handle writes - stream acts as if it's ended
+                if (callback) callback();
+                return false;
+              }
+            });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1153,7 +1174,12 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
-            if (!value) return new ShimmedStdioOutStream();
+            if (!value) {
+              const stream = new Readable({ read() {} });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
@@ -1161,8 +1187,12 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "destroyed":
-            return new ShimmedStdioOutStream();
+          case "destroyed": {
+            const stream = new Readable({ read() {} });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1631,43 +1661,6 @@ class Control extends EventEmitter {
   }
 }
 
-class ShimmedStdin extends EventEmitter {
-  constructor() {
-    super();
-  }
-  write() {
-    return false;
-  }
-  destroy() {}
-  end() {
-    return this;
-  }
-  pipe() {
-    return this;
-  }
-  resume() {
-    return this;
-  }
-}
-
-class ShimmedStdioOutStream extends EventEmitter {
-  pipe() {}
-  get destroyed() {
-    return true;
-  }
-
-  resume() {
-    return this;
-  }
-
-  destroy() {
-    return this;
-  }
-
-  setEncoding() {
-    return this;
-  }
-}
 
 //------------------------------------------------------------------------------
 // Section 5. Validators

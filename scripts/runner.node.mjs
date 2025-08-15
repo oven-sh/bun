@@ -2225,6 +2225,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
     error.includes("error: addresssanitizer") ||
+    error.includes("internal assertion failure") ||
     error.includes("core dumped") ||
     error.includes("crash reported")
   );

@@ -92,13 +92,13 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       "hello_world.txt": "Hello, World!",
       "existing_file.txt": "Cogito ergo sum.",
       "how_are_you.txt": "How are you?",
-      "hello_dir": {
+      hello_dir: {
         "hello.txt": "",
       },
-      "hello_dir_with_file": {
+      hello_dir_with_file: {
         "hello_world.txt": "Hello, World!",
       },
-      "dir_with_10_files": {
+      dir_with_10_files: {
         "0": "",
         "1": "",
         "2": "",

@@ -10,15 +10,15 @@ describe("bun update --interactive formatting regression", () => {
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "a": "1.0.0", // Very short package name
+          a: "1.0.0", // Very short package name
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
-          "a": {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          a: {
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
         },
       }),
@@ -62,12 +62,12 @@ describe("bun update --interactive formatting regression", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
-          "regular-package": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "dev-package": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "peer-package": { "integrity": "sha512-fake", "version": "1.0.0" },
-          "optional-package": { "integrity": "sha512-fake", "version": "1.0.0" },
+        lockfileVersion: 3,
+        packages: {
+          "regular-package": { integrity: "sha512-fake", version: "1.0.0" },
+          "dev-package": { integrity: "sha512-fake", version: "1.0.0" },
+          "peer-package": { integrity: "sha512-fake", version: "1.0.0" },
+          "optional-package": { integrity: "sha512-fake", version: "1.0.0" },
         },
       }),
     });
@@ -101,11 +101,11 @@ describe("bun update --interactive formatting regression", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
+        lockfileVersion: 3,
+        packages: {
           [longPackageName]: {
-            "integrity": "sha512-fake",
-            "version": "1.0.0",
+            integrity: "sha512-fake",
+            version: "1.0.0",
           },
         },
       }),
@@ -141,11 +141,11 @@ describe("bun update --interactive formatting regression", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
+        lockfileVersion: 3,
+        packages: {
           "package-with-long-version": {
-            "integrity": "sha512-fake",
-            "version": longVersion,
+            integrity: "sha512-fake",
+            version: longVersion,
           },
         },
       }),
@@ -192,12 +192,12 @@ describe("bun update --interactive formatting regression", () => {
         },
       }),
       "bun.lockb": JSON.stringify({
-        "lockfileVersion": 3,
-        "packages": {
-          [maxWidthPackage]: { "integrity": "sha512-fake", "version": maxWidthVersion },
-          [maxWidthPackage + "-dev"]: { "integrity": "sha512-fake", "version": maxWidthVersion },
-          [maxWidthPackage + "-peer"]: { "integrity": "sha512-fake", "version": maxWidthVersion },
-          [maxWidthPackage + "-optional"]: { "integrity": "sha512-fake", "version": maxWidthVersion },
+        lockfileVersion: 3,
+        packages: {
+          [maxWidthPackage]: { integrity: "sha512-fake", version: maxWidthVersion },
+          [maxWidthPackage + "-dev"]: { integrity: "sha512-fake", version: maxWidthVersion },
+          [maxWidthPackage + "-peer"]: { integrity: "sha512-fake", version: maxWidthVersion },
+          [maxWidthPackage + "-optional"]: { integrity: "sha512-fake", version: maxWidthVersion },
         },
       }),
     });

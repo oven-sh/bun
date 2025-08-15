@@ -884,7 +884,7 @@ class Http2ServerResponse extends Stream {
     stream.additionalHeaders({
       ...headers,
       [HTTP2_HEADER_STATUS]: HTTP_STATUS_EARLY_HINTS,
-      "Link": linkHeaderValue,
+      Link: linkHeaderValue,
     });
     return true;
   }

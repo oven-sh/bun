@@ -111,7 +111,7 @@ for (let backend of ["api", "cli"] as const) {
         },
         run: {
           env: {
-            "BASE_URL": "https://api.example.com",
+            BASE_URL: "https://api.example.com",
           },
           stdout: "process.env.BASE_URL\n$BASE_URL",
         },

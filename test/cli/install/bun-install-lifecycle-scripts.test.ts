@@ -1337,7 +1337,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const scripts = {
-        "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
+        preinstall: `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -1372,7 +1372,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe()} --version`,
+        postinstall: `${bunExe()} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts
@@ -1581,7 +1581,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "foo",
           version: "1.2.3",
           dependencies: {
-            "electron": "1.0.0",
+            electron: "1.0.0",
           },
         }),
       );
@@ -1624,7 +1624,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           dependencies: {
             "uses-what-bin": "1.0.0",
             // fake electron package because it's in the default trustedDependencies list
-            "electron": "1.0.0",
+            electron: "1.0.0",
           },
         }),
       );
@@ -1672,7 +1672,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           version: "1.2.3",
           dependencies: {
             "uses-what-bin": "1.0.0",
-            "electron": "1.0.0",
+            electron: "1.0.0",
           },
           trustedDependencies: ["uses-what-bin"],
         }),
@@ -1722,7 +1722,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           version: "1.2.3",
           dependencies: {
             "uses-what-bin": "1.0.0",
-            "electron": "1.0.0",
+            electron: "1.0.0",
           },
           trustedDependencies: [],
         }),
@@ -2322,7 +2322,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           JSON.stringify({
             name: "foo",
             dependencies: {
-              "electron": "1.0.0",
+              electron: "1.0.0",
             },
           }),
         );
@@ -2356,7 +2356,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(await file(packageJson).json()).toEqual({
           name: "foo",
           dependencies: {
-            "electron": "1.0.0",
+            electron: "1.0.0",
           },
         });
 
@@ -2366,7 +2366,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             name: "foo",
             trustedDependencies: ["electron"],
             dependencies: {
-              "electron": "1.0.0",
+              electron: "1.0.0",
             },
           }),
         );
@@ -2826,9 +2826,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "foo",
           version: "1.2.3",
           scripts: {
-            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
-            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
-            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+            preinstall: `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            install: `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            prepare: `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
           },
         }),
       );
@@ -2876,9 +2876,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "foo",
           version: "1.2.3",
           scripts: {
-            "preinstall": `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
-            "install": `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
-            "prepare": `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
+            preinstall: `${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
+            install: `${exe} -e 'process.stdout.write("install stdout 🚀\\n")'`,
+            prepare: `${exe} -e 'Bun.sleepSync(200); process.stdout.write("prepare stdout done ✅\\n")'`,
           },
           dependencies: {
             "no-deps": "1.0.0",

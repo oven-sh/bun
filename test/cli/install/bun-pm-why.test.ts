@@ -30,8 +30,8 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
           name: "test-package",
           version: "1.0.0",
           dependencies: {
-            "lodash": "^4.17.21",
-            "react": "^18.0.0",
+            lodash: "^4.17.21",
+            react: "^18.0.0",
           },
           devDependencies: {
             "@types/react": "^18.0.0",
@@ -58,13 +58,13 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
           name: "complex-package",
           version: "1.0.0",
           dependencies: {
-            "express": "^4.18.2",
-            "react": "^18.0.0",
+            express: "^4.18.2",
+            react: "^18.0.0",
             "react-dom": "^18.0.0",
           },
           devDependencies: {
             "@types/express": "^4.17.17",
-            "typescript": "^5.0.0",
+            typescript: "^5.0.0",
           },
         },
         null,
@@ -310,16 +310,16 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
         name: "foo",
         version: "0.0.1",
         dependencies: {
-          "express": "^4.18.2",
+          express: "^4.18.2",
         },
         devDependencies: {
-          "typescript": "^5.0.0",
+          typescript: "^5.0.0",
         },
         peerDependencies: {
-          "react": "^18.0.0",
+          react: "^18.0.0",
         },
         optionalDependencies: {
-          "chalk": "^5.0.0",
+          chalk: "^5.0.0",
         },
       }),
     );
@@ -374,7 +374,7 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
         name: "multi-version-test",
         version: "1.0.0",
         dependencies: {
-          "react": "^18.0.0",
+          react: "^18.0.0",
           "old-package": "npm:react@^16.0.0",
         },
       }),
@@ -448,8 +448,8 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
         name: "version-test",
         version: "1.0.0",
         dependencies: {
-          "react": "^18.0.0",
-          "lodash": "^4.17.21",
+          react: "^18.0.0",
+          lodash: "^4.17.21",
         },
       }),
     );

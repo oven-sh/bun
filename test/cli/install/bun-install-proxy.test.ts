@@ -59,23 +59,23 @@ if (isDockerEnabled()) {
   it("bun install with proxy with big packages", async () => {
     const files = {
       "package.json": JSON.stringify({
-        "name": "test-install",
-        "module": "index.ts",
-        "type": "module",
-        "private": true,
-        "dependencies": {
-          "gastby": "1.0.1",
-          "mitata": "1.0.34",
+        name: "test-install",
+        module: "index.ts",
+        type: "module",
+        private: true,
+        dependencies: {
+          gastby: "1.0.1",
+          mitata: "1.0.34",
           "next.js": "1.0.3",
-          "react": "19.1.0",
+          react: "19.1.0",
           "react-dom": "19.1.0",
           "@types/react": "18.3.3",
-          "esbuild": "0.21.4",
-          "peechy": "0.4.34",
-          "prettier": "3.5.3",
+          esbuild: "0.21.4",
+          peechy: "0.4.34",
+          prettier: "3.5.3",
           "prettier-plugin-organize-imports": "4.0.0",
           "source-map-js": "1.2.0",
-          "typescript": "5.7.2",
+          typescript: "5.7.2",
         },
       }),
     };

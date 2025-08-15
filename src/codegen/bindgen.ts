@@ -403,8 +403,8 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
       }>`;
     } else {
       const rangeAdaptor = {
-        "clamp": "WebCore::IDLClampAdaptor",
-        "enforce": "WebCore::IDLEnforceRangeAdaptor",
+        clamp: "WebCore::IDLClampAdaptor",
+        enforce: "WebCore::IDLEnforceRangeAdaptor",
       }[range[0]];
       assert(rangeAdaptor);
       entry = `${rangeAdaptor}<${entry}>`;

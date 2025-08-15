@@ -224,7 +224,7 @@ describe("parseArgs", () => {
     const args = ["---triple"];
     const options = {};
     const expected = {
-      values: { "__proto__": null, "-triple": true },
+      values: { __proto__: null, "-triple": true },
       positionals: [],
     };
     const result = parseArgs({ strict: false, args, options });
@@ -1007,7 +1007,7 @@ describe("parseArgs extra tests", () => {
       expect(result.values).toEqual({
         [U1]: true,
         [U2]: true,
-        "bún": true,
+        bún: true,
       });
     });
 

@@ -685,184 +685,184 @@ it("promises.readFile", async () => {
 describe("promises.readFile", async () => {
   const nodeOutput = [
     {
-      "encoding": "utf8",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [97, 115, 99, 105, 105],
+      encoding: "utf8",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [97, 115, 99, 105, 105],
       },
-      "out": "ascii",
+      out: "ascii",
     },
     {
-      "encoding": "utf8",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [
+      encoding: "utf8",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [
           117, 116, 102, 49, 54, 32, 240, 159, 141, 135, 32, 240, 159, 141, 136, 32, 240, 159, 141, 137, 32, 240, 159,
           141, 138, 32, 240, 159, 141, 139,
         ],
       },
-      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+      out: "utf16 🍇 🍈 🍉 🍊 🍋",
     },
     {
-      "encoding": "utf8",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [240, 159, 145, 141],
+      encoding: "utf8",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [240, 159, 145, 141],
       },
-      "out": "👍",
+      out: "👍",
     },
     {
-      "encoding": "utf-8",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [97, 115, 99, 105, 105],
+      encoding: "utf-8",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [97, 115, 99, 105, 105],
       },
-      "out": "ascii",
+      out: "ascii",
     },
     {
-      "encoding": "utf-8",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [
+      encoding: "utf-8",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [
           117, 116, 102, 49, 54, 32, 240, 159, 141, 135, 32, 240, 159, 141, 136, 32, 240, 159, 141, 137, 32, 240, 159,
           141, 138, 32, 240, 159, 141, 139,
         ],
       },
-      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+      out: "utf16 🍇 🍈 🍉 🍊 🍋",
     },
     {
-      "encoding": "utf-8",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [240, 159, 145, 141],
+      encoding: "utf-8",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [240, 159, 145, 141],
       },
-      "out": "👍",
+      out: "👍",
     },
     {
-      "encoding": "utf16le",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [97, 0, 115, 0, 99, 0, 105, 0, 105, 0],
+      encoding: "utf16le",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [97, 0, 115, 0, 99, 0, 105, 0, 105, 0],
       },
-      "out": "ascii",
+      out: "ascii",
     },
     {
-      "encoding": "utf16le",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [
+      encoding: "utf16le",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [
           117, 0, 116, 0, 102, 0, 49, 0, 54, 0, 32, 0, 60, 216, 71, 223, 32, 0, 60, 216, 72, 223, 32, 0, 60, 216, 73,
           223, 32, 0, 60, 216, 74, 223, 32, 0, 60, 216, 75, 223,
         ],
       },
-      "out": "utf16 🍇 🍈 🍉 🍊 🍋",
+      out: "utf16 🍇 🍈 🍉 🍊 🍋",
     },
     {
-      "encoding": "utf16le",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [61, 216, 77, 220],
+      encoding: "utf16le",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [61, 216, 77, 220],
       },
-      "out": "👍",
+      out: "👍",
     },
     {
-      "encoding": "latin1",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [97, 115, 99, 105, 105],
+      encoding: "latin1",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [97, 115, 99, 105, 105],
       },
-      "out": "ascii",
+      out: "ascii",
     },
     {
-      "encoding": "latin1",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
+      encoding: "latin1",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
       },
-      "out": "utf16 <G <H <I <J <K",
+      out: "utf16 <G <H <I <J <K",
     },
     {
-      "encoding": "latin1",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [61, 77],
+      encoding: "latin1",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [61, 77],
       },
-      "out": "=M",
+      out: "=M",
     },
     {
-      "encoding": "binary",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [97, 115, 99, 105, 105],
+      encoding: "binary",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [97, 115, 99, 105, 105],
       },
-      "out": "ascii",
+      out: "ascii",
     },
     {
-      "encoding": "binary",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
+      encoding: "binary",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [117, 116, 102, 49, 54, 32, 60, 71, 32, 60, 72, 32, 60, 73, 32, 60, 74, 32, 60, 75],
       },
-      "out": "utf16 <G <H <I <J <K",
+      out: "utf16 <G <H <I <J <K",
     },
     {
-      "encoding": "binary",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [61, 77],
+      encoding: "binary",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [61, 77],
       },
-      "out": "=M",
+      out: "=M",
     },
     {
-      "encoding": "base64",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [106, 199, 34],
+      encoding: "base64",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [106, 199, 34],
       },
-      "out": "asci",
+      out: "asci",
     },
     {
-      "encoding": "hex",
-      "text": "ascii",
-      "correct": {
-        "type": "Buffer",
-        "data": [],
+      encoding: "hex",
+      text: "ascii",
+      correct: {
+        type: "Buffer",
+        data: [],
       },
-      "out": "",
+      out: "",
     },
     {
-      "encoding": "hex",
-      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
-      "correct": {
-        "type": "Buffer",
-        "data": [],
+      encoding: "hex",
+      text: "utf16 🍇 🍈 🍉 🍊 🍋",
+      correct: {
+        type: "Buffer",
+        data: [],
       },
-      "out": "",
+      out: "",
     },
     {
-      "encoding": "hex",
-      "text": "👍",
-      "correct": {
-        "type": "Buffer",
-        "data": [],
+      encoding: "hex",
+      text: "👍",
+      correct: {
+        type: "Buffer",
+        data: [],
       },
-      "out": "",
+      out: "",
     },
   ];
 
@@ -3305,9 +3305,9 @@ it("test syscall errno, issue#4198", () => {
   expect(() => unlinkSync(path)).toThrow(
     (
       {
-        "darwin": "operation not permitted",
-        "linux": "illegal operation on a directory",
-        "win32": "operation not permitted",
+        darwin: "operation not permitted",
+        linux: "illegal operation on a directory",
+        win32: "operation not permitted",
       } as any
     )[process.platform],
   );
@@ -3536,20 +3536,20 @@ it("fs.statfs should work with bigint", async () => {
 
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
-    "atimeMs": undefined,
-    "birthtimeMs": undefined,
-    "blksize": undefined,
-    "blocks": undefined,
-    "ctimeMs": undefined,
-    "dev": undefined,
-    "gid": undefined,
-    "ino": undefined,
-    "mode": undefined,
-    "mtimeMs": undefined,
-    "nlink": undefined,
-    "rdev": undefined,
-    "size": undefined,
-    "uid": undefined,
+    atimeMs: undefined,
+    birthtimeMs: undefined,
+    blksize: undefined,
+    blocks: undefined,
+    ctimeMs: undefined,
+    dev: undefined,
+    gid: undefined,
+    ino: undefined,
+    mode: undefined,
+    mtimeMs: undefined,
+    nlink: undefined,
+    rdev: undefined,
+    size: undefined,
+    uid: undefined,
   });
 });
 
@@ -3609,7 +3609,7 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   });
   const tmp2 = tempDirWithFiles("longpath", {
     "a/b/hello": "true",
-    "config": "true",
+    config: "true",
   });
   const workingDir1 = path.join(tmp1, "a/b");
   const workingDir2 = path.join(tmp2, "a/b");

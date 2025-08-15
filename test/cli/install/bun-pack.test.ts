@@ -48,7 +48,7 @@ test("basic", async () => {
   await pack(packageDir, bunEnv);
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
-  expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
 });
 
 test("in subdirectory", async () => {
@@ -69,9 +69,9 @@ test("in subdirectory", async () => {
 
   const first = readTarball(join(packageDir, "pack-from-subdir-7.7.7.tgz"));
   expect(first.entries).toMatchObject([
-    { "pathname": "package/package.json" },
-    { "pathname": "package/root.js" },
-    { "pathname": "package/subdir1/subdir2/index.js" },
+    { pathname: "package/package.json" },
+    { pathname: "package/root.js" },
+    { pathname: "package/subdir1/subdir2/index.js" },
   ]);
 
   await rm(join(packageDir, "pack-from-subdir-7.7.7.tgz"));
@@ -254,13 +254,13 @@ describe("flags", () => {
 
   const destinationTests = [
     {
-      "path": "",
+      path: "",
     },
     {
-      "path": "dest-dir",
+      path: "dest-dir",
     },
     {
-      "path": "more/dir",
+      path: "more/dir",
     },
   ];
 
@@ -442,10 +442,10 @@ test("shasum and integrity are consistent", async () => {
   const tarball = readTarball(join(packageDir, "pack-shasum-1.1.1.tgz"));
   expect(tarball.entries).toMatchObject([
     {
-      "pathname": "package/package.json",
+      pathname: "package/package.json",
     },
     {
-      "pathname": "package/index.js",
+      pathname: "package/index.js",
     },
   ]);
 
@@ -458,10 +458,10 @@ test("shasum and integrity are consistent", async () => {
   const secondTarball = readTarball(join(packageDir, "pack-shasum-1.1.1.tgz"));
   expect(secondTarball.entries).toMatchObject([
     {
-      "pathname": "package/package.json",
+      pathname: "package/package.json",
     },
     {
-      "pathname": "package/index.js",
+      pathname: "package/index.js",
     },
   ]);
 
@@ -491,7 +491,7 @@ describe("workspaces", () => {
     await pack(join(packageDir, "pkgs", "pkg1"), bunEnv);
 
     const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
   });
   test("in a workspace subdirectory", async () => {
     await createBasicWorkspace();
@@ -500,7 +500,7 @@ describe("workspaces", () => {
     await pack(join(packageDir, "pkgs", "pkg1", "subdir"), bunEnv);
 
     const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
   });
   test("replaces workspace: protocol without lockfile", async () => {
     await Promise.all([
@@ -511,7 +511,7 @@ describe("workspaces", () => {
           version: "2.3.4",
           workspaces: ["pkgs/*"],
           dependencies: {
-            "pkg1": "workspace:1.1.1",
+            pkg1: "workspace:1.1.1",
           },
         }),
       ),
@@ -523,16 +523,16 @@ describe("workspaces", () => {
 
     const tarball = readTarball(join(packageDir, "pack-workspace-protocol-2.3.4.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/pkgs/pkg1/package.json" },
-      { "pathname": "package/root.js" },
+      { pathname: "package/package.json" },
+      { pathname: "package/pkgs/pkg1/package.json" },
+      { pathname: "package/root.js" },
     ]);
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "pack-workspace-protocol",
       version: "2.3.4",
       workspaces: ["pkgs/*"],
       dependencies: {
-        "pkg1": "1.1.1",
+        pkg1: "1.1.1",
       },
     });
   });
@@ -556,7 +556,7 @@ describe("workspaces", () => {
             version: "2.5.6",
             workspaces: ["pkgs/*"],
             dependencies: {
-              "pkg1": input,
+              pkg1: input,
             },
           }),
         ),
@@ -569,16 +569,16 @@ describe("workspaces", () => {
 
       const tarball = readTarball(join(packageDir, "pack-workspace-protocol-with-lockfile-2.5.6.tgz"));
       expect(tarball.entries).toMatchObject([
-        { "pathname": "package/package.json" },
-        { "pathname": "package/pkgs/pkg1/package.json" },
-        { "pathname": "package/root.js" },
+        { pathname: "package/package.json" },
+        { pathname: "package/pkgs/pkg1/package.json" },
+        { pathname: "package/root.js" },
       ]);
       expect(JSON.parse(tarball.entries[0].contents)).toEqual({
         name: "pack-workspace-protocol-with-lockfile",
         version: "2.5.6",
         workspaces: ["pkgs/*"],
         dependencies: {
-          "pkg1": expected,
+          pkg1: expected,
         },
       });
     });
@@ -593,7 +593,7 @@ describe("workspaces", () => {
           version: "2.2.3",
           workspaces: ["pkgs/*"],
           dependencies: {
-            "pkg1": "workspace:*",
+            pkg1: "workspace:*",
           },
         }),
       ),
@@ -610,9 +610,9 @@ describe("workspaces", () => {
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/pkgs/pkg1/package.json" },
-      { "pathname": "package/root.js" },
+      { pathname: "package/package.json" },
+      { pathname: "package/pkgs/pkg1/package.json" },
+      { pathname: "package/root.js" },
     ]);
   });
 });
@@ -645,10 +645,10 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
 
   const tarball = readTarball(join(packageDir, "pack-lifecycle-order-1.1.1.tgz"));
   expect(tarball.entries).toMatchObject([
-    { "pathname": "package/package.json" },
-    { "pathname": "package/prepack.txt" },
-    { "pathname": "package/prepare.txt" },
-    { "pathname": "package/script.js" },
+    { pathname: "package/package.json" },
+    { pathname: "package/prepack.txt" },
+    { pathname: "package/prepare.txt" },
+    { pathname: "package/script.js" },
   ]);
 
   const results = await Promise.all([
@@ -674,7 +674,7 @@ describe("bundledDependnecies", () => {
             name: "pack-bundled",
             version: "4.4.4",
             dependencies: {
-              "dep1": "1.1.1",
+              dep1: "1.1.1",
             },
             [bundledDependencies]: ["dep1"],
           }),
@@ -692,8 +692,8 @@ describe("bundledDependnecies", () => {
 
       const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
       expect(tarball.entries).toMatchObject([
-        { "pathname": "package/package.json" },
-        { "pathname": "package/node_modules/dep1/package.json" },
+        { pathname: "package/package.json" },
+        { pathname: "package/node_modules/dep1/package.json" },
       ]);
     });
   }
@@ -706,10 +706,10 @@ describe("bundledDependnecies", () => {
           name: "pack-bundled",
           version: "4.4.4",
           dependencies: {
-            "dep1": "1.1.1",
+            dep1: "1.1.1",
           },
           devDependencies: {
-            "dep2": "1.1.1",
+            dep2: "1.1.1",
           },
           bundledDependencies: true,
         }),
@@ -734,8 +734,8 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/node_modules/dep1/package.json" },
+      { pathname: "package/package.json" },
+      { pathname: "package/node_modules/dep1/package.json" },
     ]);
   });
 
@@ -765,8 +765,8 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/node_modules/@oven/bun/package.json" },
+      { pathname: "package/package.json" },
+      { pathname: "package/node_modules/@oven/bun/package.json" },
     ]);
   });
 
@@ -853,10 +853,10 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-resolved-bundled-dep-5.5.5.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/node_modules/dep1/node_modules/dep3/package.json" },
-      { "pathname": "package/node_modules/dep1/package.json" },
-      { "pathname": "package/node_modules/dep2/package.json" },
+      { pathname: "package/package.json" },
+      { pathname: "package/node_modules/dep1/node_modules/dep3/package.json" },
+      { pathname: "package/node_modules/dep1/package.json" },
+      { pathname: "package/node_modules/dep2/package.json" },
     ]);
   });
 
@@ -906,10 +906,10 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-resolve-scoped-6.6.6.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/node_modules/@scoped/dep1/node_modules/@scoped/dep3/package.json" },
-      { "pathname": "package/node_modules/@scoped/dep1/package.json" },
-      { "pathname": "package/node_modules/@scoped/dep2/package.json" },
+      { pathname: "package/package.json" },
+      { pathname: "package/node_modules/@scoped/dep1/node_modules/@scoped/dep3/package.json" },
+      { pathname: "package/node_modules/@scoped/dep1/package.json" },
+      { pathname: "package/node_modules/@scoped/dep2/package.json" },
     ]);
   });
 
@@ -933,7 +933,7 @@ describe("bundledDependnecies", () => {
     expect(out).not.toContain("Bundled deps");
 
     const tarball = readTarball(join(packageDir, "pack-bundled-dep-not-dir-4.5.6.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
   });
 });
 
@@ -954,10 +954,7 @@ describe("files", () => {
 
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/lib/index.js" },
-    ]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/lib/index.js" }]);
   });
 
   test(".npmignore cannot exclude CHANGELOG", async () => {
@@ -977,10 +974,10 @@ describe("files", () => {
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/CHANGELOG" },
-      { "pathname": "package/CHANGELOG.md" },
-      { "pathname": "package/CHANGELOG.txt" },
+      { pathname: "package/package.json" },
+      { pathname: "package/CHANGELOG" },
+      { pathname: "package/CHANGELOG.md" },
+      { pathname: "package/CHANGELOG.txt" },
     ]);
   });
 
@@ -1001,9 +998,9 @@ describe("files", () => {
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-license-1.1.1.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/LICENSE" },
-      { "pathname": "package/lib/index.js" },
+      { pathname: "package/package.json" },
+      { pathname: "package/LICENSE" },
+      { pathname: "package/lib/index.js" },
     ]);
   });
 
@@ -1021,7 +1018,7 @@ describe("files", () => {
     ]);
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-license-1.1.2.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/LICENSE" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/LICENSE" }]);
   });
 
   test("can include files and directories", async () => {
@@ -1047,11 +1044,11 @@ describe("files", () => {
 
     const tarball = readTarball(join(packageDir, "pack-files-1-1.1.1.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/root.js" },
-      { "pathname": "package/subdir/anotherdir/index.js" },
-      { "pathname": "package/subdir/index.js" },
-      { "pathname": "package/subdir2/subdir/index.js" },
+      { pathname: "package/package.json" },
+      { pathname: "package/root.js" },
+      { pathname: "package/subdir/anotherdir/index.js" },
+      { pathname: "package/subdir/index.js" },
+      { pathname: "package/subdir2/subdir/index.js" },
     ]);
   });
 
@@ -1072,7 +1069,7 @@ describe("files", () => {
 
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-2-1.2.3.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
   });
 
   test("matches './' as the root", async () => {
@@ -1094,9 +1091,9 @@ describe("files", () => {
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/dist/index.js" },
-      { "pathname": "package/src/index.ts" },
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/index.js" },
+      { pathname: "package/src/index.ts" },
     ]);
   });
 
@@ -1120,10 +1117,10 @@ describe("files", () => {
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-4-1.2.123.tgz"));
     expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/index.js" },
-      { "pathname": "package/subdir/anotherdir/index.js" },
-      { "pathname": "package/subdir/index.js" },
+      { pathname: "package/package.json" },
+      { pathname: "package/index.js" },
+      { pathname: "package/subdir/anotherdir/index.js" },
+      { pathname: "package/subdir/index.js" },
     ]);
   });
 
@@ -1145,10 +1142,7 @@ describe("files", () => {
     const { out } = await pack(dir, bunEnv);
     expect(out).toContain("Total files: 2");
     const tarball = readTarball(join(dir, "pack-excluded-entries-from-files-1.0.0.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-      { "pathname": "package/src/index.ts" },
-    ]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/src/index.ts" }]);
   });
 });
 
@@ -1169,7 +1163,7 @@ describe(".gitignore/.npmignore", () => {
 
       await pack(packageDir, bunEnv);
       const tarball = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+      expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
 
       await Promise.all([
         rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
@@ -1178,10 +1172,7 @@ describe(".gitignore/.npmignore", () => {
 
       await pack(packageDir, bunEnv);
       const tarball2 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball2.entries).toMatchObject([
-        { "pathname": "package/package.json" },
-        { "pathname": "package/index.js" },
-      ]);
+      expect(tarball2.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
 
       await Promise.all([
         rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
@@ -1190,7 +1181,7 @@ describe(".gitignore/.npmignore", () => {
 
       await pack(packageDir, bunEnv);
       const tarball3 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
-      expect(tarball3.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+      expect(tarball3.entries).toMatchObject([{ pathname: "package/package.json" }]);
     });
   }
 
@@ -1211,7 +1202,7 @@ describe(".gitignore/.npmignore", () => {
 
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-ignore-2-1.2.1.tgz"));
-    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
   });
 });
 
@@ -1296,7 +1287,7 @@ test("unicode", async () => {
 
   await pack(packageDir, bunEnv);
   const tarball = readTarball(join(packageDir, "pack-unicode-1.1.1.tgz"));
-  expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/äöüščří.js" }]);
+  expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/äöüščří.js" }]);
 });
 
 test("$npm_command is accurate", async () => {

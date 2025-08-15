@@ -6,8 +6,8 @@ const PS_SUPPORTED = true;
 const ASYMMETRIC_KEY_DETAILS_SUPPORTED = true;
 const RSA_PSS_KEY_DETAILS_SUPPORTED = true;
 const allowedAlgorithmsForKeys = {
-  "ec": ["ES256", "ES384", "ES512"],
-  "rsa": ["RS256", "PS256", "RS384", "PS384", "RS512", "PS512"],
+  ec: ["ES256", "ES384", "ES512"],
+  rsa: ["RS256", "PS256", "RS384", "PS384", "RS512", "PS512"],
   "rsa-pss": ["PS256", "PS384", "PS512"],
 };
 

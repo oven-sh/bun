@@ -90,10 +90,10 @@ for (const mode of [
       "package.json": JSON.stringify({
         name: "ctrlc",
         scripts: {
-          "dev": "vite",
+          dev: "vite",
         },
         devDependencies: {
-          "vite": "^6.0.1",
+          vite: "^6.0.1",
         },
       }),
     });

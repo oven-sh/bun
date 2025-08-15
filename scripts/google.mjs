@@ -293,14 +293,14 @@ export const google = {
     }
 
     const instance = await google.createInstance({
-      "name": name,
-      "zone": "us-central1-a",
-      "image": imageUrl,
+      name: name,
+      zone: "us-central1-a",
+      image: imageUrl,
       "machine-type": instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
       "boot-disk-auto-delete": true,
       "boot-disk-size": `${getDiskSize(options)}GB`,
-      "metadata": this.getMetadata(metadata),
-      "labels": Object.entries(tags || {})
+      metadata: this.getMetadata(metadata),
+      labels: Object.entries(tags || {})
         .filter(([, value]) => value !== undefined)
         .map(([key, value]) => `${this.getLabel(key)}=${value}`)
         .join(","),

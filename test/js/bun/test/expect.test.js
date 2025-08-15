@@ -289,10 +289,10 @@ describe("expect()", () => {
     }
 
     test("Headers", () => {
-      expect(new Headers({ "a": "1" })).toEqual(new Headers({ "a": "1" }));
-      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "b": "1" }));
-      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "2" }));
-      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
+      expect(new Headers({ a: "1" })).toEqual(new Headers({ a: "1" }));
+      expect(new Headers({ a: "1" })).not.toEqual(new Headers({ b: "1" }));
+      expect(new Headers({ a: "1" })).not.toEqual(new Headers({ a: "2" }));
+      expect(new Headers({ a: "1" })).not.toEqual(new Headers({ a: "1", b: "2" }));
     });
 
     // TODO: FormData

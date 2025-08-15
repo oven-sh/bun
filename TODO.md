@@ -5,6 +5,7 @@ Complete before merge:
 - [ ] remove describe2.ts
 - [ ] remove describe2BeforeAll.ts
 - [ ] search for TODOs in the diff and fix them all
+- [ ] replace asserts with runtime throws or debug-only asserts
 - [ ] remove TODO.md
 
 Overview:

@@ -1121,12 +1121,12 @@ static void NodeHTTPServer__writeHead(
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
-                
+
                 // Check if this is a Connection header
                 if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
                     hasConnectionHeader = true;
                 }
-                
+
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }

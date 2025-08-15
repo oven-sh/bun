@@ -86,7 +86,7 @@ pub fn createPostgresError(
         opts_obj,
     };
 
-    return pg_error_constructor.call(globalObject, .js_undefined, &args) catch unreachable;
+    return try pg_error_constructor.call(globalObject, .js_undefined, &args);
 }
 
 pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -136,7 +136,11 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
     defer {
         if (message == null) bun.default_allocator.free(msg);
     }
-    return createPostgresError(globalObject, msg, .{ .code = code }) catch unreachable;
+    return createPostgresError(globalObject, msg, .{ .code = code }) catch |e| brk: {
+        // If we fail to create the error, return a generic error
+        _ = e;
+        return globalObject.createErrorInstance("PostgreSQL error: {s}", .{msg});
+    };
 }
 
 const bun = @import("bun");

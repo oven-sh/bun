@@ -8,6 +8,7 @@ const {
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
+const { PostgresError } = require("internal/sql/errors");
 
 const {
   createConnection: createPostgresConnection,
@@ -603,7 +604,12 @@ export class PostgresAdapter
       if (this.connectionInfo.max !== 1) {
         const upperCaseSqlString = sql.toUpperCase().trim();
         if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
+          throw new PostgresError("Only use sql.begin, sql.reserved or max: 1", {
+            code: "ERR_POSTGRES_UNSAFE_TRANSACTION",
+            detail: "",
+            hint: "",
+            severity: "ERROR",
+          });
         }
       }
     }

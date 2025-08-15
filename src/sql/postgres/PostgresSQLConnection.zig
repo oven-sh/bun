@@ -213,13 +213,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoop
 
     switch (this.status) {
         .connected => {
-            this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -229,7 +229,7 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoo
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return .disarm;
-    this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
     return .disarm;
 }
 
@@ -332,8 +332,10 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
-pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
+pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
+    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    defer bun.default_allocator.free(message);
+    this.failWithJSValue(createPostgresError(this.globalObject, message, .{ .code = code }) catch unreachable);
 }
 
 pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
@@ -730,24 +732,24 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         if (path.len > 0) {
             ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch {
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
                     ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
+                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch unreachable);
                 },
             };
         } else {
             ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch {
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
                     ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
+                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch unreachable);
                 },
             };
         }
@@ -1827,6 +1829,8 @@ const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
+const createPostgresError = @import("./AnyPostgresError.zig").createPostgresError;
+const PostgresErrorOptions = @import("./AnyPostgresError.zig").PostgresErrorOptions;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;

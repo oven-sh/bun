@@ -2510,7 +2510,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnCount, (JSGlobalObject * lexical
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNumber(sqlite3_column_count(castedThis->stmt))));
 }
 
-
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

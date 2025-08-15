@@ -229,6 +229,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       error = e;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
     expect(error.message).toContain("Connection timeout after 4s");
     expect(onconnect).not.toHaveBeenCalled();
@@ -250,6 +252,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       error = e;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
     expect(onconnect).toHaveBeenCalled();
     expect(onclose).toHaveBeenCalledTimes(1);
@@ -271,6 +275,8 @@ if (isDockerEnabled()) {
     expect(onconnect).toHaveBeenCalledTimes(1);
     expect(onclose).not.toHaveBeenCalled();
     const err = await onClosePromise.promise;
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
   });
 
@@ -301,6 +307,8 @@ if (isDockerEnabled()) {
 
     expect(onclose).toHaveBeenCalledTimes(1);
 
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
   });
 
@@ -578,20 +586,23 @@ if (isDockerEnabled()) {
   test("Throws on illegal transactions", async () => {
     const sql = postgres({ ...options, max: 2, fetch_types: false });
     const error = await sql`begin`.catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
   });
 
   test("Transaction throws", async () => {
     await sql`create table if not exists test (a int)`;
     try {
-      expect(
-        await sql
-          .begin(async sql => {
-            await sql`insert into test values(1)`;
-            await sql`insert into test values('hej')`;
-          })
-          .catch(e => e.errno),
-      ).toBe("22P02");
+      const error = await sql
+        .begin(async sql => {
+          await sql`insert into test values(1)`;
+          await sql`insert into test values('hej')`;
+        })
+        .catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLError);
+      expect(error).toBeInstanceOf(SQL.PostgresError);
+      expect(error.errno).toBe("22P02");
     } finally {
       await sql`drop table test`;
     }
@@ -768,11 +779,12 @@ if (isDockerEnabled()) {
   test("Uncaught transaction request errors bubbles to transaction", async () => {
     const sql = postgres(options);
     process.nextTick(() => sql.close({ timeout: 1 }));
-    expect(
-      await sql
-        .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno || e),
-    ).toBe("42703");
+    const error = await sql
+      .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
+      .catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.errno).toBe("42703");
   });
 
   test("Fragments in transactions", async () => {
@@ -886,6 +898,8 @@ if (isDockerEnabled()) {
   test("Throw syntax error", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const err = await sql`wat 1`.catch(x => x);
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.errno).toBe("42601");
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
     expect(err).toBeInstanceOf(SyntaxError);
@@ -1036,6 +1050,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       err = e;
     }
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
   });
 
@@ -1207,7 +1223,10 @@ if (isDockerEnabled()) {
   test("Connection ended error", async () => {
     const sql = postgres(options);
     await sql.end();
-    return expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+    const error = await sql``.catch(x => x);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    return expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
   test("Connection end does not cancel query", async () => {
@@ -1221,7 +1240,10 @@ if (isDockerEnabled()) {
   test("Connection destroyed", async () => {
     const sql = postgres(options);
     process.nextTick(() => sql.end({ timeout: 0 }));
-    expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+    const error = await sql``.catch(x => x);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
   test("Connection destroyed with query before", async () => {
@@ -1632,7 +1654,10 @@ if (isDockerEnabled()) {
   );
 
   test("only allows one statement", async () => {
-    expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
+    const error = await sql`select 1; select 2`.catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.errno).toBe("42601");
   });
 
   test("await sql() throws not tagged error", async () => {
@@ -1640,6 +1665,8 @@ if (isDockerEnabled()) {
       await sql("select 1");
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1651,6 +1678,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1662,6 +1691,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1673,6 +1704,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1701,6 +1734,8 @@ if (isDockerEnabled()) {
     } catch (err) {
       error = err;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
@@ -2343,6 +2378,8 @@ if (isDockerEnabled()) {
         throw new Error("should not reach");
       } catch (e) {
         expect(e).toBeInstanceOf(Error);
+        expect(e).toBeInstanceOf(SQL.SQLError);
+        expect(e).toBeInstanceOf(SQL.PostgresError);
         expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
         expect(e.message).toMatch(/Connection timed out after 200ms/);
       } finally {
@@ -4654,16 +4691,18 @@ CREATE TABLE ${table_name} (
 
     test("int2[] - overflow behavior", async () => {
       await using sql = postgres({ ...options, max: 1 });
-      expect(
-        await sql`
+      const error1 = await sql`
         SELECT ARRAY[32768]::int2[] -- One more than maximum int2
-      `.catch(e => e.errno),
-      ).toBe("22003"); //smallint out of range
-      expect(
-        await sql`
+      `.catch(e => e);
+      expect(error1).toBeInstanceOf(SQL.SQLError);
+      expect(error1).toBeInstanceOf(SQL.PostgresError);
+      expect(error1.errno).toBe("22003"); //smallint out of range
+      const error2 = await sql`
         SELECT ARRAY[-32769]::int2[] -- One less than minimum int2
-      `.catch(e => e.errno),
-      ).toBe("22003"); //smallint out of range
+      `.catch(e => e);
+      expect(error2).toBeInstanceOf(SQL.SQLError);
+      expect(error2).toBeInstanceOf(SQL.PostgresError);
+      expect(error2.errno).toBe("22003"); //smallint out of range
     });
   });
   // old, deprecated not entire documented but we keep the same behavior as postgres.js
@@ -5183,17 +5222,19 @@ CREATE TABLE ${table_name} (
       await using sql = postgres({ ...options, max: 1 });
 
       // Invalid unicode escape
-      expect(
-        await sql`
+      const error3 = await sql`
         SELECT ARRAY[E'\\u123']::text[] as invalid_unicode
-      `.catch(e => e.errno || e),
-      ).toBe("22025");
+      `.catch(e => e);
+      expect(error3).toBeInstanceOf(SQL.SQLError);
+      expect(error3).toBeInstanceOf(SQL.PostgresError);
+      expect(error3.errno).toBe("22025");
       // Invalid octal escape
-      expect(
-        await sql`
+      const error4 = await sql`
         SELECT ARRAY[E'\\400']::text[] as invalid_octal
-      `.catch(e => e.errno || e),
-      ).toBe("22021");
+      `.catch(e => e);
+      expect(error4).toBeInstanceOf(SQL.SQLError);
+      expect(error4).toBeInstanceOf(SQL.PostgresError);
+      expect(error4.errno).toBe("22021");
       // Invalid hex escape
       expect(
         await sql`

@@ -36,6 +36,7 @@ pub const AnyPostgresError = error{
 /// Options for creating a PostgresError
 pub const PostgresErrorOptions = struct {
     code: []const u8,
+    errno: ?[]const u8 = null,
     detail: ?[]const u8 = null,
     hint: ?[]const u8 = null,
     severity: ?[]const u8 = null,
@@ -68,6 +69,7 @@ pub fn createPostgresError(
     opts_obj.put(globalObject, jsc.ZigString.static("hint"), jsc.ZigString.init(options.hint orelse "").toJS(globalObject));
     opts_obj.put(globalObject, jsc.ZigString.static("severity"), jsc.ZigString.init(options.severity orelse "ERROR").toJS(globalObject));
 
+    if (options.errno) |errno| opts_obj.put(globalObject, jsc.ZigString.static("errno"), jsc.ZigString.init(errno).toJS(globalObject));
     if (options.position) |pos| opts_obj.put(globalObject, jsc.ZigString.static("position"), jsc.ZigString.init(pos).toJS(globalObject));
     if (options.internalPosition) |pos| opts_obj.put(globalObject, jsc.ZigString.static("internalPosition"), jsc.ZigString.init(pos).toJS(globalObject));
     if (options.internalQuery) |query| opts_obj.put(globalObject, jsc.ZigString.static("internalQuery"), jsc.ZigString.init(query).toJS(globalObject));

@@ -311,7 +311,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     this.stopTimers();
     if (this.status == .failed) return;
 
-    this.status = .failed;
+    this.setStatus(.failed);
 
     this.ref();
     defer this.deref();

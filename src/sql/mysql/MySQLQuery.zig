@@ -4,27 +4,41 @@ const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 statement: ?*MySQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
-thisValue: JSValue = .js_undefined,
-target: jsc.Strong.Optional = .empty,
+thisValue: JSRef = JSRef.empty(),
+
 status: Status = Status.pending,
-is_done: bool = false,
 ref_count: RefCount = RefCount.init(),
-binary: bool = false,
-pending_value: jsc.Strong.Optional = .empty,
+
+flags: packed struct(u8) {
+    is_done: bool = false,
+    binary: bool = false,
+    bigint: bool = false,
+    simple: bool = false,
+    pipelined: bool = false,
+    result_mode: SQLQueryResultMode = .objects,
+    _padding: u1 = 0,
+} = .{},
 
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 pub const Status = enum(u8) {
+    /// The query was just enqueued, statement status can be checked for more details
     pending,
     written,
-    running,
+    /// The query is being bound to the statement
     binding,
+    /// The query is running
+    running,
+    /// The query is waiting for a partial response
+    partial_response,
+    /// The query was successful
     success,
+    /// The query failed
     fail,
 
     pub fn isRunning(this: Status) bool {
-        return this == .running or this == .binding;
+        return @intFromEnum(this) > @intFromEnum(Status.pending) and @intFromEnum(this) < @intFromEnum(Status.success);
     }
 };
 
@@ -33,13 +47,12 @@ pub fn hasPendingActivity(this: *@This()) bool {
 }
 
 pub fn deinit(this: *@This()) void {
+    this.thisValue.deinit();
     if (this.statement) |statement| {
         statement.deref();
     }
     this.query.deref();
     this.cursor_name.deref();
-    this.target.deinit();
-    this.pending_value.deinit();
 
     bun.default_allocator.destroy(this);
 }
@@ -53,36 +66,24 @@ pub fn finalize(this: *@This()) void {
         this.statement = null;
     }
 
-    this.thisValue = .zero;
+    if (this.thisValue == .weak) {
+        // clean up if is a weak reference, if is a strong reference we need to wait until the query is done
+        // if we are a strong reference, here is probably a bug because GC'd should not happen
+        this.thisValue.weak = .zero;
+    }
     this.deref();
 }
 
-pub fn onNoData(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
-    this.status = .success;
-    defer this.deref();
-
-    const thisValue = this.thisValue;
-    const targetValue = this.target.trySwap() orelse JSValue.zero;
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
-
-    const vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
-    const event_loop = vm.eventLoop();
-    event_loop.runCallback(function, globalObject, thisValue, &.{
-        targetValue,
-        this.pending_value.trySwap() orelse .js_undefined,
-        JSValue.jsNumber(0),
-        JSValue.jsNumber(0),
-    });
-}
-
-pub fn onWriteFail(this: *@This(), err: anyerror, globalObject: *jsc.JSGlobalObject) void {
+pub fn onWriteFail(
+    this: *@This(),
+    err: anyerror,
+    globalObject: *jsc.JSGlobalObject,
+    queries_array: JSValue,
+) void {
     this.status = .fail;
-    this.pending_value.deinit();
-    const thisValue = this.thisValue;
-    const targetValue = this.target.trySwap() orelse JSValue.zero;
+    const thisValue = this.thisValue.get();
+    defer this.thisValue.deinit();
+    const targetValue = this.getTarget(globalObject, true);
     if (thisValue == .zero or targetValue == .zero) {
         return;
     }
@@ -94,7 +95,10 @@ pub fn onWriteFail(this: *@This(), err: anyerror, globalObject: *jsc.JSGlobalObj
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
+        // TODO: add mysql error to JS
+        // postgresErrorToJS(globalObject, null, err),
         instance,
+        queries_array,
     });
 }
 
@@ -111,8 +115,9 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
 }
 
 pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
-    const binding_value = js.bindingGetCached(this.thisValue) orelse .zero;
-    const columns_value = js.columnsGetCached(this.thisValue) orelse .zero;
+    const thisValue = this.thisValue.get();
+    const binding_value = js.bindingGetCached(thisValue) orelse .zero;
+    const columns_value = js.columnsGetCached(thisValue) orelse .zero;
 
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
@@ -147,67 +152,86 @@ pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject
 }
 
 pub fn onError(this: *@This(), err: ErrorPacket, globalObject: *jsc.JSGlobalObject) void {
-    this.status = .fail;
-    defer {
-        // Clean up statement reference on error
-        if (this.statement) |statement| {
-            statement.deref();
-            this.statement = null;
-        }
-        this.deref();
-    }
+    debug("onError", .{});
+    this.onJSError(err.toJS(globalObject), globalObject);
+}
 
-    const thisValue = this.thisValue;
-    const targetValue = this.target.trySwap() orelse JSValue.zero;
+pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+    this.ref();
+    defer this.deref();
+    this.status = .fail;
+    const thisValue = this.thisValue.get();
+    defer this.thisValue.deinit();
+    const targetValue = this.getTarget(globalObject, true);
     if (thisValue == .zero or targetValue == .zero) {
         return;
     }
 
     var vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
-    globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, err.toJS(globalObject) });
+    const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
+    const event_loop = vm.eventLoop();
+    event_loop.runCallback(function, globalObject, thisValue, &.{
+        targetValue,
+        err,
+    });
+}
+pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
+    const thisValue = this.thisValue.tryGet() orelse return .zero;
+    const target = js.targetGetCached(thisValue) orelse return .zero;
+    if (clean_target) {
+        js.targetSetCached(thisValue, globalObject, .zero);
+    }
+    return target;
 }
 
-pub fn onJSError(this: *@This(), exception: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
-    this.status = .fail;
-    defer {
-        // Clean up statement reference on error
-        if (this.statement) |statement| {
-            statement.deref();
-            this.statement = null;
-        }
-        this.deref();
-    }
+fn consumePendingValue(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) ?JSValue {
+    const pending_value = js.pendingValueGetCached(thisValue) orelse return null;
+    js.pendingValueSetCached(thisValue, globalObject, .zero);
+    return pending_value;
+}
 
-    const thisValue = this.thisValue;
-    const targetValue = this.target.trySwap() orelse JSValue.zero;
-    if (thisValue == .zero or targetValue == .zero) {
+pub fn allowGC(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+    if (thisValue == .zero) {
         return;
     }
 
-    var vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
-    globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, exception.toError().? });
+    defer thisValue.ensureStillAlive();
+    js.bindingSetCached(thisValue, globalObject, .zero);
+    js.pendingValueSetCached(thisValue, globalObject, .zero);
+    js.targetSetCached(thisValue, globalObject, .zero);
 }
 
-pub fn onSuccess(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
-    this.status = .success;
+pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
+    this.ref();
     defer this.deref();
 
-    const thisValue = this.thisValue;
-    const targetValue = this.target.trySwap() orelse JSValue.zero;
+    const thisValue = this.thisValue.get();
+    const targetValue = this.getTarget(globalObject, is_last);
+    if (is_last) {
+        this.status = .success;
+    } else {
+        this.status = .partial_response;
+    }
+    defer if (is_last) {
+        allowGC(thisValue, globalObject);
+        this.thisValue.deinit();
+    };
     if (thisValue == .zero or targetValue == .zero) {
         return;
     }
 
     const vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
+    const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
+    const tag = CommandTag.init(command_tag_str);
+
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        this.pending_value.trySwap() orelse .js_undefined,
-        JSValue.jsNumber(0),
-        JSValue.jsNumber(0),
+        consumePendingValue(thisValue, globalObject) orelse .js_undefined,
+        tag.toJSTag(globalObject),
+        tag.toJSNumber(),
+        if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
+        JSValue.jsBoolean(is_last),
     });
 }
 
@@ -222,10 +246,15 @@ pub fn estimatedSize(this: *MySQLQuery) usize {
 }
 
 pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.argumentsUndef(4).slice();
-    const query = arguments[0];
-    const values = arguments[1];
-    const columns = arguments[3];
+    const arguments = callframe.arguments();
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    defer args.deinit();
+    const query = args.nextEat() orelse {
+        return globalThis.throw("query must be a string", .{});
+    };
+    const values = args.nextEat() orelse {
+        return globalThis.throw("values must be an array", .{});
+    };
 
     if (!query.isString()) {
         return globalThis.throw("query must be a string", .{});
@@ -235,7 +264,21 @@ pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
         return globalThis.throw("values must be an array", .{});
     }
 
-    const pending_value = arguments[2];
+    const pending_value: JSValue = args.nextEat() orelse .js_undefined;
+    const columns: JSValue = args.nextEat() orelse .js_undefined;
+    const js_bigint: JSValue = args.nextEat() orelse .false;
+    const js_simple: JSValue = args.nextEat() orelse .false;
+
+    const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
+    const simple = js_simple.isBoolean() and js_simple.asBoolean();
+    if (simple) {
+        if (try values.getLength(globalThis) > 0) {
+            return globalThis.throwInvalidArguments("simple query cannot have parameters", .{});
+        }
+        if (try query.getLength(globalThis) >= std.math.maxInt(i32)) {
+            return globalThis.throwInvalidArguments("query is too long", .{});
+        }
+    }
     if (!pending_value.jsType().isArrayLike()) {
         return globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
     }
@@ -249,48 +292,44 @@ pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     ptr.* = .{
         .query = try query.toBunString(globalThis),
-        .thisValue = this_value,
+        .thisValue = JSRef.initWeak(this_value),
+        .flags = .{
+            .bigint = bigint,
+            .simple = simple,
+        },
     };
     ptr.query.ref();
 
     js.bindingSetCached(this_value, globalThis, values);
     js.pendingValueSetCached(this_value, globalThis, pending_value);
-    if (columns != .js_undefined) {
+    if (!columns.isUndefined()) {
         js.columnsSetCached(this_value, globalThis, columns);
     }
-    ptr.pending_value.set(globalThis, pending_value);
 
     return this_value;
 }
-
 pub fn setPendingValue(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    _ = globalObject;
-    _ = callframe;
-    _ = this;
-    // const result = callframe.argument(0);
-    // const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
-    // js.pendingValueSetCached(thisValue, globalObject, result);
+    const result = callframe.argument(0);
+    const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
+    js.pendingValueSetCached(thisValue, globalObject, result);
     return .js_undefined;
 }
 pub fn setMode(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    _ = globalObject;
-    _ = callframe;
-    _ = this;
-    // const js_mode = callframe.argument(0);
-    // if (js_mode.isEmptyOrUndefinedOrNull() or !js_mode.isNumber()) {
-    //     return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
-    // }
+    const js_mode = callframe.argument(0);
+    if (js_mode.isEmptyOrUndefinedOrNull() or !js_mode.isNumber()) {
+        return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
+    }
 
-    // const mode = try js_mode.coerce(i32, globalObject);
-    // this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
-    //     return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
-    // };
+    const mode = try js_mode.coerce(i32, globalObject);
+    this.flags.result_mode = std.meta.intToEnum(SQLQueryResultMode, mode) catch {
+        return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
+    };
     return .js_undefined;
 }
 
 pub fn doDone(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
-    this.is_done = true;
+    this.flags.is_done = true;
     return .js_undefined;
 }
 
@@ -302,50 +341,40 @@ pub fn doCancel(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe:
     return .js_undefined;
 }
 
-pub fn doSetMode(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    _ = callframe;
-    _ = globalObject;
-    _ = this;
-
-    return .js_undefined;
-}
-
-pub fn doSetPendingValue(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    _ = callframe;
-    _ = globalObject;
-    _ = this;
-
-    return .js_undefined;
-}
-
 pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    var arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
-    var connection: *MySQLConnection = arguments[0].as(MySQLConnection) orelse {
+    debug("doRun", .{});
+    var arguments = callframe.arguments();
+    const connection: *MySQLConnection = arguments[0].as(MySQLConnection) orelse {
         return globalObject.throw("connection must be a MySQLConnection", .{});
     };
+
+    connection.poll_ref.ref(globalObject.bunVM());
     var query = arguments[1];
 
     if (!query.isObject()) {
         return globalObject.throwInvalidArgumentType("run", "query", "Query");
     }
 
-    this.target.set(globalObject, query);
-    const binding_value = js.bindingGetCached(callframe.this()) orelse .zero;
+    const this_value = callframe.this();
+    const binding_value = js.bindingGetCached(this_value) orelse .zero;
     var query_str = this.query.toUTF8(bun.default_allocator);
     defer query_str.deinit();
+    const writer = connection.writer();
+    // We need a strong reference to the query so that it doesn't get GC'd
+    this.ref();
+
     const columns_value = js.columnsGetCached(callframe.this()) orelse .js_undefined;
 
     var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
+        this.deref();
         if (!globalObject.hasException())
             return globalObject.throwError(err, "failed to generate signature");
         return error.JSError;
     };
     errdefer signature.deinit();
 
-    const writer = connection.writer();
-
     const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
+        this.deref();
         return globalObject.throwError(err, "failed to allocate statement");
     };
 
@@ -362,7 +391,8 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
             if (has_params and this.statement.?.status == .parsing) {
                 // if it has params, we need to wait for PrepareOk to be received before we can write the data
             } else {
-                this.binary = true;
+                this.flags.binary = true;
+                debug("doRun: binding and executing query", .{});
                 this.bindAndExecute(writer, this.statement.?, globalObject) catch |err| {
                     if (!globalObject.hasException())
                         return globalObject.throwError(err, "failed to bind and execute query");
@@ -375,6 +405,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         }
 
         const stmt = bun.default_allocator.create(MySQLStatement) catch |err| {
+            this.deref();
             return globalObject.throwError(err, "failed to allocate statement");
         };
         stmt.* = .{
@@ -387,12 +418,17 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         entry.value_ptr.* = stmt;
     }
 
-    try connection.requests.writeItem(this);
-    this.ref();
     this.status = if (did_write) .binding else .pending;
+    try connection.requests.writeItem(this);
+    debug("doRun: wrote query to connection", .{});
+    this.thisValue.upgrade(globalObject);
 
-    if (connection.is_ready_for_query)
-        connection.flushData();
+    js.targetSetCached(this_value, globalObject, query);
+    if (did_write) {
+        connection.flushDataAndResetTimeout();
+    } else {
+        connection.resetConnectionTimeout();
+    }
 
     return .js_undefined;
 }
@@ -419,3 +455,7 @@ const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").Query
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");
+const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const JSRef = jsc.JSRef;
+// TODO: move to shared IF POSSIBLE
+const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;

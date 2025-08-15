@@ -863,8 +863,7 @@ pub const Value = union(enum) {
                 str.append(digit + '0') catch return JSValue.jsNumber(0);
             }
 
-            var js_str = bun.String.createUTF8(str.items);
-            return js_str.transferToJS(globalObject);
+            return bun.String.createUTF8ForJS(globalObject, str.items) catch .zero;
         }
 
         pub fn toBinary(this: Decimal, field_type: FieldType) !Data {
@@ -885,27 +884,20 @@ pub const Value = union(enum) {
     };
 
     pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
-        // return switch (this.*) {
-        //     .null => JSValue.jsNull(),
-        //     .bool => |b| JSValue.jsBoolean(b),
-        //     inline .string, .string_data => |*str| {
-        //         var out = try bun.String.createUTF8(str.slice());
-        //         return out.transferToJS(globalObject);
-        //     },
-        //     inline .bytes, .bytes_data => |*data| JSC.ArrayBuffer.createBuffer(globalObject, data.slice()),
-        //     inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
-        //     inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
-        // };
-        _ = this;
-        _ = globalObject;
-        return .js_undefined;
+        return switch (this.*) {
+            .null => JSValue.jsNull(),
+            .bool => |b| JSValue.jsBoolean(b),
+            inline .string, .string_data => |*str| {
+                return try bun.String.createUTF8ForJS(globalObject, str.slice());
+            },
+            inline .bytes, .bytes_data => |*data| JSC.ArrayBuffer.createBuffer(globalObject, data.slice()),
+            inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
+            inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
+        };
     }
 
     export fn MySQL__ValueToJS(globalObject: *JSC.JSGlobalObject, value: *Value) JSValue {
-        // return value.toJS(globalObject);s
-        _ = globalObject;
-        _ = value;
-        return .js_undefined;
+        return value.toJS(globalObject) catch .zero;
     }
 };
 

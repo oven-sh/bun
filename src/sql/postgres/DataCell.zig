@@ -1107,7 +1107,7 @@ const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const Data = @import("./Data.zig").Data;
-const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 
 const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = types.AnyPostgresError;

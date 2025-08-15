@@ -646,17 +646,8 @@ pub const Command = struct {
                 var ctx = global_cli_ctx;
 
                 ctx.args.target = api.Target.bun;
-
-                // Handle compile_argv: prepend arguments to argv for standalone executables
-                var argv_to_use = bun.argv;
-                if (graph.compile_argv.len > 0) {
-                    var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                    try bun.appendOptionsEnv(graph.compile_argv, &argv_list, bun.default_allocator);
-                    argv_to_use = argv_list.items;
-                }
-
-                if (argv_to_use.len > 1) {
-                    ctx.passthrough = argv_to_use[1..];
+                if (bun.argv.len > 1) {
+                    ctx.passthrough = bun.argv[1..];
                 } else {
                     ctx.passthrough = &[_]string{};
                 }

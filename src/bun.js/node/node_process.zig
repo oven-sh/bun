@@ -59,8 +59,36 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
-    // For compiled/standalone executables, execArgv should be empty
-    if (vm.standalone_module_graph != null) {
+    // For compiled/standalone executables, execArgv should contain compile_argv
+    if (vm.standalone_module_graph) |graph| {
+        if (graph.compile_argv.len > 0) {
+            // Parse the compile_argv string into individual arguments
+            var args = std.ArrayList(bun.String).init(temp_alloc);
+            defer args.deinit();
+            defer for (args.items) |*arg| arg.deref();
+            
+            var i: usize = 0;
+            while (i < graph.compile_argv.len) {
+                // Skip whitespace
+                while (i < graph.compile_argv.len and std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
+                if (i >= graph.compile_argv.len) break;
+                
+                const start = i;
+                // Find end of argument (until next whitespace or end)
+                while (i < graph.compile_argv.len and !std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
+                
+                const arg = graph.compile_argv[start..i];
+                if (arg.len > 0) {
+                    try args.append(bun.String.cloneUTF8(arg));
+                }
+            }
+            
+            const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
+            for (0..args.items.len) |idx| {
+                try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));
+            }
+            return array;
+        }
         return try jsc.JSValue.createEmptyArray(globalObject, 0);
     }
 

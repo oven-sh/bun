@@ -29,7 +29,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(ErrorResponse, decodeInternal).decode;
 
-pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSValue {
+pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
@@ -127,7 +127,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
     const line_slice = if (line.isEmpty()) null else line.byteSlice();
     const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
-    return try createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
+    return createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
         .code = code_slice,
         .detail = detail_slice,
         .hint = hint_slice,
@@ -144,7 +144,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
         .file = file_slice,
         .line = line_slice,
         .routine = routine_slice,
-    });
+    }) catch |e| globalObject.takeError(e);
 }
 
 const std = @import("std");

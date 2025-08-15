@@ -579,6 +579,33 @@ async function runOn(executable: string, test: string, args: any[] | string, env
   return stdout;
 }
 
+async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
+  const [node, bun] = await Promise.all(
+    ["node", bunExe()].map(async executable => {
+      const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+      const env = { ...rest, ...envArgs };
+      const exec = spawn({
+        cmd: [
+          executable,
+          "--expose-gc",
+          join(__dirname, "napi-app/main.js"),
+          test,
+          typeof args == "string" ? args : JSON.stringify(args),
+        ],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "inherit",
+      });
+      const exitCode = await exec.exited;
+      return { exitCode, signalCode: exec.signalCode };
+    }),
+  );
+  expect(node.exitCode || node.signalCode).toBeTruthy();
+  expect(!!node.exitCode).toEqual(!!bun.exitCode);
+  expect(!!node.signalCode).toEqual(!!bun.signalCode);
+}
+
 describe("cleanup hooks", () => {
   describe("execution order", () => {
     it("executes in reverse insertion order like Node.js", async () => {
@@ -600,9 +627,8 @@ describe("cleanup hooks", () => {
   });
 
   describe("duplicate prevention", () => {
-    it("should not crash on duplicate hooks in release builds", async () => {
-      // Test that duplicate hooks don't crash in release builds
-      await checkSameOutput("test_cleanup_hook_duplicates", []);
+    it("should crash on duplicate hooks", async () => {
+      await checkBothFail("test_cleanup_hook_duplicates", []);
     });
   });
 });

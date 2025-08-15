@@ -1,7 +1,6 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 locked: bool = false, // set to true after collection phase ends
-executing: bool = false,
 describe_callback_queue: std.ArrayList(QueuedDescribe),
 
 root_scope: *DescribeScope,
@@ -101,7 +100,7 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!de
     group.begin(@src());
     defer group.end();
 
-    if (!this.executing and this.describe_callback_queue.items.len > 0) {
+    if (this.describe_callback_queue.items.len > 0) {
         group.log("runOne -> call next", .{});
         var first = this.describe_callback_queue.orderedRemove(0);
         defer first.deinit();
@@ -124,7 +123,6 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
 
     this.active_scope = new_scope;
     group.log("callDescribeCallback -> call", .{});
-    this.executing = true;
     const result = try callback.call(globalThis, .js_undefined, &.{});
 
     if (result.asPromise()) |_| {
@@ -134,7 +132,6 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
         buntest.addThen(globalThis, result);
         return .continue_async;
     } else {
-        this.executing = false;
         group.log("callDescribeCallback -> got value", .{});
         try this.describeCallbackCompleted(globalThis, previous_scope);
         return .continue_sync;
@@ -143,8 +140,6 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
 pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     group.begin(@src());
     defer group.end();
-
-    this.executing = false;
 
     bun.assert(this._previous_scope != null);
     const prev_scope = this._previous_scope.?;

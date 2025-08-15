@@ -578,3 +578,31 @@ async function runOn(executable: string, test: string, args: any[] | string, env
   expect(result).toBe(0);
   return stdout;
 }
+
+describe("cleanup hooks", () => {
+  describe("execution order", () => {
+    it("executes in reverse insertion order like Node.js", async () => {
+      // Test that cleanup hooks execute in reverse insertion order (LIFO)
+      await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  describe("error handling", () => {
+    it("removing non-existent env cleanup hook should not crash", async () => {
+      // Test that removing non-existent hooks doesn't crash the process
+      await checkSameOutput("test_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("removing non-existent async cleanup hook should not crash", async () => {
+      // Test that removing non-existent async hooks doesn't crash
+      await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+  });
+
+  describe("duplicate prevention", () => {
+    it("should not crash on duplicate hooks in release builds", async () => {
+      // Test that duplicate hooks don't crash in release builds  
+      await checkSameOutput("test_cleanup_hook_duplicates", []);
+    });
+  });
+});

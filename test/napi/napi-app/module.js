@@ -733,4 +733,25 @@ nativeTests.test_constructor_order = () => {
   require("./build/Debug/constructor_order_addon.node");
 };
 
+// Cleanup hook tests
+nativeTests.test_cleanup_hook_order = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_order.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_duplicates = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
+  addon.test();
+};
+
 module.exports = nativeTests;

@@ -70,5 +70,5 @@ pub fn readZ(this: StackReader) anyerror!Data {
 }
 
 const bun = @import("bun");
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;

@@ -5,6 +5,8 @@ pub const Data = union(enum) {
     inline_storage: std.BoundedArray(u8, 15),
     empty: void,
 
+    pub const Empty: Data = .{ .empty = {} };
+
     pub fn create(possibly_inline_bytes: []const u8, allocator: std.mem.Allocator) !Data {
         if (possibly_inline_bytes.len == 0) {
             return .{ .empty = {} };

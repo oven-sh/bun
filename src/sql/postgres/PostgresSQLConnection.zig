@@ -1351,8 +1351,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 .globalObject = this.globalObject,
             };
 
-            var stack_buf: [70]DataCell = undefined;
-            var cells: []DataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
+            var stack_buf: [70]DataCell.SQLDataCell = undefined;
+            var cells: []DataCell.SQLDataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
             var free_cells = false;
             defer {
                 for (cells[0..putter.count]) |*cell| {
@@ -1362,11 +1362,11 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
 
             if (statement.fields.len >= jsc.JSObject.maxInlineCapacity()) {
-                cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
+                cells = try bun.default_allocator.alloc(DataCell.SQLDataCell, statement.fields.len);
                 free_cells = true;
             }
             // make sure all cells are reset if reader short breaks the fields will just be null with is better than undefined behavior
-            @memset(cells, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+            @memset(cells, DataCell.SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
             putter.list = cells;
 
             if (request.flags.result_mode == .raw) {
@@ -1817,9 +1817,9 @@ const SocketMonitor = @import("./SocketMonitor.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
-const ConnectionFlags = @import("./ConnectionFlags.zig").ConnectionFlags;
-const Data = @import("./Data.zig").Data;
-const DataCell = @import("./DataCell.zig").DataCell;
+const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
+const Data = @import("../shared/Data.zig").Data;
+const DataCell = @import("./DataCell.zig");
 const SSLMode = @import("./SSLMode.zig").SSLMode;
 const Status = @import("./Status.zig").Status;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;

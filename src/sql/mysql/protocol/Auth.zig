@@ -196,7 +196,7 @@ pub const caching_sha2_password = struct {
 };
 const bun = @import("bun");
 const jsc = bun.jsc;
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;

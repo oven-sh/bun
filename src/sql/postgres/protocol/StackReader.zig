@@ -61,5 +61,5 @@ pub fn readZ(this: StackReader) AnyPostgresError!Data {
 
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;

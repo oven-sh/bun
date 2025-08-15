@@ -72,7 +72,7 @@ pub fn decodeInternal(this: *HandshakeV10, comptime Context: type, reader: NewRe
 
 pub const decode = decoderWrap(HandshakeV10, decodeInternal).decode;
 
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const Capabilities = @import("../Capabilities.zig");

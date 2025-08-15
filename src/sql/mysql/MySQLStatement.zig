@@ -3,8 +3,9 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 cached_structure: CachedStructure = .{},
 ref_count: RefCount = RefCount.init(),
 statement_id: u32 = 0,
-params: []const types.FieldType = &[_]types.FieldType{},
-columns: []const ColumnDefinition41 = &[_]ColumnDefinition41{},
+params: []types.FieldType = &[_]types.FieldType{},
+columns: []ColumnDefinition41 = &[_]ColumnDefinition41{},
+columns_received: u32 = 0,
 signature: Signature,
 status: Status = Status.parsing,
 error_response: ErrorPacket = .{ .error_code = 0 },
@@ -22,10 +23,14 @@ pub fn deinit(this: *MySQLStatement) void {
     debug("MySQLStatement deinit", .{});
 
     for (this.columns) |*column| {
-        @constCast(column).deinit();
+        column.deinit();
     }
-    bun.default_allocator.free(this.columns);
-    bun.default_allocator.free(this.params);
+    if (this.columns.len > 0) {
+        bun.default_allocator.free(this.columns);
+    }
+    if (this.params.len > 0) {
+        bun.default_allocator.free(this.params);
+    }
     this.cached_structure.deinit();
     this.error_response.deinit();
     this.signature.deinit();
@@ -49,13 +54,11 @@ pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlo
     //     }
     // }
     const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
-    var i: usize = 0;
 
-    var id: *jsc.JSObject.ExternColumnIdentifier = &ids[i];
-    for (this.columns) |*column| {
+    for (this.columns, 0..) |*column, i| {
+        var id: *jsc.JSObject.ExternColumnIdentifier = &ids[i];
         id.value.name = String.createAtomIfPossible(column.name.slice());
         id.tag = 2;
-        i += 1;
     }
 
     if (nonDuplicatedCount > jsc.JSObject.maxInlineCapacity()) {

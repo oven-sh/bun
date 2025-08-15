@@ -60,7 +60,7 @@ pub const decode = decoderWrap(OKPacket, decodeInternal).decode;
 
 const std = @import("std");
 const bun = @import("bun");
-const Data = @import("./Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const StatusFlags = @import("../StatusFlags.zig").StatusFlags;

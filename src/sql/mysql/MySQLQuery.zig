@@ -7,6 +7,7 @@ cursor_name: bun.String = bun.String.empty,
 thisValue: JSRef = JSRef.empty(),
 
 status: Status = Status.pending,
+
 ref_count: RefCount = RefCount.init(),
 
 flags: packed struct(u8) {
@@ -362,6 +363,58 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     const writer = connection.writer();
     // We need a strong reference to the query so that it doesn't get GC'd
     this.ref();
+    if (this.flags.simple) {
+        debug("executeQuery", .{});
+
+        const stmt = bun.default_allocator.create(MySQLStatement) catch {
+            this.deref();
+            return globalObject.throwOutOfMemory();
+        };
+        // Query is simple and it's the only owner of the statement
+        stmt.* = .{
+            .signature = Signature.empty(),
+            .status = .parsing,
+        };
+        this.statement = stmt;
+
+        const can_execute = !connection.hasQueryRunning();
+        if (can_execute) {
+            connection.sequence_id = 0;
+            MySQLRequest.executeQuery(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
+                // fail to run do cleanup
+                this.statement = null;
+                bun.default_allocator.destroy(stmt);
+                this.deref();
+
+                if (!globalObject.hasException())
+                    return globalObject.throwError(err, "failed to execute query");
+                // return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to execute query", err));
+                return error.JSError;
+            };
+            connection.flags.is_ready_for_query = false;
+            connection.nonpipelinable_requests += 1;
+            this.status = .running;
+        } else {
+            this.status = .pending;
+        }
+        connection.requests.writeItem(this) catch {
+            // fail to run do cleanup
+            this.statement = null;
+            bun.default_allocator.destroy(stmt);
+            this.deref();
+
+            return globalObject.throwOutOfMemory();
+        };
+
+        this.thisValue.upgrade(globalObject);
+        js.targetSetCached(this_value, globalObject, query);
+        if (this.status == .running) {
+            connection.flushDataAndResetTimeout();
+        } else {
+            connection.resetConnectionTimeout();
+        }
+        return .js_undefined;
+    }
 
     const columns_value = js.columnsGetCached(callframe.this()) orelse .js_undefined;
 
@@ -447,7 +500,7 @@ const bun = @import("bun");
 const MySQLStatement = @import("./MySQLStatement.zig");
 const MySQLConnection = @import("./MySQLConnection.zig");
 const Signature = @import("./protocol/Signature.zig");
-const Data = @import("./protocol/Data.zig").Data;
+const Data = @import("../shared/Data.zig").Data;
 const Value = @import("./MySQLTypes.zig").Value;
 const debug = bun.Output.scoped(.MySQLQuery, false);
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
@@ -459,3 +512,5 @@ const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryR
 const JSRef = jsc.JSRef;
 // TODO: move to shared IF POSSIBLE
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
+const MySQLRequest = @import("./MySQLRequest.zig");
+const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");

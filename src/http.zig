@@ -528,13 +528,10 @@ else
     accept_encoding_header_compression;
 
 fn getUserAgentHeader() picohttp.Header {
-    return picohttp.Header{ 
-        .name = "User-Agent", 
-        .value = if (overridden_default_user_agent.len > 0) 
-            overridden_default_user_agent 
-        else 
-            Global.user_agent 
-    };
+    return picohttp.Header{ .name = "User-Agent", .value = if (overridden_default_user_agent.len > 0)
+        overridden_default_user_agent
+    else
+        Global.user_agent };
 }
 
 pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {

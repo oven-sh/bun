@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 describe("--user-agent flag", () => {
   test("custom user agent is sent in HTTP requests", async () => {
     const customUserAgent = "MyCustomUserAgent/1.0";
-    
+
     const testScript = `
 const server = Bun.serve({
   port: 0,

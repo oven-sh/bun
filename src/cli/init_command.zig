@@ -986,7 +986,9 @@ const Template = enum {
 
     const agent_rule = @embedFile("../init/rule.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
+    const windsurf_rule = TemplateFile{ .path = ".windsurf/rules/use-bun-instead-of-node-vite-npm-pnpm.md", .contents = agent_rule };
     const cursor_rule_path_to_claude_md = "../../CLAUDE.md";
+    const windsurf_rule_path_to_claude_md = "../../CLAUDE.md";
 
     fn isClaudeCodeInstalled() bool {
         if (Environment.isWindows) {
@@ -1043,6 +1045,40 @@ const Template = enum {
             }
         }
 
+        // If windsurf is installed, create windsurf rule
+        if (Template.getWindsurfRule()) |windsurf_template_file| {
+            var did_create_windsurf_rule = false;
+
+            // If both Windsurf & Claude is installed, make the windsurf rule a
+            // symlink to ../../CLAUDE.md
+            const windsurf_asset_path = if (@"create CLAUDE.md") "CLAUDE.md" else windsurf_template_file.path;
+            const windsurf_result = InitCommand.Assets.createNew(windsurf_asset_path, windsurf_template_file.contents);
+            did_create_windsurf_rule = true;
+            windsurf_result catch {
+                did_create_windsurf_rule = false;
+                if (@"create CLAUDE.md") {
+                    @"create CLAUDE.md" = false;
+                    // If installing the CLAUDE.md fails for some reason, fall back to installing the windsurf rule.
+                    InitCommand.Assets.createNew(windsurf_template_file.path, windsurf_template_file.contents) catch {};
+                }
+            };
+
+            if (comptime !Environment.isWindows) {
+                // if we did create the CLAUDE.md, then symlinks the
+                // .windsurf/rules/*.md -> CLAUDE.md so it's easier to keep them in
+                // sync if you change it locally. we use a symlink for the windsurf
+                // rule in this case so that the github UI for CLAUDE.md (which may
+                // appear prominently in repos) doesn't show a file path.
+                if (did_create_windsurf_rule and @"create CLAUDE.md") symlink_windsurf_rule: {
+                    @"create CLAUDE.md" = false;
+                    bun.makePath(bun.FD.cwd().stdDir(), ".windsurf/rules") catch {};
+                    bun.sys.symlinkat(windsurf_rule_path_to_claude_md, .cwd(), windsurf_template_file.path).unwrap() catch break :symlink_windsurf_rule;
+                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ windsurf_template_file.path, windsurf_asset_path });
+                    Output.flush();
+                }
+            }
+        }
+
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
@@ -1092,6 +1128,54 @@ const Template = enum {
     fn getCursorRule() ?*const TemplateFile {
         if (isCursorInstalled()) {
             return &cursor_rule;
+        }
+
+        return null;
+    }
+
+    fn isWindsurfInstalled() bool {
+        // Give some way to opt-out.
+        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("WINDSURF_AGENT_RULE_DISABLED")) {
+            return false;
+        }
+
+        // Detect if they're currently using windsurf.
+        if (bun.getenvZAnyCase("WINDSURF_WORKSPACE_ID")) |env| {
+            if (env.len > 0) {
+                return true;
+            }
+        }
+
+        if (Environment.isMac) {
+            if (bun.sys.exists("/Applications/Windsurf.app")) {
+                return true;
+            }
+        }
+
+        if (Environment.isWindows) {
+            if (bun.getenvZAnyCase("USER")) |user| {
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
+                const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Windsurf\\Windsurf.exe", .{user}) catch {
+                    return false;
+                };
+
+                if (bun.sys.exists(path)) {
+                    return true;
+                }
+            }
+        }
+
+        // Check if windsurf is in PATH
+        const pathbuffer = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuffer);
+
+        return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "windsurf") != null;
+    }
+
+    fn getWindsurfRule() ?*const TemplateFile {
+        if (isWindsurfInstalled()) {
+            return &windsurf_rule;
         }
 
         return null;

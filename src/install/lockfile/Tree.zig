@@ -557,6 +557,27 @@ fn hoistDependency(
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
+    return hoistDependencyWithDepth(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, 0);
+}
+
+fn hoistDependencyWithDepth(
+    this: *Tree,
+    comptime as_defined: bool,
+    hoist_root_id: Id,
+    package_id: PackageID,
+    dependency: *const Dependency,
+    dependency_lists: []Lockfile.DependencyIDList,
+    trees: []Tree,
+    comptime method: BuilderMethod,
+    builder: *Builder(method),
+    depth: u32,
+) !HoistDependencyResult {
+    // Prevent infinite recursion by limiting the hoisting depth
+    // This prevents stack overflow in circular dependency scenarios
+    const max_hoisting_depth = 1000;
+    if (depth >= max_hoisting_depth) {
+        return .dependency_loop;
+    }
     const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
     for (0..this_dependencies.len) |i| {
         const dep_id = this_dependencies[i];
@@ -614,7 +635,7 @@ fn hoistDependency(
 
     // this dependency was not found in this tree, try hoisting or placing in the next parent
     if (this.parent != invalid_id and this.id != hoist_root_id) {
-        const id = trees[this.parent].hoistDependency(
+        const id = trees[this.parent].hoistDependencyWithDepth(
             false,
             hoist_root_id,
             package_id,
@@ -623,6 +644,7 @@ fn hoistDependency(
             trees,
             method,
             builder,
+            depth + 1,
         ) catch unreachable;
         if (!as_defined or id != .dependency_loop) return id; // 1 or 2
     }

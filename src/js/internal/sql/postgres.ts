@@ -606,9 +606,6 @@ export class PostgresAdapter
         if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
           throw new PostgresError("Only use sql.begin, sql.reserved or max: 1", {
             code: "ERR_POSTGRES_UNSAFE_TRANSACTION",
-            detail: "",
-            hint: "",
-            severity: "ERROR",
           });
         }
       }

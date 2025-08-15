@@ -41,10 +41,10 @@ declare module "bun" {
 
     class PostgresError extends SQLError {
       public readonly code: string;
-      public readonly errno: string;
-      public readonly detail: string;
-      public readonly hint: string;
-      public readonly severity: string;
+      public readonly errno?: string;
+      public readonly detail?: string;
+      public readonly hint?: string;
+      public readonly severity?: string;
       public readonly position?: string;
       public readonly internalPosition?: string;
       public readonly internalQuery?: string;
@@ -62,8 +62,10 @@ declare module "bun" {
         message: string,
         options: {
           code: string;
-          detail: string;
-          hint: string;
+          errno?: string;
+          detail?: string;
+          hint?: string;
+          severity?: string;
           position?: string;
           internalPosition?: string;
           internalQuery?: string;
@@ -76,7 +78,6 @@ declare module "bun" {
           file?: string;
           line?: string;
           routine?: string;
-          severity?: string;
         },
       );
     }

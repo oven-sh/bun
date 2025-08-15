@@ -65,11 +65,11 @@ pub fn createPostgresError(
 
     const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.put(globalObject, jsc.ZigString.static("code"), jsc.ZigString.init(options.code).toJS(globalObject));
-    opts_obj.put(globalObject, jsc.ZigString.static("detail"), jsc.ZigString.init(options.detail orelse "").toJS(globalObject));
-    opts_obj.put(globalObject, jsc.ZigString.static("hint"), jsc.ZigString.init(options.hint orelse "").toJS(globalObject));
-    opts_obj.put(globalObject, jsc.ZigString.static("severity"), jsc.ZigString.init(options.severity orelse "ERROR").toJS(globalObject));
-
+    
     if (options.errno) |errno| opts_obj.put(globalObject, jsc.ZigString.static("errno"), jsc.ZigString.init(errno).toJS(globalObject));
+    if (options.detail) |detail| opts_obj.put(globalObject, jsc.ZigString.static("detail"), jsc.ZigString.init(detail).toJS(globalObject));
+    if (options.hint) |hint| opts_obj.put(globalObject, jsc.ZigString.static("hint"), jsc.ZigString.init(hint).toJS(globalObject));
+    if (options.severity) |severity| opts_obj.put(globalObject, jsc.ZigString.static("severity"), jsc.ZigString.init(severity).toJS(globalObject));
     if (options.position) |pos| opts_obj.put(globalObject, jsc.ZigString.static("position"), jsc.ZigString.init(pos).toJS(globalObject));
     if (options.internalPosition) |pos| opts_obj.put(globalObject, jsc.ZigString.static("internalPosition"), jsc.ZigString.init(pos).toJS(globalObject));
     if (options.internalQuery) |query| opts_obj.put(globalObject, jsc.ZigString.static("internalQuery"), jsc.ZigString.init(query).toJS(globalObject));

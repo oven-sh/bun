@@ -34,3 +34,23 @@ Status:
 - [ ] are there hook timeouts?
 - [ ] use the new owned pointer types?
 - [ ] make a new jsc.strong / jsc.strong.optional class that uses .protect()/.unprotect() and in debug builds allocates something for leak checking
+
+Design:
+
+- collect tests
+  - The test runner must do a first pass where it calls describes, but only queues tests
+- flatten
+  - Once collection is done, callbacks are flattened into a list
+  - Complications: tests that execute repeatedly need to also run their beforeEach/afterEach handlers
+- execute tests
+  - Items in the list are executed
+- promise handling
+  - then and catch are assigned to functions in BunTest which submit the results
+  - Complications: concurrent tests will need to handle this differently
+    - there will be seperate callbacks for resolveConcurrent and rejectConcurrent
+    - once all of them are resolved, we can call the main resolve function to continue
+    - this doesn't seem too complicated. pretty simple actually.
+    - note that jest currently skips beforeEach/afterEach calls for concurrent tests <https://github.com/jestjs/jest/issues/7997>
+    - check what vitest does
+- multi-file
+  - not implemented yet but we'll try to have a different BunTest for each file?

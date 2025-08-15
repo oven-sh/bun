@@ -287,7 +287,7 @@ pub const Collection = @import("./Collection.zig");
 
 pub const DescribeScope = struct {
     parent: ?*DescribeScope,
-    entries: std.ArrayList(TestScheduleEntry2),
+    entries: std.ArrayList(TestScheduleEntry),
     beforeAll: std.ArrayList(*ExecutionEntry),
     beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
@@ -365,11 +365,11 @@ pub const ExecutionEntry = struct {
         buntest.gpa.destroy(this);
     }
 };
-pub const TestScheduleEntry2 = union(enum) {
+pub const TestScheduleEntry = union(enum) {
     describe: *DescribeScope,
     test_callback: *ExecutionEntry,
     fn deinit(
-        this: *TestScheduleEntry2,
+        this: *TestScheduleEntry,
         buntest: *BunTest,
     ) void {
         switch (this.*) {

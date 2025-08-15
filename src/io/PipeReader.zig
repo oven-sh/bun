@@ -1067,7 +1067,6 @@ pub const WindowsBufferedReader = struct {
                     _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
                 },
                 .pipe => |pipe| {
-                    pipe.data = pipe;
                     this.flags.is_paused = true;
                     pipe.close(onPipeClose);
                 },

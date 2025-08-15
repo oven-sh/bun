@@ -437,6 +437,7 @@ pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
@@ -450,8 +451,7 @@ fn doStop(this: *Listener, force_close: bool) void {
 
         this.handlers.unprotect();
         // deiniting the context will also close the listener
-        if (this.socket_context) |ctx| {
-            this.socket_context = null;
+        if (bun.take(&this.socket_context)) |ctx| {
             ctx.deinit(this.ssl);
         }
         this.strong_self.clearWithoutDeallocation();
@@ -487,12 +487,12 @@ pub fn deinit(this: *Listener) void {
     this.handlers.unprotect();
 
     if (this.handlers.active_connections > 0) {
-        if (this.socket_context) |ctx| {
+        if (bun.take(&this.socket_context)) |ctx| {
             ctx.close(this.ssl);
         }
         // TODO: fix this leak.
     } else {
-        if (this.socket_context) |ctx| {
+        if (bun.take(&this.socket_context)) |ctx| {
             ctx.deinit(this.ssl);
         }
     }
@@ -865,7 +865,7 @@ fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {
 }
 
 pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
-    uvPipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
+    uvPipe: ?*uv.Pipe = null,
     listener: ?*Listener,
     globalThis: *jsc.JSGlobalObject,
     vm: *jsc.VirtualMachine,
@@ -875,6 +875,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     fn onClientConnect(this: *WindowsNamedPipeListeningContext, status: uv.ReturnCode) void {
         if (status != uv.ReturnCode.zero or this.vm.isShuttingDown() or this.listener == null) {
             // connection dropped or vm is shutting down or we are deiniting/closing
+            if (bun.take(&this.uvPipe)) |pipe| {
+                pipe.close(onPipeClosed);
+            }
             return;
         }
         const listener = this.listener.?;
@@ -888,7 +891,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
 
         const client = WindowsNamedPipeContext.create(this.globalThis, socket);
 
-        const result = client.named_pipe.getAcceptedBy(&this.uvPipe, this.ctx);
+        const result = client.named_pipe.getAcceptedBy(this.uvPipe.?, this.ctx);
         if (result == .err) {
             // connection dropped
             client.deinit();
@@ -896,41 +899,54 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     }
 
     fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
-        const this: *WindowsNamedPipeListeningContext = @ptrCast(@alignCast(pipe.data));
-        this.deinit();
+        bun.destroy(pipe);
     }
 
     pub fn closePipeAndDeinit(this: *WindowsNamedPipeListeningContext) void {
         this.listener = null;
-        this.uvPipe.data = this;
-        this.uvPipe.close(onPipeClosed);
+        if (bun.take(&this.uvPipe)) |pipe| {
+            pipe.close(onPipeClosed);
+        }
+        this.deinit();
     }
 
     pub fn listen(globalThis: *jsc.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?jsc.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
-        const this = WindowsNamedPipeListeningContext.new(.{
-            .globalThis = globalThis,
-            .vm = globalThis.bunVM(),
-            .listener = listener,
-        });
+        const ctx: ?*BoringSSL.SSL_CTX = brk: {
+            if (ssl_config) |ssl_options| {
+                bun.BoringSSL.load();
 
-        if (ssl_config) |ssl_options| {
-            bun.BoringSSL.load();
+                const ctx_opts: uws.SocketContext.BunSocketContextOptions = jsc.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+                var err: uws.create_bun_socket_error_t = .none;
+                // Create SSL context using uSockets to match behavior of node.js
+                break :brk ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
+            }
+            break :brk null;
+        };
+        const vm = globalThis.bunVM();
 
-            const ctx_opts: uws.SocketContext.BunSocketContextOptions = jsc.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-            var err: uws.create_bun_socket_error_t = .none;
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
-            this.ctx = ctx;
-        }
+        const pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
 
-        const initResult = this.uvPipe.init(this.vm.uvLoop(), false);
+        const initResult = pipe.init(vm.uvLoop(), false);
         if (initResult == .err) {
+            bun.destroy(pipe);
+            if (ctx) |ssl_ctx| {
+                BoringSSL.SSL_CTX_free(ssl_ctx);
+            }
             return error.FailedToInitPipe;
         }
+
+        const this = WindowsNamedPipeListeningContext.new(.{
+            .globalThis = globalThis,
+            .vm = vm,
+            .listener = listener,
+            .uvPipe = pipe,
+            .ctx = ctx,
+        });
+
         if (path[path.len - 1] == 0) {
             // is already null terminated
             const slice_z = path[0 .. path.len - 1 :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+            pipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
         } else {
             var path_buf: bun.PathBuffer = undefined;
             // we need to null terminate the path
@@ -939,7 +955,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             @memcpy(path_buf[0..len], path[0..len]);
             path_buf[len] = 0;
             const slice_z = path_buf[0..len :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+            pipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
@@ -967,6 +983,10 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
 
     fn deinit(this: *WindowsNamedPipeListeningContext) void {
         this.listener = null;
+        if (bun.take(&this.uvPipe)) |pipe| {
+            bun.destroy(pipe);
+        }
+
         if (this.ctx) |ctx| {
             this.ctx = null;
             BoringSSL.SSL_CTX_free(ctx);

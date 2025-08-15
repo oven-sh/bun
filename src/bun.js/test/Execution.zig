@@ -25,7 +25,7 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     const entry = this.order[this.index];
 
     if (!entry.tag.shouldExecute()) {
-        try runOneCompleted(this, globalThis, .skip);
+        try runOneCompleted2(this, globalThis, .skip);
         return .continue_sync;
     }
 
@@ -37,18 +37,11 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
 
     // TODO: catch errors
     if (entry.tag == .test_callback) entry.tag = .executing;
-    const result = try callback.?.call(globalThis, .js_undefined, &.{});
 
-    if (result.asPromise()) |_| {
-        this.bunTest().addThen(globalThis, result);
-        return .continue_async;
-    }
-
-    try runOneCompleted(this, globalThis, .pass);
-    return .continue_sync;
+    return this.bunTest().callTestCallback(globalThis, callback.?, .{ .done_parameter = true });
 }
 
-pub fn runOneCompleted(this: *Execution, globalThis: *jsc.JSGlobalObject, status: ExecutionEntryTag) bun.JSError!void {
+pub fn runOneCompleted2(this: *Execution, globalThis: *jsc.JSGlobalObject, status: ExecutionEntryTag) bun.JSError!void {
     bun.assert(this.index < this.order.len);
     const entry = this.order[this.index];
     this.index += 1;
@@ -59,11 +52,17 @@ pub fn runOneCompleted(this: *Execution, globalThis: *jsc.JSGlobalObject, status
     _ = globalThis;
 }
 
-pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+pub fn runOneCompleted(this: *Execution, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
-    try runOneCompleted(this, globalThis, .pass);
+    if (result_is_error) {
+        _ = result_value;
+        group.log("TODO: print error", .{});
+        try runOneCompleted2(this, globalThis, .fail);
+    } else {
+        try runOneCompleted2(this, globalThis, .pass);
+    }
 
     group.log("TODO: announce test result", .{});
 }

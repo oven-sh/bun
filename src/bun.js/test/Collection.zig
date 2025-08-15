@@ -109,6 +109,20 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!de
         return .done;
     }
 }
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
+    group.begin(@src());
+    defer group.end();
+
+    if (result_is_error) {
+        _ = result_value;
+        group.log("TODO: print error", .{});
+    }
+
+    bun.assert(this._previous_scope != null);
+    const prev_scope = this._previous_scope.?;
+    this._previous_scope = null;
+    try this.describeCallbackCompleted(globalThis, prev_scope);
+}
 
 pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, active_scope: *DescribeScope) bun.JSError!describe2.RunOneResult {
     group.begin(@src());
@@ -123,28 +137,10 @@ pub fn callDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, 
 
     this.active_scope = new_scope;
     group.log("callDescribeCallback -> call", .{});
-    const result = try callback.call(globalThis, .js_undefined, &.{});
 
-    if (result.asPromise()) |_| {
-        group.log("callDescribeCallback -> got promise", .{});
-        bun.assert(this._previous_scope == null);
-        this._previous_scope = previous_scope;
-        buntest.addThen(globalThis, result);
-        return .continue_async;
-    } else {
-        group.log("callDescribeCallback -> got value", .{});
-        try this.describeCallbackCompleted(globalThis, previous_scope);
-        return .continue_sync;
-    }
-}
-pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
-    group.begin(@src());
-    defer group.end();
-
-    bun.assert(this._previous_scope != null);
-    const prev_scope = this._previous_scope.?;
-    this._previous_scope = null;
-    try this.describeCallbackCompleted(globalThis, prev_scope);
+    bun.assert(this._previous_scope == null);
+    this._previous_scope = previous_scope;
+    return buntest.callTestCallback(globalThis, callback, .{ .done_parameter = false });
 }
 pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
     group.begin(@src());

@@ -146,32 +146,28 @@ pub const BunTest = struct {
 
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
     export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
-    fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
 
-        var this: *BunTest = callframe.arguments_old(2).ptr[1].asPromisePtr(BunTest);
+        const result, const this_ptr = callframe.argumentsAsArray(2);
+
+        var this: *BunTest = this_ptr.asPromisePtr(BunTest);
         defer this.unref();
 
-        switch (this.phase) {
-            .collection => try this.collection.describeCallbackThen(globalThis),
-            .execution => try this.execution.testCallbackThen(globalThis),
-        }
+        try this.runOneCompleted(globalThis, is_catch, result);
 
         this.executing = false;
         try this.run(globalThis);
         return .js_undefined;
     }
-    fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-
-        _ = globalThis;
-        _ = callframe;
-        @panic("bun:test failure. TODO: throw the error");
-        // return bunTestThen(globalThis, callframe); // TODO: throw the error
+    fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return bunTestThenOrCatch(globalThis, callframe, false);
     }
-    pub fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
+    fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return bunTestThenOrCatch(globalThis, callframe, true);
+    }
+    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
         promise.then(globalThis, this.ref(), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
@@ -198,7 +194,7 @@ pub const BunTest = struct {
         comptime unreachable;
     }
 
-    pub fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
         switch (this.phase) {
             .collection => {
                 // collection phase is complete. advance to execution phase, then continue.
@@ -236,6 +232,40 @@ pub const BunTest = struct {
                 return .exit;
             },
         }
+    }
+
+    fn runOneCompleted(this: *BunTest, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
+        switch (this.phase) {
+            .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value),
+            .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value),
+        }
+    }
+
+    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, _: struct { done_parameter: bool }) bun.JSError!RunOneResult {
+        group.begin(@src());
+        defer group.end();
+
+        // TODO: this will need to support:
+        // - in tests, (done) => {} callbacks
+        // - for test.concurrent, we will have multiple 'then's active at once, and they will
+        //   need to be able to pass context information to runOneCompleted
+
+        var is_error = false;
+        const result = callback.call(globalThis, .js_undefined, &.{}) catch |e| blk: {
+            group.log("callTestCallback -> error", .{});
+            is_error = true;
+            break :blk globalThis.takeError(e);
+        };
+
+        if (!is_error and result.asPromise() != null) {
+            group.log("callTestCallback -> promise", .{});
+            this.addThen(globalThis, result);
+            return .continue_async;
+        }
+
+        group.log("callTestCallback -> sync", .{});
+        try this.runOneCompleted(globalThis, is_error, result);
+        return .continue_sync;
     }
 };
 

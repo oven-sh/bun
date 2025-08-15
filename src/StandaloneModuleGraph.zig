@@ -489,7 +489,23 @@ pub const StandaloneModuleGraph = struct {
 
     pub const InjectOptions = struct {
         windows_hide_console: bool = false,
+        windows_icon: ?[]const u8,
     };
+
+    fn openExecutableFileWindows(path: [:0]const u16) !bun.FileDescriptor {
+        return bun.sys.openFileAtWindows(
+            bun.invalid_fd,
+            path,
+            .{
+                .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
+                .disposition = w.FILE_OPEN,
+                .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            },
+        ).unwrap() catch |e| {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open executable file\n{}", .{e});
+            Global.exit(1);
+        };
+    }
 
     pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
@@ -510,7 +526,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }.toClean;
 
-        const cloned_executable_fd: bun.FileDescriptor = brk: {
+        var cloned_executable_fd: bun.FileDescriptor = brk: {
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
@@ -527,19 +543,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
-                const file = bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
-                    out,
-                    .{
-                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
-                        .disposition = w.FILE_OPEN,
-                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
-                    },
-                ).unwrap() catch |e| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
-                    Global.exit(1);
-                };
-
+                const file = try openExecutableFileWindows(out);
                 break :brk file;
             }
 
@@ -630,6 +634,36 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
+        if (Environment.isWindows) {
+            // this should be done before embedding the content because rescle sanitizes the file
+            if (inject_options.windows_icon) |icon_utf8| {
+                const tempfile_buf = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(tempfile_buf);
+                const tempfile = bun.strings.toWPathNormalized(tempfile_buf, zname);
+                const icon_buf = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(icon_buf);
+                const icon = bun.strings.toWPathNormalized(icon_buf, icon_utf8);
+
+                // Close the file descriptor temporarily to avoid sharing conflicts
+                cloned_executable_fd.close();
+
+                bun.windows.rescle.setIcon(tempfile.ptr, icon) catch |err| {
+                    switch (err) {
+                        error.ExecutableLoadFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot load executable file"}),
+                        error.IconSetFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot read or parse icon file"}),
+                        error.ExecutableCommitFailed => Output.prettyErrorln("Failed to set executable icon: {s}", .{"Cannot commit changes to executable"}),
+                        else => Output.prettyErrorln("Failed to set executable icon", .{}),
+                    }
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+
+                // Reopen the file for further operations
+                const reopened_fd = try openExecutableFileWindows(tempfile);
+                cloned_executable_fd = reopened_fd;
+            }
+        }
+
         switch (target.os) {
             .mac => {
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
@@ -701,6 +735,14 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 input_result.bytes.deinit();
+
+                if (inject_options.windows_hide_console) {
+                    pe_file.setSubsystem(.GUI) catch |err| {
+                        Output.prettyErrorln("Failed to disable console on executable: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    };
+                }
 
                 switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
@@ -795,16 +837,7 @@ pub const StandaloneModuleGraph = struct {
             },
         }
 
-        if (Environment.isWindows and inject_options.windows_hide_console) {
-            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
-                Output.err(err, "failed to disable console on executable", .{});
-                cleanup(zname, cloned_executable_fd);
-
-                Global.exit(1);
-            };
-        }
-
-        return cloned_executable_fd;
+        unreachable;
     }
 
     pub const CompileTarget = @import("./compile_target.zig");
@@ -849,7 +882,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
-            .{ .windows_hide_console = windows_hide_console },
+            .{ .windows_hide_console = windows_hide_console, .windows_icon = windows_icon },
             target,
         );
         bun.debugAssert(fd.kind == .system);
@@ -876,14 +909,6 @@ pub const StandaloneModuleGraph = struct {
                 Global.exit(1);
             };
             fd.close();
-
-            if (windows_icon) |icon_utf8| {
-                var icon_buf: bun.OSPathBuffer = undefined;
-                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
-                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
-                    Output.warn("Failed to set executable icon", .{});
-                };
-            }
             return;
         }
 

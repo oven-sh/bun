@@ -3625,23 +3625,6 @@ pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;
 pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;
 
-const pe_header_offset_location = 0x3C;
-const subsystem_offset = 0x5C;
-
-pub const Subsystem = enum(u16) {
-    windows_gui = 2,
-};
-
-pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
-    comptime bun.assert(bun.Environment.isWindows);
-    if (bun.windows.SetFilePointerEx(fd.handle.cast(), pe_header_offset_location, null, std.os.windows.FILE_BEGIN) == 0)
-        return error.Win32Error;
-    const offset = try fd.reader().readInt(u32, .little);
-    if (bun.windows.SetFilePointerEx(fd.handle.cast(), offset + subsystem_offset, null, std.os.windows.FILE_BEGIN) == 0)
-        return error.Win32Error;
-    try fd.writer().writeInt(u16, @intFromEnum(subsystem), .little);
-}
-
 pub const rescle = struct {
     extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
 
@@ -3650,6 +3633,9 @@ pub const rescle = struct {
         const status = rescle__setIcon(exe_path, icon);
         return switch (status) {
             0 => {},
+            -1 => error.ExecutableLoadFailed,
+            -2 => error.IconSetFailed,
+            -3 => error.ExecutableCommitFailed,
             else => error.IconEditError,
         };
     }
@@ -3663,6 +3649,7 @@ pub extern "kernel32" fn GetCurrentThread() callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
 pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
 pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetFilePointerEx(hFile: HANDLE, liDistanceToMove: LARGE_INTEGER, lpNewFilePointer: ?*LARGE_INTEGER, dwMoveMethod: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;
 
 /// Returns the original mode, or null on failure

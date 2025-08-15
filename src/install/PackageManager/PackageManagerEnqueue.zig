@@ -346,7 +346,7 @@ pub fn enqueueDependencyToRoot(
                                         .fn_ptr = PackageManager.onExtractDefault,
                                     },
                                 };
-                                
+
                                 manager.runTasks(
                                     void,
                                     {},

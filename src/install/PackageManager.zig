@@ -1271,6 +1271,56 @@ pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/upd
 const string = []const u8;
 const stringZ = [:0]const u8;
 
+/// Default callback for handling extracted packages when no installer context is available
+pub fn onExtractDefault(
+    manager: *PackageManager,
+    task_id: Task.Id,
+    dependency_id: DependencyID,
+    data: *const ExtractData,
+    log_level: Options.LogLevel,
+) void {
+    _ = data;
+    _ = log_level;
+    _ = dependency_id;
+
+    // Process any dependency_install_context items in the task queue
+    if (manager.task_queue.fetchRemove(task_id)) |removed| {
+        var callbacks = removed.value;
+        defer callbacks.deinit(manager.allocator);
+
+        if (callbacks.items.len == 0) {
+            return;
+        }
+
+        // For each dependency_install_context, we need to install the package to node_modules
+        for (callbacks.items) |*cb| {
+            switch (cb.*) {
+                .dependency_install_context => |context| {
+                    // The package is already in the cache, we just need to link/copy it to node_modules
+                    const package_id = manager.lockfile.buffers.resolutions.items[context.dependency_id];
+                    const name = manager.lockfile.packages.items(.name)[package_id];
+
+                    // TODO: Actually implement the linking/copying from cache to node_modules
+                    // This is a simplified version - the actual implementation would need to:
+                    // 1. Get the correct node_modules path from context.path
+                    // 2. Create the package folder in node_modules
+                    // 3. Link or copy files from cache to node_modules
+                    // 4. Handle bin links
+                    // 5. Handle lifecycle scripts
+
+                    if (PackageManager.verbose_install) {
+                        const label = manager.lockfile.str(&name);
+                        Output.prettyErrorln("   -> Installing {s} to node_modules (from cache)", .{label});
+                    }
+                },
+                else => {
+                    // Other context types would be handled by their specific installers
+                },
+            }
+        }
+    }
+}
+
 const DirInfo = @import("../resolver/dir_info.zig");
 const resolution = @import("./PackageManager/PackageManagerResolution.zig");
 const std = @import("std");
@@ -1333,53 +1383,3 @@ const initializeStore = bun.install.initializeStore;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
-
-/// Default callback for handling extracted packages when no installer context is available
-pub fn onExtractDefault(
-    manager: *PackageManager,
-    task_id: Task.Id,
-    dependency_id: DependencyID,
-    data: *const ExtractData,
-    log_level: Options.LogLevel,
-) void {
-    _ = data;
-    _ = log_level;
-    _ = dependency_id;
-    
-    // Process any dependency_install_context items in the task queue
-    if (manager.task_queue.fetchRemove(task_id)) |removed| {
-        var callbacks = removed.value;
-        defer callbacks.deinit(manager.allocator);
-        
-        if (callbacks.items.len == 0) {
-            return;
-        }
-        
-        // For each dependency_install_context, we need to install the package to node_modules
-        for (callbacks.items) |*cb| {
-            switch (cb.*) {
-                .dependency_install_context => |context| {
-                    // The package is already in the cache, we just need to link/copy it to node_modules
-                    const package_id = manager.lockfile.buffers.resolutions.items[context.dependency_id];
-                    const name = manager.lockfile.packages.items(.name)[package_id];
-                    
-                    // TODO: Actually implement the linking/copying from cache to node_modules
-                    // This is a simplified version - the actual implementation would need to:
-                    // 1. Get the correct node_modules path from context.path
-                    // 2. Create the package folder in node_modules
-                    // 3. Link or copy files from cache to node_modules
-                    // 4. Handle bin links
-                    // 5. Handle lifecycle scripts
-                    
-                    if (PackageManager.verbose_install) {
-                        const label = manager.lockfile.str(&name);
-                        Output.prettyErrorln("   -> Installing {s} to node_modules (from cache)", .{label});
-                    }
-                },
-                else => {
-                    // Other context types would be handled by their specific installers
-                },
-            }
-        }
-    }
-}

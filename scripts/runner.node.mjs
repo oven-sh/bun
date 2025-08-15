@@ -185,19 +185,27 @@ if (options["quiet"]) {
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  console.log("on buildkite: collecting new files from PR");
-  for (let i = 0; i < 5; i++) {
-    const res = await fetch(`https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=100&page=${i}`); // prettier-ignore
-    const doc = await res.json();
-    console.log(`-> page ${i}, found ${doc.length} items`);
-    if (doc.length === 0) break;
-    for (const { filename, status } of doc) {
-      prFileCount += 1;
-      if (status !== "added") continue;
-      newFiles.push(filename);
+  try {
+    console.log("on buildkite: collecting new files from PR");
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=100&page=${i}`, {
+        headers: {
+          Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+        },
+      });
+      const doc = await res.json();
+      console.log(`-> page ${i}, found ${doc.length} items`);
+      if (doc.length === 0) break;
+      for (const { filename, status } of doc) {
+        prFileCount += 1;
+        if (status !== "added") continue;
+        newFiles.push(filename);
+      }
     }
+    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+  } catch (e) {
+    console.error(e);
   }
-  console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
 }
 
 let coresDir;

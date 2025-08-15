@@ -34,6 +34,41 @@ test("SHARE_ENV symbol should be accepted as env option", async () => {
   await worker.terminate();
 });
 
+test("SHARE_ENV enables true environment sharing", async () => {
+  // Set a unique test variable in the parent
+  const testVar = `TEST_VAR_${Date.now()}`;
+  process.env[testVar] = "parent_value";
+  
+  const worker = new Worker(
+    `
+    const { parentPort } = require('worker_threads');
+    // Worker should see the parent's environment variable
+    parentPort.postMessage({
+      testVar: process.env["${testVar}"],
+      hasTestVar: "${testVar}" in process.env
+    });
+    `,
+    {
+      eval: true,
+      env: SHARE_ENV
+    }
+  );
+
+  const message = await new Promise((resolve, reject) => {
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    setTimeout(() => reject(new Error("Test timeout")), 5000);
+  });
+
+  // Verify the worker can see the parent's environment variable
+  expect((message as any).hasTestVar).toBe(true);
+  expect((message as any).testVar).toBe("parent_value");
+
+  // Clean up
+  delete process.env[testVar];
+  await worker.terminate();
+});
+
 test("SHARE_ENV should be the correct symbol", () => {
   // Verify that SHARE_ENV is the expected symbol
   expect(typeof SHARE_ENV).toBe("symbol");

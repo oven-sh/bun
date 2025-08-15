@@ -234,10 +234,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         
-        // Check if envValue is the SHARE_ENV symbol
+        // Check if envValue is the SHARE_ENV symbol (nodejs.worker_threads.SHARE_ENV)
         bool isShareEnv = false;
         if (envValue && envValue.isSymbol()) {
             auto* symbol = asSymbol(envValue);
+            // Check if this is the global symbol for nodejs.worker_threads.SHARE_ENV
             auto description = symbol->description();
             if (!description.isEmpty() && description == "nodejs.worker_threads.SHARE_ENV"_s) {
                 isShareEnv = true;
@@ -251,7 +252,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         if (envValue && envValue.isCell() && !isShareEnv) {
             envObject = jsDynamicCast<JSC::JSObject*>(envValue);
-        } else if (isShareEnv || globalObject->m_processEnvObject.isInitialized()) {
+        } else if (globalObject->m_processEnvObject.isInitialized()) {
+            // For both SHARE_ENV and default cases, use the process environment
+            // SHARE_ENV means share the live parent environment
             envObject = globalObject->processEnvObject();
         }
 

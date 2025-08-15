@@ -119,40 +119,37 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
 
   if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
 
+  // For any URL-like string, just extract the path portion
+  // Strip the protocol and handle query params
+  let path: string;
+
   if (str.startsWith("sqlite://")) {
-    // For SQLite URLs, the path is everything after sqlite://
-    // We need to be careful not to parse it as a URL since # and % are valid filename characters
-    const pathWithQuery = str.slice(9); // "sqlite://".length
-
-    // Only look for ? to separate query parameters
-    // Don't treat # as a fragment - it's a valid filename character in SQLite
-    const queryIndex = pathWithQuery.indexOf("?");
-    if (queryIndex !== -1) {
-      // Remove query parameters but keep everything else including #
-      return pathWithQuery.slice(0, queryIndex);
-    }
-    return pathWithQuery;
-  }
-  if (str.startsWith("sqlite:")) return str.slice(7); // "sqlite:".length
-
-  // Handle file:// URLs as SQLite databases
-  if (str.startsWith("file://")) {
+    path = str.slice(9); // "sqlite://".length
+  } else if (str.startsWith("sqlite:")) {
+    path = str.slice(7); // "sqlite:".length
+  } else if (str.startsWith("file://")) {
+    // For file:// URLs, use Bun's built-in converter for correct platform handling
+    // This properly handles Windows paths, UNC paths, etc.
     try {
-      const url = value instanceof URL ? value : new URL(str);
-      return url.pathname;
+      return Bun.fileURLToPath(str);
     } catch {
-      // If it's not a valid URL, just strip the prefix
-      return str.slice(7); // "file://".length
+      // Fallback: just strip the protocol
+      path = str.slice(7); // "file://".length
     }
-  }
-  if (str.startsWith("file:")) {
-    // Handle file: without slashes
-    return str.slice(5); // "file:".length
+  } else if (str.startsWith("file:")) {
+    path = str.slice(5); // "file:".length
+  } else {
+    // Not a SQLite URL
+    return null;
   }
 
-  // We can't guarantee this is exclusively an sqlite url here
-  // even if it *could* be
-  return null;
+  // Remove query parameters if present (only looking for ?)
+  const queryIndex = path.indexOf("?");
+  if (queryIndex !== -1) {
+    path = path.slice(0, queryIndex);
+  }
+
+  return path;
 }
 
 function parseSQLiteOptionsWithQueryParams(

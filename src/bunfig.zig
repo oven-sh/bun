@@ -499,6 +499,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("disableDefaultTrustedDependencies")) |disable_default_trusted_expr| {
+                        if (disable_default_trusted_expr.asBool()) |value| {
+                            install.disable_default_trusted_dependencies = value;
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);

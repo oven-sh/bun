@@ -16,7 +16,6 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
-#include <list>
 #include <optional>
 #include <unordered_set>
 #include <variant>

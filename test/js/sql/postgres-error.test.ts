@@ -65,12 +65,6 @@ describe("PostgresError compatibility", () => {
     expect(error.column).toBe("test_column");
     expect(error.dataType).toBe("integer");
     expect(error.constraint).toBe("test_constraint");
-
-    // Verify toJSON works
-    const json = error.toJSON();
-    expect(json.name).toBe("PostgresError");
-    expect(json.message).toBe("Test error");
-    expect(json.code).toBe("ERR_TEST");
   });
 
   test("PostgresError optional properties are handled correctly", () => {

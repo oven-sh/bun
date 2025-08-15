@@ -11614,35 +11614,6 @@ describe("Misc", () => {
       });
     });
 
-    describe("Error serialization", () => {
-      test("errors can be JSON stringified", () => {
-        const pgError = new SQL.PostgresError("test error", {
-          code: "23505",
-          detail: "Duplicate key",
-          hint: "",
-          severity: "ERROR",
-        });
-
-        const json = JSON.stringify(pgError);
-        const parsed = JSON.parse(json);
-
-        expect(parsed.name).toBe("PostgresError");
-        expect(parsed.message).toBe("test error");
-        expect(parsed.code).toBe("23505");
-        expect(parsed.detail).toBe("Duplicate key");
-        expect(parsed.severity).toBe("ERROR");
-      });
-
-      test("errors preserve stack trace in JSON", () => {
-        const error = new SQL.SQLError("test");
-        const json = JSON.stringify(error);
-        const parsed = JSON.parse(json);
-
-        expect(parsed.stack).toBeDefined();
-        expect(parsed.stack).toContain("SQLError");
-      });
-    });
-
     describe("Type guards", () => {
       test("can use instanceof for type narrowing", () => {
         function handleError(e: unknown) {

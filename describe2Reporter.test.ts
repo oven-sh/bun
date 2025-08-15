@@ -30,6 +30,7 @@ describe("Another Suite", () => {
   test("failing test", () => {
     console.log("failing test line 1");
     expect(1 + 1).toBe(3); // This will fail
+    // TODO: fix this causing a tickWithoutIdle loop?
   });
 });
 

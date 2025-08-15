@@ -187,11 +187,11 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
         let result: unknown[] | undefined;
 
         if (mode === SQLQueryResultMode.values) {
-          result = stmt.values(...values);
+          result = stmt.values.$apply(stmt, values);
         } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw(...values);
+          result = stmt.raw.$apply(stmt, values);
         } else {
-          result = stmt.all(...values);
+          result = stmt.all.$apply(stmt, values);
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -203,7 +203,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run(sql, ...values);
+        const changes = db.run.$apply(db, [sql].concat(values));
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = command;

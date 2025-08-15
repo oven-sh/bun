@@ -57,9 +57,6 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(
         new PostgresError("Query cancelled", {
           code: "ERR_POSTGRES_QUERY_CANCELLED",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         }),
       );
     }
@@ -82,9 +79,6 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(
         new PostgresError("Query cancelled", {
           code: "ERR_POSTGRES_QUERY_CANCELLED",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         }),
       );
     }
@@ -115,9 +109,6 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(
         new PostgresError("Query cancelled", {
           code: "ERR_POSTGRES_QUERY_CANCELLED",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         }),
       );
     }
@@ -175,9 +166,6 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(
         new PostgresError("Query cancelled", {
           code: "ERR_POSTGRES_QUERY_CANCELLED",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         }),
       );
     }
@@ -643,16 +631,10 @@ const SQL: typeof Bun.SQL = function SQL(
       if (distributed) {
         throw new PostgresError("cannot call begin inside a distributed transaction", {
           code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         });
       }
       throw new PostgresError("cannot call begin inside a transaction use savepoint() instead", {
         code: "POSTGRES_INVALID_TRANSACTION_STATE",
-        detail: "",
-        hint: "",
-        severity: "ERROR",
       });
     };
 
@@ -660,16 +642,10 @@ const SQL: typeof Bun.SQL = function SQL(
       if (distributed) {
         throw new PostgresError("cannot call beginDistributed inside a distributed transaction", {
           code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         });
       }
       throw new PostgresError("cannot call beginDistributed inside a transaction use savepoint() instead", {
         code: "POSTGRES_INVALID_TRANSACTION_STATE",
-        detail: "",
-        hint: "",
-        severity: "ERROR",
       });
     };
 
@@ -766,9 +742,6 @@ const SQL: typeof Bun.SQL = function SQL(
       transaction_sql.savepoint = async (_fn: TransactionCallback, _name?: string): Promise<any> => {
         throw new PostgresError("cannot call savepoint inside a distributed transaction", {
           code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-          detail: "",
-          hint: "",
-          severity: "ERROR",
         });
       };
     } else {

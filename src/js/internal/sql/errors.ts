@@ -15,10 +15,9 @@ class SQLError extends Error {
 
 class PostgresError extends SQLError {
   public readonly code: string;
-  public readonly detail: string;
-  public readonly hint: string;
-  public readonly severity: string;
-
+  public readonly detail?: string;
+  public readonly hint?: string;
+  public readonly severity?: string;
   public readonly errno?: string;
   public readonly position?: string;
   public readonly internalPosition?: string;
@@ -37,10 +36,10 @@ class PostgresError extends SQLError {
     message: string,
     options: {
       code: string;
+      detail?: string;
+      hint?: string;
+      severity?: string;
       errno?: string;
-      detail: string;
-      hint: string;
-      severity: string;
       position?: string;
       internalPosition?: string;
       internalQuery?: string;
@@ -59,11 +58,10 @@ class PostgresError extends SQLError {
     this.name = "PostgresError";
 
     this.code = options.code;
-    this.errno = options.errno;
-    this.detail = options.detail;
-    this.hint = options.hint;
-    this.severity = options.severity;
-
+    if (options.detail !== undefined) this.detail = options.detail;
+    if (options.hint !== undefined) this.hint = options.hint;
+    if (options.severity !== undefined) this.severity = options.severity;
+    if (options.errno !== undefined) this.errno = options.errno;
     if (options.position !== undefined) this.position = options.position;
     if (options.internalPosition !== undefined) this.internalPosition = options.internalPosition;
     if (options.internalQuery !== undefined) this.internalQuery = options.internalQuery;
@@ -76,33 +74,6 @@ class PostgresError extends SQLError {
     if (options.file !== undefined) this.file = options.file;
     if (options.line !== undefined) this.line = options.line;
     if (options.routine !== undefined) this.routine = options.routine;
-  }
-
-  toJSON() {
-    const json: any = {
-      name: this.name,
-      message: this.message,
-      code: this.code,
-      detail: this.detail,
-      hint: this.hint,
-      severity: this.severity,
-      stack: this.stack,
-    };
-
-    if (this.position !== undefined) json.position = this.position;
-    if (this.internalPosition !== undefined) json.internalPosition = this.internalPosition;
-    if (this.internalQuery !== undefined) json.internalQuery = this.internalQuery;
-    if (this.where !== undefined) json.where = this.where;
-    if (this.schema !== undefined) json.schema = this.schema;
-    if (this.table !== undefined) json.table = this.table;
-    if (this.column !== undefined) json.column = this.column;
-    if (this.dataType !== undefined) json.dataType = this.dataType;
-    if (this.constraint !== undefined) json.constraint = this.constraint;
-    if (this.file !== undefined) json.file = this.file;
-    if (this.line !== undefined) json.line = this.line;
-    if (this.routine !== undefined) json.routine = this.routine;
-
-    return json;
   }
 }
 
@@ -120,20 +91,6 @@ class SQLiteError extends SQLError {
     if (options.byteOffset !== undefined) {
       this.byteOffset = options.byteOffset;
     }
-  }
-
-  toJSON() {
-    const json: any = {
-      name: this.name,
-      message: this.message,
-      code: this.code,
-      errno: this.errno,
-      stack: this.stack,
-    };
-    if (this.byteOffset !== undefined) {
-      json.byteOffset = this.byteOffset;
-    }
-    return json;
   }
 }
 

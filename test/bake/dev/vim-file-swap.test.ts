@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { devTest } from "../bake-harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { devTest } from "../bake-harness";
 
 devTest("vim file swap hot reload for entrypoints", {
   files: {

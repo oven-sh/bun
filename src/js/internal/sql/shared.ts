@@ -159,26 +159,31 @@ function parseSQLiteOptionsWithQueryParams(
   sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions,
   urlString: string | URL | null | undefined,
 ): Bun.SQL.__internal.DefinedSQLiteOptions {
-  const str = typeof urlString === "string" ? urlString : urlString?.toString();
-  if (str && str.includes("?")) {
-    try {
-      const url = new URL(str.startsWith("sqlite://") || str.startsWith("file://") ? str : "sqlite://" + str);
-      const params = url.searchParams;
+  if (!urlString) return sqliteOptions;
 
-      const mode = params.get("mode");
+  let params: URLSearchParams | null = null;
 
-      if (mode === "ro") {
-        sqliteOptions.readonly = true;
-      } else if (mode === "rw") {
-        sqliteOptions.readonly = false;
-      } else if (mode === "rwc") {
-        sqliteOptions.readonly = false;
-        sqliteOptions.create = true;
-      }
-    } catch {
-      // If URL parsing fails, ignore the parameters
-    }
+  if (urlString instanceof URL) {
+    params = urlString.searchParams;
+  } else {
+    const queryIndex = urlString.indexOf("?");
+    if (queryIndex === -1) return sqliteOptions;
+
+    const queryString = urlString.slice(queryIndex + 1);
+    params = new URLSearchParams(queryString);
   }
+
+  const mode = params.get("mode");
+
+  if (mode === "ro") {
+    sqliteOptions.readonly = true;
+  } else if (mode === "rw") {
+    sqliteOptions.readonly = false;
+  } else if (mode === "rwc") {
+    sqliteOptions.readonly = false;
+    sqliteOptions.create = true;
+  }
+
   return sqliteOptions;
 }
 

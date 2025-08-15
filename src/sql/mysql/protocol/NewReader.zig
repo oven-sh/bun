@@ -60,6 +60,22 @@ pub fn NewReaderWrap(
             const size = @divExact(@typeInfo(Int).int.bits, 8);
             return @as(Int, @bitCast(data.slice()[0..size].*));
         }
+
+        pub fn encodeLenString(this: @This()) !Data {
+            if (decodeLengthInt(this.peek())) |result| {
+                this.skip(result.bytes_read);
+                return try this.read(@intCast(result.value));
+            }
+            return error.InvalidEncodedLength;
+        }
+
+        pub fn encodeLenInt(this: @This()) !u64 {
+            if (decodeLengthInt(this.peek())) |result| {
+                this.skip(result.bytes_read);
+                return result.value;
+            }
+            return error.InvalidEncodedInteger;
+        }
     };
 }
 
@@ -94,3 +110,4 @@ pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
 }
 const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
+const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;

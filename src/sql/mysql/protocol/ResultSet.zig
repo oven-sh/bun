@@ -1,28 +1,5 @@
 const ResultSet = @This();
-pub const Header = struct {
-    field_count: u64 = 0,
-    extra: ?u64 = null,
-
-    pub fn decodeInternal(this: *Header, comptime Context: type, reader: NewReader(Context)) !void {
-        // Field count (length encoded integer)
-        if (decodeLengthInt(reader.peek())) |result| {
-            this.field_count = result.value;
-            reader.skip(result.bytes_read);
-        } else {
-            return error.InvalidResultSetHeader;
-        }
-
-        // Extra (length encoded integer, optional)
-        if (reader.peek().len > 0) {
-            if (decodeLengthInt(reader.peek())) |result| {
-                this.extra = result.value;
-                reader.skip(result.bytes_read);
-            }
-        }
-    }
-
-    pub const decode = decoderWrap(Header, decodeInternal).decode;
-};
+pub const Header = @import("./ResultSetHeader.zig");
 
 pub const Row = struct {
     values: []Value = &[_]Value{},

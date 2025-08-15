@@ -185,28 +185,9 @@ public:
 
     void cleanup()
     {
-        std::vector<Napi::EitherCleanupHook> hooks = getHooks();
-
-        for (const Napi::EitherCleanupHook& hook : hooks) {
-            if (auto set_iter = m_cleanupHooks.find(hook); set_iter != m_cleanupHooks.end()) {
-                m_cleanupHooks.erase(set_iter);
-            } else {
-                // Already removed during removal of a different cleanup hook
-                continue;
-            }
-
-            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
-                ASSERT(sync->function != nullptr);
-                sync->function(sync->data);
-            } else {
-                auto& async = std::get<Napi::AsyncCleanupHook>(hook);
-                ASSERT(async.function != nullptr);
-                async.function(async.handle, async.data);
-                delete async.handle;
-            }
+        while (!m_cleanupHooks.empty()) {
+            drain();
         }
-
-        ASSERT(m_cleanupHooks.empty());
 
         m_isFinishingFinalizers = true;
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
@@ -487,6 +468,30 @@ private:
             return left.get().insertionCounter > right.get().insertionCounter;
         });
         return hooks;
+    }
+
+    void drain()
+    {
+        std::vector<Napi::EitherCleanupHook> hooks = getHooks();
+
+        for (const Napi::EitherCleanupHook& hook : hooks) {
+            if (auto set_iter = m_cleanupHooks.find(hook); set_iter != m_cleanupHooks.end()) {
+                m_cleanupHooks.erase(set_iter);
+            } else {
+                // Already removed during removal of a different cleanup hook
+                continue;
+            }
+
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
+                ASSERT(sync->function != nullptr);
+                sync->function(sync->data);
+            } else {
+                auto& async = std::get<Napi::AsyncCleanupHook>(hook);
+                ASSERT(async.function != nullptr);
+                async.function(async.handle, async.data);
+                delete async.handle;
+            }
+        }
     }
 };
 

@@ -35,17 +35,18 @@ describe.skipIf(isWindows)("Windows PE Checksum Verification", () => {
 
     const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     expect(exitCode).toBe(0);
-    
+
     // Filter out mimalloc warnings which are expected for large allocations (Windows PE files ~118MB)
     const filteredStderr = stderr
-      .split('\n')
-      .filter(line => 
-        !line.includes('mimalloc: warning:') && 
-        !line.includes('(this may still be a valid very large allocation') &&
-        !line.includes('(yes, the previous pointer') &&
-        line.trim() !== ''
+      .split("\n")
+      .filter(
+        line =>
+          !line.includes("mimalloc: warning:") &&
+          !line.includes("(this may still be a valid very large allocation") &&
+          !line.includes("(yes, the previous pointer") &&
+          line.trim() !== "",
       )
-      .join('\n')
+      .join("\n")
       .trim();
     expect(filteredStderr).toBe("");
 

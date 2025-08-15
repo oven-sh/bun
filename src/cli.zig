@@ -629,7 +629,7 @@ pub const Command = struct {
             if (bun.getenvZ("MI_VERBOSE") == null) {
                 bun.mimalloc.mi_option_set_enabled(.verbose, false);
             }
-            
+
             // Suppress mimalloc warnings for memory-mapped PE sections (Windows compilation)
             // These warnings occur when processing large Windows PE files (~118MB) because
             // mimalloc's heuristics flag memory-mapped sections as suspicious, then confirm

@@ -251,7 +251,7 @@ pub const BunTest = struct {
         //   need to be able to pass context information to runOneCompleted
 
         if (cfg.done_parameter) {
-            const length = callback.getLength(globalThis);
+            const length = try callback.getLength(globalThis);
             if (length > 0) {
                 // TODO: support done parameter
                 group.log("TODO: support done parameter", .{});

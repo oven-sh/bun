@@ -1133,12 +1133,12 @@ class ChildProcess extends EventEmitter {
 
             if (!stdin) {
               // This can happen if the process was already killed.
-              const stream = new Writable({ 
+              const stream = new Writable({
                 write(chunk, encoding, callback) {
                   // Gracefully handle writes - stream acts as if it's ended
                   if (callback) callback();
                   return false;
-                }
+                },
               });
               // Mark as destroyed to indicate it's not usable
               stream.destroy();
@@ -1151,12 +1151,12 @@ class ChildProcess extends EventEmitter {
           case "inherit":
             return null;
           case "destroyed": {
-            const stream = new Writable({ 
+            const stream = new Writable({
               write(chunk, encoding, callback) {
                 // Gracefully handle writes - stream acts as if it's ended
                 if (callback) callback();
                 return false;
-              }
+              },
             });
             // Mark as destroyed to indicate it's not usable
             stream.destroy();
@@ -1660,7 +1660,6 @@ class Control extends EventEmitter {
     super();
   }
 }
-
 
 //------------------------------------------------------------------------------
 // Section 5. Validators

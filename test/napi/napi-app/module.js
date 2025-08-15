@@ -759,4 +759,9 @@ nativeTests.test_cleanup_hook_mixed_order = () => {
   addon.test();
 };
 
+nativeTests.test_cleanup_hook_modification_during_iteration = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_modification_during_iteration.node");
+  addon.test();
+};
+
 module.exports = nativeTests;

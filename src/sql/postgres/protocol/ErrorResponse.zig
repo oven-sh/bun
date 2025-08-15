@@ -111,7 +111,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     const createPostgresError = @import("../AnyPostgresError.zig").createPostgresError;
 
     const errno = if (!code.isEmpty()) code.byteSlice() else null;
-    const error_code = if (code.eqlComptime("42601"))
+    const error_code = if (code.eqlComptime("42601")) // syntax error - https://www.postgresql.org/docs/8.1/errcodes-appendix.html
         "ERR_POSTGRES_SYNTAX_ERROR"
     else
         "ERR_POSTGRES_SERVER_ERROR";

@@ -2642,19 +2642,23 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
+    return handleOom(tryNew(T, init));
+}
+
+/// Error-returning version of `new`.
+pub inline fn tryNew(comptime T: type, init: T) OOM!*T {
     const pointer = if (heap_breakdown.enabled)
-        heap_breakdown.getZoneT(T).create(T, init)
+        try heap_breakdown.getZoneT(T).tryCreate(T, init)
     else pointer: {
-        const pointer = default_allocator.create(T) catch outOfMemory();
+        const pointer = try default_allocator.create(T);
         pointer.* = init;
         break :pointer pointer;
     };
 
     if (comptime Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
+        const logAlloc = Output.scoped(.alloc, .visibleIf(meta.hasDecl(T, "log_allocations")));
         logAlloc("new({s}) = {*}", .{ meta.typeName(T), pointer });
     }
-
     return pointer;
 }
 
@@ -2668,16 +2672,14 @@ pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
+        const logAlloc = Output.scoped(.alloc, .visibleIf(meta.hasDecl(T, "log_allocations")));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
 
         // If this type implements a RefCount, make sure it is zero.
         ptr.ref_count.maybeAssertNoRefs(T, pointer);
 
-        switch (@typeInfo(T)) {
-            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertBeforeDestroy"))
-                pointer.assertBeforeDestroy(),
-            else => {},
+        if (comptime std.meta.hasFn(T, "assertBeforeDestroy")) {
+            pointer.assertBeforeDestroy();
         }
     }
 
@@ -3008,7 +3010,7 @@ noinline fn assertionFailure() noreturn {
 
 noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
     if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("assertion failure"));
+        @compileError(std.fmt.comptimePrint("assertion failure", .{}));
     } else {
         @branchHint(.cold);
         Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
@@ -3126,17 +3128,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 /// This has no effect on the real code but capturing 'a' and 'b' into
 /// parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
+    if (a == b) return;
     if (@inComptime()) {
-        if (a != b) {
-            @compileLog(a);
-            @compileLog(b);
-            @compileError("A != B");
-        }
+        @compileError(std.fmt.comptimePrint("Assertion failure: {any} != {any}", .{ a, b }));
     }
     if (!Environment.allow_assert) return;
-    if (a != b) {
-        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
-    }
+    Output.panic("Assertion failure: {any} != {any}", .{ a, b });
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into

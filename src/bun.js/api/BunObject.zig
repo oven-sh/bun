@@ -1464,13 +1464,13 @@ pub const EnvironmentVariables = struct {
         defer name_sliced.deinit();
         var value_sliced = value.toSlice(vm.allocator);
         defer value_sliced.deinit();
-        
+
         // Set in Bun's environment map
         vm.transpiler.env.map.put(name_sliced.slice(), value_sliced.slice()) catch return false;
-        
+
         // TODO: Also set the actual environment variable for the system
         // For now, we'll only set it in Bun's internal map, which is sufficient for the test
-        
+
         return true;
     }
 };

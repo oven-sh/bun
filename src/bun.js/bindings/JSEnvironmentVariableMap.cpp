@@ -60,18 +60,18 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
 
     JSValue decodedValue = JSValue::decode(value);
     JSString* string;
-    
+
     // Node.js converts ALL values to strings when assigned to process.env
     // Exception: Symbol values throw an error
     if (decodedValue.isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
         return false;
     }
-    
+
     // Convert the value to string using JavaScript's String() conversion
     string = decodedValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    
+
     if (!string) [[unlikely]]
         return false;
 

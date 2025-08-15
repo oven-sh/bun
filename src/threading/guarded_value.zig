@@ -26,7 +26,7 @@ pub fn GuardedValue(comptime Value: type, comptime Mutex: type) type {
 }
 
 pub fn DebugGuardedValue(comptime Value: type) type {
-    return GuardedValue(Value, bun.DebugThreadLock);
+    return GuardedValue(Value, bun.safety.ThreadLock);
 }
 
 const bun = @import("bun");

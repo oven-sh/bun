@@ -27,7 +27,7 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
-const log = Output.scoped(.fetch, false);
+const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
 

@@ -9,17 +9,9 @@ const bun = @This();
 pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = true;
-
-pub const default_allocator: std.mem.Allocator = if (use_mimalloc)
-    allocators.c_allocator
-else
-    std.heap.c_allocator;
-
+pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zeroing memory allocator
-pub const z_allocator: std.mem.Allocator = if (use_mimalloc)
-    allocators.z_allocator
-else
-    std.heap.c_allocator;
+pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
@@ -603,6 +595,7 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 pub const HTTPThread = @import("./http.zig").HTTPThread;
 pub const http = @import("./http.zig");
 
+pub const ptr = @import("./ptr.zig");
 pub const TaggedPointer = ptr.TaggedPointer;
 pub const TaggedPointerUnion = ptr.TaggedPointerUnion;
 
@@ -1827,9 +1820,9 @@ pub const Futex = threading.Futex;
 pub const ThreadPool = threading.ThreadPool;
 pub const UnboundedQueue = threading.UnboundedQueue;
 
-pub fn threadlocalAllocator() std.mem.Allocator {
+pub fn threadLocalAllocator() std.mem.Allocator {
     if (comptime use_mimalloc) {
-        return MimallocArena.getThreadlocalDefault();
+        return MimallocArena.getThreadLocalDefault();
     }
 
     return default_allocator;
@@ -1931,7 +1924,7 @@ pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
-const TODO_LOG = Output.scoped(.TODO, false);
+const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
         TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
@@ -2585,6 +2578,40 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// If `error_union` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
+///
+/// * If that was the only possible error, returns the non-error payload.
+/// * If other errors are possible, returns the same error union, but without `error.OutOfMemory`
+///   in the error set.
+///
+/// Prefer this method over `catch bun.outOfMemory()`, since that could mistakenly catch
+/// non-OOM-related errors.
+pub fn handleOom(error_union: anytype) blk: {
+    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
+    const ErrorSet = error_union_info.error_set;
+    const oom_is_only_error = for (@typeInfo(ErrorSet).error_set orelse &.{}) |err| {
+        if (!std.mem.eql(u8, err.name, "OutOfMemory")) break false;
+    } else true;
+
+    break :blk @TypeOf(error_union catch |err| if (comptime oom_is_only_error)
+        unreachable
+    else switch (err) {
+        error.OutOfMemory => unreachable,
+        else => |other_error| other_error,
+    });
+} {
+    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
+    const Payload = error_union_info.payload;
+    const ReturnType = @TypeOf(handleOom(error_union));
+    return error_union catch |err|
+        if (comptime ReturnType == Payload)
+            bun.outOfMemory()
+        else switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            else => |other_error| other_error,
+        };
+}
+
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,
@@ -2622,11 +2649,10 @@ pub inline fn new(comptime T: type, init: T) *T {
         break :pointer pointer;
     };
 
-    // TODO::
-    // if (comptime Environment.allow_assert) {
-    //     const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-    //     logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
-    // }
+    if (comptime Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), pointer });
+    }
 
     return pointer;
 }
@@ -2635,21 +2661,21 @@ pub inline fn new(comptime T: type, init: T) *T {
 /// For single-item heap pointers, prefer bun.new/destroy over default_allocator
 ///
 /// Destruction performs additional safety checks:
-/// - Generic assertions can be added to T.assertMayDeinit()
+/// - Generic assertions can be added to T.assertBeforeDestroy()
 /// - Automatic integration with `RefCount`
 pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
 
         // If this type implements a RefCount, make sure it is zero.
-        @import("./ptr/ref_count.zig").maybeAssertNoRefs(T, pointer);
+        ptr.ref_count.maybeAssertNoRefs(T, pointer);
 
         switch (@typeInfo(T)) {
-            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertMayDeinit"))
-                pointer.assertMayDeinit(),
+            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertBeforeDestroy"))
+                pointer.assertBeforeDestroy(),
             else => {},
         }
     }
@@ -3405,56 +3431,10 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
+
 pub fn getTotalMemorySize() usize {
     return cpp.Bun__ramSize();
 }
-
-pub const DebugThreadLock = if (Environment.isDebug)
-    struct {
-        owning_thread: ?std.Thread.Id,
-        locked_at: crash_handler.StoredTrace,
-
-        pub const unlocked: DebugThreadLock = .{
-            .owning_thread = null,
-            .locked_at = crash_handler.StoredTrace.empty,
-        };
-
-        pub fn lock(impl: *@This()) void {
-            if (impl.owning_thread) |thread| {
-                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
-                crash_handler.dumpStackTrace(impl.locked_at.trace(), .{ .frame_count = 10, .stop_at_jsc_llint = true });
-                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
-            }
-            impl.owning_thread = std.Thread.getCurrentId();
-            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
-        }
-
-        pub fn unlock(impl: *@This()) void {
-            impl.assertLocked();
-            impl.* = unlocked;
-        }
-
-        pub fn assertLocked(impl: *const @This()) void {
-            assert(impl.owning_thread != null); // not locked
-            assert(impl.owning_thread == std.Thread.getCurrentId());
-        }
-
-        pub fn initLocked() @This() {
-            var impl = DebugThreadLock.unlocked;
-            impl.lock();
-            return impl;
-        }
-    }
-else
-    struct {
-        pub const unlocked: @This() = .{};
-        pub fn lock(_: *@This()) void {}
-        pub fn unlock(_: *@This()) void {}
-        pub fn assertLocked(_: *const @This()) void {}
-        pub fn initLocked() @This() {
-            return .{};
-        }
-    };
 
 pub const bytecode_extension = ".jsc";
 
@@ -3730,7 +3710,6 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
 const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
-pub const ptr = @import("./ptr.zig");
 
 /// Memory is typically not decommitted immediately when freed.
 /// Sensitive information that's kept in memory can be read in various ways until the OS
@@ -3748,6 +3727,7 @@ pub const highway = @import("./highway.zig");
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
+/// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
 pub const cpp = @import("cpp").bindings;
 
 pub const asan = @import("./asan.zig");

@@ -2,7 +2,7 @@
 
 const WebWorker = @This();
 
-const log = Output.scoped(.Worker, true);
+const log = Output.scoped(.Worker, .hidden);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -310,7 +310,7 @@ pub fn start(
         // this should go through most flags and update the options.
     }
 
-    this.arena = try bun.MimallocArena.init();
+    this.arena = bun.MimallocArena.init();
     var vm = try jsc.VirtualMachine.initWorker(this, .{
         .allocator = this.arena.?.allocator(),
         .args = transform_options,

@@ -6,7 +6,7 @@
 
 const Blob = @This();
 
-const debug = Output.scoped(.Blob, false);
+const debug = Output.scoped(.Blob, .visible);
 
 pub const Store = @import("./blob/Store.zig");
 pub const read_file = @import("./blob/read_file.zig");

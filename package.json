@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.20",
+  "version": "1.2.21",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
@@ -48,6 +48,9 @@
     "css-properties": "bun run src/css/properties/generate_properties.ts",
     "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
+    "jsc:build": "bun ./scripts/build-jsc.ts release",
+    "jsc:build:debug": "bun ./scripts/build-jsc.ts debug",
+    "jsc:build:lto": "bun ./scripts/build-jsc.ts lto",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",

@@ -280,7 +280,7 @@ pub const c = struct {
     pub extern fn create_ssl_context_from_bun_options(options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 };
 
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 
 const std = @import("std");
 

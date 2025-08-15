@@ -1,5 +1,6 @@
-pub const c_allocator = @import("./allocators/basic.zig").c_allocator;
-pub const z_allocator = @import("./allocators/basic.zig").z_allocator;
+pub const c_allocator = basic.c_allocator;
+pub const z_allocator = basic.z_allocator;
+pub const freeWithoutSize = basic.freeWithoutSize;
 pub const mimalloc = @import("./allocators/mimalloc.zig");
 pub const MimallocArena = @import("./allocators/MimallocArena.zig");
 pub const AllocationScope = @import("./allocators/AllocationScope.zig");
@@ -771,6 +772,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
     };
 }
+
+const basic = if (bun.use_mimalloc)
+    @import("./allocators/basic.zig")
+else
+    @import("./allocators/fallback.zig");
 
 const Environment = @import("./env.zig");
 const std = @import("std");

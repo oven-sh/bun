@@ -1,6 +1,6 @@
 const FileReader = @This();
 
-const log = Output.scoped(.FileReader, false);
+const log = Output.scoped(.FileReader, .visible);
 
 reader: IOReader = IOReader.init(FileReader),
 done: bool = false,

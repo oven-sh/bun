@@ -5,51 +5,53 @@ class SQLError extends Error {
   }
 }
 
+export interface PostgresErrorOptions {
+  code: string;
+
+  detail?: string | undefined;
+  hint?: string | undefined;
+  severity?: string | undefined;
+  errno?: string | undefined;
+  position?: string | undefined;
+  internalPosition?: string | undefined;
+  internalQuery?: string | undefined;
+  where?: string | undefined;
+  schema?: string | undefined;
+  table?: string | undefined;
+  column?: string | undefined;
+  dataType?: string | undefined;
+  constraint?: string | undefined;
+  file?: string | undefined;
+  line?: string | undefined;
+  routine?: string | undefined;
+}
+
 class PostgresError extends SQLError {
   public readonly code: string;
-  public readonly detail?: string;
-  public readonly hint?: string;
-  public readonly severity?: string;
-  public readonly errno?: string;
-  public readonly position?: string;
-  public readonly internalPosition?: string;
-  public readonly internalQuery?: string;
-  public readonly where?: string;
-  public readonly schema?: string;
-  public readonly table?: string;
-  public readonly column?: string;
-  public readonly dataType?: string;
-  public readonly constraint?: string;
-  public readonly file?: string;
-  public readonly line?: string;
-  public readonly routine?: string;
 
-  constructor(
-    message: string,
-    options: {
-      code: string;
-      detail?: string;
-      hint?: string;
-      severity?: string;
-      errno?: string;
-      position?: string;
-      internalPosition?: string;
-      internalQuery?: string;
-      where?: string;
-      schema?: string;
-      table?: string;
-      column?: string;
-      dataType?: string;
-      constraint?: string;
-      file?: string;
-      line?: string;
-      routine?: string;
-    },
-  ) {
+  public readonly detail: string | undefined;
+  public readonly hint: string | undefined;
+  public readonly severity: string | undefined;
+  public readonly errno: string | undefined;
+  public readonly position: string | undefined;
+  public readonly internalPosition: string | undefined;
+  public readonly internalQuery: string | undefined;
+  public readonly where: string | undefined;
+  public readonly schema: string | undefined;
+  public readonly table: string | undefined;
+  public readonly column: string | undefined;
+  public readonly dataType: string | undefined;
+  public readonly constraint: string | undefined;
+  public readonly file: string | undefined;
+  public readonly line: string | undefined;
+  public readonly routine: string | undefined;
+
+  constructor(message: string, options: PostgresErrorOptions) {
     super(message);
-    this.name = "PostgresError";
 
+    this.name = "PostgresError";
     this.code = options.code;
+
     if (options.detail !== undefined) this.detail = options.detail;
     if (options.hint !== undefined) this.hint = options.hint;
     if (options.severity !== undefined) this.severity = options.severity;
@@ -69,20 +71,25 @@ class PostgresError extends SQLError {
   }
 }
 
+export interface SQLiteErrorOptions {
+  code: string;
+  errno: number;
+  byteOffset?: number | undefined;
+}
+
 class SQLiteError extends SQLError {
   public readonly code: string;
   public readonly errno: number;
-  public readonly byteOffset?: number;
+  public readonly byteOffset: number | undefined;
 
-  constructor(message: string, options: { code: string; errno: number; byteOffset?: number }) {
+  constructor(message: string, options: SQLiteErrorOptions) {
     super(message);
-    this.name = "SQLiteError";
 
+    this.name = "SQLiteError";
     this.code = options.code;
     this.errno = options.errno;
-    if (options.byteOffset !== undefined) {
-      this.byteOffset = options.byteOffset;
-    }
+
+    if (options.byteOffset !== undefined) this.byteOffset = options.byteOffset;
   }
 }
 

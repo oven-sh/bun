@@ -1,4 +1,5 @@
 import { file, Glob } from "bun";
+import { readdirSync } from "fs";
 import path from "path";
 
 // prettier-ignore
@@ -129,6 +130,22 @@ describe("banned words", () => {
       } else if (count.length < limit) {
         throw new Error(
           `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit by running \`bun ./test/internal/ban-words.test.ts\`\n`,
+        );
+      }
+    });
+  }
+});
+
+describe("required words", () => {
+  const expectDir = "src/bun.js/test/expect";
+  const files = readdirSync(expectDir);
+  for (const file of files) {
+    if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;
+    test(file, async () => {
+      const content = await Bun.file(path.join(expectDir, file)).text();
+      if (!content.includes("incrementExpectCallCounter")) {
+        throw new Error(
+          `${expectDir}/${file} is missing string "incrementExpectCallCounter"\nAll expect() functions must call incrementExpectCallCounter()`,
         );
       }
     });

@@ -20,18 +20,12 @@ test("tls.DEFAULT_CIPHERS can be set to crypto.constants.defaultCipherList", () 
     expect(typeof tls.DEFAULT_CIPHERS).toBe("string");
     expect(tls.DEFAULT_CIPHERS.length).toBeGreaterThan(0);
 
-    // Should include the supported DHE ciphers that were missing before
+    // Should include all the DHE ciphers that were missing before
     expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES128-GCM-SHA256");
     expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES128-SHA256");
     expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES256-SHA256");
-
-    // The assignment succeeds, but unsupported ciphers should be filtered out
-    // This is tested by verifying the assignment doesn't throw and the result is sensible
-    const afterCiphers = tls.DEFAULT_CIPHERS.split(":");
-    
-    // Should NOT contain the unsupported BoringSSL ciphers (correctly filtered out)
-    expect(afterCiphers.includes("DHE-RSA-AES256-SHA384")).toBe(false);
-    expect(afterCiphers.includes("ECDHE-RSA-AES256-SHA256")).toBe(false);
+    expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES256-SHA384");
+    expect(tls.DEFAULT_CIPHERS).toContain("ECDHE-RSA-AES256-SHA256");
 
     // Should still include standard ciphers
     expect(tls.DEFAULT_CIPHERS).toContain("ECDHE-RSA-AES128-GCM-SHA256");
@@ -58,11 +52,13 @@ test("crypto.constants.defaultCipherList contains expected ciphers", () => {
   );
 });
 
-test("tls.DEFAULT_CIPHERS includes supported ciphers by default", () => {
+test("tls.DEFAULT_CIPHERS includes all previously missing ciphers by default", () => {
   const tls = require("tls");
   
-  // Should include the newly added supported DHE ciphers
+  // Should include all 5 ciphers that were missing before the fix
   expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES128-GCM-SHA256");
   expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES128-SHA256"); 
+  expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES256-SHA384");
+  expect(tls.DEFAULT_CIPHERS).toContain("ECDHE-RSA-AES256-SHA256");
   expect(tls.DEFAULT_CIPHERS).toContain("DHE-RSA-AES256-SHA256");
 });

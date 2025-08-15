@@ -10,6 +10,8 @@
                                  "ECDHE-RSA-AES128-SHA256:"         \
                                  "DHE-RSA-AES128-SHA256:"           \
                                  "ECDHE-RSA-AES256-SHA384:"         \
+                                 "DHE-RSA-AES256-SHA384:"           \
+                                 "ECDHE-RSA-AES256-SHA256:"         \
                                  "DHE-RSA-AES256-SHA256:"           \
                                  "HIGH:"                            \
                                  "!aNULL:"                          \
@@ -23,9 +25,9 @@
                                  "!CAMELLIA"
 #endif
 
-// BoringSSL supports some DHE ciphers but not all legacy ones
+// BoringSSL supports all Node.js defaultCipherList ciphers except TLS 1.3 ones
+// TLS 1.3 ciphers are handled separately in JavaScript (see getDefaultCiphers in tls.ts)
 // See https://github.com/envoyproxy/envoy/issues/8848#issuecomment-548672667
-// Node.js full list below
 
 // In node.js they filter TLS_* ciphers and use SSL_CTX_set_cipher_list (TODO: Electron has a patch https://github.com/nodejs/node/issues/25890)
 // if passed to SSL_CTX_set_cipher_list it will be filtered out and not used in BoringSSL
@@ -33,7 +35,7 @@
 // "TLS_CHACHA20_POLY1305_SHA256:"    \
 // "TLS_AES_128_GCM_SHA256:"          \
 
-// Supported by BoringSSL:
+// All of these are supported by BoringSSL and match Node.js defaultCipherList:
 // "ECDHE-RSA-AES128-GCM-SHA256:"     \
 // "ECDHE-ECDSA-AES128-GCM-SHA256:"   \
 // "ECDHE-RSA-AES256-GCM-SHA384:"     \
@@ -42,11 +44,9 @@
 // "ECDHE-RSA-AES128-SHA256:"         \
 // "DHE-RSA-AES128-SHA256:"           \
 // "ECDHE-RSA-AES256-SHA384:"         \
-// "DHE-RSA-AES256-SHA256:"           \
-
-// Not supported by BoringSSL:
-// "ECDHE-RSA-AES256-SHA256:"         \
 // "DHE-RSA-AES256-SHA384:"           \
+// "ECDHE-RSA-AES256-SHA256:"         \
+// "DHE-RSA-AES256-SHA256:"           \
 
 
 // Also present in Node.js and supported by BoringSSL:

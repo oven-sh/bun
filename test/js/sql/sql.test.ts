@@ -11203,11 +11203,11 @@ describe("Misc", () => {
       try {
         sql = new Bun.SQL("sqlite://:memory:", {
           adapter: "postgres",
-          hostname: new URL(process.env.DATABASE_URL).hostname,
-          port: parseInt(new URL(process.env.DATABASE_URL).port || "5432"),
-          username: new URL(process.env.DATABASE_URL).username || "postgres",
-          password: new URL(process.env.DATABASE_URL).password || "",
-          database: new URL(process.env.DATABASE_URL).pathname.slice(1),
+          hostname: "localhost",
+          port: 5432,
+          username: "postgres",
+          password: "",
+          database: "testdb",
           max: 1,
         });
 

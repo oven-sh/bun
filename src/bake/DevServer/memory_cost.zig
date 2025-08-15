@@ -144,7 +144,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .deleted_entrypoints = if (bun.Environment.isMac) {
             const watchlist = dev.deleted_entrypoints.lock();
             defer dev.deleted_entrypoints.unlock();
-            
+
             other_bytes += watchlist.entries_by_dir.capacity() * (@sizeOf([]const u8) + @sizeOf(std.ArrayListUnmanaged(DeletedEntrypointWatchlist.Entry)));
             var iter = watchlist.entries_by_dir.iterator();
             while (iter.next()) |kv| {
@@ -228,9 +228,9 @@ const HTMLBundle = jsc.API.HTMLBundle;
 
 const DevServer = bun.bake.DevServer;
 const DeferredRequest = DevServer.DeferredRequest;
+const DeletedEntrypointWatchlist = DevServer.DeletedEntrypointWatchlist;
 const HmrSocket = DevServer.HmrSocket;
 const IncrementalResult = DevServer.IncrementalResult;
-const DeletedEntrypointWatchlist = DevServer.DeletedEntrypointWatchlist;
 
 const VoidFieldTypes = bun.meta.VoidFieldTypes;
 const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;

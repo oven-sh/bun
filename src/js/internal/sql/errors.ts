@@ -15,6 +15,7 @@ class SQLError extends Error {
 
 class PostgresError extends SQLError {
   public readonly code: string;
+  public readonly errno: string;
   public readonly detail: string;
   public readonly hint: string;
   public readonly severity: string;

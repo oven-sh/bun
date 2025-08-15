@@ -927,6 +927,7 @@ pub fn runTasks(
                     }
 
                     // Process any remaining items (e.g., dependency_install_context) that were appended back
+                    // This is needed when there's no onExtract callback to handle installation
                     if (dependency_list_entry.value_ptr.items.len > 0) {
                         const remaining_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};

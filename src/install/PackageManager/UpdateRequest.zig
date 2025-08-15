@@ -143,16 +143,34 @@ fn parseWithError(
 
         var value = input;
         var alias: ?string = null;
-        if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
-            alias = input;
-            value = input[input.len..];
-        } else if (input.len > 1) {
+        // Check for alias@url syntax (e.g., myalias@github.com:user/repo)
+        // Only look for @ if the input contains : (indicates a URL or path)
+        if (input.len > 1 and strings.containsChar(input, ':')) {
             if (strings.indexOfChar(input[1..], '@')) |at| {
                 const name = input[0 .. at + 1];
+                // Check if the part before @ is a valid package name (alias)
+                // This will catch "bun@github.com:..." but not "git@github.com:..."
+                // because "git" alone is not a valid npm package name
                 if (strings.isNPMPackageName(name)) {
                     alias = name;
                     value = input[at + 2 ..];
                 }
+            }
+        } else if (!Dependency.isTarball(input)) {
+            // Check for package@version format (e.g., bar@0.0.2)
+            if (input.len > 1) {
+                if (strings.indexOfChar(input[1..], '@')) |at| {
+                    const name = input[0 .. at + 1];
+                    if (strings.isNPMPackageName(name)) {
+                        alias = name;
+                        value = input[at + 2 ..];
+                    }
+                }
+            }
+            // If no @ found or before @ is not a valid package name, check if the whole thing is a package name
+            if (alias == null and strings.isNPMPackageName(input)) {
+                alias = input;
+                value = input[input.len..];
             }
         }
 
@@ -179,21 +197,22 @@ fn parseWithError(
 
             return error.UnrecognizedDependencyFormat;
         };
-        if (alias != null and version.tag == .git) {
-            if (Dependency.parseWithOptionalTag(
-                allocator,
-                placeholder,
-                null,
-                input,
-                null,
-                &SlicedString.init(input, input),
-                log,
-                pm,
-            )) |ver| {
-                alias = null;
-                version = ver;
-            }
-        }
+        // Don't re-parse git dependencies with aliases - this was throwing away the alias
+        // if (alias != null and version.tag == .git) {
+        //     if (Dependency.parseWithOptionalTag(
+        //         allocator,
+        //         placeholder,
+        //         null,
+        //         input,
+        //         null,
+        //         &SlicedString.init(input, input),
+        //         log,
+        //         pm,
+        //     )) |ver| {
+        //         alias = null;
+        //         version = ver;
+        //     }
+        // }
         if (switch (version.tag) {
             .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
             .npm => version.value.npm.name.eql(placeholder, input, input),
@@ -246,6 +265,7 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const Global = bun.Global;
 const JSAst = bun.ast;
 const Output = bun.Output;

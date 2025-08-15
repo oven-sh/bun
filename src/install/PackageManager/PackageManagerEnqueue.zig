@@ -1329,7 +1329,8 @@ pub fn enqueueGitCheckout(
         return;
     } else |_| {}
 
-    const repo_path = bun.getFdPath(dir, &git_path_buf) catch |err| {
+    // Verify we can get the directory path - if not, fail early
+    _ = bun.getFdPath(dir, &git_path_buf) catch |err| {
         // If we can't get the path, create a failed task
         const task = this.preallocated_resolve_tasks.get();
         task.* = Task{
@@ -1360,7 +1361,54 @@ pub fn enqueueGitCheckout(
         return;
     };
 
+    // Ensure the cache directory and parent directories exist before cloning into it
+    _ = this.getCacheDirectory();
+    
+    // Also ensure the parent directory of the target exists
+    // Since git clone won't create parent directories
+    const parent_end = std.mem.lastIndexOf(u8, target, std.fs.path.sep_str) orelse target.len;
+    if (parent_end > 0) {
+        const parent_dir = target[0..parent_end];
+        std.fs.cwd().makePath(parent_dir) catch |err| {
+            // If we can't create the parent directory, the clone will fail
+            if (err != error.PathAlreadyExists) {
+                const task = this.preallocated_resolve_tasks.get();
+                task.* = Task{
+                    .package_manager = this,
+                    .log = logger.Log.init(this.allocator),
+                    .tag = Task.Tag.git_checkout,
+                    .request = .{
+                        .git_checkout = .{
+                            .repo_dir = dir,
+                            .resolution = resolution,
+                            .dependency_id = dependency_id,
+                            .name = strings.StringOrTinyString.init(name),
+                            .url = strings.StringOrTinyString.init(this.lockfile.str(&resolution.value.git.repo)),
+                            .resolved = strings.StringOrTinyString.init(resolved),
+                            .env = DotEnv.Map{ .map = DotEnv.Map.HashTable.init(this.allocator) },
+                        },
+                    },
+                    .id = task_id,
+                    .threadpool_task = ThreadPool.Task{ .callback = &dummyCallback },
+                    .data = .{ .git_checkout = .{} },
+                    .status = .fail,
+                    .err = err,
+                };
+                // Increment pending tasks for this immediate failure task
+                this.incrementPendingTasks(1);
+                this.resolve_tasks.push(task);
+                this.wake();
+                return;
+            }
+        };
+    }
+
     // Build git command arguments for clone --no-checkout
+    // Get the git repository URL and transform it if necessary
+    const git_url = this.lockfile.str(&resolution.value.git.repo);
+    // Try HTTPS transformation for SCP-like paths (more compatible than SSH)
+    const transformed_url = Repository.tryHTTPS(git_url) orelse git_url;
+    
     const argv: [10]?[*:0]const u8 = .{
         "git",
         "clone",
@@ -1368,8 +1416,8 @@ pub fn enqueueGitCheckout(
         "core.longpaths=true",
         "--quiet",
         "--no-checkout",
-        bun.default_allocator.dupeZ(u8, repo_path) catch unreachable,
-        bun.default_allocator.dupeZ(u8, target) catch unreachable,
+        bun.default_allocator.dupeZ(u8, transformed_url) catch unreachable,  // repository URL
+        bun.default_allocator.dupeZ(u8, target) catch unreachable,  // target directory
         null,
         null,
     };

@@ -424,23 +424,21 @@ pub const Repository = extern struct {
             ssh_path_buf[0.."ssh://git@".len].* = "ssh://git@".*;
             var rest = ssh_path_buf["ssh://git@".len..];
 
-            const colon_index = strings.indexOfChar(url, ':');
+            const colon_index = strings.indexOfChar(url, ':') orelse return null;
 
-            if (colon_index) |colon| {
-                // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |tld| {
-                    bun.copy(u8, rest, url[0..colon]);
-                    bun.copy(u8, rest[colon..], tld);
-                    rest[colon + tld.len] = '/';
-                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
-                    return out;
-                }
+            // make sure known hosts have `.com` or `.org`
+            if (Hosts.get(url[0..colon_index])) |tld| {
+                bun.copy(u8, rest, url[0..colon_index]);
+                bun.copy(u8, rest[colon_index..], tld);
+                rest[colon_index + tld.len] = '/';
+                bun.copy(u8, rest[colon_index + tld.len + 1 ..], url[colon_index + 1 ..]);
+                const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
+                return out;
             }
 
             bun.copy(u8, rest, url);
-            if (colon_index) |colon| rest[colon] = '/';
-            const final = ssh_path_buf[0 .. url.len + "ssh://".len];
+            rest[colon_index] = '/';
+            const final = ssh_path_buf[0 .. url.len + "ssh://git@".len];
             return final;
         }
 

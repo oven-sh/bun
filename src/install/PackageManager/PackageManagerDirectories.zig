@@ -139,7 +139,9 @@ noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
 const CacheDir = struct { path: string, is_node_modules: bool };
 pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) CacheDir {
     if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
-        return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        if (dir.len > 0) {
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
+        }
     }
 
     if (options) |opts| {

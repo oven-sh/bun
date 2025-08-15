@@ -160,6 +160,7 @@ pub const GitCommandRunner = struct {
             argc += 1;
         }
         argv[argc] = null; // Ensure null termination
+        
 
         // Cache directory is manager.cache_directory_path
 
@@ -199,11 +200,15 @@ pub const GitCommandRunner = struct {
             runner.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
         }
 
+        // Ensure cache directory exists before using it as cwd
+        _ = manager.getCacheDirectory();
+        
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = runner.stdout.source.?.pipe },
             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = runner.stderr.source.?.pipe },
             .argv0 = git_path.ptr,
+            .cwd = manager.cache_directory_path,
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&manager.event_loop),
             },
@@ -213,6 +218,11 @@ pub const GitCommandRunner = struct {
         // About to spawn git process with argv[0]="{s}"
         if (comptime Environment.allow_assert) {
             log("Spawning git with argv[0]={s}, cwd={s}", .{ argv[0].?, manager.cache_directory_path });
+            for (argv[0..argc]) |arg| {
+                if (arg) |a| {
+                    log("  argv: {s}", .{a});
+                }
+            }
         }
         var spawn_result = bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), envp) catch |err| {
             log("Failed to spawn git process: {} (argv[0]={s})", .{ err, argv[0].? });
@@ -527,6 +537,7 @@ pub const GitCommandRunner = struct {
                 if (this.checkout_phase == .clone) {
                     // First phase completed (clone --no-checkout)
                     if (status == .exited and status.exited.code == 0) {
+                        
                         // Now run the actual checkout command
                         this.checkout_phase = .checkout;
 
@@ -539,10 +550,18 @@ pub const GitCommandRunner = struct {
                         };
 
                         // Build checkout command: git -C <folder> checkout --quiet <resolved>
+                        const target_dir_z = bun.default_allocator.dupeZ(u8, checkout.target_dir) catch unreachable;
+                        
+                        
+                        if (comptime Environment.allow_assert) {
+                            log("Checkout target_dir: {s}", .{target_dir_z});
+                            log("Checkout resolved: {s}", .{checkout.resolved.slice()});
+                        }
+                        
                         const argv: [7]?[*:0]const u8 = .{
                             git_path.ptr,
                             "-C",
-                            bun.default_allocator.dupeZ(u8, checkout.target_dir) catch unreachable,
+                            target_dir_z,
                             "checkout",
                             "--quiet",
                             bun.default_allocator.dupeZ(u8, checkout.resolved.slice()) catch unreachable,
@@ -566,16 +585,29 @@ pub const GitCommandRunner = struct {
                             this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                         }
 
+                        // Ensure cache directory exists before using it as cwd
+                        _ = this.manager.getCacheDirectory();
+                        
                         const spawn_options = bun.spawn.SpawnOptions{
                             .stdin = .ignore,
                             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
                             .stderr = if (Environment.isPosix) .buffer else .{ .buffer = this.stderr.source.?.pipe },
                             .argv0 = git_path.ptr,
+                            .cwd = this.manager.cache_directory_path,
                             .windows = if (Environment.isWindows) .{
                                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
                             },
                             .stream = false,
                         };
+
+                        if (comptime Environment.allow_assert) {
+                            log("Spawning git checkout with cwd={s}", .{this.manager.cache_directory_path});
+                            for (argv) |arg| {
+                                if (arg) |a| {
+                                    log("  argv: {s}", .{a});
+                                } else break;
+                            }
+                        }
 
                         var spawn_result = bun.spawn.spawnProcess(&spawn_options, @constCast(@ptrCast(&argv)), envp) catch |err| {
                             log("Failed to spawn git checkout: {}", .{err});

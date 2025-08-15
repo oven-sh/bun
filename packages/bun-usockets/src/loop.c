@@ -30,13 +30,17 @@ extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t l
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
+extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
+
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
-    if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
-    }
     loop->data.sweep_timer_count++;
+    if (loop->data.sweep_timer_count == 1) {
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
+    }
+    
 }
 
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {

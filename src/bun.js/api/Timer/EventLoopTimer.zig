@@ -65,6 +65,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
+    DateHeaderTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -86,6 +87,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
         };
     }
 } else enum {
@@ -105,6 +107,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
+    DateHeaderTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -125,6 +128,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
         };
     }
 };
@@ -192,6 +196,11 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         .AbortSignalTimeout => {
             const timeout = @as(*jsc.WebCore.AbortSignal.Timeout, @fieldParentPtr("event_loop_timer", self));
             timeout.run(vm);
+            return .disarm;
+        },
+        .DateHeaderTimer => {
+            const date_header_timer = @as(*jsc.API.Timer.DateHeaderTimer, @fieldParentPtr("event_loop_timer", self));
+            date_header_timer.run(vm);
             return .disarm;
         },
         inline else => |t| {

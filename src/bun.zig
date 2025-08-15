@@ -190,6 +190,7 @@ pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
 
 pub const FD = @import("./fd.zig").FD;
+pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
 
 /// Deprecated: Use `FD` instead.
 pub const FileDescriptor = FD;
@@ -3727,6 +3728,7 @@ pub const highway = @import("./highway.zig");
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
+/// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
 pub const cpp = @import("cpp").bindings;
 
 pub const asan = @import("./asan.zig");

@@ -5,6 +5,12 @@ pub const CowSlice = @import("./ptr/CowSlice.zig").CowSlice;
 pub const CowSliceZ = @import("./ptr/CowSlice.zig").CowSliceZ;
 pub const CowString = CowSlice(u8);
 
+pub const owned = @import("./ptr/owned.zig");
+pub const Owned = owned.Owned;
+pub const OwnedWithOpts = owned.OwnedWithOpts;
+pub const MaybeOwned = owned.MaybeOwned;
+pub const MaybeOwnedWithOpts = owned.MaybeOwnedWithOpts;
+
 pub const ref_count = @import("./ptr/ref_count.zig");
 pub const RefCount = ref_count.RefCount;
 pub const ThreadSafeRefCount = ref_count.ThreadSafeRefCount;

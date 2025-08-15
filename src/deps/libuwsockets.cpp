@@ -23,6 +23,11 @@ using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 extern "C"
 {
 
+  void uws_loop_date_header_timer_update(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    loopData->updateDate();
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     if (ssl)

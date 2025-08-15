@@ -310,7 +310,11 @@ pub const VMHolder = struct {
 };
 
 pub inline fn get() *VirtualMachine {
-    return VMHolder.vm.?;
+    return getOrNull().?;
+}
+
+pub inline fn getOrNull() ?*VirtualMachine {
+    return VMHolder.vm;
 }
 
 pub fn getMainThreadVM() ?*VirtualMachine {

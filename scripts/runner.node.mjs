@@ -182,6 +182,35 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+let newFiles = [];
+let prFileCount = 0;
+if (isBuildkite) {
+  try {
+    console.log("on buildkite: collecting new files from PR");
+    for (let i = 1; i <= 5; i++) {
+      const res = await fetch(
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=50&page=${i}`,
+        {
+          headers: {
+            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+          },
+        },
+      );
+      const doc = await res.json();
+      console.log(`-> page ${i}, found ${doc.length} items`);
+      if (doc.length === 0) break;
+      for (const { filename, status } of doc) {
+        prFileCount += 1;
+        if (status !== "added") continue;
+        newFiles.push(filename);
+      }
+    }
+    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 let coresDir;
 
 if (options["coredump-upload"]) {
@@ -1985,6 +2014,9 @@ function formatTestToMarkdown(result, concise, retries) {
     }
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
+    }
+    if (newFiles.includes(testTitle)) {
+      markdown += ` (new)`;
     }
 
     if (concise) {

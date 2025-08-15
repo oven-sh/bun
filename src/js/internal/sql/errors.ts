@@ -137,4 +137,4 @@ class SQLiteError extends SQLError {
   }
 }
 
-export { PostgresError, SQLError, SQLiteError };
+export default { PostgresError, SQLError, SQLiteError };

@@ -15,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
-const log = bun.Output.scoped(.jest, true);
+const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,

@@ -1022,7 +1022,6 @@ const ServerPrototype = {
           }
           drainMicrotasks();
 
-          let capturedError;
           let resolveFunction;
           let didFinish = false;
 
@@ -1090,13 +1089,6 @@ const ServerPrototype = {
           }
 
           socket.cork();
-
-          if (capturedError) {
-            handle = undefined;
-            http_res[kCloseCallback] = undefined;
-            http_res.detachSocket(socket);
-            throw capturedError;
-          }
 
           if (handle.finished || didFinish) {
             handle = undefined;

@@ -1211,7 +1211,7 @@ const c = struct {
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 
 const std = @import("std");
 

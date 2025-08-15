@@ -19,17 +19,17 @@ pub fn less(_: void, a: *const Self, b: *const Self) bool {
     if (sec_order != .eq) return sec_order == .lt;
 
     // collapse sub-millisecond precision for JavaScript timers
-    const maybe_a_internals = a.jsTimerInternals();
-    const maybe_b_internals = b.jsTimerInternals();
+    const maybe_a_flags = a.jsTimerInternalsFlags();
+    const maybe_b_flags = b.jsTimerInternalsFlags();
     var a_ns = a.next.nsec;
     var b_ns = b.next.nsec;
-    if (maybe_a_internals != null) a_ns = std.time.ns_per_ms * @divTrunc(a_ns, std.time.ns_per_ms);
-    if (maybe_b_internals != null) b_ns = std.time.ns_per_ms * @divTrunc(b_ns, std.time.ns_per_ms);
+    if (maybe_a_flags != null) a_ns = std.time.ns_per_ms * @divTrunc(a_ns, std.time.ns_per_ms);
+    if (maybe_b_flags != null) b_ns = std.time.ns_per_ms * @divTrunc(b_ns, std.time.ns_per_ms);
 
     const order = std.math.order(a_ns, b_ns);
     if (order == .eq) {
-        if (maybe_a_internals) |a_internals| {
-            if (maybe_b_internals) |b_internals| {
+        if (maybe_a_flags) |a_flags| {
+            if (maybe_b_flags) |b_flags| {
                 // We expect that the epoch will overflow sometimes.
                 // If it does, we would ideally like timers with an epoch from before the
                 // overflow to be sorted *before* timers with an epoch from after the overflow
@@ -40,7 +40,7 @@ pub fn less(_: void, a: *const Self, b: *const Self) bool {
                 // small, it's likely that b is really newer than a, so we consider a less than
                 // b. If the distance from a to b is large (greater than half the u25 range),
                 // it's more likely that b is older than a so the true distance is from b to a.
-                return b_internals.flags.epoch -% a_internals.flags.epoch < std.math.maxInt(u25) / 2;
+                return b_flags.epoch -% a_flags.epoch < std.math.maxInt(u25) / 2;
             }
         }
     }
@@ -64,6 +64,8 @@ pub const Tag = if (Environment.isWindows) enum {
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
+    AbortSignalTimeout,
+    DateHeaderTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -84,6 +86,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerSweepSourceMaps,
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
+            .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
         };
     }
 } else enum {
@@ -102,6 +106,8 @@ pub const Tag = if (Environment.isWindows) enum {
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
+    AbortSignalTimeout,
+    DateHeaderTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -121,6 +127,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerSweepSourceMaps,
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
+            .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
         };
     }
 };
@@ -147,19 +155,22 @@ pub const State = enum {
 
 /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
 /// for all those kinds of timers
-pub fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
-    *Self => ?*TimerObjectInternals,
-    *const Self => ?*const TimerObjectInternals,
-    else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternals"),
+pub fn jsTimerInternalsFlags(self: anytype) switch (@TypeOf(self)) {
+    *Self => ?*TimerObjectInternals.Flags,
+    *const Self => ?*const TimerObjectInternals.Flags,
+    else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternalsFlags"),
 } {
     switch (self.tag) {
-        inline .TimeoutObject, .ImmediateObject => |tag| {
+        inline .TimeoutObject, .ImmediateObject, .AbortSignalTimeout => |tag| {
             const parent: switch (@TypeOf(self)) {
                 *Self => *tag.Type(),
                 *const Self => *const tag.Type(),
                 else => unreachable,
             } = @fieldParentPtr("event_loop_timer", self);
-            return &parent.internals;
+            return if (comptime std.meta.Child(@TypeOf(parent)) == jsc.WebCore.AbortSignal.Timeout)
+                &parent.flags
+            else
+                &parent.internals.flags;
         },
         else => return null,
     }
@@ -182,6 +193,16 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
         .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
         .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now),
+        .AbortSignalTimeout => {
+            const timeout = @as(*jsc.WebCore.AbortSignal.Timeout, @fieldParentPtr("event_loop_timer", self));
+            timeout.run(vm);
+            return .disarm;
+        },
+        .DateHeaderTimer => {
+            const date_header_timer = @as(*jsc.API.Timer.DateHeaderTimer, @fieldParentPtr("event_loop_timer", self));
+            date_header_timer.run(vm);
+            return .disarm;
+        },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {
                 @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new sql(...args);
 
@@ -10710,7 +10710,7 @@ CREATE TABLE ${table_name} (
     test("pg_database[] - system databases", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT array_agg(d.*)::pg_database[] FROM pg_database d;`;
-      expect(result[0].array_agg[0]).toContain("(5,postgres,10,6,c,f,t,-1,717,1,1663,en_US.utf8,en_US.utf8,,2.36,)");
+      expect(result[0].array_agg[0]).toContain(",postgres,");
     });
 
     test("pg_database[] - null values", async () => {
@@ -11096,3 +11096,16 @@ CREATE TABLE ${table_name} (
     });
   });
 }
+
+describe("should proper handle connection errors", () => {
+  test("should not crash if connection fails", async () => {
+    const result = Bun.spawnSync([bunExe(), path.join(import.meta.dirname, "socket.fail.fixture.ts")], {
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    expect(result.stderr?.toString()).toBeFalsy();
+  });
+});

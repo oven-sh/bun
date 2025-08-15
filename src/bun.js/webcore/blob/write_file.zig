@@ -353,7 +353,7 @@ pub const WriteFileWindows = struct {
 
     owned_fd: bool = false,
 
-    const log = bun.Output.scoped(.WriteFile, true);
+    const log = bun.Output.scoped(.WriteFile, .hidden);
 
     pub fn createWithCtx(
         file_blob: Blob,
@@ -721,7 +721,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
     }
 };
 
-const bloblog = bun.Output.scoped(.WriteFile, true);
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
 const std = @import("std");
 

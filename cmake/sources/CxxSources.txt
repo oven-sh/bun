@@ -1,3 +1,6 @@
+packages/bun-usockets/src/crypto/root_certs_darwin.cpp
+packages/bun-usockets/src/crypto/root_certs_linux.cpp
+packages/bun-usockets/src/crypto/root_certs_windows.cpp
 packages/bun-usockets/src/crypto/root_certs.cpp
 packages/bun-usockets/src/crypto/sni_tree.cpp
 src/bake/BakeGlobalObject.cpp

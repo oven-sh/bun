@@ -43,7 +43,7 @@ static bool us_should_use_system_ca() {
 
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
-// - Windows: us_load_system_certificates_windows() below
+// - Windows: root_certs_windows.cpp (Windows CryptoAPI)
 // - Linux/Unix: us_load_system_certificates_linux() below
 
 // This callback is used to avoid the default passphrase callback in OpenSSL
@@ -256,93 +256,10 @@ extern "C" const char *us_get_default_ciphers() {
 // Platform-specific implementations for loading system certificates
 
 #if defined(_WIN32)
-void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
-  *system_certs = sk_X509_new_null();
-  if (*system_certs == NULL) {
-    return;
-  }
-
-  // On Windows, load certificates from system certificate stores
-  // This follows Node.js's ReadWindowsCertificates implementation
-  
-  HCERTSTORE cert_store = NULL;
-  PCCERT_CONTEXT cert_context = NULL;
-  
-  // Try to open the ROOT certificate store
-  cert_store = CertOpenSystemStore(0, L"ROOT");
-  if (cert_store == NULL) {
-    return;
-  }
-  
-  // Enumerate certificates in the store
-  while ((cert_context = CertEnumCertificatesInStore(cert_store, cert_context)) != NULL) {
-    const unsigned char* cert_data = cert_context->pbCertEncoded;
-    int cert_len = cert_context->cbCertEncoded;
-    
-    X509* x509_cert = d2i_X509(NULL, &cert_data, cert_len);
-    if (x509_cert != NULL) {
-      sk_X509_push(*system_certs, x509_cert);
-    }
-  }
-  
-  CertCloseStore(cert_store, 0);
-}
+// Windows implementation is in root_certs_windows.cpp
+extern "C" void us_load_system_certificates_windows(STACK_OF(X509) **system_certs);
 
 #else
-// Linux and other Unix-like systems
-void us_load_system_certificates_linux(STACK_OF(X509) **system_certs) {
-  *system_certs = sk_X509_new_null();
-  if (*system_certs == NULL) {
-    return;
-  }
-
-  // Load certificates from standard Linux/Unix paths
-  // This follows Node.js's GetOpenSSLSystemCertificates implementation
-  
-  const char* cert_file = getenv("SSL_CERT_FILE");
-  if (!cert_file) {
-    cert_file = "/etc/ssl/certs/ca-certificates.crt"; // Debian/Ubuntu default
-  }
-  
-  const char* cert_dir = getenv("SSL_CERT_DIR");  
-  if (!cert_dir) {
-    cert_dir = "/etc/ssl/certs"; // Common Linux cert directory
-  }
-  
-  // Try to load from certificate file first
-  if (cert_file) {
-    FILE *fp = fopen(cert_file, "r");
-    if (fp) {
-      X509 *cert;
-      while ((cert = PEM_read_X509(fp, NULL, NULL, NULL)) != NULL) {
-        sk_X509_push(*system_certs, cert);
-      }
-      fclose(fp);
-    }
-  }
-  
-  // If file loading didn't work or we want to supplement it, try directory
-  if (cert_dir) {
-    DIR *d = opendir(cert_dir);
-    if (d) {
-      struct dirent *entry;
-      while ((entry = readdir(d)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        
-        char path[PATH_MAX];
-        snprintf(path, sizeof(path), "%s/%s", cert_dir, entry->d_name);
-        
-        FILE *fp = fopen(path, "r");
-        if (fp) {
-          X509 *cert;
-          while ((cert = PEM_read_X509(fp, NULL, NULL, NULL)) != NULL) {
-            sk_X509_push(*system_certs, cert);
-          }
-          fclose(fp);
-        }
-      }
-      closedir(d);
-    }
-  }
-}
+// Linux and other Unix-like systems - implementation is in root_certs_linux.cpp
+extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs);
 #endif

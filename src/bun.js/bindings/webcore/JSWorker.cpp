@@ -233,15 +233,25 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
-        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+        
+        // Check if envValue is the SHARE_ENV symbol
+        bool isShareEnv = false;
+        if (envValue && envValue.isSymbol()) {
+            auto* symbol = asSymbol(envValue);
+            auto description = symbol->description();
+            if (!description.isEmpty() && description == "nodejs.worker_threads.SHARE_ENV"_s) {
+                isShareEnv = true;
+            }
+        }
+        
+        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull() || isShareEnv)) {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
         }
         JSObject* envObject = nullptr;
 
-        if (envValue && envValue.isCell()) {
+        if (envValue && envValue.isCell() && !isShareEnv) {
             envObject = jsDynamicCast<JSC::JSObject*>(envValue);
-        } else if (globalObject->m_processEnvObject.isInitialized()) {
+        } else if (isShareEnv || globalObject->m_processEnvObject.isInitialized()) {
             envObject = globalObject->processEnvObject();
         }
 

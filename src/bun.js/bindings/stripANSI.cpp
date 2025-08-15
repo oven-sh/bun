@@ -210,7 +210,7 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
             // original string should be used.
             if (!foundANSI) return std::nullopt;
             // Append the rest of the string
-            result.append(std::span{start, end});
+            result.append(std::span { start, end });
             break;
         }
 
@@ -220,7 +220,7 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         }
 
         // Append everything before the escape sequence
-        result.append(std::span{start, escPos});
+        result.append(std::span { start, escPos });
         const auto newPos = consumeANSI(escPos, end);
         ASSERT(newPos > start);
         ASSERT(newPos <= end);
@@ -230,7 +230,7 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
     return result.toString();
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

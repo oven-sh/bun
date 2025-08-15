@@ -1,27 +1,27 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Practical tests for DHE cipher functionality in Bun
 // Related to issue #21891: Five "crypto" ciphers are unusable with "tls" (unlike NodeJS)
 
 const testCiphers = [
   "DHE-RSA-AES128-GCM-SHA256",
-  "DHE-RSA-AES128-SHA256", 
+  "DHE-RSA-AES128-SHA256",
   "DHE-RSA-AES256-SHA384",
   "ECDHE-RSA-AES256-SHA256",
-  "DHE-RSA-AES256-SHA256"
+  "DHE-RSA-AES256-SHA256",
 ];
 
 test("DHE ciphers can be set individually in DEFAULT_CIPHERS", () => {
   const tls = require("tls");
   const originalCiphers = tls.DEFAULT_CIPHERS;
-  
+
   try {
     // Test each cipher can be set without throwing
     for (const cipher of testCiphers) {
       expect(() => {
         tls.DEFAULT_CIPHERS = cipher + ":HIGH:!aNULL:!eNULL";
       }).not.toThrow();
-      
+
       // Verify it was actually set
       expect(tls.DEFAULT_CIPHERS).toContain(cipher);
     }
@@ -34,7 +34,7 @@ test("DHE ciphers can be set individually in DEFAULT_CIPHERS", () => {
 test("DHE ciphers are included in default cipher list", () => {
   const tls = require("tls");
   const defaultCiphers = tls.DEFAULT_CIPHERS;
-  
+
   // All test ciphers should be in the default list
   for (const cipher of testCiphers) {
     expect(defaultCiphers).toContain(cipher);
@@ -44,14 +44,15 @@ test("DHE ciphers are included in default cipher list", () => {
 test("DHE ciphers are listed in getCiphers() output", () => {
   const tls = require("tls");
   const availableCiphers = tls.getCiphers();
-  
+
   // Filter out configuration directives (they start with ! or are keywords like HIGH)
-  const actualCipherNames = availableCiphers.filter((cipher: string) => 
-    !cipher.startsWith("!") && 
-    !["HIGH", "MEDIUM", "LOW", "EXPORT", "NULL"].includes(cipher) &&
-    !cipher.startsWith("TLS_") // TLS 1.3 ciphers are different
+  const actualCipherNames = availableCiphers.filter(
+    (cipher: string) =>
+      !cipher.startsWith("!") &&
+      !["HIGH", "MEDIUM", "LOW", "EXPORT", "NULL"].includes(cipher) &&
+      !cipher.startsWith("TLS_"), // TLS 1.3 ciphers are different
   );
-  
+
   for (const cipher of testCiphers) {
     expect(actualCipherNames).toContain(cipher);
   }
@@ -60,13 +61,13 @@ test("DHE ciphers are listed in getCiphers() output", () => {
 test("Can create TLS server context with DHE ciphers", () => {
   const tls = require("tls");
   const crypto = require("crypto");
-  
+
   // Generate a simple key pair for testing
   const { privateKey } = crypto.generateKeyPairSync("rsa", {
     modulusLength: 2048,
-    privateKeyEncoding: { type: "pkcs8", format: "pem" }
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
-  
+
   // Simple self-signed cert (just for context creation test)
   const simpleCert = `-----BEGIN CERTIFICATE-----
 MIICpjCCAY4CCQDtGqcHH8KqHTANBgkqhkiG9w0BAQsFADAUMRIwEAYDVQQDDAls
@@ -91,7 +92,7 @@ F6r8EpVuF8tKgD4rNF7bYNqTy8dCnJgE2ZpEgLw
       tls.createSecureContext({
         key: privateKey,
         cert: simpleCert,
-        ciphers: cipher + ":HIGH:!aNULL:!eNULL"
+        ciphers: cipher + ":HIGH:!aNULL:!eNULL",
       });
     }).not.toThrow(`Failed to create secure context with cipher: ${cipher}`);
   }
@@ -100,23 +101,22 @@ F6r8EpVuF8tKgD4rNF7bYNqTy8dCnJgE2ZpEgLw
 test("Original issue scenario: can assign defaultCipherList to DEFAULT_CIPHERS", () => {
   const tls = require("tls");
   const crypto = require("crypto");
-  
+
   const originalCiphers = tls.DEFAULT_CIPHERS;
-  
+
   try {
     // This was the failing case from the GitHub issue
     expect(() => {
       tls.DEFAULT_CIPHERS = crypto.constants.defaultCipherList;
     }).not.toThrow();
-    
+
     // Should now be identical to Node.js behavior
     expect(tls.DEFAULT_CIPHERS).toBe(crypto.constants.defaultCipherList);
-    
+
     // Verify all our test ciphers are included
     for (const cipher of testCiphers) {
       expect(tls.DEFAULT_CIPHERS).toContain(cipher);
     }
-    
   } finally {
     tls.DEFAULT_CIPHERS = originalCiphers;
   }

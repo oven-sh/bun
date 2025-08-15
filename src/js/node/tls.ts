@@ -987,7 +987,7 @@ function tlsCipherFilter(a: string) {
 function supportedCipherFilter(cipher: string) {
   // Filter out TLS_ ciphers (handled separately by getDefaultCiphers)
   if (cipher.startsWith("TLS_")) return false;
-  
+
   // All other ciphers in Node.js defaultCipherList are supported by BoringSSL
   return true;
 }

@@ -188,11 +188,14 @@ if (isBuildkite) {
   try {
     console.log("on buildkite: collecting new files from PR");
     for (let i = 0; i < 5; i++) {
-      const res = await fetch(`https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=100&page=${i}`, {
-        headers: {
-          Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+      const res = await fetch(
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=100&page=${i}`,
+        {
+          headers: {
+            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+          },
         },
-      });
+      );
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;

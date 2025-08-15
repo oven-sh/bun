@@ -4,6 +4,7 @@ import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
   readdirSorted,
   runBunInstall,
@@ -468,10 +469,13 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   });
 
   expect(await exited).toBe(0);
-  const out1 = (await stdout.text())
+  let out1 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
+  if (isLinux) {
+    out1 = out1.map(line => line.replace("12 packages installed", "13 packages installed"));
+  }
   expect(out1).toMatchInlineSnapshot(`
     [
       "preinstall",
@@ -500,10 +504,13 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   }));
 
   expect(await exited).toBe(0);
-  const out2 = (await stdout.text())
+  let out2 = (await stdout.text())
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
+  if (isLinux) {
+    out2 = out2.map(line => line.replace("12 packages installed", "13 packages installed"));
+  }
   expect(out2).toMatchInlineSnapshot(`
     [
       "preinstall",

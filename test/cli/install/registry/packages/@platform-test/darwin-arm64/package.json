@@ -1,0 +1,37 @@
+{
+	"name": "@platform-test/darwin-arm64",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/darwin-arm64",
+			"version": "1.0.0",
+			"description": "Platform test package for darwin-arm64",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"darwin"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"_id": "@platform-test/darwin-arm64@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/darwin-arm64/-/platform-test-darwin-arm64-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.125Z",
+		"created": "2025-07-18T16:17:21.125Z",
+		"1.0.0": "2025-07-18T16:17:21.125Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/darwin-arm64"
+}

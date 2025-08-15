@@ -1,6 +1,5 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const { Readable, Writable } = require("node:stream");
 const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
@@ -1133,6 +1132,7 @@ class ChildProcess extends EventEmitter {
 
             if (!stdin) {
               // This can happen if the process was already killed.
+              const { Writable } = require("node:stream");
               const stream = new Writable({
                 write(chunk, encoding, callback) {
                   // Gracefully handle writes - stream acts as if it's ended
@@ -1151,6 +1151,7 @@ class ChildProcess extends EventEmitter {
           case "inherit":
             return null;
           case "destroyed": {
+            const { Writable } = require("node:stream");
             const stream = new Writable({
               write(chunk, encoding, callback) {
                 // Gracefully handle writes - stream acts as if it's ended
@@ -1175,6 +1176,7 @@ class ChildProcess extends EventEmitter {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
             if (!value) {
+              const { Readable } = require("node:stream");
               const stream = new Readable({ read() {} });
               // Mark as destroyed to indicate it's not usable
               stream.destroy();
@@ -1188,6 +1190,7 @@ class ChildProcess extends EventEmitter {
             return pipe;
           }
           case "destroyed": {
+            const { Readable } = require("node:stream");
             const stream = new Readable({ read() {} });
             // Mark as destroyed to indicate it's not usable
             stream.destroy();

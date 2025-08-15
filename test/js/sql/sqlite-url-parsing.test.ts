@@ -246,21 +246,26 @@ describe("SQLite URL Parsing Matrix", () => {
 
   describe("Edge cases", () => {
     test("handles very long paths", () => {
-      const longPath = "a".repeat(255) + ".db";
+      const longFilename = "a".repeat(255) + ".db";
+      const longPath = `/tmp/${longFilename}`;
       const sql = new SQL(`sqlite://${longPath}`);
       expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(longPath);
       sql.close();
     });
 
     test("handles database with .db in middle of name", () => {
-      const sql = new SQL("sqlite://test.db.backup");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("test.db.backup");
+      // Use a path that won't create a file in the project root
+      const path = "/tmp/test.db.backup";
+      const sql = new SQL(`sqlite://${path}`);
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(path);
       sql.close();
     });
 
     test("handles path with multiple dots", () => {
-      const sql = new SQL("sqlite://test...db");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("test...db");
+      // Use a path that won't create a file in the project root
+      const path = "/tmp/test...db";
+      const sql = new SQL(`sqlite://${path}`);
+      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(path);
       sql.close();
     });
 

@@ -549,10 +549,7 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 }
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
-  // when the inspector runs (can be due to VSCode extension), there is
-  // a bug that in debug modes the console logs extra stuff
-  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
-  const env = { ...rest, ...envArgs };
+  const env = { ...bunEnv, ...envArgs };
   const exec = spawn({
     cmd: [
       executable,

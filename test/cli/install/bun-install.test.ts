@@ -8648,7 +8648,7 @@ it("should respect --bin-links and --no-bin-links flags", async () => {
   }
 });
 
-it("should respect bin-links setting from bunfig.toml", async () => {
+it("should respect binLinks setting from bunfig.toml", async () => {
   const package_json = JSON.stringify({
     name: "test-bin-links-config",
     dependencies: {
@@ -8658,9 +8658,9 @@ it("should respect bin-links setting from bunfig.toml", async () => {
 
   await writeFile(join(package_dir, "package.json"), package_json);
 
-  // Test with bin-links = false in bunfig.toml
+  // Test with binLinks = false in bunfig.toml
   {
-    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbin-links = false");
+    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbinLinks = false");
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
 
     const { stdout, stderr, exited } = spawn({
@@ -8675,9 +8675,9 @@ it("should respect bin-links setting from bunfig.toml", async () => {
     expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
   }
 
-  // Test with bin-links = true in bunfig.toml
+  // Test with binLinks = true in bunfig.toml
   {
-    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbin-links = true");
+    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbinLinks = true");
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
 
     const { stdout, stderr, exited } = spawn({
@@ -8697,6 +8697,7 @@ it("should respect bin-links setting from bunfig.toml", async () => {
   await rm(join(package_dir, "bunfig.toml"), { force: true });
 });
 
+<<<<<<< HEAD
 it("should respect bin-links setting from environment variables", async () => {
   const package_json = JSON.stringify({
     name: "test-bin-links-env",
@@ -8737,3 +8738,46 @@ it("should respect bin-links setting from environment variables", async () => {
     expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
   }
 });
+||||||| parent of 94cdd6f211 (implement --bin-links flag for bun install)
+it("should respect bin-links setting from environment variables", async () => {
+  const package_json = JSON.stringify({
+    name: "test-bin-links-env",
+    dependencies: {
+      "prettier": "^2.0.0",
+    },
+  });
+  
+  await writeFile(join(package_dir, "package.json"), package_json);
+
+  // Test with BUN_CONFIG_BIN_LINKS=false
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, BUN_CONFIG_BIN_LINKS: "false" },
+    });
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
+  }
+
+  // Test with NPM_CONFIG_BIN_LINKS=false
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, NPM_CONFIG_BIN_LINKS: "false" },
+    });
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
+  }
+});
+=======
+>>>>>>> 94cdd6f211 (implement --bin-links flag for bun install)

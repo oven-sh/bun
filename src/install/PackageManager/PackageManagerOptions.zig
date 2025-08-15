@@ -457,25 +457,6 @@ pub fn load(
         this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
     }
 
-    // Load bin-links from environment variables
-    {
-        const bin_links_keys = [_]string{
-            "BUN_CONFIG_BIN_LINKS",
-            "NPM_CONFIG_BIN_LINKS",
-            "npm_config_bin_links",
-        };
-
-        inline for (bin_links_keys) |key| {
-            if (env.get(key)) |value| {
-                if (strings.eqlComptime(value, "false") or strings.eqlComptime(value, "0")) {
-                    this.bin_links = false;
-                } else if (strings.eqlComptime(value, "true") or strings.eqlComptime(value, "1")) {
-                    this.bin_links = true;
-                }
-                break;
-            }
-        }
-    }
 
     // Update should never read from manifest cache
     if (subcommand == .update) {

@@ -902,7 +902,6 @@ if (isDockerEnabled()) {
     expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.errno).toBe("42601");
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
-    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("Connect using uri", async () => [

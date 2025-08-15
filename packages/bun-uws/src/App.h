@@ -305,6 +305,7 @@ public:
         struct us_socket_t **prev = &context->head_sockets;
         while (s) {
             auto *data = HttpContext<SSL>::getSocketContextDataS(s);
+            data->closeAfterParsingHttp();
             struct us_socket_t *nextS = s->next;
 
             if (!data->isParsingHttp()) {

@@ -12,6 +12,7 @@ const { isUint8Array } = require("node:util/types");
 const { SafeSet } = require("internal/primordials");
 
 const ArrayIsArray = Array.isArray;
+const ArrayPrototypeJoin = Array.prototype.join;
 const MathFloor = Math.floor;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectHasOwn = Object.hasOwn;
@@ -529,7 +530,17 @@ function processHeader(self, state, key, value, validate) {
       (value.length < 2 || !isCookieField(key)) &&
       (!self[kUniqueHeaders] || !self[kUniqueHeaders].has(key.toLowerCase()))
     ) {
-      for (let i = 0; i < value.length; i++) storeHeader(self, state, key, value[i], validate);
+      // https://www.rfc-editor.org/rfc/rfc9110#section-5.3 Field Order
+      // A recipient MAY combine multiple field lines within a field section that have the same field name into one field line, without changing the semantics of the message,
+      // by appending each subsequent field line value to the initial field line value in order, separated by a comma (",") and optional whitespace (OWS, defined in Section 5.6.3).
+
+      // https://www.rfc-editor.org/rfc/rfc9110#section-5.2 Field Lines and Combined Field Value
+      // When a field name is only present once in a section, the combined "field value" for that field consists of the corresponding field line value. When a field name is repeated
+      // within a section, its combined field value consists of the list of corresponding field line values within that section, concatenated in order, with each field line value separated by a comma.
+
+      // TODO: Bun does not yet do this header joining on the server side so do it here in the client instead. § 5.2 clarifies that this is a bug on our part.
+      // for (let i = 0; i < value.length; i++) storeHeader(self, state, key, value[i], validate);
+      storeHeader(self, state, key, ArrayPrototypeJoin.$call(value, ", "), validate);
       return;
     }
     value = value.join("; ");

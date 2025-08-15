@@ -51,7 +51,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
+const { Duplex } = Stream;
 
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 

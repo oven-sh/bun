@@ -1431,6 +1431,15 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     assert(route_bundle.data == .html);
     const html = &route_bundle.data.html;
 
+    // Check if the HTML file was deleted (script_injection_offset would be null)
+    if (html.script_injection_offset.unwrap() == null or html.bundled_html_text == null) {
+        // The HTML file was deleted, return a 404 error
+        debug.log("HTML route requested but file was deleted: route_bundle_index={d}", .{route_bundle_index.get()});
+
+        sendBuiltInNotFound(resp);
+        return;
+    }
+
     const blob = html.cached_response orelse generate: {
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
@@ -1464,8 +1473,15 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
     assert(html.html_bundle.data.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
-    const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
-    const bundled_html = html.bundled_html_text orelse unreachable;
+
+    // This should be checked before calling generateHTMLPayload, but let's be defensive
+    const script_injection_offset = (html.script_injection_offset.unwrap() orelse {
+        @panic("generateHTMLPayload called with null script_injection_offset");
+    }).get();
+
+    const bundled_html = html.bundled_html_text orelse {
+        @panic("generateHTMLPayload called with null bundled_html_text");
+    };
 
     // The bundler records an offsets in development mode, splitting the HTML
     // file into two chunks. DevServer is able to insert style/script tags
@@ -2911,6 +2927,8 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
             bun.hash32(parent_dir),
             true,
         );
+
+        return;
     }
 
     // Linux watches on file paths, so we can just add the deleted file to the

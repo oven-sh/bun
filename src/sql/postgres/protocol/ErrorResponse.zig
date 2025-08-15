@@ -33,7 +33,6 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
-    // Pre-calculate capacity to avoid reallocations
     for (this.messages.items) |*msg| {
         b.cap += switch (msg.*) {
             inline else => |m| m.utf8ByteLength(),
@@ -41,7 +40,6 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
     }
     b.allocate(bun.default_allocator) catch {};
 
-    // Build a more structured error message
     var severity: String = String.dead;
     var code: String = String.dead;
     var message: String = String.dead;
@@ -110,35 +108,43 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
         }
     }
 
-    const bun_ns = (try globalObject.toJSValue().get(globalObject, "Bun")).?;
-    const sql_constructor = (try bun_ns.get(globalObject, "SQL")).?;
-    const pg_error_constructor = (try sql_constructor.get(globalObject, "PostgresError")).?;
+    const createPostgresError = @import("../AnyPostgresError.zig").createPostgresError;
 
-    const options = JSValue.createEmptyObject(globalObject, 0);
-    options.put(globalObject, jsc.ZigString.static("code"), code.toJS(globalObject));
-    options.put(globalObject, jsc.ZigString.static("detail"), detail.toJS(globalObject));
-    options.put(globalObject, jsc.ZigString.static("hint"), hint.toJS(globalObject));
-    options.put(globalObject, jsc.ZigString.static("severity"), severity.toJS(globalObject));
+    const code_slice = if (code.isEmpty()) "ERR_POSTGRES_SERVER_ERROR" else code.slice();
+    const detail_slice = if (detail.isEmpty()) null else detail.slice();
+    const hint_slice = if (hint.isEmpty()) null else hint.slice();
+    const severity_slice = if (severity.isEmpty()) null else severity.slice();
+    const position_slice = if (position.isEmpty()) null else position.slice();
+    const internalPosition_slice = if (internalPosition.isEmpty()) null else internalPosition.slice();
+    const internalQuery_slice = if (internal.isEmpty()) null else internal.slice();
+    const where_slice = if (where.isEmpty()) null else where.slice();
+    const schema_slice = if (schema.isEmpty()) null else schema.slice();
+    const table_slice = if (table.isEmpty()) null else table.slice();
+    const column_slice = if (column.isEmpty()) null else column.slice();
+    const dataType_slice = if (datatype.isEmpty()) null else datatype.slice();
+    const constraint_slice = if (constraint.isEmpty()) null else constraint.slice();
+    const file_slice = if (file.isEmpty()) null else file.slice();
+    const line_slice = if (line.isEmpty()) null else line.slice();
+    const routine_slice = if (routine.isEmpty()) null else routine.slice();
 
-    if (!position.isEmpty()) options.put(globalObject, jsc.ZigString.static("position"), position.toJS(globalObject));
-    if (!internalPosition.isEmpty()) options.put(globalObject, jsc.ZigString.static("internalPosition"), internalPosition.toJS(globalObject));
-    if (!internal.isEmpty()) options.put(globalObject, jsc.ZigString.static("internalQuery"), internal.toJS(globalObject));
-    if (!where.isEmpty()) options.put(globalObject, jsc.ZigString.static("where"), where.toJS(globalObject));
-    if (!schema.isEmpty()) options.put(globalObject, jsc.ZigString.static("schema"), schema.toJS(globalObject));
-    if (!table.isEmpty()) options.put(globalObject, jsc.ZigString.static("table"), table.toJS(globalObject));
-    if (!column.isEmpty()) options.put(globalObject, jsc.ZigString.static("column"), column.toJS(globalObject));
-    if (!datatype.isEmpty()) options.put(globalObject, jsc.ZigString.static("dataType"), datatype.toJS(globalObject));
-    if (!constraint.isEmpty()) options.put(globalObject, jsc.ZigString.static("constraint"), constraint.toJS(globalObject));
-    if (!file.isEmpty()) options.put(globalObject, jsc.ZigString.static("file"), file.toJS(globalObject));
-    if (!line.isEmpty()) options.put(globalObject, jsc.ZigString.static("line"), line.toJS(globalObject));
-    if (!routine.isEmpty()) options.put(globalObject, jsc.ZigString.static("routine"), routine.toJS(globalObject));
-
-    const args = [_]JSValue{
-        jsc.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject),
-        options,
-    };
-
-    return pg_error_constructor.call(globalObject, .js_undefined, &args) catch unreachable;
+    return try createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
+        .code = code_slice,
+        .detail = detail_slice,
+        .hint = hint_slice,
+        .severity = severity_slice,
+        .position = position_slice,
+        .internalPosition = internalPosition_slice,
+        .internalQuery = internalQuery_slice,
+        .where = where_slice,
+        .schema = schema_slice,
+        .table = table_slice,
+        .column = column_slice,
+        .dataType = dataType_slice,
+        .constraint = constraint_slice,
+        .file = file_slice,
+        .line = line_slice,
+        .routine = routine_slice,
+    });
 }
 
 const std = @import("std");

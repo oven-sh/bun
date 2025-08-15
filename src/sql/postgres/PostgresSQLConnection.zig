@@ -335,7 +335,10 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
     const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
     defer bun.default_allocator.free(message);
-    this.failWithJSValue(createPostgresError(this.globalObject, message, .{ .code = code }) catch unreachable);
+    this.failWithJSValue(createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| brk: {
+        _ = e;
+        break :brk this.globalObject.createErrorInstance("PostgreSQL error: {s}", .{message});
+    });
 }
 
 pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
@@ -738,7 +741,10 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                         tls.deinit(true);
                     }
                     ptr.deinit();
-                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch unreachable);
+                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch |e| brk: {
+                        _ = e;
+                        break :brk globalObject.createErrorInstance("failed to connect to postgresql", .{});
+                    });
                 },
             };
         } else {
@@ -749,7 +755,10 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                         tls.deinit(true);
                     }
                     ptr.deinit();
-                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch unreachable);
+                    return globalObject.throwValue(createPostgresError(globalObject, "failed to connect to postgresql", .{ .code = "ERR_POSTGRES_CONNECTION_CLOSED" }) catch |e| brk: {
+                        _ = e;
+                        break :brk globalObject.createErrorInstance("failed to connect to postgresql", .{});
+                    });
                 },
             };
         }

@@ -6785,7 +6785,11 @@ pub const serializer = struct {
     }
 
     pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        const int_value: ?i32 = if (fract(value) == 0.0) @intFromFloat(value) else null;
+        // Check if the value is an integer and can safely fit in an i32
+        const int_value: ?i32 = if (fract(value) == 0.0 and value >= std.math.minInt(i32) and value <= std.math.maxInt(i32)) 
+            @intFromFloat(value) 
+        else 
+            null;
         const token = Token{ .dimension = .{
             .num = .{
                 .has_sign = value < 0.0,

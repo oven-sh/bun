@@ -86,7 +86,15 @@ pub fn createPostgresError(
         opts_obj,
     };
 
-    return try pg_error_constructor.call(globalObject, .js_undefined, &args);
+    const JSC = @import("../../bun.js/javascript_core_c_api.zig");
+    var exception: JSC.JSValueRef = null;
+    const result = JSC.JSObjectCallAsConstructor(globalObject, pg_error_constructor.asObjectRef(), args.len, @ptrCast(&args), &exception);
+
+    if (exception != null) {
+        return bun.JSError.JSError;
+    }
+
+    return JSValue.fromRef(result);
 }
 
 pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {

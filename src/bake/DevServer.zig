@@ -21,6 +21,7 @@ pub const DeletedEntrypointWatchlist = struct {
         /// Absolute path to the deleted entrypoint file, allocated using
         /// `dev.allocator`
         abs_path: [:0]const u8,
+        loader: bun.options.Loader,
 
         pub fn deinit(self: *Entry, allocator: Allocator) void {
             allocator.free(self.abs_path);
@@ -53,7 +54,7 @@ pub const DeletedEntrypointWatchlist = struct {
         map.deinit(self.allocator);
     }
 
-    pub fn add(self: *DeletedEntrypointWatchlist, abs_path: []const u8) !void {
+    pub fn add(self: *DeletedEntrypointWatchlist, abs_path: []const u8, loader: bun.options.Loader) !void {
         const abs_path_copy = try self.allocator.dupeZ(u8, abs_path);
         errdefer self.allocator.free(abs_path_copy);
 
@@ -70,6 +71,7 @@ pub const DeletedEntrypointWatchlist = struct {
 
         try gop.value_ptr.append(self.allocator, .{
             .abs_path = abs_path_copy,
+            .loader = loader,
         });
 
         debug.log("Added deleted entrypoint to watchlist: {s} (parent: {s})", .{ abs_path, parent_dir });
@@ -2916,13 +2918,13 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
         const list_ptr = dev.deleted_entrypoints.lock();
         defer dev.deleted_entrypoints.unlock();
 
-        list_ptr.add(abs_path) catch bun.outOfMemory();
+        list_ptr.add(abs_path, loader) catch bun.outOfMemory();
 
         // Also watch the parent directory for changes
         // TODO: is this needed?
         const parent_dir = std.fs.path.dirname(abs_path) orelse abs_path;
         _ = dev.bun_watcher.addDirectory(
-            bun.invalid_fd,
+            fd,
             parent_dir,
             bun.hash32(parent_dir),
             true,
@@ -2933,17 +2935,21 @@ fn handleEntrypointNotFoundIfNeeded(dev: *DevServer, abs_path: []const u8, graph
 
     // Linux watches on file paths, so we can just add the deleted file to the
     // watcher here
-    //
-    // I think this is the same on Windows?
-    _ = dev.bun_watcher.addFile(
-        fd,
-        abs_path,
-        bun.hash32(abs_path),
-        loader,
-        bun.invalid_fd,
-        null,
-        true,
-    );
+    if (comptime bun.Environment.isLinux) {
+        _ = dev.bun_watcher.addFile(
+            fd,
+            abs_path,
+            bun.hash32(abs_path),
+            loader,
+            bun.invalid_fd,
+            null,
+            true,
+        );
+        return;
+    }
+
+    // We don't do need to do anything on Windows since it recursively watches
+    // the directory
 }
 
 /// Return a log to write resolution failures into.
@@ -3924,9 +3930,8 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                         while (i < entries.items.len) {
                             const entry = &entries.items[i];
 
-                            const stat = bun.sys.stat(entry.abs_path);
-                            if (stat == .err) {
-                                // File still doesn't exist
+                            const maybe_file = bun.sys.open(entry.abs_path, bun.sys.O.EVTONLY, 0).unwrapOr(bun.invalid_fd);
+                            if (maybe_file == bun.invalid_fd) {
                                 i += 1;
                                 continue;
                             }
@@ -3935,11 +3940,27 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
                             const abs_path = entry.abs_path;
                             entry.abs_path = "";
+                            const loader = entry.loader;
 
                             _ = entries.swapRemove(i);
 
-                            // Append the file to the event so it will be reprocessed again in HotReloadEvent.processFileList
+                            // Append the file to the event so it will be
+                            // reprocessed again in
+                            // HotReloadEvent.processFileList
                             ev.appendFile(dev.allocator, abs_path);
+
+                            // No need to lock since we acquired the lock
+                            // higher in the callstack
+                            _ = dev.bun_watcher.appendFileMaybeLock(
+                                maybe_file,
+                                abs_path,
+                                bun.hash32(abs_path),
+                                loader,
+                                .invalid,
+                                null,
+                                true,
+                                false,
+                            );
                         }
 
                         deleted_watchlist_for_directory.clearIfEmpty(entries, file_path);

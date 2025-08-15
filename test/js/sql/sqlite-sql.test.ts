@@ -4469,24 +4469,21 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       const result = await sql`SELECT text_data, description FROM unicode_fuzz WHERE id = ${i}`;
       expect(result).toHaveLength(1);
 
-      // Special handling for problematic Unicode that may not roundtrip correctly
-      const problematicCases = [
+      // SQLite's actual behavior with problematic Unicode:
+      // - Lone surrogates (\uD800, \uDFFF) are dropped (become empty string)
+      // - BOM inverse (\uFFFE) is dropped (becomes empty string)
+      // - Null characters are preserved (not truncated)
+      const droppedCharacters = [
         "High surrogate (invalid alone)",
         "Low surrogate (invalid alone)",
         "Byte order mark inverse",
-        "Null in middle",
       ];
 
-      if (problematicCases.includes(desc)) {
-        // These characters may be handled differently - could be empty, replacement char, or preserved
-        const retrieved = result[0].text_data;
-        // For null in middle, check if it's preserved or truncated
-        if (desc === "Null in middle") {
-          expect(retrieved === "hello\x00world" || retrieved === "hello").toBe(true);
-        } else {
-          expect(retrieved === text || retrieved === "" || retrieved === "\uFFFD").toBe(true);
-        }
+      if (droppedCharacters.includes(desc)) {
+        // SQLite drops these invalid UTF-8 sequences
+        expect(result[0].text_data).toBe("");
       } else {
+        // All other characters should be preserved exactly, including null bytes
         expect(result[0].text_data).toBe(text);
       }
       expect(result[0].description).toBe(desc);

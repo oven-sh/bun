@@ -139,405 +139,6 @@ function strictContentLength(response) {
     }
   }
 }
-const ServerResponsePrototype = {
-  constructor: ServerResponse,
-  __proto__: OutgoingMessage.prototype,
-
-  // Unused but observable fields:
-  _removedConnection: false,
-  _removedContLen: false,
-  _hasBody: true,
-  _ended: false,
-  [kRejectNonStandardBodyWrites]: undefined,
-
-  get headersSent() {
-    return (
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
-    );
-  },
-  set headersSent(value) {
-    this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
-  },
-  _writeRaw(chunk, encoding, callback) {
-    return this.socket.write(chunk, encoding, callback);
-  },
-
-  writeEarlyHints(hints, cb) {
-    let head = "HTTP/1.1 103 Early Hints\r\n";
-
-    validateObject(hints, "hints");
-
-    if (hints.link === null || hints.link === undefined) {
-      return;
-    }
-
-    const link = validateLinkHeaderValue(hints.link);
-
-    if (link.length === 0) {
-      return;
-    }
-
-    head += "Link: " + link + "\r\n";
-
-    for (const key of ObjectKeys(hints)) {
-      if (key !== "link") {
-        head += key + ": " + hints[key] + "\r\n";
-      }
-    }
-
-    head += "\r\n";
-
-    this._writeRaw(head, "ascii", cb);
-  },
-
-  writeProcessing(cb) {
-    this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
-  },
-  writeContinue(cb) {
-    this.socket[kHandle]?.response?.writeContinue();
-    cb?.();
-  },
-
-  // This end method is actually on the OutgoingMessage prototype in Node.js
-  // But we don't want it for the fetch() response version.
-  end(chunk, encoding, callback) {
-    const handle = this[kHandle];
-    if (handle?.aborted) {
-      return this;
-    }
-
-    if ($isCallable(chunk)) {
-      callback = chunk;
-      chunk = undefined;
-      encoding = undefined;
-    } else if ($isCallable(encoding)) {
-      callback = encoding;
-      encoding = undefined;
-    } else if (!$isCallable(callback)) {
-      callback = undefined;
-    }
-
-    if (hasServerResponseFinished(this, chunk, callback)) {
-      return this;
-    }
-
-    if (chunk && !this._hasBody) {
-      if (this[kRejectNonStandardBodyWrites]) {
-        throw $ERR_HTTP_BODY_NOT_ALLOWED();
-      } else {
-        // node.js just ignores the write in this case
-        chunk = undefined;
-      }
-    }
-
-    if (!handle) {
-      if ($isCallable(callback)) {
-        process.nextTick(callback);
-      }
-      return this;
-    }
-
-    const headerState = this[headerStateSymbol];
-    callWriteHeadIfObservable(this, headerState);
-
-    const flags = handle.flags;
-    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-      // node.js will return true if the handle is closed but the internal state is not
-      // and will not throw or emit an error
-      return true;
-    }
-    if (headerState !== NodeHTTPHeaderState.sent) {
-      handle.cork(() => {
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-
-        // If handle.writeHead throws, we don't want headersSent to be set to true.
-        // So we set it here.
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-        this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
-      });
-    } else {
-      // If there's no data but you already called end, then you're done.
-      // We can ignore it in that case.
-      if (!(!chunk && handle.ended) && !handle.aborted) {
-        handle.end(chunk, encoding, undefined, strictContentLength(this));
-      }
-    }
-    this._header = " ";
-    const req = this.req;
-    const socket = req.socket;
-    if (!req._consuming && !req?._readableState?.resumeScheduled) {
-      req._dump();
-    }
-    this.detachSocket(socket);
-    this.finished = true;
-    process.nextTick(self => {
-      self._ended = true;
-    }, this);
-    this.emit("prefinish");
-    this._callPendingCallbacks();
-
-    if (callback) {
-      process.nextTick(
-        function (callback, self) {
-          // In Node.js, the "finish" event triggers the "close" event.
-          // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
-          self.emit("finish");
-          try {
-            callback();
-          } catch (err) {
-            self.emit("error", err);
-          }
-
-          process.nextTick(emitCloseNT, self);
-        },
-        callback,
-        this,
-      );
-    } else {
-      process.nextTick(function (self) {
-        self.emit("finish");
-        process.nextTick(emitCloseNT, self);
-      }, this);
-    }
-
-    return this;
-  },
-
-  get writable() {
-    return !this._ended || !hasServerResponseFinished(this);
-  },
-
-  write(chunk, encoding, callback) {
-    const handle = this[kHandle];
-
-    if ($isCallable(chunk)) {
-      callback = chunk;
-      chunk = undefined;
-      encoding = undefined;
-    } else if ($isCallable(encoding)) {
-      callback = encoding;
-      encoding = undefined;
-    } else if (!$isCallable(callback)) {
-      callback = undefined;
-    }
-
-    if (hasServerResponseFinished(this, chunk, callback)) {
-      return false;
-    }
-    if (chunk && !this._hasBody) {
-      if (this[kRejectNonStandardBodyWrites]) {
-        throw $ERR_HTTP_BODY_NOT_ALLOWED();
-      } else {
-        // node.js just ignores the write in this case
-        chunk = undefined;
-      }
-    }
-    let result = 0;
-
-    const headerState = this[headerStateSymbol];
-    callWriteHeadIfObservable(this, headerState);
-
-    if (!handle) {
-      if (this.socket) {
-        return this.socket.write(chunk, encoding, callback);
-      } else {
-        return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
-      }
-    }
-
-    const flags = handle.flags;
-    if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-      // node.js will return true if the handle is closed but the internal state is not
-      // and will not throw or emit an error
-      return true;
-    }
-
-    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-      handle.cork(() => {
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-
-        // If handle.writeHead throws, we don't want headersSent to be set to true.
-        // So we set it here.
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
-      });
-    } else {
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
-    }
-
-    if (result < 0) {
-      if (callback) {
-        // The write was buffered due to backpressure.
-        // We need to defer the callback until the write actually goes through.
-        this[kPendingCallbacks].push(callback);
-      }
-      return false;
-    }
-
-    this._callPendingCallbacks();
-    if (callback) {
-      process.nextTick(callback);
-    }
-    this.emit("drain");
-
-    return true;
-  },
-
-  _callPendingCallbacks() {
-    const originalLength = this[kPendingCallbacks].length;
-
-    for (let i = 0; i < originalLength; ++i) {
-      process.nextTick(this[kPendingCallbacks][i]);
-    }
-
-    if (this[kPendingCallbacks].length == originalLength) {
-      // If the array wasn't somehow appended to, just set it to an empty array
-      this[kPendingCallbacks] = [];
-    } else {
-      // Otherwise, splice it.
-      this[kPendingCallbacks].splice(0, originalLength);
-    }
-  },
-
-  _finish() {
-    this.emit("prefinish");
-  },
-
-  detachSocket(socket) {
-    if (socket._httpMessage === this) {
-      socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
-      socket.removeListener("close", onServerResponseClose);
-      socket._httpMessage = null;
-    }
-
-    this.socket = null;
-  },
-
-  _implicitHeader() {
-    if (this.headersSent) return;
-    // @ts-ignore
-    this.writeHead(this.statusCode);
-  },
-
-  get writableNeedDrain() {
-    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
-  },
-
-  get writableFinished() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
-  },
-
-  get writableLength() {
-    return this.writableFinished ? 0 : (this[kHandle]?.bufferedAmount ?? 0);
-  },
-
-  get writableHighWaterMark() {
-    return 64 * 1024;
-  },
-
-  get closed() {
-    return this._closed;
-  },
-
-  _send(data, encoding, callback, _byteLength) {
-    const handle = this[kHandle];
-    if (!handle) {
-      return OutgoingMessagePrototype._send.$apply(this, arguments);
-    }
-
-    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-      handle.cork(() => {
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        handle.write(data, encoding, callback, strictContentLength(this));
-      });
-    } else {
-      handle.write(data, encoding, callback, strictContentLength(this));
-    }
-  },
-
-  writeHead(statusCode, statusMessage, headers) {
-    if (this.headersSent) {
-      throw $ERR_HTTP_HEADERS_SENT("writeHead");
-    }
-    _writeHead(statusCode, statusMessage, headers, this);
-
-    this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
-
-    return this;
-  },
-
-  assignSocket(socket) {
-    if (socket._httpMessage) {
-      throw $ERR_HTTP_SOCKET_ASSIGNED();
-    }
-    socket._httpMessage = this;
-    socket.once("close", onServerResponseClose);
-    this.socket = socket;
-    this.emit("socket", socket);
-  },
-
-  statusMessage: undefined,
-  statusCode: 200,
-
-  get shouldKeepAlive() {
-    return this[kHandle]?.shouldKeepAlive ?? true;
-  },
-  set shouldKeepAlive(value) {
-    // throw new Error('not implemented');
-  },
-
-  get chunkedEncoding() {
-    return false;
-  },
-  set chunkedEncoding(value) {
-    // throw new Error('not implemented');
-  },
-
-  get useChunkedEncodingByDefault() {
-    return true;
-  },
-  set useChunkedEncodingByDefault(value) {
-    // throw new Error('not implemented');
-  },
-
-  destroy(_err?: Error) {
-    if (this.destroyed) return this;
-    const handle = this[kHandle];
-    this.destroyed = true;
-    if (handle) {
-      handle.abort();
-    }
-    this?.socket?.destroy();
-    this.emit("close");
-    return this;
-  },
-
-  emit(event) {
-    if (event === "close") {
-      callCloseCallback(this);
-    }
-    return Stream.prototype.emit.$apply(this, arguments);
-  },
-
-  flushHeaders() {
-    this._implicitHeader();
-
-    const handle = this[kHandle];
-    if (handle) {
-      if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
-        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-      }
-      handle.flushHeaders();
-    }
-  },
-} satisfies typeof import("node:http").ServerResponse.prototype;
-ServerResponse.prototype = ServerResponsePrototype;
-$setPrototypeDirect.$call(ServerResponse, Stream);
 
 const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback) {
   if ($isCallable(encoding)) {
@@ -591,29 +192,7 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-type Server = InstanceType<typeof Server>;
-const Server = function Server(options, callback) {
+function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
   this[kConnectionsCheckingInterval] = { _destroyed: false };
@@ -685,8 +264,458 @@ const Server = function Server(options, callback) {
 
   if (callback) this.on("request", callback);
   return this;
-} as unknown as typeof import("node:http").Server;
-Object.defineProperty(Server, "name", { value: "Server" });
+}
+$toClass(Server, "Server", EventEmitter);
+
+Server.prototype[kIncomingMessage] = undefined;
+
+Server.prototype[kServerResponse] = undefined;
+
+Server.prototype[kConnectionsCheckingInterval] = undefined;
+
+Server.prototype.ref = function () {
+  this._unref = false;
+  this[serverSymbol]?.ref?.();
+  return this;
+};
+
+Server.prototype.unref = function () {
+  this._unref = true;
+  this[serverSymbol]?.unref?.();
+  return this;
+};
+
+Server.prototype.closeAllConnections = function () {
+  const server = this[serverSymbol];
+  if (!server) {
+    return;
+  }
+  this[serverSymbol] = undefined;
+  const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+  if (connectionsCheckingInterval) {
+    connectionsCheckingInterval._destroyed = true;
+  }
+  this.listening = false;
+
+  server.stop(true);
+};
+
+Server.prototype.closeIdleConnections = function () {
+  const server = this[serverSymbol];
+  server.closeIdleConnections();
+};
+
+Server.prototype.close = function (optionalCallback?) {
+  const server: Bun.Server | undefined = this[serverSymbol];
+  if (!server) {
+    if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
+    return;
+  }
+  this[serverSymbol] = undefined;
+  const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+  if (connectionsCheckingInterval) {
+    connectionsCheckingInterval._destroyed = true;
+  }
+  if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
+  this.listening = false;
+  server.closeIdleConnections();
+  server.stop();
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ...args) {
+  switch (event) {
+    case "request": {
+      const { 1: res } = args;
+      if (!res.headersSent && !res.writableEnded) {
+        // Don't leak headers.
+        const names = res.getHeaderNames();
+        for (let i = 0; i < names.length; i++) {
+          res.removeHeader(names[i]);
+        }
+        res.statusCode = 500;
+        res.end(STATUS_CODES[500]);
+      } else {
+        res.destroy();
+      }
+      break;
+    }
+    default:
+      // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
+      //   .apply(this, arguments);
+      const { 1: res } = args;
+      res?.socket?.destroy();
+      break;
+  }
+};
+
+Server.prototype[Symbol.asyncDispose] = function () {
+  const { resolve, reject, promise } = Promise.withResolvers();
+  this.close(function (err, ...args) {
+    if (err) reject(err);
+    else resolve(...args);
+  });
+  return promise;
+};
+
+Server.prototype.address = function () {
+  if (!this[serverSymbol]) return null;
+  return this[serverSymbol].address;
+};
+
+Server.prototype.listen = function () {
+  const server = this;
+  let port, host, onListen;
+  let socketPath;
+  let tls = this[tlsSymbol];
+
+  // This logic must align with:
+  // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
+  if (arguments.length > 0) {
+    if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
+      // (options[...][, cb])
+      port = arguments[0].port;
+      host = arguments[0].host;
+      socketPath = arguments[0].path;
+
+      const otherTLS = arguments[0].tls;
+      if (otherTLS && $isObject(otherTLS)) {
+        tls = otherTLS;
+      }
+    } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
+      // (path[...][, cb])
+      socketPath = arguments[0];
+    } else {
+      // ([port][, host][...][, cb])
+      port = arguments[0];
+      if (arguments.length > 1 && typeof arguments[1] === "string") {
+        host = arguments[1];
+      }
+    }
+  }
+
+  // Bun defaults to port 3000.
+  // Node defaults to port 0.
+  if (port === undefined && !socketPath) {
+    port = 0;
+  }
+
+  if (typeof port === "string") {
+    const portNumber = parseInt(port);
+    if (!Number.isNaN(portNumber)) {
+      port = portNumber;
+    }
+  }
+
+  if ($isCallable(arguments[arguments.length - 1])) {
+    onListen = arguments[arguments.length - 1];
+  }
+
+  try {
+    // listenInCluster
+
+    if (isPrimary) {
+      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      return this;
+    }
+
+    if (cluster === undefined) cluster = require("node:cluster");
+
+    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+
+    // const serverQuery = {
+    //   // address: address,
+    //   port: port,
+    //   addressType: 4,
+    //   // fd: fd,
+    //   // flags,
+    //   // backlog,
+    //   // ...options,
+    // };
+    // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    //   // err = checkBindError(err, port, handle);
+    //   // if (err) {
+    //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
+    //   // }
+    //   if (err) {
+    //     throw err;
+    //   }
+    //   server[kRealListen](port, host, socketPath, onListen);
+    // });
+
+    server.once("listening", () => {
+      cluster.worker.state = "listening";
+      const address = server.address();
+      const message = {
+        act: "listening",
+        port: (address && address.port) || port,
+        data: null,
+        addressType: 4,
+      };
+      sendHelper(message, null);
+    });
+
+    server[kRealListen](tls, port, host, socketPath, true, onListen);
+  } catch (err) {
+    setTimeout(() => server.emit("error", err), 1);
+  }
+
+  return this;
+};
+
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+  {
+    const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
+    const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+    const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
+    let isHTTPS = false;
+    let server = this;
+
+    if (tls) {
+      this.serverName = tls.serverName || host || "localhost";
+    }
+
+    this[serverSymbol] = Bun.serve<any>({
+      idleTimeout: 0, // nodejs dont have a idleTimeout by default
+      tls,
+      port,
+      hostname: host,
+      unix: socketPath,
+      reusePort,
+      // Bindings to be used for WS Server
+      websocket: {
+        open(ws) {
+          ws.data.open(ws);
+        },
+        message(ws, message) {
+          ws.data.message(ws, message);
+        },
+        close(ws, code, reason) {
+          ws.data.close(ws, code, reason);
+        },
+        drain(ws) {
+          ws.data.drain(ws);
+        },
+        ping(ws, data) {
+          ws.data.ping(ws, data);
+        },
+        pong(ws, data) {
+          ws.data.pong(ws, data);
+        },
+      },
+      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+
+      onNodeHTTPRequest(
+        bunServer,
+        url: string,
+        method: string,
+        headersObject: Record<string, string>,
+        headersArray: string[],
+        handle,
+        hasBody: boolean,
+        socketHandle,
+        isSocketNew,
+        socket,
+        isAncientHTTP: boolean,
+      ) {
+        const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
+        setIsNextIncomingMessageHTTPS(isHTTPS);
+        if (!socket) {
+          socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
+        }
+
+        const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
+        if (isAncientHTTP) {
+          http_req.httpVersion = "1.0";
+        }
+        const http_res = new ResponseClass(http_req, {
+          [kHandle]: handle,
+          [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
+        });
+        setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
+        handle.onabort = onServerRequestEvent.bind(socket);
+        // start buffering data if any, the user will need to resume() or .on("data") to read it
+        if (hasBody) {
+          handle.pause();
+        }
+        drainMicrotasks();
+
+        let resolveFunction;
+        let didFinish = false;
+
+        const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
+        let reachedRequestsLimit = false;
+        if (isRequestsLimitSet) {
+          const requestCount = (socket._requestCount || 0) + 1;
+          socket._requestCount = requestCount;
+          if (server.maxRequestsPerSocket < requestCount) {
+            reachedRequestsLimit = true;
+          }
+        }
+
+        if (isSocketNew && !reachedRequestsLimit) {
+          server.emit("connection", socket);
+        }
+
+        socket[kRequest] = http_req;
+        const is_upgrade = http_req.headers.upgrade;
+        if (!is_upgrade) {
+          if (canUseInternalAssignSocket) {
+            // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+            assignSocketInternal(http_res, socket);
+          } else {
+            http_res.assignSocket(socket);
+          }
+        }
+        function onClose() {
+          didFinish = true;
+          resolveFunction && resolveFunction();
+        }
+
+        setCloseCallback(http_res, onClose);
+        if (reachedRequestsLimit) {
+          server.emit("dropRequest", http_req, socket);
+          http_res.writeHead(503);
+          http_res.end();
+          socket.destroy();
+        } else if (is_upgrade) {
+          server.emit("upgrade", http_req, socket, kEmptyBuffer);
+          if (!socket._httpMessage) {
+            if (canUseInternalAssignSocket) {
+              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
+              assignSocketInternal(http_res, socket);
+            } else {
+              http_res.assignSocket(socket);
+            }
+          }
+        } else if (http_req.headers.expect !== undefined) {
+          if (http_req.headers.expect === "100-continue") {
+            if (server.listenerCount("checkContinue") > 0) {
+              server.emit("checkContinue", http_req, http_res);
+            } else {
+              http_res.writeContinue();
+              server.emit("request", http_req, http_res);
+            }
+          } else if (server.listenerCount("checkExpectation") > 0) {
+            server.emit("checkExpectation", http_req, http_res);
+          } else {
+            http_res.writeHead(417);
+            http_res.end();
+          }
+        } else {
+          server.emit("request", http_req, http_res);
+        }
+
+        socket.cork();
+
+        if (handle.finished || didFinish) {
+          handle = undefined;
+          http_res[kCloseCallback] = undefined;
+          http_res.detachSocket(socket);
+          return;
+        }
+        if (http_res.socket) {
+          http_res.on("finish", http_res.detachSocket.bind(http_res, socket));
+        }
+
+        const { resolve, promise } = $newPromiseCapability(Promise);
+        resolveFunction = resolve;
+
+        return promise;
+      },
+
+      // Be very careful not to access (web) Request object
+      // properties:
+      // - request.url
+      // - request.headers
+      //
+      // We want to avoid triggering the getter for these properties because
+      // that will cause the data to be cloned twice, which costs memory & performance.
+      // fetch(req, _server) {
+      //   var pendingResponse;
+      //   var pendingError;
+      //   var reject = err => {
+      //     if (pendingError) return;
+      //     pendingError = err;
+      //     if (rejectFunction) rejectFunction(err);
+      //   };
+      //   var reply = function (resp) {
+      //     if (pendingResponse) return;
+      //     pendingResponse = resp;
+      //     if (resolveFunction) resolveFunction(resp);
+      //   };
+      //   const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+      //   isNextIncomingMessageHTTPS = isHTTPS;
+      //   const http_req = new RequestClass(req, {
+      //     [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
+      //   });
+      //   assignEventCallback(req, onRequestEvent.bind(http_req));
+      //   isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+
+      //   const upgrade = http_req.headers.upgrade;
+      //   const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
+      //   http_req.socket[kInternalSocketData] = [server, http_res, req];
+      //   server.emit("connection", http_req.socket);
+      //   const rejectFn = err => reject(err);
+      //   http_req.once("error", rejectFn);
+      //   http_res.once("error", rejectFn);
+      //   if (upgrade) {
+      //     server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+      //   } else {
+      //     server.emit("request", http_req, http_res);
+      //   }
+
+      //   if (pendingError) {
+      //     throw pendingError;
+      //   }
+
+      //   if (pendingResponse) {
+      //     return pendingResponse;
+      //   }
+
+      //   var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+      //   return promise;
+      // },
+    });
+    getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
+    isHTTPS = this[serverSymbol].protocol === "https";
+    // always set strict method validation to true for node.js compatibility
+    setServerCustomOptions(
+      this[serverSymbol],
+      this.requireHostHeader,
+      true,
+      typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
+      onServerClientError.bind(this),
+    );
+
+    if (this?._unref) {
+      this[serverSymbol]?.unref?.();
+    }
+
+    if ($isCallable(onListen)) {
+      this.once("listening", onListen);
+    }
+
+    if (this[kDeferredTimeouts]) {
+      for (const { msecs, callback } of this[kDeferredTimeouts]) {
+        this.setTimeout(msecs, callback);
+      }
+      delete this[kDeferredTimeouts];
+    }
+
+    setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+  }
+};
+
+Server.prototype.setTimeout = function (msecs, callback) {
+  const server = this[serverSymbol];
+  if (server) {
+    setServerIdleTimeout(server, Math.ceil(msecs / 1000));
+    typeof callback === "function" && this.once("timeout", callback);
+  } else {
+    (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
+  }
+  return this;
+};
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
@@ -703,6 +732,7 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
+
 // uWS::HttpParserError
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
@@ -753,457 +783,6 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     nodeSocket.emit("error", err);
   }
 }
-const ServerPrototype = {
-  constructor: Server,
-  __proto__: EventEmitter.prototype,
-  [kIncomingMessage]: undefined,
-  [kServerResponse]: undefined,
-  [kConnectionsCheckingInterval]: undefined,
-  ref() {
-    this._unref = false;
-    this[serverSymbol]?.ref?.();
-    return this;
-  },
-
-  unref() {
-    this._unref = true;
-    this[serverSymbol]?.unref?.();
-    return this;
-  },
-
-  closeAllConnections() {
-    const server = this[serverSymbol];
-    if (!server) {
-      return;
-    }
-    this[serverSymbol] = undefined;
-    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
-    if (connectionsCheckingInterval) {
-      connectionsCheckingInterval._destroyed = true;
-    }
-    this.listening = false;
-
-    server.stop(true);
-  },
-
-  closeIdleConnections() {
-    const server = this[serverSymbol];
-    server.closeIdleConnections();
-  },
-
-  close(optionalCallback?) {
-    const server: Bun.Server | undefined = this[serverSymbol];
-    if (!server) {
-      if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
-      return;
-    }
-    this[serverSymbol] = undefined;
-    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
-    if (connectionsCheckingInterval) {
-      connectionsCheckingInterval._destroyed = true;
-    }
-    if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
-    this.listening = false;
-    server.closeIdleConnections();
-    server.stop();
-  },
-  [EventEmitter.captureRejectionSymbol]: function (err, event, ...args) {
-    switch (event) {
-      case "request": {
-        const { 1: res } = args;
-        if (!res.headersSent && !res.writableEnded) {
-          // Don't leak headers.
-          const names = res.getHeaderNames();
-          for (let i = 0; i < names.length; i++) {
-            res.removeHeader(names[i]);
-          }
-          res.statusCode = 500;
-          res.end(STATUS_CODES[500]);
-        } else {
-          res.destroy();
-        }
-        break;
-      }
-      default:
-        // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
-        //   .apply(this, arguments);
-        const { 1: res } = args;
-        res?.socket?.destroy();
-        break;
-    }
-  },
-  [Symbol.asyncDispose]() {
-    const { resolve, reject, promise } = Promise.withResolvers();
-    this.close(function (err, ...args) {
-      if (err) reject(err);
-      else resolve(...args);
-    });
-    return promise;
-  },
-
-  address() {
-    if (!this[serverSymbol]) return null;
-    return this[serverSymbol].address;
-  },
-
-  listen() {
-    const server = this;
-    let port, host, onListen;
-    let socketPath;
-    let tls = this[tlsSymbol];
-
-    // This logic must align with:
-    // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
-    if (arguments.length > 0) {
-      if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
-        // (options[...][, cb])
-        port = arguments[0].port;
-        host = arguments[0].host;
-        socketPath = arguments[0].path;
-
-        const otherTLS = arguments[0].tls;
-        if (otherTLS && $isObject(otherTLS)) {
-          tls = otherTLS;
-        }
-      } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
-        // (path[...][, cb])
-        socketPath = arguments[0];
-      } else {
-        // ([port][, host][...][, cb])
-        port = arguments[0];
-        if (arguments.length > 1 && typeof arguments[1] === "string") {
-          host = arguments[1];
-        }
-      }
-    }
-
-    // Bun defaults to port 3000.
-    // Node defaults to port 0.
-    if (port === undefined && !socketPath) {
-      port = 0;
-    }
-
-    if (typeof port === "string") {
-      const portNumber = parseInt(port);
-      if (!Number.isNaN(portNumber)) {
-        port = portNumber;
-      }
-    }
-
-    if ($isCallable(arguments[arguments.length - 1])) {
-      onListen = arguments[arguments.length - 1];
-    }
-
-    try {
-      // listenInCluster
-
-      if (isPrimary) {
-        server[kRealListen](tls, port, host, socketPath, false, onListen);
-        return this;
-      }
-
-      if (cluster === undefined) cluster = require("node:cluster");
-
-      // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
-
-      // const serverQuery = {
-      //   // address: address,
-      //   port: port,
-      //   addressType: 4,
-      //   // fd: fd,
-      //   // flags,
-      //   // backlog,
-      //   // ...options,
-      // };
-      // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
-      //   // err = checkBindError(err, port, handle);
-      //   // if (err) {
-      //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
-      //   // }
-      //   if (err) {
-      //     throw err;
-      //   }
-      //   server[kRealListen](port, host, socketPath, onListen);
-      // });
-
-      server.once("listening", () => {
-        cluster.worker.state = "listening";
-        const address = server.address();
-        const message = {
-          act: "listening",
-          port: (address && address.port) || port,
-          data: null,
-          addressType: 4,
-        };
-        sendHelper(message, null);
-      });
-
-      server[kRealListen](tls, port, host, socketPath, true, onListen);
-    } catch (err) {
-      setTimeout(() => server.emit("error", err), 1);
-    }
-
-    return this;
-  },
-
-  [kRealListen](tls, port, host, socketPath, reusePort, onListen) {
-    {
-      const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
-      const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-      const canUseInternalAssignSocket =
-        ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
-      let isHTTPS = false;
-      let server = this;
-
-      if (tls) {
-        this.serverName = tls.serverName || host || "localhost";
-      }
-
-      this[serverSymbol] = Bun.serve<any>({
-        idleTimeout: 0, // nodejs dont have a idleTimeout by default
-        tls,
-        port,
-        hostname: host,
-        unix: socketPath,
-        reusePort,
-        // Bindings to be used for WS Server
-        websocket: {
-          open(ws) {
-            ws.data.open(ws);
-          },
-          message(ws, message) {
-            ws.data.message(ws, message);
-          },
-          close(ws, code, reason) {
-            ws.data.close(ws, code, reason);
-          },
-          drain(ws) {
-            ws.data.drain(ws);
-          },
-          ping(ws, data) {
-            ws.data.ping(ws, data);
-          },
-          pong(ws, data) {
-            ws.data.pong(ws, data);
-          },
-        },
-        maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-
-        onNodeHTTPRequest(
-          bunServer,
-          url: string,
-          method: string,
-          headersObject: Record<string, string>,
-          headersArray: string[],
-          handle,
-          hasBody: boolean,
-          socketHandle,
-          isSocketNew,
-          socket,
-          isAncientHTTP: boolean,
-        ) {
-          const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
-          setIsNextIncomingMessageHTTPS(isHTTPS);
-          if (!socket) {
-            socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
-          }
-
-          const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
-          if (isAncientHTTP) {
-            http_req.httpVersion = "1.0";
-          }
-          const http_res = new ResponseClass(http_req, {
-            [kHandle]: handle,
-            [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
-          });
-          setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
-          handle.onabort = onServerRequestEvent.bind(socket);
-          // start buffering data if any, the user will need to resume() or .on("data") to read it
-          if (hasBody) {
-            handle.pause();
-          }
-          drainMicrotasks();
-
-          let resolveFunction;
-          let didFinish = false;
-
-          const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
-          let reachedRequestsLimit = false;
-          if (isRequestsLimitSet) {
-            const requestCount = (socket._requestCount || 0) + 1;
-            socket._requestCount = requestCount;
-            if (server.maxRequestsPerSocket < requestCount) {
-              reachedRequestsLimit = true;
-            }
-          }
-
-          if (isSocketNew && !reachedRequestsLimit) {
-            server.emit("connection", socket);
-          }
-
-          socket[kRequest] = http_req;
-          const is_upgrade = http_req.headers.upgrade;
-          if (!is_upgrade) {
-            if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-              assignSocketInternal(http_res, socket);
-            } else {
-              http_res.assignSocket(socket);
-            }
-          }
-          function onClose() {
-            didFinish = true;
-            resolveFunction && resolveFunction();
-          }
-
-          setCloseCallback(http_res, onClose);
-          if (reachedRequestsLimit) {
-            server.emit("dropRequest", http_req, socket);
-            http_res.writeHead(503);
-            http_res.end();
-            socket.destroy();
-          } else if (is_upgrade) {
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
-            if (!socket._httpMessage) {
-              if (canUseInternalAssignSocket) {
-                // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-                assignSocketInternal(http_res, socket);
-              } else {
-                http_res.assignSocket(socket);
-              }
-            }
-          } else if (http_req.headers.expect !== undefined) {
-            if (http_req.headers.expect === "100-continue") {
-              if (server.listenerCount("checkContinue") > 0) {
-                server.emit("checkContinue", http_req, http_res);
-              } else {
-                http_res.writeContinue();
-                server.emit("request", http_req, http_res);
-              }
-            } else if (server.listenerCount("checkExpectation") > 0) {
-              server.emit("checkExpectation", http_req, http_res);
-            } else {
-              http_res.writeHead(417);
-              http_res.end();
-            }
-          } else {
-            server.emit("request", http_req, http_res);
-          }
-
-          socket.cork();
-
-          if (handle.finished || didFinish) {
-            handle = undefined;
-            http_res[kCloseCallback] = undefined;
-            http_res.detachSocket(socket);
-            return;
-          }
-          if (http_res.socket) {
-            http_res.on("finish", http_res.detachSocket.bind(http_res, socket));
-          }
-
-          const { resolve, promise } = $newPromiseCapability(Promise);
-          resolveFunction = resolve;
-
-          return promise;
-        },
-
-        // Be very careful not to access (web) Request object
-        // properties:
-        // - request.url
-        // - request.headers
-        //
-        // We want to avoid triggering the getter for these properties because
-        // that will cause the data to be cloned twice, which costs memory & performance.
-        // fetch(req, _server) {
-        //   var pendingResponse;
-        //   var pendingError;
-        //   var reject = err => {
-        //     if (pendingError) return;
-        //     pendingError = err;
-        //     if (rejectFunction) rejectFunction(err);
-        //   };
-        //   var reply = function (resp) {
-        //     if (pendingResponse) return;
-        //     pendingResponse = resp;
-        //     if (resolveFunction) resolveFunction(resp);
-        //   };
-        //   const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
-        //   isNextIncomingMessageHTTPS = isHTTPS;
-        //   const http_req = new RequestClass(req, {
-        //     [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
-        //   });
-        //   assignEventCallback(req, onRequestEvent.bind(http_req));
-        //   isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
-
-        //   const upgrade = http_req.headers.upgrade;
-        //   const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
-        //   http_req.socket[kInternalSocketData] = [server, http_res, req];
-        //   server.emit("connection", http_req.socket);
-        //   const rejectFn = err => reject(err);
-        //   http_req.once("error", rejectFn);
-        //   http_res.once("error", rejectFn);
-        //   if (upgrade) {
-        //     server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
-        //   } else {
-        //     server.emit("request", http_req, http_res);
-        //   }
-
-        //   if (pendingError) {
-        //     throw pendingError;
-        //   }
-
-        //   if (pendingResponse) {
-        //     return pendingResponse;
-        //   }
-
-        //   var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-        //   return promise;
-        // },
-      });
-      getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
-      isHTTPS = this[serverSymbol].protocol === "https";
-      // always set strict method validation to true for node.js compatibility
-      setServerCustomOptions(
-        this[serverSymbol],
-        this.requireHostHeader,
-        true,
-        typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
-        onServerClientError.bind(this),
-      );
-
-      if (this?._unref) {
-        this[serverSymbol]?.unref?.();
-      }
-
-      if ($isCallable(onListen)) {
-        this.once("listening", onListen);
-      }
-
-      if (this[kDeferredTimeouts]) {
-        for (const { msecs, callback } of this[kDeferredTimeouts]) {
-          this.setTimeout(msecs, callback);
-        }
-        delete this[kDeferredTimeouts];
-      }
-
-      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
-    }
-  },
-
-  setTimeout(msecs, callback) {
-    const server = this[serverSymbol];
-    if (server) {
-      setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-      typeof callback === "function" && this.once("timeout", callback);
-    } else {
-      (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
-    }
-    return this;
-  },
-};
-Server.prototype = ServerPrototype;
-$setPrototypeDirect.$call(Server, EventEmitter);
 
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
@@ -1597,6 +1176,425 @@ function ServerResponse(req, options) {
     this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites] ?? false;
   }
 }
+$toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+
+ServerResponse.prototype._removedConnection = false;
+
+ServerResponse.prototype._removedContLen = false;
+
+ServerResponse.prototype._hasBody = true;
+
+ServerResponse.prototype._ended = false;
+
+ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
+
+Object.defineProperty(ServerResponse.prototype, "headersSent", {
+  get() {
+    return (
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
+    );
+  },
+  set(value) {
+    this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+  },
+});
+
+ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
+  return this.socket.write(chunk, encoding, callback);
+};
+
+ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
+  let head = "HTTP/1.1 103 Early Hints\r\n";
+
+  validateObject(hints, "hints");
+
+  if (hints.link === null || hints.link === undefined) {
+    return;
+  }
+
+  const link = validateLinkHeaderValue(hints.link);
+
+  if (link.length === 0) {
+    return;
+  }
+
+  head += "Link: " + link + "\r\n";
+
+  for (const key of ObjectKeys(hints)) {
+    if (key !== "link") {
+      head += key + ": " + hints[key] + "\r\n";
+    }
+  }
+
+  head += "\r\n";
+
+  this._writeRaw(head, "ascii", cb);
+};
+
+ServerResponse.prototype.writeProcessing = function (cb) {
+  this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
+};
+
+ServerResponse.prototype.writeContinue = function (cb) {
+  this.socket[kHandle]?.response?.writeContinue();
+  cb?.();
+};
+
+// This end method is actually on the OutgoingMessage prototype in Node.js
+// But we don't want it for the fetch() response version.
+ServerResponse.prototype.end = function (chunk, encoding, callback) {
+  const handle = this[kHandle];
+  if (handle?.aborted) {
+    return this;
+  }
+
+  if ($isCallable(chunk)) {
+    callback = chunk;
+    chunk = undefined;
+    encoding = undefined;
+  } else if ($isCallable(encoding)) {
+    callback = encoding;
+    encoding = undefined;
+  } else if (!$isCallable(callback)) {
+    callback = undefined;
+  }
+
+  if (hasServerResponseFinished(this, chunk, callback)) {
+    return this;
+  }
+
+  if (chunk && !this._hasBody) {
+    if (this[kRejectNonStandardBodyWrites]) {
+      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+    } else {
+      // node.js just ignores the write in this case
+      chunk = undefined;
+    }
+  }
+
+  if (!handle) {
+    if ($isCallable(callback)) {
+      process.nextTick(callback);
+    }
+    return this;
+  }
+
+  const headerState = this[headerStateSymbol];
+  callWriteHeadIfObservable(this, headerState);
+
+  const flags = handle.flags;
+  if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+    // node.js will return true if the handle is closed but the internal state is not
+    // and will not throw or emit an error
+    return true;
+  }
+  if (headerState !== NodeHTTPHeaderState.sent) {
+    handle.cork(() => {
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+
+      // If handle.writeHead throws, we don't want headersSent to be set to true.
+      // So we set it here.
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
+      // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
+      this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
+    });
+  } else {
+    // If there's no data but you already called end, then you're done.
+    // We can ignore it in that case.
+    if (!(!chunk && handle.ended) && !handle.aborted) {
+      handle.end(chunk, encoding, undefined, strictContentLength(this));
+    }
+  }
+  this._header = " ";
+  const req = this.req;
+  const socket = req.socket;
+  if (!req._consuming && !req?._readableState?.resumeScheduled) {
+    req._dump();
+  }
+  this.detachSocket(socket);
+  this.finished = true;
+  process.nextTick(self => {
+    self._ended = true;
+  }, this);
+  this.emit("prefinish");
+  this._callPendingCallbacks();
+
+  if (callback) {
+    process.nextTick(
+      function (callback, self) {
+        // In Node.js, the "finish" event triggers the "close" event.
+        // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
+        self.emit("finish");
+        try {
+          callback();
+        } catch (err) {
+          self.emit("error", err);
+        }
+
+        process.nextTick(emitCloseNT, self);
+      },
+      callback,
+      this,
+    );
+  } else {
+    process.nextTick(function (self) {
+      self.emit("finish");
+      process.nextTick(emitCloseNT, self);
+    }, this);
+  }
+
+  return this;
+};
+
+Object.defineProperty(ServerResponse.prototype, "writable", {
+  get() {
+    return !this._ended || !hasServerResponseFinished(this);
+  },
+});
+
+ServerResponse.prototype.write = function (chunk, encoding, callback) {
+  const handle = this[kHandle];
+
+  if ($isCallable(chunk)) {
+    callback = chunk;
+    chunk = undefined;
+    encoding = undefined;
+  } else if ($isCallable(encoding)) {
+    callback = encoding;
+    encoding = undefined;
+  } else if (!$isCallable(callback)) {
+    callback = undefined;
+  }
+
+  if (hasServerResponseFinished(this, chunk, callback)) {
+    return false;
+  }
+  if (chunk && !this._hasBody) {
+    if (this[kRejectNonStandardBodyWrites]) {
+      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+    } else {
+      // node.js just ignores the write in this case
+      chunk = undefined;
+    }
+  }
+  let result = 0;
+
+  const headerState = this[headerStateSymbol];
+  callWriteHeadIfObservable(this, headerState);
+
+  if (!handle) {
+    if (this.socket) {
+      return this.socket.write(chunk, encoding, callback);
+    } else {
+      return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
+    }
+  }
+
+  const flags = handle.flags;
+  if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
+    // node.js will return true if the handle is closed but the internal state is not
+    // and will not throw or emit an error
+    return true;
+  }
+
+  if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+    handle.cork(() => {
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+
+      // If handle.writeHead throws, we don't want headersSent to be set to true.
+      // So we set it here.
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+    });
+  } else {
+    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+  }
+
+  if (result < 0) {
+    if (callback) {
+      // The write was buffered due to backpressure.
+      // We need to defer the callback until the write actually goes through.
+      this[kPendingCallbacks].push(callback);
+    }
+    return false;
+  }
+
+  this._callPendingCallbacks();
+  if (callback) {
+    process.nextTick(callback);
+  }
+  this.emit("drain");
+
+  return true;
+};
+
+ServerResponse.prototype._callPendingCallbacks = function () {
+  const originalLength = this[kPendingCallbacks].length;
+
+  for (let i = 0; i < originalLength; ++i) {
+    process.nextTick(this[kPendingCallbacks][i]);
+  }
+
+  if (this[kPendingCallbacks].length == originalLength) {
+    // If the array wasn't somehow appended to, just set it to an empty array
+    this[kPendingCallbacks] = [];
+  } else {
+    // Otherwise, splice it.
+    this[kPendingCallbacks].splice(0, originalLength);
+  }
+};
+
+ServerResponse.prototype._finish = function () {
+  this.emit("prefinish");
+};
+
+ServerResponse.prototype.detachSocket = function (socket) {
+  if (socket._httpMessage === this) {
+    socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
+    socket.removeListener("close", onServerResponseClose);
+    socket._httpMessage = null;
+  }
+  this.socket = null;
+};
+
+ServerResponse.prototype._implicitHeader = function () {
+  if (this.headersSent) return;
+  // @ts-ignore
+  this.writeHead(this.statusCode);
+};
+
+Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
+  get() {
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "writableFinished", {
+  get() {
+    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "writableLength", {
+  get() {
+    return this.writableFinished ? 0 : (this[kHandle]?.bufferedAmount ?? 0);
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "writableHighWaterMark", {
+  get() {
+    return 64 * 1024;
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "closed", {
+  get() {
+    return this._closed;
+  },
+});
+
+ServerResponse.prototype._send = function (data, encoding, callback, _byteLength) {
+  const handle = this[kHandle];
+  if (!handle) {
+    return OutgoingMessagePrototype._send.$apply(this, arguments);
+  }
+
+  if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+    handle.cork(() => {
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      handle.write(data, encoding, callback, strictContentLength(this));
+    });
+  } else {
+    handle.write(data, encoding, callback, strictContentLength(this));
+  }
+};
+
+ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
+  if (this.headersSent) {
+    throw $ERR_HTTP_HEADERS_SENT("writeHead");
+  }
+  _writeHead(statusCode, statusMessage, headers, this);
+
+  this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+
+  return this;
+};
+
+ServerResponse.prototype.assignSocket = function (socket) {
+  if (socket._httpMessage) {
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
+  }
+  socket._httpMessage = this;
+  socket.once("close", onServerResponseClose);
+  this.socket = socket;
+  this.emit("socket", socket);
+};
+
+ServerResponse.prototype.statusMessage = undefined;
+
+ServerResponse.prototype.statusCode = 200;
+
+Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
+  get() {
+    return this[kHandle]?.shouldKeepAlive ?? true;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
+  get() {
+    return false;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
+
+Object.defineProperty(ServerResponse.prototype, "useChunkedEncodingByDefault", {
+  get() {
+    return true;
+  },
+  set(value) {
+    // throw new Error('not implemented');
+  },
+});
+
+ServerResponse.prototype.destroy = function (_err?: Error) {
+  if (this.destroyed) return this;
+  const handle = this[kHandle];
+  this.destroyed = true;
+  if (handle) {
+    handle.abort();
+  }
+  this?.socket?.destroy();
+  this.emit("close");
+  return this;
+};
+
+ServerResponse.prototype.emit = function (event) {
+  if (event === "close") {
+    callCloseCallback(this);
+  }
+  return Stream.prototype.emit.$apply(this, arguments);
+};
+
+ServerResponse.prototype.flushHeaders = function () {
+  this._implicitHeader();
+
+  const handle = this[kHandle];
+  if (handle) {
+    if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
+      handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+    }
+    handle.flushHeaders();
+  }
+};
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

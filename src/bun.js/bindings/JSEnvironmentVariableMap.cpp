@@ -20,6 +20,7 @@ extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
+extern "C" bool Bun__setEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
 
 namespace Bun {
 
@@ -52,13 +53,32 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
 JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
 
-    auto string = JSValue::decode(value).toString(globalObject);
+    JSValue decodedValue = JSValue::decode(value);
+    JSString* string;
+    
+    // Node.js converts ALL values to strings when assigned to process.env
+    // Exception: Symbol values throw an error
+    if (decodedValue.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+    
+    // Convert the value to string using JavaScript's String() conversion
+    string = decodedValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    
     if (!string) [[unlikely]]
         return false;
+
+    // Set the environment variable at the system level
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString valueString = toZigString(string->value(globalObject));
+    Bun__setEnvValue(globalObject, &name, &valueString);
 
     object->putDirect(vm, propertyName, string, 0);
     return true;

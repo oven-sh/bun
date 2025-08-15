@@ -66,9 +66,6 @@ pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.J
     try runOneCompleted(this, globalThis, .pass);
 
     group.log("TODO: announce test result", .{});
-
-    this.bunTest().executing = false;
-    try this.bunTest().run(globalThis);
 }
 
 pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {

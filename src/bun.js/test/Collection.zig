@@ -150,10 +150,6 @@ pub fn describeCallbackThen(this: *Collection, globalThis: *jsc.JSGlobalObject) 
     const prev_scope = this._previous_scope.?;
     this._previous_scope = null;
     try this.describeCallbackCompleted(globalThis, prev_scope);
-
-    // continue execution
-    this.bunTest().executing = false;
-    try this.bunTest().run(globalThis);
 }
 pub fn describeCallbackCompleted(this: *Collection, _: *jsc.JSGlobalObject, previous_scope: *DescribeScope) bun.JSError!void {
     group.begin(@src());

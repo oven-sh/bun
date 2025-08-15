@@ -157,6 +157,9 @@ pub const BunTest = struct {
             .collection => try this.collection.describeCallbackThen(globalThis),
             .execution => try this.execution.testCallbackThen(globalThis),
         }
+
+        this.executing = false;
+        try this.run(globalThis);
         return .js_undefined;
     }
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -187,49 +190,52 @@ pub const BunTest = struct {
             group.log("runOne -> {s}", .{@tagName(result)});
             switch (result) {
                 .continue_async => return, // continue in 'then' callback
-                .continue_sync => continue,
-                .done => {
-                    switch (this.phase) {
-                        .collection => {
-                            // collection phase is complete. advance to execution phase, then continue.
-                            // re-entry safety:
-                            // - use ScriptDisallowedScope::InMainThread
-
-                            // here:
-                            // - assert the collection phase is complete, then lock the collection phase
-                            // - apply filters (`-t`)
-                            // - apply `.only`
-                            // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
-                            // - reorder (`--randomize`)
-                            // now, generate the execution order
-                            this.phase = .execution;
-                            var order = std.ArrayList(*ExecutionEntry).init(this.gpa);
-                            defer order.deinit();
-                            try Execution.generateOrderDescribe(this.collection.root_scope, &order);
-                            this.execution.order = try order.toOwnedSlice();
-                            // now, allowing js execution again:
-                            // - start the test execution loop
-
-                            // test execution:
-                            // - one at a time
-                            // - timeout handling
-                        },
-                        .execution => {
-                            // execution phase is complete. print results.
-
-                            if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
-
-                            this.executing = false;
-                            this.deinit();
-                            bun.jsc.Jest.Jest.runner.?.describe2 = null;
-                            return;
-                        },
-                    }
-                },
+                .continue_sync => {},
+                .done => if (try this._advance(globalThis) == .exit) return,
             }
         }
 
         comptime unreachable;
+    }
+
+    pub fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+        switch (this.phase) {
+            .collection => {
+                // collection phase is complete. advance to execution phase, then continue.
+                // re-entry safety:
+                // - use ScriptDisallowedScope::InMainThread
+
+                // here:
+                // - assert the collection phase is complete, then lock the collection phase
+                // - apply filters (`-t`)
+                // - apply `.only`
+                // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
+                // - reorder (`--randomize`)
+                // now, generate the execution order
+                this.phase = .execution;
+                var order = std.ArrayList(*ExecutionEntry).init(this.gpa);
+                defer order.deinit();
+                try Execution.generateOrderDescribe(this.collection.root_scope, &order);
+                this.execution.order = try order.toOwnedSlice();
+                // now, allowing js execution again:
+                // - start the test execution loop
+
+                // test execution:
+                // - one at a time
+                // - timeout handling
+                return .cont;
+            },
+            .execution => {
+                // execution phase is complete. print results.
+
+                if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
+
+                this.executing = false;
+                this.deinit();
+                bun.jsc.Jest.Jest.runner.?.describe2 = null;
+                return .exit;
+            },
+        }
     }
 };
 

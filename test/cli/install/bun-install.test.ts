@@ -8696,4 +8696,3 @@ it("should respect binLinks setting from bunfig.toml", async () => {
   // Clean up bunfig.toml
   await rm(join(package_dir, "bunfig.toml"), { force: true });
 });
-

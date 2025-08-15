@@ -23,9 +23,9 @@ fn bunTest(this: *Execution) *BunTest {
 pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.RunOneResult {
     if (this.index >= this.order.len) return .done;
     const entry = this.order[this.index];
-    this.index += 1;
 
     if (!entry.tag.shouldExecute()) {
+        try runOneCompleted(this, globalThis, .skip);
         return .continue_sync;
     }
 
@@ -36,6 +36,7 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     if (callback == null) @panic("double-call of ExecutionEntry! TODO support beforeAll/afterAll which get called multiple times.");
 
     // TODO: catch errors
+    if (entry.tag == .test_callback) entry.tag = .executing;
     const result = try callback.?.call(globalThis, .js_undefined, &.{});
 
     if (result.asPromise()) |_| {
@@ -43,13 +44,31 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
         return .continue_async;
     }
 
+    try runOneCompleted(this, globalThis, .pass);
     return .continue_sync;
 }
 
-pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
-    _ = this;
+pub fn runOneCompleted(this: *Execution, globalThis: *jsc.JSGlobalObject, status: ExecutionEntryTag) bun.JSError!void {
+    bun.assert(this.index < this.order.len);
+    const entry = this.order[this.index];
+    this.index += 1;
+
+    if (entry.tag == .executing) {
+        entry.tag = status;
+    }
     _ = globalThis;
-    @panic("TODO testCallbackThen");
+}
+
+pub fn testCallbackThen(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    group.begin(@src());
+    defer group.end();
+
+    try runOneCompleted(this, globalThis, .pass);
+
+    group.log("TODO: announce test result", .{});
+
+    this.bunTest().executing = false;
+    try this.bunTest().run(globalThis);
 }
 
 pub fn generateOrderSub(current: TestScheduleEntry2, order: *std.ArrayList(*ExecutionEntry)) bun.JSError!void {
@@ -125,6 +144,7 @@ const group = describe2.group;
 const TestScope = describe2.TestScope;
 const TestScheduleEntry2 = describe2.TestScheduleEntry2;
 const ExecutionEntry = describe2.ExecutionEntry;
+const ExecutionEntryTag = describe2.ExecutionEntryTag;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

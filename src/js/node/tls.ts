@@ -519,9 +519,8 @@ function TLSSocket(socket?, options?) {
   }
 
   if (typeof options === "object") {
-    const { ALPNProtocols } = options;
-    if (ALPNProtocols) {
-      convertALPNProtocols(ALPNProtocols, this);
+    if (options.ALPNProtocols) {
+      convertALPNProtocols(options.ALPNProtocols, this);
     }
 
     if (isNetSocketOrDuplex) {
@@ -735,10 +734,8 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
-      const { ALPNProtocols } = options;
-
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, this);
+      if (options.ALPNProtocols) {
+        convertALPNProtocols(options.ALPNProtocols, this);
       }
 
       let cert = options.cert;
@@ -864,11 +861,10 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
-  const options = normal[0];
-  const { ALPNProtocols } = options as { ALPNProtocols?: unknown };
+  const options = normal[0] as { ALPNProtocols?: unknown };
 
-  if (ALPNProtocols) {
-    convertALPNProtocols(ALPNProtocols, options);
+  if (options.ALPNProtocols) {
+    convertALPNProtocols(options.ALPNProtocols, options);
   }
 
   return new TLSSocket(options).connect(normal);

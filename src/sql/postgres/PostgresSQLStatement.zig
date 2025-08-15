@@ -23,13 +23,14 @@ pub const Error = union(enum) {
         }
     }
 
-    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSError!JSValue {
         return switch (this.*) {
             .protocol => |err| err.toJS(globalObject),
             .postgres_error => |err| postgresErrorToJS(globalObject, null, err),
         };
     }
 };
+
 pub const Status = enum {
     pending,
     parsing,
@@ -178,3 +179,4 @@ const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const JSError = bun.JSError;

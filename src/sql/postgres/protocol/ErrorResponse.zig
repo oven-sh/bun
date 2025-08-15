@@ -29,7 +29,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(ErrorResponse, decodeInternal).decode;
 
-pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
+pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
@@ -110,10 +110,9 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
         }
     }
 
-    // these probably shouldnt be catch unreachable - what should they be?
-    const bun_ns = globalObject.toJSValue().get(globalObject, "Bun") catch unreachable orelse unreachable;
-    const sql_constructor = bun_ns.get(globalObject, "SQL") catch unreachable orelse unreachable;
-    const pg_error_constructor = sql_constructor.get(globalObject, "PostgresError") catch unreachable orelse unreachable;
+    const bun_ns = (try globalObject.toJSValue().get(globalObject, "Bun")).?;
+    const sql_constructor = (try bun_ns.get(globalObject, "SQL")).?;
+    const pg_error_constructor = (try sql_constructor.get(globalObject, "PostgresError")).?;
 
     const options = JSValue.createEmptyObject(globalObject, 0);
     options.put(globalObject, jsc.ZigString.static("code"), code.toJS(globalObject));
@@ -152,3 +151,4 @@ const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const JSError = bun.JSError;

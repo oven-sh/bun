@@ -1688,7 +1688,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     err.deinit();
                 }
 
-                this.failWithJSValue(err.toJS(this.globalObject));
+                const e = err.toJS(this.globalObject) catch return;
+                this.failWithJSValue(e);
 
                 // it shouldn't enqueue any requests while connecting
                 bun.assert(this.requests.count == 0);

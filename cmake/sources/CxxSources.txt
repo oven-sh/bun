@@ -42,6 +42,7 @@ src/bun.js/bindings/DOMURL.cpp
 src/bun.js/bindings/DOMWrapperWorld.cpp
 src/bun.js/bindings/DoubleFormatter.cpp
 src/bun.js/bindings/EncodeURIComponent.cpp
+src/bun.js/bindings/EncodingTables.cpp
 src/bun.js/bindings/ErrorCode.cpp
 src/bun.js/bindings/ErrorStackFrame.cpp
 src/bun.js/bindings/ErrorStackTrace.cpp
@@ -194,6 +195,14 @@ src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp
+src/bun.js/bindings/TextCodec.cpp
+src/bun.js/bindings/TextCodecCJK.cpp
+src/bun.js/bindings/TextCodecReplacement.cpp
+src/bun.js/bindings/TextCodecSingleByte.cpp
+src/bun.js/bindings/TextCodecUserDefined.cpp
+src/bun.js/bindings/TextCodecWrapper.cpp
+src/bun.js/bindings/TextEncoding.cpp
+src/bun.js/bindings/TextEncodingRegistry.cpp
 src/bun.js/bindings/Uint8Array.cpp
 src/bun.js/bindings/Undici.cpp
 src/bun.js/bindings/URLDecomposition.cpp

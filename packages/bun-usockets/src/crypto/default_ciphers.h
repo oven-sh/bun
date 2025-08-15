@@ -6,8 +6,11 @@
                                  "ECDHE-ECDSA-AES128-GCM-SHA256:"   \
                                  "ECDHE-RSA-AES256-GCM-SHA384:"     \
                                  "ECDHE-ECDSA-AES256-GCM-SHA384:"   \
+                                 "DHE-RSA-AES128-GCM-SHA256:"       \
                                  "ECDHE-RSA-AES128-SHA256:"         \
+                                 "DHE-RSA-AES128-SHA256:"           \
                                  "ECDHE-RSA-AES256-SHA384:"         \
+                                 "DHE-RSA-AES256-SHA256:"           \
                                  "HIGH:"                            \
                                  "!aNULL:"                          \
                                  "!eNULL:"                          \
@@ -20,8 +23,9 @@
                                  "!CAMELLIA"
 #endif
 
-// BoringSSL does not support legacy DHE ciphers and dont support SSL_CTX_set_cipher_list (see https://github.com/envoyproxy/envoy/issues/8848#issuecomment-548672667)
-// Node.js full list bellow
+// BoringSSL supports some DHE ciphers but not all legacy ones
+// See https://github.com/envoyproxy/envoy/issues/8848#issuecomment-548672667
+// Node.js full list below
 
 // In node.js they filter TLS_* ciphers and use SSL_CTX_set_cipher_list (TODO: Electron has a patch https://github.com/nodejs/node/issues/25890)
 // if passed to SSL_CTX_set_cipher_list it will be filtered out and not used in BoringSSL
@@ -34,15 +38,15 @@
 // "ECDHE-ECDSA-AES128-GCM-SHA256:"   \
 // "ECDHE-RSA-AES256-GCM-SHA384:"     \
 // "ECDHE-ECDSA-AES256-GCM-SHA384:"   \
+// "DHE-RSA-AES128-GCM-SHA256:"       \
 // "ECDHE-RSA-AES128-SHA256:"         \
+// "DHE-RSA-AES128-SHA256:"           \
 // "ECDHE-RSA-AES256-SHA384:"         \
+// "DHE-RSA-AES256-SHA256:"           \
 
 // Not supported by BoringSSL:
 // "ECDHE-RSA-AES256-SHA256:"         \
-// "DHE-RSA-AES128-GCM-SHA256:"       \
-// "DHE-RSA-AES128-SHA256:"           \
 // "DHE-RSA-AES256-SHA384:"           \
-// "DHE-RSA-AES256-SHA256:"           \
 
 
 // Also present in Node.js and supported by BoringSSL:

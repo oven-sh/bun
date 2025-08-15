@@ -151,6 +151,8 @@ function getValidCiphersSet() {
       "ECDH-ECDSA-AES256-SHA384",
       "ECDHE-RSA-AES128-SHA256",
       "ECDHE-RSA-AES256-SHA384",
+      "ECDHE-RSA-AES256-SHA256",
+      "DHE-RSA-AES256-SHA384",
       "ECDH-RSA-AES128-SHA256",
       "ECDH-RSA-AES256-SHA384",
 
@@ -982,6 +984,17 @@ function tlsCipherFilter(a: string) {
   return !a.startsWith("TLS_");
 }
 
+function supportedCipherFilter(cipher: string) {
+  // Filter out TLS_ ciphers (handled separately) and ciphers not supported by BoringSSL
+  if (cipher.startsWith("TLS_")) return false;
+  
+  // These ciphers are in Node.js defaultCipherList but not supported by BoringSSL
+  if (cipher === "DHE-RSA-AES256-SHA384") return false;
+  if (cipher === "ECDHE-RSA-AES256-SHA256") return false;
+  
+  return true;
+}
+
 function getDefaultCiphers() {
   // TLS_ will always be present until SSL_CTX_set_cipher_list is supported see default_ciphers.h
   const ciphers = getTLSDefaultCiphers();
@@ -1001,9 +1014,9 @@ export default {
   set DEFAULT_CIPHERS(value) {
     if (value) {
       validateCiphers(value, "value");
-      // filter out TLS_ ciphers
+      // filter out TLS_ ciphers and unsupported BoringSSL ciphers
       const ciphers = value.split(":");
-      value = ciphers.filter(tlsCipherFilter).join(":");
+      value = ciphers.filter(supportedCipherFilter).join(":");
     }
     setTLSDefaultCiphers(value);
   },

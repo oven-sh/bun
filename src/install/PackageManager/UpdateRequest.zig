@@ -145,19 +145,19 @@ fn parseWithError(
         var alias: ?string = null;
         // Check for alias@url syntax (e.g., myalias@github.com:user/repo)
         // Only look for @ if the input contains : (indicates a URL or path)
-        if (input.len > 1 and strings.containsChar(input, ':')) {
+        // BUT skip if it starts with git@ (SSH URL format)
+        if (input.len > 1 and strings.containsChar(input, ':') and !(input.len >= 4 and strings.eqlComptime(input[0..4], "git@"))) {
             if (strings.indexOfChar(input[1..], '@')) |at| {
                 const name = input[0 .. at + 1];
                 // Check if the part before @ is a valid package name (alias)
-                // This will catch "bun@github.com:..." but not "git@github.com:..."
-                // because "git" alone is not a valid npm package name
                 if (strings.isNPMPackageName(name)) {
                     alias = name;
                     value = input[at + 2 ..];
                 }
             }
-        } else if (!Dependency.isTarball(input)) {
+        } else if (!Dependency.isTarball(input) and !(input.len >= 4 and strings.eqlComptime(input[0..4], "git@"))) {
             // Check for package@version format (e.g., bar@0.0.2)
+            // Skip if it's a git@ SSH URL
             if (input.len > 1) {
                 if (strings.indexOfChar(input[1..], '@')) |at| {
                     const name = input[0 .. at + 1];

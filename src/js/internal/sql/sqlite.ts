@@ -44,96 +44,133 @@ function commandToString(command: SQLCommand): string {
   }
 }
 
-function detectCommand(query: string): SQLCommand {
-  const text = query.toLowerCase().trim();
-  const text_len = text.length;
-
-  let token = "";
-  let command = SQLCommand.none;
-  let quoted = false;
-  for (let i = 0; i < text_len; i++) {
-    const char = text[i];
-    switch (char) {
-      case " ": // Space
-      case "\n": // Line feed
-      case "\t": // Tab character
-      case "\r": // Carriage return
-      case "\f": // Form feed
-      case "\v": {
-        switch (token) {
-          case "insert": {
-            if (command === SQLCommand.none) {
-              return SQLCommand.insert;
-            }
-            return command;
-          }
-          case "update": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-              token = "";
-              continue; // try to find SET
-            }
-            return command;
-          }
-          case "where": {
-            command = SQLCommand.where;
-            token = "";
-            continue; // try to find IN
-          }
-          case "set": {
-            if (command === SQLCommand.update) {
-              command = SQLCommand.updateSet;
-              token = "";
-              continue; // try to find WHERE
-            }
-            return command;
-          }
-          case "in": {
-            if (command === SQLCommand.where) {
-              return SQLCommand.whereIn;
-            }
-            return command;
-          }
-          default: {
-            token = "";
-            continue;
-          }
-        }
-      }
-      default: {
-        // skip quoted commands
-        if (char === '"') {
-          quoted = !quoted;
-          continue;
-        }
-        if (!quoted) {
-          token += char;
-        }
+// Case-insensitive string comparison without allocation
+function matchesIgnoreCase(str: string, start: number, end: number, target: string): boolean {
+  if (end - start !== target.length) return false;
+  for (let i = 0; i < target.length; i++) {
+    const c = str.charCodeAt(start + i);
+    const t = target.charCodeAt(i);
+    // Check if they match (considering case)
+    if (c !== t) {
+      // If not equal, check if they differ by case (A-Z is 65-90, a-z is 97-122)
+      if (c >= 65 && c <= 90) {
+        if (c + 32 !== t) return false;
+      } else if (c >= 97 && c <= 122) {
+        if (c - 32 !== t) return false;
+      } else {
+        return false;
       }
     }
   }
-  if (token) {
-    switch (command) {
-      case SQLCommand.none: {
-        switch (token) {
-          case "insert":
+  return true;
+}
+
+// Check if character is whitespace or delimiter (anything that's not a letter/digit/underscore)
+function isTokenDelimiter(code: number): boolean {
+  // Quick check for common ASCII whitespace
+  if (code <= 32) return true;
+  // Letters A-Z, a-z
+  if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) return false;
+  // Digits 0-9
+  if (code >= 48 && code <= 57) return false;
+  // Underscore (allowed in SQL identifiers)
+  if (code === 95) return false;
+  // Everything else is a delimiter (including Unicode whitespace, punctuation, etc.)
+  return true;
+}
+
+function detectCommand(query: string): SQLCommand {
+  const text_len = query.length;
+
+  // Skip leading whitespace/delimiters
+  let i = 0;
+  while (i < text_len && isTokenDelimiter(query.charCodeAt(i))) {
+    i++;
+  }
+
+  let command = SQLCommand.none;
+  let quoted = false;
+  let tokenStart = i;
+
+  while (i < text_len) {
+    const char = query[i];
+
+    if (char === '"') {
+      quoted = !quoted;
+      i++;
+      continue;
+    }
+
+    if (quoted) {
+      i++;
+      continue;
+    }
+
+    const charCode = query.charCodeAt(i);
+    if (isTokenDelimiter(charCode)) {
+      if (i > tokenStart) {
+        if (matchesIgnoreCase(query, tokenStart, i, "insert")) {
+          if (command === SQLCommand.none) {
             return SQLCommand.insert;
-          case "update":
-            return SQLCommand.update;
-          case "where":
-            return SQLCommand.where;
-          default:
-            return SQLCommand.none;
+          }
+          return command;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "update")) {
+          if (command === SQLCommand.none) {
+            command = SQLCommand.update;
+            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+            tokenStart = i;
+            continue;
+          }
+          return command;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "where")) {
+          command = SQLCommand.where;
+          while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+          tokenStart = i;
+          continue;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "set")) {
+          if (command === SQLCommand.update) {
+            command = SQLCommand.updateSet;
+            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+            tokenStart = i;
+            continue;
+          }
+          return command;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "in")) {
+          if (command === SQLCommand.where) {
+            return SQLCommand.whereIn;
+          }
+          return command;
         }
       }
+
+      while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+      tokenStart = i;
+      continue;
+    }
+    i++;
+  }
+
+  // Handle last token if we reached end of string
+  if (i >= text_len && i > tokenStart && !quoted) {
+    switch (command) {
+      case SQLCommand.none: {
+        if (matchesIgnoreCase(query, tokenStart, i, "insert")) {
+          return SQLCommand.insert;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "update")) {
+          return SQLCommand.update;
+        } else if (matchesIgnoreCase(query, tokenStart, i, "where")) {
+          return SQLCommand.where;
+        }
+        return SQLCommand.none;
+      }
       case SQLCommand.update: {
-        if (token === "set") {
+        if (matchesIgnoreCase(query, tokenStart, i, "set")) {
           return SQLCommand.updateSet;
         }
         return SQLCommand.update;
       }
       case SQLCommand.where: {
-        if (token === "in") {
+        if (matchesIgnoreCase(query, tokenStart, i, "in")) {
           return SQLCommand.whereIn;
         }
         return SQLCommand.where;

@@ -1363,7 +1363,7 @@ pub fn enqueueGitCheckout(
 
     // Ensure the cache directory and parent directories exist before cloning into it
     _ = this.getCacheDirectory();
-    
+
     // Also ensure the parent directory of the target exists
     // Since git clone won't create parent directories
     const parent_end = std.mem.lastIndexOf(u8, target, std.fs.path.sep_str) orelse target.len;
@@ -1408,7 +1408,7 @@ pub fn enqueueGitCheckout(
     const git_url = this.lockfile.str(&resolution.value.git.repo);
     // Try HTTPS transformation for SCP-like paths (more compatible than SSH)
     const transformed_url = Repository.tryHTTPS(git_url) orelse git_url;
-    
+
     const argv: [10]?[*:0]const u8 = .{
         "git",
         "clone",
@@ -1416,8 +1416,8 @@ pub fn enqueueGitCheckout(
         "core.longpaths=true",
         "--quiet",
         "--no-checkout",
-        bun.default_allocator.dupeZ(u8, transformed_url) catch unreachable,  // repository URL
-        bun.default_allocator.dupeZ(u8, target) catch unreachable,  // target directory
+        bun.default_allocator.dupeZ(u8, transformed_url) catch unreachable, // repository URL
+        bun.default_allocator.dupeZ(u8, target) catch unreachable, // target directory
         null,
         null,
     };

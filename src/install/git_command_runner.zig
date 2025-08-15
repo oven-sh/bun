@@ -160,7 +160,6 @@ pub const GitCommandRunner = struct {
             argc += 1;
         }
         argv[argc] = null; // Ensure null termination
-        
 
         // Cache directory is manager.cache_directory_path
 
@@ -202,7 +201,7 @@ pub const GitCommandRunner = struct {
 
         // Ensure cache directory exists before using it as cwd
         _ = manager.getCacheDirectory();
-        
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = runner.stdout.source.?.pipe },
@@ -537,7 +536,7 @@ pub const GitCommandRunner = struct {
                 if (this.checkout_phase == .clone) {
                     // First phase completed (clone --no-checkout)
                     if (status == .exited and status.exited.code == 0) {
-                        
+
                         // Now run the actual checkout command
                         this.checkout_phase = .checkout;
 
@@ -551,13 +550,12 @@ pub const GitCommandRunner = struct {
 
                         // Build checkout command: git -C <folder> checkout --quiet <resolved>
                         const target_dir_z = bun.default_allocator.dupeZ(u8, checkout.target_dir) catch unreachable;
-                        
-                        
+
                         if (comptime Environment.allow_assert) {
                             log("Checkout target_dir: {s}", .{target_dir_z});
                             log("Checkout resolved: {s}", .{checkout.resolved.slice()});
                         }
-                        
+
                         const argv: [7]?[*:0]const u8 = .{
                             git_path.ptr,
                             "-C",
@@ -587,7 +585,7 @@ pub const GitCommandRunner = struct {
 
                         // Ensure cache directory exists before using it as cwd
                         _ = this.manager.getCacheDirectory();
-                        
+
                         const spawn_options = bun.spawn.SpawnOptions{
                             .stdin = .ignore,
                             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },

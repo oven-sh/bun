@@ -110,22 +110,22 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSError!JSVa
 
     const createPostgresError = @import("../AnyPostgresError.zig").createPostgresError;
 
-    const code_slice = if (code.isEmpty()) "ERR_POSTGRES_SERVER_ERROR" else code.slice();
-    const detail_slice = if (detail.isEmpty()) null else detail.slice();
-    const hint_slice = if (hint.isEmpty()) null else hint.slice();
-    const severity_slice = if (severity.isEmpty()) null else severity.slice();
-    const position_slice = if (position.isEmpty()) null else position.slice();
-    const internalPosition_slice = if (internalPosition.isEmpty()) null else internalPosition.slice();
-    const internalQuery_slice = if (internal.isEmpty()) null else internal.slice();
-    const where_slice = if (where.isEmpty()) null else where.slice();
-    const schema_slice = if (schema.isEmpty()) null else schema.slice();
-    const table_slice = if (table.isEmpty()) null else table.slice();
-    const column_slice = if (column.isEmpty()) null else column.slice();
-    const dataType_slice = if (datatype.isEmpty()) null else datatype.slice();
-    const constraint_slice = if (constraint.isEmpty()) null else constraint.slice();
-    const file_slice = if (file.isEmpty()) null else file.slice();
-    const line_slice = if (line.isEmpty()) null else line.slice();
-    const routine_slice = if (routine.isEmpty()) null else routine.slice();
+    const code_slice = if (code.isEmpty()) "ERR_POSTGRES_SERVER_ERROR" else code.byteSlice();
+    const detail_slice = if (detail.isEmpty()) null else detail.byteSlice();
+    const hint_slice = if (hint.isEmpty()) null else hint.byteSlice();
+    const severity_slice = if (severity.isEmpty()) null else severity.byteSlice();
+    const position_slice = if (position.isEmpty()) null else position.byteSlice();
+    const internalPosition_slice = if (internalPosition.isEmpty()) null else internalPosition.byteSlice();
+    const internalQuery_slice = if (internal.isEmpty()) null else internal.byteSlice();
+    const where_slice = if (where.isEmpty()) null else where.byteSlice();
+    const schema_slice = if (schema.isEmpty()) null else schema.byteSlice();
+    const table_slice = if (table.isEmpty()) null else table.byteSlice();
+    const column_slice = if (column.isEmpty()) null else column.byteSlice();
+    const dataType_slice = if (datatype.isEmpty()) null else datatype.byteSlice();
+    const constraint_slice = if (constraint.isEmpty()) null else constraint.byteSlice();
+    const file_slice = if (file.isEmpty()) null else file.byteSlice();
+    const line_slice = if (line.isEmpty()) null else line.byteSlice();
+    const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
     return try createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
         .code = code_slice,

@@ -1,5 +1,9 @@
 pub const js_fns = struct {
     pub fn describeFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
@@ -19,10 +23,15 @@ pub const js_fns = struct {
             .execution => {
                 return globalObject.throw("Cannot call describe() inside a test", .{});
             },
+            .done => return globalObject.throw("Cannot call describe() after the test run has completed", .{}),
         }
     }
 
     pub fn testFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
@@ -42,12 +51,17 @@ pub const js_fns = struct {
             .execution => {
                 return globalObject.throw("TODO: queue this test callback to call after this test ends", .{});
             },
+            .done => return globalObject.throw("Cannot call test() after the test run has completed", .{}),
         }
     }
 
     pub fn genericHook(comptime tag: @Type(.enum_literal)) type {
         return struct {
             pub fn hookFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+                group.begin(@src());
+                defer group.end();
+                errdefer group.log("ended in error", .{});
+
                 const vm = globalObject.bunVM();
                 if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
                     @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
@@ -67,12 +81,17 @@ pub const js_fns = struct {
                     .execution => {
                         return globalObject.throw("Cannot call beforeAll/beforeEach/afterEach/afterAll() inside a test", .{});
                     },
+                    .done => return globalObject.throw("Cannot call beforeAll/beforeEach/afterEach/afterAll() after the test run has completed", .{}),
                 }
             }
         };
     }
 
     pub fn forDebuggingExecuteTestsNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
@@ -86,16 +105,38 @@ pub const js_fns = struct {
 
         _ = callframe;
 
+        if (buntest.phase == .done) return .js_undefined;
         if (buntest.done_promise.get() == null) {
             _ = buntest.done_promise.swap(buntest.gpa, jsc.JSPromise.create(globalObject).toJS());
         }
         return buntest.done_promise.get().?; // TODO: return a promise that resolves when done
     }
+
+    pub fn forDebuggingDeinitNow(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2.?.phase != .done) {
+            return globalObject.throw("Cannot call forDebuggingDeinitNow() before the test run has completed", .{});
+        }
+        bun.jsc.Jest.Jest.runner.?.describe2.?.deinit();
+        bun.jsc.Jest.Jest.runner.?.describe2 = null;
+        _ = callframe;
+        return .js_undefined;
+    }
 };
 
 /// this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
 pub const BunTest = struct {
-    executing: bool,
+    in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
     done_promise: Strong.Optional = .empty,
@@ -103,6 +144,7 @@ pub const BunTest = struct {
     phase: enum {
         collection,
         execution,
+        done,
     },
     collection: Collection,
     execution: Execution,
@@ -114,7 +156,7 @@ pub const BunTest = struct {
         var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
         const gpa = allocation_scope.allocator();
         return .{
-            .executing = false,
+            .in_run_loop = false,
             .allocation_scope = allocation_scope,
             .gpa = gpa,
             .phase = .collection,
@@ -149,6 +191,7 @@ pub const BunTest = struct {
     fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
+        errdefer group.log("ended in error", .{});
 
         const result, const this_ptr = callframe.argumentsAsArray(2);
 
@@ -156,8 +199,6 @@ pub const BunTest = struct {
         defer this.unref();
 
         try this.runOneCompleted(globalThis, is_catch, result);
-
-        this.executing = false;
         try this.run(globalThis);
         return .js_undefined;
     }
@@ -175,26 +216,62 @@ pub const BunTest = struct {
         group.begin(@src());
         defer group.end();
 
-        if (this.executing) return; // already running
-        this.executing = true;
+        if (this.in_run_loop) return bun.assert(false); // already running
+        this.in_run_loop = true;
+        defer this.in_run_loop = false;
+
+        var callback_queue: CallbackQueue = .init(this.gpa);
+        defer callback_queue.deinit();
 
         while (true) {
-            const result = switch (this.phase) {
-                .collection => try this.collection.runOne(globalThis),
-                .execution => try this.execution.runOne(globalThis),
-            };
-            group.log("runOne -> {s}", .{@tagName(result)});
-            switch (result) {
-                .continue_async => return, // continue in 'then' callback
-                .continue_sync => {},
-                .done => if (try this._advance(globalThis) == .exit) return,
-            }
-        }
+            defer callback_queue.clearRetainingCapacity();
+            defer for (callback_queue.items) |*item| item.callback.deinit();
 
+            const status = switch (this.phase) {
+                .collection => try this.collection.runOne(globalThis, &callback_queue),
+                .execution => try this.execution.runOne(globalThis, &callback_queue),
+                .done => .done,
+            };
+            if (status == .done) {
+                group.log("-> advancing", .{});
+                bun.assert(callback_queue.items.len == 0);
+                if (try this._advance(globalThis) == .exit) {
+                    return;
+                } else {
+                    continue;
+                }
+            }
+            // if one says continue_async and two say continue_sync then you continue_sync
+            // if two say continue_async then you continue_async
+            // if there are zero then you continue_sync
+            group.log("-> executing", .{});
+            var final_result: CallNowResult = .continue_async;
+            for (callback_queue.items) |entry| {
+                const result = try this._callTestCallbackNow(globalThis, entry);
+                group.log("callTestCallbackNow -> {s}", .{@tagName(result)});
+                switch (result) {
+                    .continue_sync => final_result = .continue_sync,
+                    .continue_async => {},
+                }
+            }
+            if (callback_queue.items.len == 0) final_result = .continue_sync;
+
+            group.log("-> final_result: {s}", .{@tagName(final_result)});
+            switch (final_result) {
+                .continue_sync => continue,
+                .continue_async => return,
+            }
+            comptime unreachable;
+        }
         comptime unreachable;
     }
 
     fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+        group.begin(@src());
+        defer group.end();
+        group.log("advance from {s}", .{@tagName(this.phase)});
+        defer group.log("advance -> {s}", .{@tagName(this.phase)});
+
         switch (this.phase) {
             .collection => {
                 // collection phase is complete. advance to execution phase, then continue.
@@ -209,10 +286,9 @@ pub const BunTest = struct {
                 // - reorder (`--randomize`)
                 // now, generate the execution order
                 this.phase = .execution;
-                var order = std.ArrayList(*ExecutionEntry).init(this.gpa);
-                defer order.deinit();
-                try Execution.generateOrderDescribe(this.collection.root_scope, &order);
-                this.execution.order = try order.toOwnedSlice();
+                try Execution.dumpDescribe(globalThis, this.collection.root_scope);
+                try this.execution.generateOrderDescribe(this.collection.root_scope);
+                try this.execution.dumpOrder(globalThis);
                 // now, allowing js execution again:
                 // - start the test execution loop
 
@@ -225,12 +301,12 @@ pub const BunTest = struct {
                 // execution phase is complete. print results.
 
                 if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
+                this.in_run_loop = false;
+                this.phase = .done;
 
-                this.executing = false;
-                this.deinit();
-                bun.jsc.Jest.Jest.runner.?.describe2 = null;
                 return .exit;
             },
+            .done => return .exit,
         }
     }
 
@@ -238,10 +314,15 @@ pub const BunTest = struct {
         switch (this.phase) {
             .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value),
             .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value),
+            .done => bun.debugAssert(false),
         }
     }
 
-    pub fn callTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, callback: jsc.JSValue, cfg: struct { done_parameter: bool }) bun.JSError!RunOneResult {
+    const CallNowResult = enum {
+        continue_sync,
+        continue_async,
+    };
+    fn _callTestCallbackNow(this: *BunTest, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!CallNowResult {
         group.begin(@src());
         defer group.end();
 
@@ -251,7 +332,7 @@ pub const BunTest = struct {
         //   need to be able to pass context information to runOneCompleted
 
         if (cfg.done_parameter) {
-            const length = try callback.getLength(globalThis);
+            const length = try cfg.callback.get().getLength(globalThis);
             if (length > 0) {
                 // TODO: support done parameter
                 group.log("TODO: support done parameter", .{});
@@ -259,7 +340,7 @@ pub const BunTest = struct {
         }
 
         var is_error = false;
-        const result = callback.call(globalThis, .js_undefined, &.{}) catch |e| blk: {
+        const result = cfg.callback.get().call(globalThis, .js_undefined, &.{}) catch |e| blk: {
             group.log("callTestCallback -> error", .{});
             is_error = true;
             break :blk globalThis.takeError(e);
@@ -277,10 +358,11 @@ pub const BunTest = struct {
     }
 };
 
-pub const RunOneResult = enum {
-    done,
-    continue_sync,
-    continue_async,
+pub const CallbackQueue = std.ArrayList(CallbackEntry);
+
+pub const CallbackEntry = struct {
+    callback: Strong,
+    done_parameter: bool,
 };
 
 pub const Collection = @import("./Collection.zig");
@@ -327,41 +409,21 @@ pub const ExecutionEntryTag = enum {
     afterEach,
     afterAll,
 
-    executing,
-    pass,
-    fail,
-    skip,
-    todo,
-    timeout,
-    skipped_because_label,
-    fail_because_failing_test_passed,
-    fail_because_todo_passed,
-    fail_because_expected_has_assertions,
-    fail_because_expected_assertion_count,
-
     pub fn isCalledMultipleTimes(this: @This()) bool {
         return switch (this) {
             .beforeEach, .afterEach => true,
             else => false,
         };
     }
-    pub fn shouldExecute(this: @This()) bool {
-        return switch (this) {
-            .test_callback, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
-            .skip, .todo, .skipped_because_label => false,
-            .executing, .pass, .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => {
-                bun.assert(false);
-                return false;
-            },
-        };
-    }
 };
 pub const ExecutionEntry = struct {
     parent: *DescribeScope,
     tag: ExecutionEntryTag,
-    callback: Strong.Optional,
+    callback: Strong,
+    name: Strong.Optional,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();
+        this.name.deinit();
         buntest.gpa.destroy(this);
     }
 };
@@ -377,6 +439,10 @@ pub const TestScheduleEntry = union(enum) {
             .test_callback => |test_scope| test_scope.destroy(buntest),
         }
     }
+};
+pub const RunOneResult = enum {
+    done,
+    execute,
 };
 
 pub const Execution = @import("./Execution.zig");
@@ -404,9 +470,13 @@ pub const group = struct {
         return wants_quiet.?;
     }
     pub fn begin(pos: std.builtin.SourceLocation) void {
+        return beginMsg("\x1b[36m{s}\x1b[37m:\x1b[93m{d}\x1b[37m:\x1b[33m{d}\x1b[37m: \x1b[35m{s}\x1b[m", .{ pos.file, pos.line, pos.column, pos.fn_name });
+    }
+    pub fn beginMsg(comptime fmtt: []const u8, args: anytype) void {
         if (getWantsQuiet()) return;
         printIndent();
-        std.io.getStdOut().writer().print("\x1b[32m++ \x1b[36m{s}\x1b[37m:\x1b[93m{d}\x1b[37m:\x1b[33m{d}\x1b[37m: \x1b[35m{s}\x1b[m\n", .{ pos.file, pos.line, pos.column, pos.fn_name }) catch {};
+        std.io.getStdOut().writer().print("\x1b[32m++ \x1b[0m", .{}) catch {};
+        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
         indent += 1;
         last_was_start = true;
     }
@@ -426,11 +496,11 @@ pub const group = struct {
     }
 };
 
-const Strong = struct {
+pub const Strong = struct {
     _raw: jsc.JSValue,
     _safety: Safety,
     const enable_safety = bun.Environment.ci_assert;
-    const Safety = if (enable_safety) ?struct { ptr: *Strong, gpa: std.mem.Allocator } else void;
+    const Safety = if (enable_safety) ?struct { ptr: *Strong, gpa: std.mem.Allocator, ref_count: u32 } else void;
     pub fn initNonCell(non_cell: jsc.JSValue) Strong {
         bun.assert(!non_cell.isCell());
         const safety: Safety = if (enable_safety) null;
@@ -438,13 +508,15 @@ const Strong = struct {
     }
     pub fn init(safety_gpa: std.mem.Allocator, value: jsc.JSValue) Strong {
         value.protect();
-        const safety: Safety = if (enable_safety) .{ .ptr = bun.create(safety_gpa, Strong, .{ ._raw = @enumFromInt(0xAEBCFA), ._safety = null }), .gpa = safety_gpa };
+        const safety: Safety = if (enable_safety) .{ .ptr = bun.create(safety_gpa, Strong, .{ ._raw = @enumFromInt(0xAEBCFA), ._safety = null }), .gpa = safety_gpa, .ref_count = 1 };
         return .{ ._raw = value, ._safety = safety };
     }
     pub fn deinit(this: *Strong) void {
         this._raw.unprotect();
         if (enable_safety) if (this._safety) |safety| {
             bun.assert(@intFromEnum(safety.ptr.*._raw) == 0xAEBCFA);
+            safety.ptr.*._raw = @enumFromInt(0xFFFFFF);
+            bun.assert(safety.ref_count == 1);
             safety.gpa.destroy(safety.ptr);
         };
     }
@@ -457,15 +529,33 @@ const Strong = struct {
         this.* = .init(safety_gpa, next);
         return prev;
     }
+    pub fn ref(this: *Strong) void {
+        this._raw.protect();
+        if (enable_safety) if (this._safety) |safety| {
+            safety.ref_count += 1;
+        };
+    }
+    pub fn unref(this: *Strong) void {
+        this._raw.unprotect();
+        if (enable_safety) if (this._safety) |safety| {
+            if (safety.ref_count == 1) {
+                bun.assert(@intFromEnum(safety.ptr.*._raw) == 0xAEBCFA);
+                safety.ptr.*._raw = @enumFromInt(0xFFFFFF);
+                safety.gpa.destroy(safety.ptr);
+                return;
+            }
+            safety.ref_count -= 1;
+        };
+    }
 
-    const Optional = struct {
+    pub const Optional = struct {
         _backing: Strong,
-        pub const empty: Optional = .{ ._backing = .initNonCell(.zero) };
-        pub fn initNonCell(non_cell: jsc.JSValue) Optional {
-            return .{ ._backing = .initNonCell(non_cell) };
+        pub const empty: Optional = .initNonCell(null);
+        pub fn initNonCell(non_cell: ?jsc.JSValue) Optional {
+            return .{ ._backing = .initNonCell(non_cell orelse .zero) };
         }
-        pub fn init(safety_gpa: std.mem.Allocator, value: jsc.JSValue) Optional {
-            return .{ ._backing = .init(safety_gpa, value) };
+        pub fn init(safety_gpa: std.mem.Allocator, value: ?jsc.JSValue) Optional {
+            return .{ ._backing = .init(safety_gpa, value orelse .zero) };
         }
         pub fn deinit(this: *Optional) void {
             this._backing.deinit();
@@ -482,6 +572,12 @@ const Strong = struct {
         }
         pub fn has(this: Optional) bool {
             return this._backing.get() != .zero;
+        }
+        pub fn ref(this: *Optional) void {
+            this._backing.ref();
+        }
+        pub fn unref(this: *Optional) void {
+            this._backing.unref();
         }
     };
 };

@@ -47,3 +47,4 @@ describe("Skip and Todo tests", () => {
 
 setInterval(() => {}, 1000);
 await describe.forDebuggingExecuteTestsNow();
+describe.forDebuggingDeinitNow();

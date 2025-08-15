@@ -66,6 +66,7 @@ console.log("LINE 65");
 test("LINE 66", () => console.log("LINE 66"));
 
 await describe.forDebuggingExecuteTestsNow();
+describe.forDebuggingDeinitNow();
 
 /*
 this one needs async context to handle properly:

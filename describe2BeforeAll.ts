@@ -42,4 +42,5 @@ describe("sub", () => {
 
 if ("forDebuggingExecuteTestsNow" in describe) {
   await describe.forDebuggingExecuteTestsNow();
+  describe.forDebuggingDeinitNow();
 }

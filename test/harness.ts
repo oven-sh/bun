@@ -23,6 +23,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
+export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const libcFamily: "glibc" | "musl" =
@@ -261,6 +262,24 @@ export function tempDirWithFiles(
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+class DisposableString extends String {
+  [Symbol.dispose]() {
+    fs.rmSync(this + "", { recursive: true, force: true });
+  }
+  [Symbol.asyncDispose]() {
+    return fs.promises.rm(this + "", { recursive: true, force: true });
+  }
+}
+
+export function tempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): DisposableString {
+  const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
+
+  return new DisposableString(base);
 }
 
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {

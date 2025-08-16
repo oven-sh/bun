@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader, CompileBuildOptions } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
@@ -148,9 +148,8 @@ export interface BundlerTestInput {
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
   outputPaths?: string[];
   /** Use --compile */
-  compile?: boolean;
-  /** Use --compile-exec-argv to prepend arguments to standalone executable */
-  compileArgv?: string | string[];
+
+  compile?: boolean | string | CompileBuildOptions;
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -432,7 +431,6 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
-    compileArgv,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -696,8 +694,8 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
-              compileArgv
-                ? `--compile-exec-argv=${Array.isArray(compileArgv) ? compileArgv.join(" ") : compileArgv}`
+              compile && typeof compile === "object" && "execArgv" in compile
+                ? `--compile-exec-argv=${Array.isArray(compile.execArgv) ? compile.execArgv.join(" ") : compile.execArgv}`
                 : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
@@ -1026,6 +1024,19 @@ function expectBundled(
       if (!ESBUILD) {
         const buildOutDir = useOutFile ? path.dirname(outfile!) : outdir!;
 
+        if (outfile && compile) {
+          if (typeof compile === "boolean" && compile) {
+            compile = {
+              outfile: outfile,
+            };
+          } else if (typeof compile === "string") {
+            compile = {
+              target: compile,
+              outfile: outfile,
+            };
+          }
+        }
+
         const buildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
@@ -1053,6 +1064,7 @@ function expectBundled(
           drop,
           define: define ?? {},
           throw: false,
+          compile,
         } as BuildConfig;
 
         if (dotenv) {

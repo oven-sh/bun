@@ -4,8 +4,9 @@ import { itBundled } from "./expectBundled";
 describe("bundler", () => {
   // Test that the --compile-exec-argv flag works for both runtime processing and execArgv
   itBundled("compile/CompileExecArgvDualBehavior", {
-    compile: true,
-    compileArgv: "--title=CompileExecArgvDualBehavior --smol",
+    compile: {
+      execArgv: ["--title=CompileExecArgvDualBehavior", "--smol"],
+    },
     files: {
       "/entry.ts": /* js */ `
         // Test that --compile-exec-argv both processes flags AND populates execArgv

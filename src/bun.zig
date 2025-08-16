@@ -86,6 +86,53 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
+/// Converts a floating-point value to an integer following Rust semantics.
+/// This ensures safe conversion that matches the behavior from the original Rust CSS parser.
+///
+/// Conversion rules:
+/// - If finite and within target integer range: truncates toward zero
+/// - If NaN: returns 0
+/// - If positive infinity: returns target max value
+/// - If negative infinity: returns target min value  
+/// - If finite but larger than target max: returns target max value
+/// - If finite but smaller than target min: returns target min value
+pub fn intFromFloat(comptime Int: type, value: anytype) Int {
+    const Float = @TypeOf(value);
+    comptime {
+        // Simple type check - let the compiler do the heavy lifting
+        if (!(Float == f32 or Float == f64)) {
+            @compileError("intFromFloat: value must be f32 or f64");
+        }
+    }
+    
+    // Handle NaN
+    if (std.math.isNan(value)) {
+        return 0;
+    }
+    
+    // Handle infinities
+    if (std.math.isPositiveInf(value)) {
+        return std.math.maxInt(Int);
+    }
+    if (std.math.isNegativeInf(value)) {
+        return std.math.minInt(Int);
+    }
+    
+    // Handle finite values
+    const min_float = @as(Float, @floatFromInt(std.math.minInt(Int)));
+    const max_float = @as(Float, @floatFromInt(std.math.maxInt(Int)));
+    
+    if (value > max_float) {
+        return std.math.maxInt(Int);
+    }
+    if (value < min_float) {
+        return std.math.minInt(Int);
+    }
+    
+    // Safe to convert - truncate toward zero
+    return @as(Int, @intFromFloat(value));
+}
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;

@@ -5134,21 +5134,10 @@ const Tokenizer = struct {
             }
         }
 
-        const int_value: ?i32 = brk: {
-            const i32_max = comptime std.math.maxInt(i32);
-            const i32_min = comptime std.math.minInt(i32);
-            if (is_integer) {
-                if (value >= @as(f64, @floatFromInt(i32_max))) {
-                    break :brk i32_max;
-                } else if (value <= @as(f64, @floatFromInt(i32_min))) {
-                    break :brk i32_min;
-                } else {
-                    break :brk @intFromFloat(value);
-                }
-            }
-
-            break :brk null;
-        };
+        const int_value: ?i32 = if (is_integer) 
+            bun.intFromFloat(i32, value)
+        else 
+            null;
 
         if (!this.isEof() and this.nextByteUnchecked() == '%') {
             this.advance(1);
@@ -6785,9 +6774,9 @@ pub const serializer = struct {
     }
 
     pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        // Check if the value is an integer and can safely fit in an i32
-        const int_value: ?i32 = if (fract(value) == 0.0 and value >= std.math.minInt(i32) and value <= std.math.maxInt(i32)) 
-            @intFromFloat(value) 
+        // Check if the value is an integer - use Rust-compatible conversion
+        const int_value: ?i32 = if (fract(value) == 0.0) 
+            bun.intFromFloat(i32, value) 
         else 
             null;
         const token = Token{ .dimension = .{

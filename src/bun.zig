@@ -87,7 +87,8 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
 }
 
 /// Converts a floating-point value to an integer following Rust semantics.
-/// This ensures safe conversion that matches the behavior from the original Rust CSS parser.
+/// This provides safe conversion that mimics Rust's `as` operator behavior,
+/// unlike Zig's `@intFromFloat` which panics on out-of-range values.
 ///
 /// Conversion rules:
 /// - If finite and within target integer range: truncates toward zero

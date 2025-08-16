@@ -448,9 +448,6 @@ pub const BuildCommand = struct {
                     Global.exit(1);
                 }
 
-                );
-
-                    
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,

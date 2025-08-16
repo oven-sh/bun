@@ -471,13 +471,6 @@ pub const ExecutionEntryTag = enum {
     beforeEach,
     afterEach,
     afterAll,
-
-    pub fn isCalledMultipleTimes(this: @This()) bool {
-        return switch (this) {
-            .beforeEach, .afterEach => true,
-            else => false,
-        };
-    }
 };
 pub const ExecutionEntry = struct {
     parent: *DescribeScope,

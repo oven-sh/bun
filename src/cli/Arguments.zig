@@ -751,16 +751,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--use-system-ca")) {
             Bun__Node__UseSystemCA = true;
         }
-        
+
         // Node.js compatibility: validate mutually exclusive CA flags
         const use_openssl_ca = args.flag("--use-openssl-ca");
         const use_bundled_ca = args.flag("--use-bundled-ca");
-        
+
         if (use_openssl_ca and use_bundled_ca) {
             Output.prettyErrorln("<r><red>error<r>: either --use-openssl-ca or --use-bundled-ca can be used, not both", .{});
             Global.exit(1);
         }
-        
+
         // For now, --use-openssl-ca behaves like --use-system-ca (use system CA store)
         if (use_openssl_ca) {
             Bun__Node__UseSystemCA = true;

@@ -1,4 +1,4 @@
-//! Private utilities used in the implementation of `Owned` and `MaybeOwned`.
+//! Private utilities used in smart pointer implementations.
 
 pub const PointerInfo = struct {
     const Self = @This();
@@ -35,7 +35,12 @@ pub const PointerInfo = struct {
         return @typeInfo(self.NonOptionalPointer).pointer.is_const;
     }
 
-    pub fn parse(comptime Pointer: type) Self {
+    pub const ParseOptions = struct {
+        allow_const: bool = true,
+        allow_slices: bool = true,
+    };
+
+    pub fn parse(comptime Pointer: type, comptime options: ParseOptions) Self {
         const NonOptionalPointer = switch (@typeInfo(Pointer)) {
             .optional => |opt| opt.child,
             else => Pointer,
@@ -43,17 +48,20 @@ pub const PointerInfo = struct {
 
         const pointer_info = switch (@typeInfo(NonOptionalPointer)) {
             .pointer => |ptr| ptr,
-            else => {
-                @compileError("type must be a (possibly optional) slice or single-item pointer");
-            },
+            else => @compileError("type must be a (possibly optional) pointer"),
         };
         const Child = pointer_info.child;
 
         switch (pointer_info.size) {
-            .one, .slice => {},
-            else => @compileError("only slices and single-item pointers are supported"),
+            .one => {},
+            .slice => if (!options.allow_slices) @compileError("slices not supported"),
+            .many => @compileError("many-item pointers not supported"),
+            .c => @compileError("C pointers not supported"),
         }
 
+        if (pointer_info.is_const and !options.allow_const) {
+            @compileError("const pointers not supported");
+        }
         if (pointer_info.is_volatile) {
             @compileError("volatile pointers not supported");
         }

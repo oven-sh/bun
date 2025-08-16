@@ -1043,8 +1043,6 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Ensure we have the full packet
         try reader.ensureCapacity(header_length + PacketHeader.size);
         reader.skip(PacketHeader.size);
-        // make sure that we skip the full packet after we are done processing it
-        defer reader.setOffsetFromStart(header_length);
 
         // Update sequence id
         this.sequence_id = header.sequence_id +% 1;

@@ -109,18 +109,27 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     }
     
     // Handle out-of-range values (including infinities)
-    const min_float = @as(Float, @floatFromInt(std.math.minInt(Int)));
-    const max_float = @as(Float, @floatFromInt(std.math.maxInt(Int)));
+    const min_int = std.math.minInt(Int);
+    const max_int = std.math.maxInt(Int);
     
-    if (value > max_float) {
-        return std.math.maxInt(Int);
+    // Check the truncated value directly against integer bounds
+    const truncated = @trunc(value);
+    
+    // Use f64 for comparison to avoid precision issues
+    if (truncated > @as(f64, @floatFromInt(max_int))) {
+        return max_int;
     }
-    if (value < min_float) {
-        return std.math.minInt(Int);
+    if (truncated < @as(f64, @floatFromInt(min_int))) {
+        return min_int;
+    }
+    
+    // Additional safety check: ensure we can safely convert
+    if (truncated != truncated) { // Check for NaN in truncated value
+        return 0;
     }
     
     // Safe to convert - truncate toward zero
-    return @as(Int, @intFromFloat(value));
+    return @as(Int, @intFromFloat(truncated));
 }
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things

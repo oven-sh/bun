@@ -48,7 +48,6 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .server_register_update_callback = {},
         .server_fetch_function_callback = {},
         .watcher_atomics = {},
-        .deleted_entrypoints = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -150,8 +149,8 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             var iter = watchlist.entries_by_dir.iterator();
             while (iter.next()) |kv| {
                 other_bytes += kv.key_ptr.len;
-                other_bytes += memoryCostArrayList(kv.value_ptr.*);
-                for (kv.value_ptr.items) |entry| {
+                other_bytes += memoryCostSmallList(kv.value_ptr.*);
+                for (kv.value_ptr.slice()) |entry| {
                     other_bytes += entry.abs_path.len;
                 }
             }
@@ -219,6 +218,9 @@ pub fn memoryCostSlice(slice: anytype) usize {
 }
 pub fn memoryCostArrayHashMap(map: anytype) usize {
     return @TypeOf(map.entries).capacityInBytes(map.entries.capacity);
+}
+pub fn memoryCostSmallList(list: anytype) usize {
+    return list.capacity * @sizeOf(@typeInfo(@TypeOf(list.slice())).pointer.child);
 }
 
 const std = @import("std");

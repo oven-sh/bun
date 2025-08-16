@@ -20,7 +20,7 @@ pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 /// **NOTE**: All strings are allocated using the FS cache (BSStringList) and
 ///           therefore do not need to be freed.
 pub const DeletedEntrypointWatchlist = struct {
-    const Entry = struct {
+    pub const Entry = struct {
         /// Absolute path to the deleted entrypoint file, the memory is owned by
         /// the FS cache and therefore does not need to be freed.
         abs_path: []const u8,

@@ -9,6 +9,7 @@
 #include "ErrorCode.h"
 #include "openssl/base.h"
 #include "openssl/bio.h"
+#include "openssl/x509.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
 
 namespace Bun {
@@ -62,6 +63,48 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
         if (bioLen <= 0 || !bioData) {
             BIO_free(bio);
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
+        }
+
+        auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
+        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        BIO_free(bio);
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+
+    STACK_OF(X509)* root_system_cert_instances = us_get_root_system_cert_instances();
+
+    auto size = sk_X509_num(root_system_cert_instances);
+    if (size < 0) size = 0; // root_system_cert_instances is nullptr
+
+    auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+    for (auto i = 0; i < size; i++) {
+        BIO* bio = BIO_new(BIO_s_mem());
+        if (!bio) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        X509* cert = sk_X509_value(root_system_cert_instances, i);
+        if (!cert) {
+            BIO_free(bio);
+            continue;
+        }
+        if (!PEM_write_bio_X509(bio, cert)) {
+            BIO_free(bio);
+            continue;
+        }
+
+        char* bioData;
+        long bioLen = BIO_get_mem_data(bio, &bioData);
+        if (bioLen <= 0) {
+            BIO_free(bio);
+            continue;
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });

@@ -202,6 +202,10 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+STACK_OF(X509) *us_get_root_system_cert_instances() {
+  return us_get_default_ca_certificates()->root_system_cert_instances;
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {

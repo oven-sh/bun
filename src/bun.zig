@@ -3759,3 +3759,11 @@ const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+// Export function to check if --use-system-ca flag is set
+pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{JSError,OutOfMemory}!jsc.JSValue {
+    _ = globalObject;
+    _ = callFrame;
+    const use_system_ca = @extern(*bool, .{ .name = "Bun__Node__UseSystemCA" });
+    return jsc.JSValue.jsBoolean(use_system_ca.*);
+}

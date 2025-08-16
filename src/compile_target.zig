@@ -6,12 +6,6 @@
 ///
 const CompileTarget = @This();
 
-const bun = @import("bun");
-const Environment = bun.Environment;
-const strings = bun.strings;
-const Output = bun.Output;
-const jsc = bun.jsc;
-
 os: Environment.OperatingSystem = Environment.os,
 arch: Environment.Architecture = Environment.arch,
 baseline: bool = !Environment.enableSIMD,
@@ -161,10 +155,6 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
 
     return dest;
 }
-
-const HTTP = bun.http;
-const MutableString = bun.MutableString;
-const Global = bun.Global;
 
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
     HTTP.HTTPThread.init(&.{});
@@ -504,3 +494,12 @@ pub fn fromSlice(global: *jsc.JSGlobalObject, slice_with_bun_prefix: []const u8)
 }
 
 const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const HTTP = bun.http;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const jsc = bun.jsc;
+const strings = bun.strings;

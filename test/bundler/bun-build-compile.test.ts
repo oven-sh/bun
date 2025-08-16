@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile", () => {

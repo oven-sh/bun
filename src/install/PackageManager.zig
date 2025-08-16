@@ -1279,35 +1279,9 @@ pub fn onExtractDefault(
     data: *const ExtractData,
     log_level: Options.LogLevel,
 ) void {
-    // The runtime callback takes full control of extraction handling
-    // We need to process the extracted package and assign resolutions
-    
-    // Get the dependency to find out what type of resolution this is
-    const dependency = manager.lockfile.buffers.dependencies.items[dependency_id];
-    var package_id = manager.lockfile.buffers.resolutions.items[dependency_id];
-    
-    // For git/github dependencies, we need to create the package from the extracted tarball
-    switch (dependency.version.tag) {
-        .git, .github => {
-            // Create a simple Resolution struct that processExtractedTarballPackage can use
-            // We just need the tag to be correct for the switch statement inside processExtractedTarballPackage
-            var res = bun.install.Resolution{
-                .tag = if (dependency.version.tag == .git) .git else .github,
-                .value = .{ .uninitialized = {} },
-            };
-            
-            if (manager.processExtractedTarballPackage(&package_id, dependency_id, &res, data, log_level)) |pkg| {
-                _ = pkg;
-                // Assign the resolution for the primary dependency
-                if (dependency_id != bun.install.invalid_package_id and package_id != bun.install.invalid_package_id) {
-                    manager.assignResolution(dependency_id, package_id);
-                }
-            }
-        },
-        else => {
-            // For other types, the package should already exist
-        },
-    }
+    _ = data;
+    _ = log_level;
+    _ = dependency_id;
 
     // Process any dependency_install_context items in the task queue
     if (manager.task_queue.fetchRemove(task_id)) |removed| {

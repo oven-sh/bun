@@ -635,6 +635,15 @@ pub fn runTasks(
                             );
                         },
                         .default => |cb| {
+                            // For default callback, process the package first
+                            if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| {
+                                _ = pkg;
+                                // Assign the resolution for the primary dependency  
+                                if (dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                                    manager.assignResolution(dependency_id, package_id);
+                                }
+                            }
+                            
                             cb.fn_ptr(
                                 cb.ctx,
                                 task.id,
@@ -878,6 +887,21 @@ pub fn runTasks(
                             );
                         },
                         .default => |cb| {
+                            // For default callback, process the package first
+                            if (manager.processExtractedTarballPackage(
+                                &package_id,
+                                git_checkout.dependency_id,
+                                resolution,
+                                &task.data.git_checkout,
+                                log_level,
+                            )) |pkg| {
+                                _ = pkg;
+                                // Assign the resolution for the primary dependency  
+                                if (git_checkout.dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                                    manager.assignResolution(git_checkout.dependency_id, package_id);
+                                }
+                            }
+                            
                             cb.fn_ptr(
                                 cb.ctx,
                                 task.id,

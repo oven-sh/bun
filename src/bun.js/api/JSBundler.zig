@@ -1340,6 +1340,7 @@ pub const BuildArtifact = struct {
 
 const string = []const u8;
 
+const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
@@ -1359,7 +1360,6 @@ const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Index = bun.ast.Index;
 const api = bun.schema.api;
-const CompileTarget = @import("../../compile_target.zig");
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

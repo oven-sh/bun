@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { tempDirWithFiles, bunEnv, bunExe, isMacOS, isArm64, isLinux, isMusl, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -23,7 +23,7 @@ describe("Bun.build compile", () => {
 
     const file = Bun.file(output.path);
     expect(await file.exists()).toBe(true);
-    
+
     // Verify file size indicates a real executable
     const stat = await file.stat();
     expect(stat.size).toBeGreaterThan(1_000_000); // Executables are typically > 1MB
@@ -162,7 +162,7 @@ describe("Bun.build compile", () => {
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    
+
     // Just verify the executable was created
     const file = Bun.file(result.outputs[0].path);
     expect(await file.exists()).toBe(true);
@@ -286,27 +286,45 @@ describe("Bun.build compile", () => {
       env: bunEnv,
       cwd: dir,
     });
-    
+
     expect(proc1.exitCode).toBe(0);
     expect(await Bun.file(join(dir, "test-default")).exists()).toBe(true);
 
     // Test Windows target creates .exe
     const proc2 = Bun.spawnSync({
-      cmd: [bunExe(), "build", "--compile", "--target", "bun-windows-x64", join(dir, "index.js"), "--outfile", join(dir, "test-win")],
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target",
+        "bun-windows-x64",
+        join(dir, "index.js"),
+        "--outfile",
+        join(dir, "test-win"),
+      ],
       env: bunEnv,
       cwd: dir,
     });
-    
+
     expect(proc2.exitCode).toBe(0);
     expect(await Bun.file(join(dir, "test-win.exe")).exists()).toBe(true);
-    
+
     // Test cross-platform compilation
     const proc3 = Bun.spawnSync({
-      cmd: [bunExe(), "build", "--compile", "--target", "bun-linux-x64", join(dir, "index.js"), "--outfile", join(dir, "test-linux")],
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target",
+        "bun-linux-x64",
+        join(dir, "index.js"),
+        "--outfile",
+        join(dir, "test-linux"),
+      ],
       env: bunEnv,
       cwd: dir,
     });
-    
+
     expect(proc3.exitCode).toBe(0);
     expect(await Bun.file(join(dir, "test-linux")).exists()).toBe(true);
   });

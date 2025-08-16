@@ -1,10 +1,7 @@
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
-import { spawn, serve } from "bun";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { join } from "path";
-import * as tls from "tls";
-import * as https from "https";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("system CA with HTTPS", () => {
   // Skip test if no system certificates are available
@@ -67,11 +64,7 @@ describe("system CA with HTTPS", () => {
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
-      proc1.stdout.text(),
-      proc1.stderr.text(),
-      proc1.exited,
-    ]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
     expect(exitCode1).toBe(0);
     expect(stdout1).toContain("STATUS:");
@@ -85,11 +78,7 @@ describe("system CA with HTTPS", () => {
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
-      proc2.stdout.text(),
-      proc2.stderr.text(),
-      proc2.exited,
-    ]);
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
     expect(exitCode2).toBe(0);
     expect(stdout2).toContain("STATUS:");
@@ -133,11 +122,7 @@ describe("system CA with HTTPS", () => {
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
-      proc1.stdout.text(),
-      proc1.stderr.text(),
-      proc1.exited,
-    ]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
     // This might succeed or fail depending on whether the site's CA is bundled
     // We just verify the test runs without crashing
@@ -152,11 +137,7 @@ describe("system CA with HTTPS", () => {
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
-      proc2.stdout.text(),
-      proc2.stderr.text(),
-      proc2.exited,
-    ]);
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
     // With system CA, we expect either success or non-cert errors
     expect([0, 2]).toContain(exitCode2);

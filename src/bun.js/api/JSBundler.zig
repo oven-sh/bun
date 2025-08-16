@@ -31,6 +31,7 @@ pub const JSBundler = struct {
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
+        legal_comments: options.LegalComments = .eof,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
@@ -160,6 +161,16 @@ pub const JSBundler = struct {
             if (try config.getOptional(globalThis, "footer", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.footer.appendSliceExact(slice.slice());
+            }
+
+            if (try config.get(globalThis, "legalComments")) |legal_comments| {
+                if (!legal_comments.isUndefined()) {
+                    this.legal_comments = try legal_comments.toEnum(
+                        globalThis,
+                        "legalComments",
+                        options.LegalComments,
+                    );
+                }
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {

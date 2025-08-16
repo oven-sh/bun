@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("CSS parser should handle extremely large floating-point values without crashing", async () => {
   // Test for regression of issue #21907: "integer part of floating point value out of bounds"
   // This was causing crashes on Windows when processing TailwindCSS with rounded-full class
-  
+
   const dir = tempDirWithFiles("css-large-float-regression", {
     "input.css": `
 /* Tests intFromFloat(i32, value) in serializeDimension */
@@ -51,9 +51,9 @@ test("CSS parser should handle extremely large floating-point values without cra
   height: 20.5px;
   margin: 0px;
 }
-`
+`,
   });
-  
+
   // This would previously crash with "integer part of floating point value out of bounds"
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
@@ -62,28 +62,24 @@ test("CSS parser should handle extremely large floating-point values without cra
     stdout: "pipe",
     stderr: "pipe",
   });
-  
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
-  
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
   // Should not crash and should exit successfully
   expect(exitCode).toBe(0);
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("integer part of floating point value out of bounds");
-  
+
   // Verify the output CSS is properly processed with intFromFloat conversions
   const outputContent = await Bun.file(`${dir}/out/input.css`).text();
-  
+
   // Helper function to normalize CSS output for snapshots
   function normalizeCSSOutput(output: string): string {
     return output
       .replace(/\/\*.*?\*\//g, "/* [path] */") // Replace comment paths
       .trim();
   }
-  
+
   // Test the actual output with inline snapshot - this ensures all intFromFloat
   // conversions work correctly and captures any changes in output format
   expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`

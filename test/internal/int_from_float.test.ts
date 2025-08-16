@@ -1,13 +1,13 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
 /**
  * Tests for bun.intFromFloat function
- * 
+ *
  * This function implements Rust-like semantics for float-to-integer conversion:
  * - If finite and within target integer range: truncates toward zero
  * - If NaN: returns 0
- * - If positive infinity: returns target max value  
+ * - If positive infinity: returns target max value
  * - If negative infinity: returns target min value
  * - If finite but larger than target max: returns target max value
  * - If finite but smaller than target min: returns target min value
@@ -21,21 +21,20 @@ function normalizeCSSOutput(output: string): string {
 }
 
 describe("bun.intFromFloat function", () => {
-  
   test("handles normal finite values within range", async () => {
     // Test CSS dimension serialization which uses intFromFloat(i32, value)
     const dir = tempDirWithFiles("int-from-float-normal", {
-      "input.css": ".test { width: 42px; height: -10px; margin: 0px; }"
+      "input.css": ".test { width: 42px; height: -10px; margin: 0px; }",
     });
-    
+
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
       outdir: dir,
     });
-    
+
     expect(result.success).toBe(true);
     expect(result.logs).toHaveLength(0);
-    
+
     const output = await result.outputs[0].text();
     expect(normalizeCSSOutput(output)).toMatchInlineSnapshot(`
       "/* [path] */
@@ -53,17 +52,17 @@ describe("bun.intFromFloat function", () => {
       "input.css": `
 .test-large { border-radius: 3.40282e38px; }
 .test-negative-large { border-radius: -3.40282e38px; }
-`
+`,
     });
-    
+
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
       outdir: dir,
     });
-    
+
     expect(result.success).toBe(true);
     expect(result.logs).toHaveLength(0);
-    
+
     const output = await result.outputs[0].text();
     expect(normalizeCSSOutput(output)).toMatchInlineSnapshot(`
       "/* [path] */
@@ -84,17 +83,17 @@ describe("bun.intFromFloat function", () => {
 .test-percent1 { width: 50%; }
 .test-percent2 { width: 100.0%; }
 .test-percent3 { width: 33.333%; }
-`
+`,
     });
-    
+
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
       outdir: dir,
     });
-    
+
     expect(result.success).toBe(true);
     expect(result.logs).toHaveLength(0);
-    
+
     const output = await result.outputs[0].text();
     expect(normalizeCSSOutput(output)).toMatchInlineSnapshot(`
       "/* [path] */
@@ -121,17 +120,17 @@ describe("bun.intFromFloat function", () => {
   height: 3.14159px;
   margin: 2.718px;
 }
-`
+`,
     });
-    
+
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
       outdir: dir,
     });
-    
+
     expect(result.success).toBe(true);
     expect(result.logs).toHaveLength(0);
-    
+
     const output = await result.outputs[0].text();
     expect(normalizeCSSOutput(output)).toMatchInlineSnapshot(`
       "/* [path] */

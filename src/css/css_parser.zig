@@ -5134,9 +5134,9 @@ const Tokenizer = struct {
             }
         }
 
-        const int_value: ?i32 = if (is_integer) 
+        const int_value: ?i32 = if (is_integer)
             bun.intFromFloat(i32, value)
-        else 
+        else
             null;
 
         if (!this.isEof() and this.nextByteUnchecked() == '%') {
@@ -6775,9 +6775,9 @@ pub const serializer = struct {
 
     pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // Check if the value is an integer - use Rust-compatible conversion
-        const int_value: ?i32 = if (fract(value) == 0.0) 
-            bun.intFromFloat(i32, value) 
-        else 
+        const int_value: ?i32 = if (fract(value) == 0.0)
+            bun.intFromFloat(i32, value)
+        else
             null;
         const token = Token{ .dimension = .{
             .num = .{

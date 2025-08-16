@@ -102,19 +102,19 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
             @compileError("intFromFloat: value must be f32 or f64");
         }
     }
-    
+
     // Handle NaN
     if (std.math.isNan(value)) {
         return 0;
     }
-    
+
     // Handle out-of-range values (including infinities)
     const min_int = std.math.minInt(Int);
     const max_int = std.math.maxInt(Int);
-    
+
     // Check the truncated value directly against integer bounds
     const truncated = @trunc(value);
-    
+
     // Use f64 for comparison to avoid precision issues
     if (truncated > @as(f64, @floatFromInt(max_int))) {
         return max_int;
@@ -122,12 +122,12 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     if (truncated < @as(f64, @floatFromInt(min_int))) {
         return min_int;
     }
-    
+
     // Additional safety check: ensure we can safely convert
     if (truncated != truncated) { // Check for NaN in truncated value
         return 0;
     }
-    
+
     // Safe to convert - truncate toward zero
     return @as(Int, @intFromFloat(truncated));
 }

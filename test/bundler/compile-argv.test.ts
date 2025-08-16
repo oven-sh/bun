@@ -11,6 +11,16 @@ describe("bundler", () => {
         // Test that --compile-argv both processes flags AND populates execArgv
         console.log("execArgv:", JSON.stringify(process.execArgv));
         console.log("argv:", JSON.stringify(process.argv));
+
+        if (process.argv.findIndex(arg => arg === "runtime") === -1) {
+          console.error("FAIL: runtime not found in argv");
+          process.exit(1);
+        }
+
+        if (process.argv.findIndex(arg => arg === "test") === -1) {
+          console.error("FAIL: test not found in argv");
+          process.exit(1);
+        }
         
         if (process.execArgv.findIndex(arg => arg === "--title=CompileArgvDualBehavior") === -1) {
           console.error("FAIL: --title=CompileArgvDualBehavior not found in execArgv");
@@ -31,6 +41,7 @@ describe("bundler", () => {
       `,
     },
     run: {
+      args: ["runtime", "test"],
       stdout: /SUCCESS: process.title and process.execArgv are both set correctly/,
     },
   });

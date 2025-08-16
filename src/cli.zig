@@ -636,11 +636,15 @@ pub const Command = struct {
         // bun build --compile entry point
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+                var offset_for_passthrough: usize = if (bun.argv.len > 1) 1 else 0;
+
                 const ctx: *ContextData = brk: {
                     if (graph.compile_argv.len > 0) {
                         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_argv, &argv_list, bun.default_allocator);
+                        offset_for_passthrough += (argv_list.items.len -| bun.argv.len);
                         bun.argv = argv_list.items;
+
                         // Handle actual options to parse.
                         break :brk try Command.init(allocator, log, .AutoCommand);
                     }
@@ -658,6 +662,8 @@ pub const Command = struct {
                 ctx.args.target = .bun;
                 if (ctx.debug.global_cache == .auto)
                     ctx.debug.global_cache = .disable;
+
+                ctx.passthrough = bun.argv[offset_for_passthrough..];
 
                 try bun_js.Run.bootStandalone(
                     ctx,

@@ -1038,20 +1038,16 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
 
         // Read packet header
         const header = PacketHeader.decode(reader.peek()) orelse break;
-        reader.skip(PacketHeader.size);
-
+        const header_length = header.length;
+        debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
-        reader.ensureCapacity(header.length) catch |err| {
-            if (err == error.ShortRead) {
-                reader.skip(-@as(isize, @intCast(PacketHeader.size)));
-            }
-            debug("ShortRead: {s}", .{@errorName(err)});
-            return error.ShortRead;
-        };
+        try reader.ensureCapacity(header_length + PacketHeader.size);
+        reader.skip(PacketHeader.size);
+        // make sure that we skip the full packet after we are done processing it
+        defer reader.setOffsetFromStart(header_length);
 
         // Update sequence id
         this.sequence_id = header.sequence_id +% 1;
-        debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header.length });
 
         // Process packet based on connection state
         switch (this.status) {
@@ -1444,6 +1440,10 @@ pub const Reader = struct {
         this.connection.last_message_start = this.connection.read_buffer.head;
     }
 
+    pub fn setOffsetFromStart(this: Reader, offset: usize) void {
+        this.connection.read_buffer.head = this.connection.last_message_start + @as(u32, @truncate(offset));
+    }
+
     pub const ensureLength = ensureCapacity;
 
     pub fn peek(this: Reader) []const u8 {
@@ -1594,39 +1594,22 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
     };
 
     switch (first_byte) {
-        @intFromEnum(PacketType.OK) => {
-            var ok = OKPacket{};
-            try ok.decode(reader);
-            defer ok.deinit();
-
-            this.status_flags = ok.status_flags;
-            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
-
-            defer {
-                this.advance();
-                this.registerAutoFlusher();
-            }
-            const statement = request.statement orelse {
-                debug("Unexpected result set packet", .{});
-                return error.UnexpectedPacket;
-            };
-            request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
-            statement.reset();
-        },
         @intFromEnum(PacketType.EOF) => {
             var eof = EOFPacket{};
             try eof.decode(reader);
 
-            this.status_flags = eof.status_flags;
-            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
-            defer {
-                this.advance();
-                this.registerAutoFlusher();
-            }
             const statement = request.statement orelse {
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
+
+            this.status_flags = eof.status_flags;
+            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
+
+            defer {
+                this.advance();
+                this.registerAutoFlusher();
+            }
 
             request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
             statement.reset();
@@ -1649,20 +1632,40 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
-            if (!statement.header_received) {
+            if (!statement.execution_flags.header_received) {
                 var header = ResultSetHeader{};
                 try header.decode(reader);
 
                 if (statement.columns.len == 0) {
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
                 }
-                statement.header_received = true;
+                statement.execution_flags.header_received = true;
                 return;
             } else if (statement.columns_received < statement.columns.len) {
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
                 // Read Row
+                if (first_byte == @intFromEnum(PacketType.OK)) {
+                    // this maybe OK packet or binary row packet depending
+                    if (request.flags.simple) {
+                        // if we know is not binary, then it's an OK packet
+                        var ok = OKPacket{};
+                        try ok.decode(reader);
+                        defer ok.deinit();
+                        this.status_flags = ok.status_flags;
+                        this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
+
+                        defer {
+                            this.advance();
+                            this.registerAutoFlusher();
+                        }
+
+                        request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
+                        statement.reset();
+                        return;
+                    }
+                }
                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
                 const allocator = stack_fallback.get();
                 var row = ResultSet.Row{

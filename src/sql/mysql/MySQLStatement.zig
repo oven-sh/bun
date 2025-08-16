@@ -6,13 +6,20 @@ statement_id: u32 = 0,
 params: []types.FieldType = &[_]types.FieldType{},
 columns: []ColumnDefinition41 = &[_]ColumnDefinition41{},
 columns_received: u32 = 0,
-header_received: bool = false,
+
 signature: Signature,
 status: Status = Status.parsing,
 error_response: ErrorPacket = .{ .error_code = 0 },
-needs_duplicate_check: bool = true,
+execution_flags: ExecutionFlags = .{},
 fields_flags: SQLDataCell.Flags = .{},
 result_count: u64 = 0,
+
+pub const ExecutionFlags = packed struct(u8) {
+    header_received: bool = false,
+    needs_duplicate_check: bool = true,
+    _: u6 = 0,
+};
+
 pub const Status = enum {
     pending,
     parsing,
@@ -26,7 +33,7 @@ pub const deref = RefCount.deref;
 pub fn reset(this: *MySQLStatement) void {
     this.result_count = 0;
     this.columns_received = 0;
-    this.header_received = false;
+    this.execution_flags = .{};
 }
 
 pub fn deinit(this: *MySQLStatement) void {
@@ -48,8 +55,8 @@ pub fn deinit(this: *MySQLStatement) void {
 }
 
 pub fn checkForDuplicateFields(this: *@This()) void {
-    if (!this.needs_duplicate_check) return;
-    this.needs_duplicate_check = false;
+    if (!this.execution_flags.needs_duplicate_check) return;
+    this.execution_flags.needs_duplicate_check = false;
 
     var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
     defer seen_numbers.deinit();

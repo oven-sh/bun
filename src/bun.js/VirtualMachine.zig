@@ -1618,7 +1618,7 @@ fn _resolve(
                 source_to_use,
                 normalized_specifier,
                 if (is_esm) .stmt else .require,
-                if (jsc_vm.standalone_module_graph == null) jsc_vm.transpiler.resolver.opts.global_cache else .disable,
+                jsc_vm.transpiler.resolver.opts.global_cache,
             )) {
                 .success => |r| r,
                 .failure => |e| e,

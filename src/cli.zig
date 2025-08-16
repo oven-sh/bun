@@ -636,30 +636,28 @@ pub const Command = struct {
         // bun build --compile entry point
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                context_data = .{
-                    .args = std.mem.zeroes(api.TransformOptions),
-                    .log = log,
-                    .start_time = start_time,
-                    .allocator = bun.default_allocator,
+                const ctx: *ContextData = brk: {
+                    if (graph.compile_argv.len > 0) {
+                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        try bun.appendOptionsEnv(graph.compile_argv, &argv_list, bun.default_allocator);
+                        bun.argv = argv_list.items;
+                        // Handle actual options to parse.
+                        break :brk try Command.init(allocator, log, .AutoCommand);
+                    }
+
+                    context_data = .{
+                        .args = std.mem.zeroes(api.TransformOptions),
+                        .log = log,
+                        .start_time = start_time,
+                        .allocator = bun.default_allocator,
+                    };
+                    global_cli_ctx = &context_data;
+                    break :brk global_cli_ctx;
                 };
-                global_cli_ctx = &context_data;
-                var ctx = global_cli_ctx;
 
-                ctx.args.target = api.Target.bun;
-
-                // Handle compile_argv: prepend arguments to argv for actual processing
-                var argv_to_use = bun.argv;
-                if (graph.compile_argv.len > 0) {
-                    var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                    try bun.appendOptionsEnv(graph.compile_argv, &argv_list, bun.default_allocator);
-                    argv_to_use = argv_list.items;
-                }
-
-                if (argv_to_use.len > 1) {
-                    ctx.passthrough = argv_to_use[1..];
-                } else {
-                    ctx.passthrough = &[_]string{};
-                }
+                ctx.args.target = .bun;
+                if (ctx.debug.global_cache == .auto)
+                    ctx.debug.global_cache = .disable;
 
                 try bun_js.Run.bootStandalone(
                     ctx,

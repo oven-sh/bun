@@ -94,7 +94,11 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
+#ifdef USE_MIMALLOC
                 mi_free(const_cast<void*>(ptr));
+#else
+                free(const_cast<void*>(ptr));
+#endif
             };
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.

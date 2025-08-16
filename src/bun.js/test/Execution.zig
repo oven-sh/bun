@@ -283,13 +283,11 @@ const std = @import("std");
 
 const describe2 = @import("./describe2.zig");
 const BunTest = describe2.BunTest;
-const Execution = describe2.Execution;
 const DescribeScope = describe2.DescribeScope;
-const groupLog = describe2.group;
-const TestScope = describe2.TestScope;
-const TestScheduleEntry = describe2.TestScheduleEntry;
+const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
-const ExecutionEntryTag = describe2.ExecutionEntryTag;
+const TestScheduleEntry = describe2.TestScheduleEntry;
+const groupLog = describe2.group;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -151,7 +151,7 @@ const BunTest = describe2.BunTest;
 const Collection = describe2.Collection;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.group;
-const Strong = describe2.Strong;
 
 const bun = @import("bun");
 const jsc = bun.jsc;
+const Strong = jsc.Strong.Safe;

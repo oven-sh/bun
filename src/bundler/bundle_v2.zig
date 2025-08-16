@@ -1841,7 +1841,10 @@ pub const BundleV2 = struct {
                 else
                     null,
                 compile_options.exec_argv.slice(),
-                compile_options.executable_path.slice(),
+                if (compile_options.executable_path.slice().len > 0)
+                    compile_options.executable_path.slice()
+                else
+                    null,
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.fail(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)}) catch bun.outOfMemory());
             };

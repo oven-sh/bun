@@ -1609,6 +1609,9 @@ pub const BundleV2 = struct {
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
+            .is_compile = config.compile,
+            .compile_target = config.compile_target,
+            .outfile = config.outfile,
         });
         completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
@@ -1681,6 +1684,9 @@ pub const BundleV2 = struct {
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
         cancelled: bool = false,
+        is_compile: bool = false,
+        compile_target: @import("../compile_target.zig") = .{},
+        outfile: ?[]const u8 = null,
 
         html_build_task: ?*jsc.API.HTMLBundle.HTMLBundleRoute = null,
 
@@ -1738,6 +1744,7 @@ pub const BundleV2 = struct {
             transpiler.options.public_path = config.public_path.list.items;
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
+            transpiler.options.compile = config.compile;
 
             transpiler.options.output_dir = config.outdir.slice();
             transpiler.options.root_dir = config.rootdir.slice();
@@ -1780,6 +1787,68 @@ pub const BundleV2 = struct {
             this.config.deinit(bun.default_allocator);
             this.promise.deinit();
             bun.destroy(this);
+        }
+
+        fn doCompilation(this: *JSBundleCompletionTask, output_files: []options.OutputFile) bun.StandaloneModuleGraph.CompileResult {
+            for (output_files) |*output_file| {
+                if (output_file.output_kind == .@"entry-point") {
+                    var full_outfile_path = if (this.outfile) |specified_outfile| blk: {
+                        if (specified_outfile.len > 0) {
+                            break :blk specified_outfile;
+                        }
+                        var name = output_file.dest_path;
+                        if (strings.hasSuffixComptime(name, ".js")) {
+                            name = name[0 .. name.len - 3];
+                        }
+                        break :blk name;
+                    } else blk: {
+                        var name = output_file.dest_path;
+                        if (strings.hasSuffixComptime(name, ".js")) {
+                            name = name[0 .. name.len - 3];
+                        }
+                        break :blk name;
+                    };
+
+                    // Add .exe extension for Windows targets if not already present
+                    if (this.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {
+                        full_outfile_path = std.fmt.allocPrint(bun.default_allocator, "{s}.exe", .{full_outfile_path}) catch {
+                            return bun.StandaloneModuleGraph.CompileResult.fail("Failed to allocate memory for output path");
+                        };
+                    }
+
+                    const dirname = std.fs.path.dirname(full_outfile_path) orelse ".";
+                    const basename = std.fs.path.basename(full_outfile_path);
+
+                    var root_dir = std.fs.cwd().openDir(dirname, .{}) catch |err| {
+                        return bun.StandaloneModuleGraph.CompileResult.fail(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) }) catch "Failed to open output directory");
+                    };
+                    defer root_dir.close();
+
+                    const result = bun.StandaloneModuleGraph.toExecutable(
+                        &this.compile_target,
+                        bun.default_allocator,
+                        output_files,
+                        root_dir,
+                        this.config.public_path.slice(),
+                        basename,
+                        this.env,
+                        this.config.format,
+                        false,
+                        null,
+                    ) catch |err| {
+                        return bun.StandaloneModuleGraph.CompileResult.fail(std.fmt.allocPrint(bun.default_allocator, "Failed to create executable: {s}", .{@errorName(err)}) catch "Failed to create executable");
+                    };
+
+                    if (result.success) {
+                        output_file.dest_path = full_outfile_path;
+                        output_file.is_executable = true;
+                    }
+
+                    return result;
+                }
+            }
+
+            return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -1825,7 +1894,31 @@ pub const BundleV2 = struct {
                 },
                 .value => |*build| {
                     const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-                    const output_files: []options.OutputFile = build.output_files.items;
+                    const output_files = build.output_files.items;
+
+                    if (this.is_compile) {
+                        const compile_result = this.doCompilation(output_files);
+
+                        if (!compile_result.success) {
+                            if (this.config.throw_on_error) {
+                                promise.reject(globalThis, bun.String.init(compile_result.error_message orelse "Compilation failed").toJS(globalThis));
+                                return;
+                            }
+
+                            root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+                            root_obj.put(globalThis, jsc.ZigString.static("success"), jsc.JSValue.jsBoolean(false));
+                            const logs_array = jsc.JSValue.createEmptyArray(globalThis, 1) catch return promise.reject(globalThis, error.JSError);
+                            const log_obj = jsc.JSValue.createEmptyObject(globalThis, 4);
+                            log_obj.put(globalThis, jsc.ZigString.static("message"), bun.String.init(compile_result.error_message orelse "Compilation failed").toJS(globalThis));
+                            log_obj.put(globalThis, jsc.ZigString.static("level"), bun.String.static("error").toJS(globalThis));
+                            log_obj.put(globalThis, jsc.ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
+                            log_obj.put(globalThis, jsc.ZigString.static("position"), jsc.JSValue.null);
+                            logs_array.putIndex(globalThis, 0, log_obj) catch return;
+                            root_obj.put(globalThis, jsc.ZigString.static("logs"), logs_array);
+                            promise.resolve(globalThis, root_obj);
+                            return;
+                        }
+                    }
                     const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
@@ -1848,7 +1941,7 @@ pub const BundleV2 = struct {
                                     bun.default_allocator.dupe(
                                         u8,
                                         bun.path.joinAbsString(
-                                            Fs.FileSystem.instance.top_level_dir,
+                                            bun.fs.FileSystem.instance.top_level_dir,
                                             &[_]string{ this.config.dir.slice(), this.config.outdir.slice(), output_file.dest_path },
                                             .auto,
                                         ),

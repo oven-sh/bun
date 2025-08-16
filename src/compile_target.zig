@@ -52,6 +52,16 @@ const BaselineFormatter = struct {
     }
 };
 
+pub const DownloadError = error{
+    TargetNotFound,
+    NetworkError,
+    InvalidResponse,
+    ExtractionFailed,
+    InvalidTarget,
+    OutOfMemory,
+    NoSpaceLeft,
+};
+
 pub fn eql(this: *const CompileTarget, other: *const CompileTarget) bool {
     return this.os == other.os and this.arch == other.arch and this.baseline == other.baseline and this.version.eql(other.version) and this.libc == other.libc;
 }
@@ -61,21 +71,21 @@ pub fn isDefault(this: *const CompileTarget) bool {
 }
 
 pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
-    if (bun.getenvZ("BUN_COMPILE_TARGET_TARBALL_URL")) |url| {
-        if (strings.hasPrefixComptime(url, "http://") or strings.hasPrefixComptime(url, "https://"))
-            return url;
-    }
-
     return try this.toNPMRegistryURLWithURL(buf, "https://registry.npmjs.org");
 }
 
 pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_url: []const u8) ![]const u8 {
+    // Validate the target is supported before building URL
+    if (!this.isSupported()) {
+        return error.UnsupportedTarget;
+    }
+
     return switch (this.os) {
         inline else => |os| switch (this.arch) {
             inline else => |arch| switch (this.libc) {
                 inline else => |libc| switch (this.baseline) {
                     // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-                    inline else => |is_baseline| try std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
+                    inline else => |is_baseline| std.fmt.bufPrint(buf, comptime "{s}/@oven/bun-" ++
                         os.npmName() ++ "-" ++ arch.npmName() ++
                         libc.npmName() ++
                         (if (is_baseline) "-baseline" else "") ++
@@ -89,7 +99,13 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
                         this.version.major,
                         this.version.minor,
                         this.version.patch,
-                    }),
+                    }) catch |err| {
+                        // Catch buffer overflow or other formatting errors
+                        if (err == error.NoSpaceLeft) {
+                            return error.BufferTooSmall;
+                        }
+                        return err;
+                    },
                 },
             },
         },
@@ -148,6 +164,7 @@ pub fn exePath(this: *const CompileTarget, buf: *bun.PathBuffer, version_str: [:
 const HTTP = bun.http;
 const MutableString = bun.MutableString;
 const Global = bun.Global;
+
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
     HTTP.HTTPThread.init(&.{});
     var refresher = bun.Progress{};
@@ -160,8 +177,12 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         var compressed_archive_bytes = try allocator.create(MutableString);
         compressed_archive_bytes.* = try MutableString.init(allocator, 24 * 1024 * 1024);
         var url_buffer: [2048]u8 = undefined;
-        const url_str = try bun.default_allocator.dupe(u8, try this.toNPMRegistryURL(&url_buffer));
-        const url = bun.URL.parse(url_str);
+        const url_str = this.toNPMRegistryURL(&url_buffer) catch |err| {
+            // Return error without printing - let caller decide how to handle
+            return err;
+        };
+        const url_str_copy = try bun.default_allocator.dupe(u8, url_str);
+        const url = bun.URL.parse(url_str_copy);
         {
             var progress = refresher.start("Downloading", 0);
             defer progress.end();
@@ -186,30 +207,15 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
             switch (response.status_code) {
                 404 => {
-                    Output.errGeneric(
-                        \\Does this target and version of Bun exist?
-                        \\
-                        \\404 downloading {} from {s}
-                    , .{
-                        this.*,
-                        url_str,
-                    });
-                    Global.exit(1);
+                    // Return error without printing - let caller handle the messaging
+                    return error.TargetNotFound;
                 },
-                403, 429, 499...599 => |status| {
-                    Output.errGeneric(
-                        \\Failed to download cross-compilation target.
-                        \\
-                        \\HTTP {d} downloading {} from {s}
-                    , .{
-                        status,
-                        this.*,
-                        url_str,
-                    });
-                    Global.exit(1);
+                403, 429, 499...599 => {
+                    // Return error without printing - let caller handle the messaging
+                    return error.NetworkError;
                 },
                 200 => {},
-                else => return error.HTTPError,
+                else => return error.NetworkError,
             }
         }
 
@@ -219,44 +225,22 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
             defer compressed_archive_bytes.list.deinit(allocator);
 
             if (compressed_archive_bytes.list.items.len == 0) {
-                Output.errGeneric(
-                    \\Failed to verify the integrity of the downloaded tarball.
-                    \\
-                    \\Received empty content downloading {} from {s}
-                , .{
-                    this.*,
-                    url_str,
-                });
-                Global.exit(1);
+                // Return error without printing - let caller handle the messaging
+                return error.InvalidResponse;
             }
 
             {
                 var node = refresher.start("Decompressing", 0);
                 defer node.end();
-                var gunzip = bun.zlib.ZlibReaderArrayList.init(compressed_archive_bytes.list.items, &tarball_bytes, allocator) catch |err| {
+                var gunzip = bun.zlib.ZlibReaderArrayList.init(compressed_archive_bytes.list.items, &tarball_bytes, allocator) catch {
                     node.end();
-                    Output.err(err,
-                        \\Failed to decompress the downloaded tarball
-                        \\
-                        \\After downloading {} from {s}
-                    , .{
-                        this.*,
-                        url_str,
-                    });
-                    Global.exit(1);
+                    // Return error without printing - let caller handle the messaging
+                    return error.InvalidResponse;
                 };
-                gunzip.readAll() catch |err| {
+                gunzip.readAll() catch {
                     node.end();
-                    // One word difference so if someone reports the bug we can tell if it happened in init or readAll.
-                    Output.err(err,
-                        \\Failed to deflate the downloaded tarball
-                        \\
-                        \\After downloading {} from {s}
-                    , .{
-                        this.*,
-                        url_str,
-                    });
-                    Global.exit(1);
+                    // Return error without printing - let caller handle the messaging
+                    return error.InvalidResponse;
                 };
                 gunzip.deinit();
             }
@@ -282,22 +266,15 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                         // "package/bin"
                         .depth_to_skip = 2,
                     },
-                ) catch |err| {
+                ) catch {
                     node.end();
-                    Output.err(err,
-                        \\Failed to extract the downloaded tarball
-                        \\
-                        \\After downloading {} from {s}
-                    , .{
-                        this.*,
-                        url_str,
-                    });
-                    Global.exit(1);
+                    // Return error without printing - let caller handle the messaging
+                    return error.ExtractionFailed;
                 };
 
                 var did_retry = false;
                 while (true) {
-                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch |err| {
+                    bun.sys.moveFileZ(.fromStdDir(tmpdir), if (this.os == .windows) "bun.exe" else "bun", bun.invalid_fd, dest_z) catch {
                         if (!did_retry) {
                             did_retry = true;
                             const dirname = bun.path.dirname(dest_z, .loose);
@@ -309,8 +286,8 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                             // fallthrough, failed for another reason
                         }
                         node.end();
-                        Output.err(err, "Failed to move cross-compiled bun binary into cache directory {}", .{bun.fmt.fmtPath(u8, dest_z, .{})});
-                        Global.exit(1);
+                        // Return error without printing - let caller handle the messaging
+                        return error.ExtractionFailed;
                     };
                     break;
                 }
@@ -331,9 +308,13 @@ pub fn isSupported(this: *const CompileTarget) bool {
     };
 }
 
-pub fn from(input_: []const u8) CompileTarget {
-    var this = CompileTarget{};
+pub const ParseError = error{
+    UnsupportedTarget,
+    InvalidTarget,
+};
 
+pub fn tryFrom(input_: []const u8) ParseError!CompileTarget {
+    var this = CompileTarget{};
     const input = bun.strings.trim(input_, " \t\r");
     if (input.len == 0) {
         return this;
@@ -373,8 +354,7 @@ pub fn from(input_: []const u8) CompileTarget {
             const version = bun.Semver.Version.parse(bun.Semver.SlicedString.init(token[1..], token[1..]));
             if (version.valid) {
                 if (version.version.major == null or version.version.minor == null or version.version.patch == null) {
-                    Output.errGeneric("Please pass a complete version number to --target. For example, --target=bun-v" ++ Environment.version_string, .{});
-                    Global.exit(1);
+                    return error.InvalidTarget;
                 }
 
                 this.version = .{
@@ -390,18 +370,7 @@ pub fn from(input_: []const u8) CompileTarget {
             found_libc = true;
             continue;
         } else {
-            Output.errGeneric(
-                \\Unsupported target {} in "bun{s}"
-                \\To see the supported targets:
-                \\  https://bun.com/docs/bundler/executables
-            ,
-                .{
-                    bun.fmt.quote(token),
-                    // received input starts at "-"
-                    input_,
-                },
-            );
-            Global.exit(1);
+            return error.UnsupportedTarget;
         }
     }
 
@@ -418,16 +387,66 @@ pub fn from(input_: []const u8) CompileTarget {
     }
 
     if (this.libc == .musl and this.os != .linux) {
-        Output.errGeneric("invalid target, musl libc only exists on linux", .{});
-        Global.exit(1);
+        return error.InvalidTarget;
     }
 
     if (this.arch == .wasm or this.os == .wasm) {
-        Output.errGeneric("invalid target, WebAssembly is not supported. Sorry!", .{});
-        Global.exit(1);
+        return error.InvalidTarget;
     }
 
     return this;
+}
+
+pub fn from(input_: []const u8) CompileTarget {
+    return tryFrom(input_) catch |err| {
+        switch (err) {
+            ParseError.UnsupportedTarget => {
+                const input = bun.strings.trim(input_, " \t\r");
+                var splitter = bun.strings.split(input, "-");
+                var unsupported_token: ?[]const u8 = null;
+                while (splitter.next()) |token| {
+                    if (token.len == 0) continue;
+                    if (Environment.Architecture.names.get(token) == null and
+                        Environment.OperatingSystem.names.get(token) == null and
+                        !strings.eqlComptime(token, "modern") and
+                        !strings.eqlComptime(token, "baseline") and
+                        !strings.eqlComptime(token, "musl") and
+                        !(strings.hasPrefixComptime(token, "v1.") or strings.hasPrefixComptime(token, "v0.")))
+                    {
+                        unsupported_token = token;
+                        break;
+                    }
+                }
+
+                if (unsupported_token) |token| {
+                    Output.errGeneric(
+                        \\Unsupported target {} in "bun{s}"
+                        \\To see the supported targets:
+                        \\  https://bun.com/docs/bundler/executables
+                    , .{
+                        bun.fmt.quote(token),
+                        input_,
+                    });
+                } else {
+                    Output.errGeneric("Unsupported target: {s}", .{input_});
+                }
+                Global.exit(1);
+            },
+            ParseError.InvalidTarget => {
+                const input = bun.strings.trim(input_, " \t\r");
+                if (strings.containsComptime(input, "musl") and !strings.containsComptime(input, "linux")) {
+                    Output.errGeneric("invalid target, musl libc only exists on linux", .{});
+                } else if (strings.containsComptime(input, "wasm")) {
+                    Output.errGeneric("invalid target, WebAssembly is not supported. Sorry!", .{});
+                } else if (strings.containsComptime(input, "v")) {
+                    Output.errGeneric("Please pass a complete version number to --target. For example, --target=bun-v" ++ Environment.version_string, .{});
+                } else {
+                    Output.errGeneric("Invalid target: {s}", .{input_});
+                }
+                Global.exit(1);
+            },
+        }
+    };
 }
 
 pub fn defineValues(this: *const CompileTarget) []const []const u8 {

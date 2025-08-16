@@ -2319,12 +2319,23 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  type CompileTarget =
+    | "darwin-aarch64"
+    | "darwin-x64"
+    | "darwin-x64-baseline"
+    | "linux-aarch64"
+    | "linux-x64"
+    | "linux-x64-baseline"
+    | "linux-aarch64-musl"
+    | "linux-x64-musl"
+    | "linux-x64-musl-baseline"
+    | "windows-x64"
+    | "windows-x64-baseline";
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  interface BuildConfig {
+  interface BuildConfigBase {
     entrypoints: string[]; // list of file path
-    outdir?: string; // output directory
     /**
      * @default "browser"
      */
@@ -2362,7 +2373,6 @@ declare module "bun" {
           asset?: string;
         }; // | string;
     root?: string; // project root
-    splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
@@ -2512,6 +2522,66 @@ declare module "bun" {
      */
     tsconfig?: string;
   }
+
+  // Regular build config - uses outdir for output directory
+  interface RegularBuildConfig extends BuildConfigBase {
+    /**
+     * Output directory for bundled files
+     */
+    outdir?: string;
+
+    /**
+     * Enable code splitting
+     * @default true
+     */
+    splitting?: boolean;
+
+    compile?: never;
+    outfile?: never;
+  }
+
+  // Compile build config - uses outfile for executable output
+  interface CompileBuildConfig extends BuildConfigBase {
+    /**
+     * Create a standalone executable
+     *
+     * When `true`, creates an executable for the current platform.
+     * When a target string, creates an executable for that platform.
+     *
+     * @example
+     * ```ts
+     * // Create executable for current platform
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: true,
+     *   outfile: './my-app'
+     * });
+     *
+     * // Cross-compile for Linux x64
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: 'linux-x64',
+     *   outfile: './my-app'
+     * });
+     * ```
+     */
+    compile: true | CompileTarget;
+
+    /**
+     * Output path for the compiled executable
+     * Only available when `compile` is set
+     */
+    outfile?: string;
+
+    // These options are not allowed with compile
+    outdir?: never;
+    splitting?: never;
+  }
+
+  /**
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
+   */
+  type BuildConfig = RegularBuildConfig | CompileBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt

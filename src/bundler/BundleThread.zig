@@ -149,6 +149,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
+            completion.is_compile = transpiler.options.compile;
             completion.result = .{ .value = .{
                 .output_files = try this.runFromJSInNewThread(transpiler.options.entry_points),
             } };

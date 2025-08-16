@@ -37,6 +37,9 @@ pub const JSBundler = struct {
         env_behavior: api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        compile: bool = false,
+        compile_target: CompileTarget = .{},
+        outfile: ?[]const u8 = null,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -143,6 +146,44 @@ pub const JSBundler = struct {
                     }
                     this.target = .bun;
                 }
+            }
+
+            if (try config.getTruthy(globalThis, "compile")) |compile_value| {
+                if (compile_value.isBoolean()) {
+                    this.compile = compile_value == .true;
+                    if (this.compile) {
+                        this.target = .bun;
+                    }
+                } else if (compile_value.isString()) {
+                    this.compile = true;
+                    this.target = .bun;
+
+                    const target_str = try compile_value.toSlice(globalThis, bun.default_allocator);
+                    defer target_str.deinit();
+
+                    const target_parsed = @import("../../compile_target.zig").tryFrom(target_str.slice()) catch {
+                        return globalThis.throwInvalidArguments("Unsupported compile target: {s}", .{target_str.slice()});
+                    };
+                    if (!target_parsed.isSupported()) {
+                        return globalThis.throwInvalidArguments("Unsupported compile target: {s}", .{target_str.slice()});
+                    }
+                    this.compile_target = target_parsed;
+                }
+            }
+
+            if (try config.getOptional(globalThis, "outfile", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+
+                if (!this.compile) {
+                    return globalThis.throwInvalidArguments("outfile option can only be used with compile", .{});
+                }
+
+                this.outfile = try bun.default_allocator.dupe(u8, slice.slice());
+            }
+
+            if (this.compile) {
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile_target.os, "");
+                try this.public_path.append(base_public_path);
             }
 
             var has_out_dir = false;
@@ -450,6 +491,18 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
+            if (this.compile) {
+                if (this.code_splitting) {
+                    return globalThis.throwInvalidArguments("cannot use compile option with code splitting", .{});
+                }
+                if (has_out_dir) {
+                    return globalThis.throwInvalidArguments("cannot use outdir with compile option, use outfile instead", .{});
+                }
+                if (this.outfile == null) {
+                    return globalThis.throwInvalidArguments("outfile is required when using compile option", .{});
+                }
+            }
+
             return this;
         }
 
@@ -506,6 +559,12 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+
+            // TODO: Memory leak - figure out why freeing outfile causes use-after-poison
+            // Free outfile if it was allocated - use bun.default_allocator to match allocation
+            // if (self.outfile) |outfile_path| {
+            //     bun.default_allocator.free(outfile_path);
+            // }
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
@@ -1300,6 +1359,7 @@ const strings = bun.strings;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Index = bun.ast.Index;
 const api = bun.schema.api;
+const CompileTarget = @import("../../compile_target.zig");
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -3,6 +3,36 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { devTest } from "../bake-harness";
 
+// Helper function to safely perform vim-style atomic write
+async function vimAtomicWrite(filePath: string, content: string): Promise<void> {
+  const dir = path.dirname(filePath);
+  const fileName = path.basename(filePath);
+  const swapFile = path.join(dir, `.${fileName}.swp`);
+  
+  try {
+    // Step 1: Write to swap file
+    await Bun.file(swapFile).write(content);
+    
+    // Step 2: Delete original file
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    
+    // Step 3: Atomic rename
+    fs.renameSync(swapFile, filePath);
+  } catch (error) {
+    // Clean up swap file if something went wrong
+    if (fs.existsSync(swapFile)) {
+      try {
+        fs.unlinkSync(swapFile);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    throw error;
+  }
+}
+
 devTest("vim file swap hot reload for entrypoints", {
   files: {
     "index.html": `<!DOCTYPE html>
@@ -35,19 +65,10 @@ devTest("vim file swap hot reload for entrypoints", {
   <script type="module" src="index.ts"></script>
 </body>`;
 
-      // Step 1: Create .index.html.swp file with new content
-      const swapFile = path.join(dev.rootDir, ".index.html.swp");
-      await Bun.file(swapFile).write(updatedContent);
-
-      // Step 2: Delete original index.html
-      const originalFile = path.join(dev.rootDir, "index.html");
-      fs.unlinkSync(originalFile);
-
-      // Step 3: Rename .index.html.swp to index.html (atomic operation)
-      fs.renameSync(swapFile, originalFile);
-
-      // Wait a bit for file watcher to detect changes
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await c.expectReload(async () => {
+        const filePath = path.join(dev.rootDir, "index.html");
+        await vimAtomicWrite(filePath, updatedContent);
+      });
 
       // Verify the content was updated
       const response = await dev.fetch("/");

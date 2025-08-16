@@ -207,6 +207,13 @@ declare module "bun:test" {
      */
     todo(label: DescribeLabel, fn?: () => void): void;
     /**
+     * Runs this group of tests concurrently.
+     *
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    concurrent(label: DescribeLabel, fn: () => void): void;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -443,6 +450,18 @@ declare module "bun:test" {
     failing(
       label: string,
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ): void;
+    /**
+     * Runs the test concurrently with other concurrent tests.
+     *
+     * @param label the label for the test
+     * @param fn the test function
+     * @param options the test timeout or options
+     */
+    concurrent(
+      label: string,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
     /**

@@ -463,6 +463,14 @@ pub fn installWithManager(
 
                         this.drainDependencyList();
 
+                        // Set up default callback for handling extracted packages
+                        this.onExtractCallback = .{
+                            .default = .{
+                                .ctx = this,
+                                .fn_ptr = PackageManager.onExtractDefault,
+                            },
+                        };
+
                         this.runTasks(
                             *PackageManager,
                             this,

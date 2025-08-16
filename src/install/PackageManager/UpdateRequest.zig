@@ -143,16 +143,34 @@ fn parseWithError(
 
         var value = input;
         var alias: ?string = null;
-        if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
-            alias = input;
-            value = input[input.len..];
-        } else if (input.len > 1) {
+        // Check for alias@url syntax (e.g., myalias@github.com:user/repo)
+        // Only look for @ if the input contains : (indicates a URL or path)
+        // BUT skip if it starts with git@ (SSH URL format)
+        if (input.len > 1 and strings.containsChar(input, ':') and !(input.len >= 4 and strings.eqlComptime(input[0..4], "git@"))) {
             if (strings.indexOfChar(input[1..], '@')) |at| {
                 const name = input[0 .. at + 1];
+                // Check if the part before @ is a valid package name (alias)
                 if (strings.isNPMPackageName(name)) {
                     alias = name;
                     value = input[at + 2 ..];
                 }
+            }
+        } else if (!Dependency.isTarball(input) and !(input.len >= 4 and strings.eqlComptime(input[0..4], "git@"))) {
+            // Check for package@version format (e.g., bar@0.0.2)
+            // Skip if it's a git@ SSH URL
+            if (input.len > 1) {
+                if (strings.indexOfChar(input[1..], '@')) |at| {
+                    const name = input[0 .. at + 1];
+                    if (strings.isNPMPackageName(name)) {
+                        alias = name;
+                        value = input[at + 2 ..];
+                    }
+                }
+            }
+            // If no @ found or before @ is not a valid package name, check if the whole thing is a package name
+            if (alias == null and strings.isNPMPackageName(input)) {
+                alias = input;
+                value = input[input.len..];
             }
         }
 
@@ -179,21 +197,22 @@ fn parseWithError(
 
             return error.UnrecognizedDependencyFormat;
         };
-        if (alias != null and version.tag == .git) {
-            if (Dependency.parseWithOptionalTag(
-                allocator,
-                placeholder,
-                null,
-                input,
-                null,
-                &SlicedString.init(input, input),
-                log,
-                pm,
-            )) |ver| {
-                alias = null;
-                version = ver;
-            }
-        }
+        // Don't re-parse git dependencies with aliases - this was throwing away the alias
+        // if (alias != null and version.tag == .git) {
+        //     if (Dependency.parseWithOptionalTag(
+        //         allocator,
+        //         placeholder,
+        //         null,
+        //         input,
+        //         null,
+        //         &SlicedString.init(input, input),
+        //         log,
+        //         pm,
+        //     )) |ver| {
+        //         alias = null;
+        //         version = ver;
+        //     }
+        // }
         if (switch (version.tag) {
             .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
             .npm => version.value.npm.name.eql(placeholder, input, input),

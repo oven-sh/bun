@@ -23,6 +23,12 @@ pub const Status = enum {
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
+pub fn reset(this: *MySQLStatement) void {
+    this.result_count = 0;
+    this.columns_received = 0;
+    this.header_received = false;
+}
+
 pub fn deinit(this: *MySQLStatement) void {
     debug("MySQLStatement deinit", .{});
 
@@ -117,11 +123,13 @@ pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlo
             },
             .duplicate => unreachable,
         }
+
         id.tag = switch (column.name_or_index) {
             .name => 2,
             .index => 1,
             .duplicate => 0,
         };
+
         i += 1;
     }
 

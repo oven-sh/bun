@@ -116,8 +116,7 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
     // they are no true pipelining in MySQL using this protocol
     // TODO: implement X Protocol
     // we will reuse this because each result set will return again all columns
-    statement.columns_received = 0;
-    statement.header_received = false;
+    statement.reset();
     try packet.end();
 }
 

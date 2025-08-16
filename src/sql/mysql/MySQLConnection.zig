@@ -1045,13 +1045,13 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
             if (err == error.ShortRead) {
                 reader.skip(-@as(isize, @intCast(PacketHeader.size)));
             }
-
-            return err;
+            debug("ShortRead: {s}", .{@errorName(err)});
+            return error.ShortRead;
         };
 
         // Update sequence id
         this.sequence_id = header.sequence_id +% 1;
-        debug("sequence_id: {d}", .{this.sequence_id});
+        debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header.length });
 
         // Process packet based on connection state
         switch (this.status) {
@@ -1600,7 +1600,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             defer ok.deinit();
 
             this.status_flags = ok.status_flags;
-            this.flags.is_ready_for_query = true;
+            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
+
             defer {
                 this.advance();
                 this.registerAutoFlusher();
@@ -1609,14 +1610,15 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
-            request.onResult(statement.result_count, this.globalObject, this.js_value, true);
+            request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
+            statement.reset();
         },
         @intFromEnum(PacketType.EOF) => {
             var eof = EOFPacket{};
             try eof.decode(reader);
 
             this.status_flags = eof.status_flags;
-            this.flags.is_ready_for_query = true;
+            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
             defer {
                 this.advance();
                 this.registerAutoFlusher();
@@ -1626,7 +1628,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 return error.UnexpectedPacket;
             };
 
-            request.onResult(statement.result_count, this.globalObject, this.js_value, true);
+            request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
+            statement.reset();
         },
 
         @intFromEnum(PacketType.ERROR) => {

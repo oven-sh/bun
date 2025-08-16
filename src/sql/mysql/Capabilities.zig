@@ -159,12 +159,8 @@ pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
         .CLIENT_DEPRECATE_EOF = true,
         .CLIENT_SSL = ssl,
         .CLIENT_QUERY_ATTRIBUTES = true,
-        // .CLIENT_TRANSACTIONS = true,
         .CLIENT_MULTI_STATEMENTS = true,
-        // .CLIENT_MULTI_RESULTS = true,
-        // .CLIENT_PS_MULTI_RESULTS = true,
-        // .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
-
+        .CLIENT_MULTI_RESULTS = true,
     };
 }
 const std = @import("std");

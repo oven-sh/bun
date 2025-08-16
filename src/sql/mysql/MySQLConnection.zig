@@ -1669,21 +1669,33 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 var row = ResultSet.Row{
                     .columns = statement.columns,
                     .binary = request.flags.binary,
+                    .raw = request.flags.result_mode == .raw,
                 };
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);
 
                 const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
 
+                var structure: JSValue = .js_undefined;
+                var cached_structure: ?CachedStructure = null;
+                switch (request.flags.result_mode) {
+                    .objects => {
+                        cached_structure = statement.structure(this.js_value, this.globalObject);
+                        structure = cached_structure.?.jsValue() orelse .js_undefined;
+                    },
+                    .raw, .values => {
+                        // no need to check for duplicate fields or structure
+                    },
+                }
+
                 // Process row data
-                const structure = request.statement.?.structure(request.thisValue.get(), this.globalObject);
                 const row_value = row.toJS(
                     this.globalObject,
                     pending_value,
-                    structure.jsValue() orelse .js_undefined,
+                    structure,
                     statement.fields_flags,
                     request.flags.result_mode,
-                    structure,
+                    cached_structure,
                 );
                 if (this.globalObject.hasException()) {
                     request.onJSError(this.globalObject.tryTakeException().?, this.globalObject);
@@ -1812,3 +1824,4 @@ const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
 const MySQLRequest = @import("./MySQLRequest.zig");
 const SocketMonitor = @import("../postgres/SocketMonitor.zig");
+const CachedStructure = @import("../shared/CachedStructure.zig");

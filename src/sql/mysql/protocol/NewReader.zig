@@ -74,6 +74,13 @@ pub fn NewReaderWrap(
             return error.InvalidEncodedLength;
         }
 
+        pub fn rawEncodeLenData(this: @This()) !Data {
+            if (decodeLengthInt(this.peek())) |result| {
+                return try this.read(@intCast(result.value + result.bytes_read));
+            }
+            return error.InvalidEncodedLength;
+        }
+
         pub fn encodeLenInt(this: @This()) !u64 {
             if (decodeLengthInt(this.peek())) |result| {
                 this.skip(result.bytes_read);

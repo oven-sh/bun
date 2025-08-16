@@ -117,7 +117,7 @@ pub const SQLDataCell = extern struct {
         }
     }
 
-    pub fn raw(optional_bytes: ?*Data) SQLDataCell {
+    pub fn raw(optional_bytes: ?*const Data) SQLDataCell {
         if (optional_bytes) |bytes| {
             const bytes_slice = bytes.slice();
             return SQLDataCell{

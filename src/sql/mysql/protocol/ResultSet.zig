@@ -5,6 +5,7 @@ pub const Row = struct {
     values: []SQLDataCell = &[_]SQLDataCell{},
     columns: []const ColumnDefinition41,
     binary: bool = false,
+    raw: bool = false,
     bigint: bool = false,
 
     pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) JSValue {
@@ -59,16 +60,25 @@ pub const Row = struct {
 
         for (cells, 0..) |*value, index| {
             if (decodeLengthInt(reader.peek())) |result| {
-                reader.skip(result.bytes_read);
                 const column = this.columns[index];
-                if (result.value == 0xfb) { // NULL value
+                if (result.value == 0xfb) {
+                    // NULL value
+                    reader.skip(result.bytes_read);
+                    // this dont matter if is raw because we will sent as null too like in postgres
                     value.* = SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 } else {
-                    // TODO: check to parse number date etc from this.columns info, you can check postgres to see more text parsing
-                    var string_data = try reader.read(@intCast(result.value));
-                    defer string_data.deinit();
-                    const slice = string_data.slice();
-                    value.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                    if (this.raw) {
+                        var data = try reader.rawEncodeLenData();
+                        defer data.deinit();
+                        value.* = SQLDataCell.raw(&data);
+                    } else {
+                        reader.skip(result.bytes_read);
+                        var string_data = try reader.read(@intCast(result.value));
+                        defer string_data.deinit();
+                        const slice = string_data.slice();
+                        // TODO: check to parse number date etc from this.columns info, you can check postgres to see more text parsing
+                        value.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                    }
                 }
                 value.index = switch (column.name_or_index) {
                     // The indexed columns can be out of order.
@@ -121,7 +131,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(column.column_type, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(column.column_type, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,

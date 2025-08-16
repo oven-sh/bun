@@ -618,11 +618,11 @@ pub const Value = union(enum) {
                     // Byte 7: [second]       (8-bit unsigned integer, 0-59)
                     return .{
                         .year = std.mem.readInt(u16, val[0..2], .little),
-                        .month = val[3],
-                        .day = val[4],
-                        .hour = val[5],
-                        .minute = val[6],
-                        .second = val[7],
+                        .month = val[2],
+                        .day = val[3],
+                        .hour = val[4],
+                        .minute = val[5],
+                        .second = val[6],
                     };
                 },
                 11 => {
@@ -636,11 +636,11 @@ pub const Value = union(enum) {
                     // Byte 8-11: [microseconds]  (32-bit little-endian unsigned integer
                     return .{
                         .year = std.mem.readInt(u16, val[0..2], .little),
-                        .month = val[3],
-                        .day = val[4],
-                        .hour = val[5],
-                        .minute = val[6],
-                        .second = val[7],
+                        .month = val[2],
+                        .day = val[3],
+                        .hour = val[4],
+                        .minute = val[5],
+                        .second = val[6],
                         .microsecond = std.mem.readInt(u32, val[8..12], .little),
                     };
                 },

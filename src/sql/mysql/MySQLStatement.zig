@@ -1,9 +1,12 @@
 const MySQLStatement = @This();
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+
 cached_structure: CachedStructure = .{},
 ref_count: RefCount = RefCount.init(),
 statement_id: u32 = 0,
-params: []types.FieldType = &[_]types.FieldType{},
+params_expected: u32 = 0,
+params_received: u32 = 0,
+
 columns: []ColumnDefinition41 = &[_]ColumnDefinition41{},
 columns_received: u32 = 0,
 
@@ -17,7 +20,8 @@ result_count: u64 = 0,
 pub const ExecutionFlags = packed struct(u8) {
     header_received: bool = false,
     needs_duplicate_check: bool = true,
-    _: u6 = 0,
+    need_to_send_params: bool = true,
+    _: u5 = 0,
 };
 
 pub const Status = enum {
@@ -44,9 +48,6 @@ pub fn deinit(this: *MySQLStatement) void {
     }
     if (this.columns.len > 0) {
         bun.default_allocator.free(this.columns);
-    }
-    if (this.params.len > 0) {
-        bun.default_allocator.free(this.params);
     }
     this.cached_structure.deinit();
     this.error_response.deinit();
@@ -153,7 +154,10 @@ pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlo
 
     return this.cached_structure;
 }
-
+pub const Param = struct {
+    type: types.FieldType,
+    flags: ColumnDefinition41.ColumnFlags,
+};
 const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;

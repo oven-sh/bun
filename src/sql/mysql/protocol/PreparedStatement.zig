@@ -41,8 +41,6 @@ pub const PrepareOK = struct {
 };
 
 pub const Execute = struct {
-    /// Command type indicating this is a prepared statement execute command (0x17)
-    command: CommandType = .COM_STMT_EXECUTE,
     /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE
     statement_id: u32,
     /// Execution flags. Currently only CURSOR_TYPE_READ_ONLY (0x01) is supported
@@ -63,7 +61,7 @@ pub const Execute = struct {
     }
 
     pub fn writeInternal(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) !void {
-        try writer.int1(@intFromEnum(this.command));
+        try writer.int1(@intFromEnum(CommandType.COM_STMT_EXECUTE));
         try writer.int4(this.statement_id);
         try writer.int1(this.flags);
         try writer.int4(this.iteration_count);
@@ -90,16 +88,18 @@ pub const Execute = struct {
             if (this.new_params_bind_flag) {
                 // Write parameter types
                 for (this.param_types) |param_type| {
+                    debug("New params bind flag: {s} {}", .{ @tagName(param_type), param_type.isBinaryFormatSupported() });
                     try writer.int1(@intFromEnum(param_type));
-                    try writer.int1(1); // unsigned flag, always true for now
+                    try writer.int1(0); // we never send unsigned for now
                 }
             }
 
             // Write parameter values
             for (this.params, this.param_types) |*param, param_type| {
-                if (param.* == .empty) continue;
+                if (param.* == .empty or param_type == .MYSQL_TYPE_NULL) continue;
 
                 const value = param.slice();
+                debug("Write param: {s} {s}", .{ @tagName(param_type), std.fmt.fmtSliceHexLower(value) });
                 if (param_type.isBinaryFormatSupported()) {
                     try writer.write(value);
                 } else {
@@ -147,3 +147,5 @@ const writeWrap = @import("./NewWriter.zig").writeWrap;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const FieldType = @import("../MySQLTypes.zig").FieldType;
 const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
+const Param = @import("../MySQLStatement.zig").Param;
+const debug = bun.Output.scoped(.PreparedStatement, false);

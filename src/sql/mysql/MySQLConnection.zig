@@ -946,7 +946,6 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
 }
 
 pub fn onData(this: *MySQLConnection, data: []const u8) void {
-    debug("onData: {d} {s}", .{ data.len, std.fmt.fmtSliceHexUpper(data) });
     this.ref();
     this.flags.is_processing_data = true;
     const vm = this.vm;
@@ -955,7 +954,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
 
     defer {
         if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
-            // Don't keep the process alive when there's nothing to do.
+            // Don't keep the process alive when there's nothixng to do.
             this.poll_ref.unref(vm);
         } else if (this.status == .connected) {
             // Keep the process alive if there's something to do.
@@ -1051,7 +1050,7 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         switch (this.status) {
             .handshaking => try this.handleHandshake(Context, reader),
             .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader),
-            .connected => try this.handleCommand(Context, reader),
+            .connected => try this.handleCommand(Context, reader, header_length),
             else => {
                 debug("Unexpected packet in state {s}", .{@tagName(this.status)});
                 return error.UnexpectedPacket;
@@ -1302,7 +1301,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
     }
 }
 
-pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
 
     // Get the current request if any
     const request = this.current() orelse {
@@ -1323,7 +1322,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
             },
             .parsing => {
                 // We're waiting for prepare response
-                try this.handlePreparedStatement(Context, reader);
+                try this.handlePreparedStatement(Context, reader, header_length);
             },
             .prepared => {
                 // We're waiting for execute response
@@ -1505,28 +1504,35 @@ pub fn bufferedReader(this: *MySQLConnection) NewReader(Reader) {
     };
 }
 
-pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     debug("handlePreparedStatement", .{});
     const first_byte = try reader.int(u8);
     reader.skip(-1);
 
     const request = this.current() orelse {
-        debug("Unexpected prepared statement packet", .{});
+        debug("Unexpected prepared statement packet missing request", .{});
         return error.UnexpectedPacket;
     };
     const statement = request.statement orelse {
-        debug("Unexpected prepared statement packet", .{});
+        debug("Unexpected prepared statement packet missing statement", .{});
         return error.UnexpectedPacket;
     };
     if (statement.statement_id > 0) {
-        if (statement.columns_received < statement.columns.len) {
+        if (statement.params_received < statement.params_expected) {
+            var column = ColumnDefinition41{};
+            defer column.deinit();
+            // we dont care about this information
+            try column.decode(reader);
+            statement.params_received += 1;
+        } else if (statement.columns_received < statement.columns.len) {
             try statement.columns[statement.columns_received].decode(reader);
             statement.columns_received += 1;
         }
-        if (statement.columns_received == statement.columns.len) {
+        if (statement.columns_received == statement.columns.len and statement.params_received == statement.params_expected) {
             statement.status = .prepared;
             this.flags.waiting_to_prepare = false;
             this.flags.is_ready_for_query = true;
+            statement.reset();
             this.advance();
             this.registerAutoFlusher();
         }
@@ -1535,7 +1541,9 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
     switch (first_byte) {
         @intFromEnum(PacketType.OK) => {
-            var ok = StmtPrepareOKPacket{};
+            var ok = StmtPrepareOKPacket{
+                .packet_length = header_length,
+            };
             try ok.decode(reader);
 
             // Get the current request
@@ -1544,22 +1552,14 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
             // Read parameter definitions if any
             if (ok.num_params > 0) {
-                const params = try bun.default_allocator.alloc(types.FieldType, ok.num_params);
-                errdefer bun.default_allocator.free(params);
-
-                for (params) |*param| {
-                    var column = ColumnDefinition41{};
-                    defer column.deinit();
-                    try column.decode(reader);
-                    param.* = column.column_type;
-                }
-
-                statement.params = params;
+                statement.params_expected = ok.num_params;
+                statement.params_received = 0;
             }
 
             // Read column definitions if any
             if (ok.num_columns > 0) {
                 statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, ok.num_columns);
+                statement.columns_received = 0;
             }
         },
 
@@ -1621,7 +1621,9 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 this.advance();
                 this.registerAutoFlusher();
             }
-
+            if (request.statement) |statement| {
+                statement.reset();
+            }
             request.onError(err, this.globalObject);
         },
 

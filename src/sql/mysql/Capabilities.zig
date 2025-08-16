@@ -79,6 +79,7 @@ pub fn reject(this: *Capabilities) void {
     this.CLIENT_NO_SCHEMA = false;
     this.CLIENT_ODBC = false;
     this.CLIENT_LOCAL_FILES = false;
+    this.CLIENT_OPTIONAL_RESULTSET_METADATA = false;
 }
 
 pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {

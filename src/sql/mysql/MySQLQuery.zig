@@ -103,20 +103,19 @@ pub fn onWriteFail(
 }
 
 pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) !void {
+    debug("bindAndExecute", .{});
     var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
-        .param_types = statement.params,
+        .param_types = statement.signature.fields,
+        .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };
+    statement.execution_flags.need_to_send_params = false;
     defer execute.deinit();
     try this.bind(&execute, globalObject);
     try execute.write(writer);
     this.status = .running;
-    // they are no true pipelining in MySQL using this protocol
-    // TODO: implement X Protocol
-    // we will reuse this because each result set will return again all columns
-    statement.reset();
     try packet.end();
 }
 
@@ -128,7 +127,7 @@ pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
     var i: u32 = 0;
-    var params = try bun.default_allocator.alloc(Data, execute.params.len);
+    var params = try bun.default_allocator.alloc(Data, execute.param_types.len);
     errdefer {
         for (params[0..i]) |*param| {
             param.deinit();
@@ -137,11 +136,11 @@ pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject
     }
     while (try iter.next()) |js_value| {
         const param = execute.param_types[i];
+        debug("param: {s} {}", .{ @tagName(param), param.isBinaryFormatSupported() });
         var value = try Value.fromJS(
             js_value,
             globalObject,
             param,
-            // TODO: unsigned
             false,
         );
         defer value.deinit(bun.default_allocator);

@@ -108,6 +108,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -635,6 +636,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             } else {
                 bun.http.max_http_header_size = size;
             }
+        }
+
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
         }
 
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))

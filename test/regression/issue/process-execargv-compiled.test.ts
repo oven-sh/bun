@@ -23,7 +23,7 @@ test("process.execArgv should be empty in compiled executables and argv should w
 
     const result = JSON.parse(await proc.stdout.text());
     expect(result.execArgv).toEqual([]);
-    
+
     // Verify argv structure: [executable, script, ...userArgs]
     expect(result.argv.length).toBeGreaterThanOrEqual(4);
     expect(result.argv[result.argv.length - 4]).toBe("-a");

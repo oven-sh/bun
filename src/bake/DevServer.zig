@@ -14,6 +14,219 @@ pub const debug = bun.Output.Scoped(.DevServer, .visible);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
 pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
+/// macOS-specific structure to track deleted entrypoints
+/// Since macOS watches file descriptors (not paths), we need special handling for deleted files
+///
+/// **NOTE**: All strings are allocated using the FS cache (BSStringList) and
+///           therefore do not need to be freed.
+pub const DeletedEntrypointWatchlist = struct {
+    pub const Entry = struct {
+        /// Absolute path to the deleted entrypoint file, the memory is owned by
+        /// the FS cache and therefore does not need to be freed.
+        abs_path: []const u8,
+        loader: bun.options.Loader,
+    };
+
+    /// parent directory -> list of deleted entries in that directory
+    entries_by_dir: bun.StringArrayHashMapUnmanaged(bun.SmallList(Entry, 2)) = .{},
+
+    /// Should be `dev.allocator`
+    allocator: Allocator,
+
+    const Processor = struct {
+        const EntrypointToProcess = struct {
+            entry: DeletedEntrypointWatchlist.Entry,
+            /// If this is a valid FD, the entrypoint file is back after being
+            /// deleted, remove from the deleted entrypoint watchlist
+            fd: bun.FD = bun.invalid_fd,
+        };
+
+        deduped_directories: bun.StringArrayHashMapUnmanaged(bun.SmallList(EntrypointToProcess, 2)),
+        temp_allocator: std.mem.Allocator,
+
+        pub fn init(temp_allocator: std.mem.Allocator) Processor {
+            return .{
+                .deduped_directories = .{},
+                .temp_allocator = temp_allocator,
+            };
+        }
+
+        pub fn processAndDeinit(self: *Processor, dev: *DevServer, ev: *HotReloadEvent) void {
+            if (comptime !bun.Environment.isMac) return;
+            if (self.deduped_directories.count() == 0) return;
+
+            defer {
+                for (self.deduped_directories.values()) |*entrypoint_list| {
+                    if (comptime bun.Environment.allow_assert) {
+                        for (entrypoint_list.slice()) |entrypoint| {
+                            bun.assert(entrypoint.fd == bun.invalid_fd);
+                        }
+                    }
+                    entrypoint_list.deinit(self.temp_allocator);
+                }
+                self.deduped_directories.deinit(self.temp_allocator);
+            }
+
+            {
+                // Hold a lock to iterate through and collect any entrypoints we
+                // should check for, this is done in a scope so we can avoid
+                // holding the lock while we try to `open(...)`
+                const deleted_entrypoints = dev.deleted_entrypoints.lock();
+                defer dev.deleted_entrypoints.unlock();
+                var iter = self.deduped_directories.iterator();
+
+                // Check any directories that contain deleted entrypoints
+                while (iter.next()) |deduped_entry| {
+                    if (deleted_entrypoints.entries_by_dir.getPtr(deduped_entry.key_ptr.*)) |entries| {
+                        for (entries.slice()) |*deleted_entrypoint_entry| {
+                            deduped_entry.value_ptr.append(
+                                self.temp_allocator,
+                                EntrypointToProcess{ .entry = deleted_entrypoint_entry.* },
+                            );
+                        }
+                    }
+                }
+            }
+
+            var found_deleted_entrypoints = false;
+
+            // Try to open deleted entrypoints to see if they got added back
+            {
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
+
+                var iter = self.deduped_directories.iterator();
+                while (iter.next()) |deduped_entry| {
+                    const entrypoint_list = deduped_entry.value_ptr;
+                    for (entrypoint_list.slice_mut()) |*entrypoint| {
+                        const pathstr = bun.path.z(entrypoint.entry.abs_path, pathbuf);
+                        const maybe_file = bun.sys.open(pathstr, bun.sys.O.EVTONLY, 0).unwrapOr(bun.invalid_fd);
+                        entrypoint.fd = maybe_file;
+                        if (maybe_file != bun.invalid_fd) {
+                            found_deleted_entrypoints = true;
+                        }
+                    }
+                }
+            }
+
+            if (!found_deleted_entrypoints) return;
+
+            // Lock one last time to remove entries from `dev.deleted_entrypoints` that were added back
+            {
+                const deleted_entrypoints = dev.deleted_entrypoints.lock();
+                defer dev.deleted_entrypoints.unlock();
+
+                var iter = self.deduped_directories.iterator();
+                while (iter.next()) |deduped_entry| {
+                    const dir_path = deduped_entry.key_ptr.*;
+                    const entries_list = deleted_entrypoints.getEntriesForDirectory(dir_path) orelse continue;
+                    for (deduped_entry.value_ptr.slice_mut()) |entrypoint| {
+                        if (entrypoint.fd != bun.FD.invalid) {
+                            deleted_entrypoints.removeEntry(entries_list, entrypoint.entry.abs_path);
+                        }
+                    }
+                    deleted_entrypoints.clearIfEmpty(entries_list, dir_path);
+                }
+            }
+
+            // Finally add files to the `dev.bun_watcher` and `ev.appendFile(...)`
+            var iter = self.deduped_directories.iterator();
+            while (iter.next()) |entry| {
+                const entrypoints = entry.value_ptr;
+                for (entrypoints.slice_mut()) |*entrypoint| {
+                    const fd = entrypoint.fd;
+                    if (fd != bun.FD.invalid) {
+                        entrypoint.fd = bun.FD.invalid;
+
+                        ev.appendFile(dev.allocator, entrypoint.entry.abs_path);
+
+                        // No need to lock since we acquired the lock
+                        // higher in the callstack
+                        _ = dev.bun_watcher.appendFileMaybeLock(
+                            fd,
+                            entrypoint.entry.abs_path,
+                            bun.hash32(entrypoint.entry.abs_path),
+                            entrypoint.entry.loader,
+                            .invalid,
+                            null,
+                            false,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+
+        pub fn addDirectory(self: *Processor, dir_path: []const u8) void {
+            const gop = self.deduped_directories.getOrPut(self.temp_allocator, dir_path) catch bun.outOfMemory();
+            if (!gop.found_existing) {
+                gop.key_ptr.* = dir_path;
+                gop.value_ptr.* = .{};
+            }
+        }
+    };
+
+    pub fn init(allocator: Allocator) DeletedEntrypointWatchlist {
+        return .{
+            .allocator = allocator,
+            .entries_by_dir = .{},
+        };
+    }
+
+    pub fn deinit(self: *DeletedEntrypointWatchlist) void {
+        for (self.entries_by_dir.values()) |*entries| {
+            entries.deinit(self.allocator);
+        }
+        self.entries_by_dir.deinit(self.allocator);
+    }
+
+    pub fn add(self: *DeletedEntrypointWatchlist, abs_path: []const u8, loader: bun.options.Loader) !void {
+        const parent_dir = std.fs.path.dirname(abs_path) orelse abs_path;
+
+        // Get or create the entry list for this directory
+        const gop = try self.entries_by_dir.getOrPut(self.allocator, parent_dir);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = parent_dir;
+            gop.value_ptr.* = .{};
+        }
+
+        // de-dupe, TODO this could be slow for many entrypoints in a directory? (e.g. blog site with 1k pages as entrypoint?)
+        for (gop.value_ptr.slice()) |*entry| {
+            if (bun.strings.eql(entry.abs_path, abs_path)) {
+                return;
+            }
+        }
+
+        gop.value_ptr.append(self.allocator, .{
+            .abs_path = abs_path,
+            .loader = loader,
+        });
+
+        debug.log("Added deleted entrypoint to watchlist: {s} (parent: {s})", .{ abs_path, parent_dir });
+    }
+
+    pub fn removeEntry(_: *DeletedEntrypointWatchlist, entry_list: *bun.SmallList(Entry, 2), abs_path: []const u8) void {
+        for (entry_list.slice(), 0..) |*entry, i| {
+            if (bun.strings.eql(entry.abs_path, abs_path)) {
+                _ = entry_list.swapRemove(@intCast(i));
+                break;
+            }
+        }
+    }
+
+    pub fn getEntriesForDirectory(self: *DeletedEntrypointWatchlist, dir_path: []const u8) ?*bun.SmallList(Entry, 2) {
+        const entry_list = self.entries_by_dir.getPtr(dir_path) orelse return null;
+        return entry_list;
+    }
+
+    pub fn clearIfEmpty(self: *DeletedEntrypointWatchlist, entries: *bun.SmallList(Entry, 2), dir_path: []const u8) void {
+        if (entries.len() == 0) {
+            entries.deinit(self.allocator);
+            _ = self.entries_by_dir.swapRemove(dir_path);
+        }
+    }
+};
+
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
@@ -110,6 +323,9 @@ server_register_update_callback: jsc.Strong.Optional,
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
+/// macOS-specific: Track deleted entrypoints since we can't watch file descriptors for deleted files
+/// Thread-safe access since onFileUpdate runs on watcher thread
+deleted_entrypoints: if (bun.Environment.isMac) bun.threading.GuardedValue(DeletedEntrypointWatchlist, bun.Mutex) else void,
 /// In end-to-end DevServer tests, flakiness was noticed around file watching
 /// and bundling times, where the test harness (bake-harness.ts) would not wait
 /// long enough for processing to complete. Checking client logs, for example,
@@ -328,6 +544,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
         .bun_watcher = undefined,
+        .deleted_entrypoints = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
         .watcher_atomics = undefined,
@@ -339,6 +556,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.allocator = allocator;
     dev.log = .init(allocator);
     dev.deferred_request_pool = .init(allocator);
+    dev.deleted_entrypoints = if (bun.Environment.isMac)
+        bun.threading.GuardedValue(DeletedEntrypointWatchlist, bun.Mutex).init(
+            DeletedEntrypointWatchlist.init(dev.allocator),
+            .{},
+        )
+    else {};
 
     const global = dev.vm.global;
 
@@ -580,6 +803,13 @@ pub fn deinit(dev: *DevServer) void {
             dev.vm.timer.remove(&dev.memory_visualizer_timer),
         .graph_safety_lock = dev.graph_safety_lock.lock(),
         .bun_watcher = dev.bun_watcher.deinit(true),
+        .deleted_entrypoints = if (bun.Environment.isMac) blk: {
+            // Get the value and deinit it
+            const list_ptr = dev.deleted_entrypoints.lock();
+            defer dev.deleted_entrypoints.unlock();
+            list_ptr.deinit();
+            break :blk {};
+        } else {},
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
         .log = dev.log.deinit(),
         .server_fetch_function_callback = dev.server_fetch_function_callback.deinit(),
@@ -1320,6 +1550,15 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     assert(route_bundle.data == .html);
     const html = &route_bundle.data.html;
 
+    // Check if the HTML file was deleted (script_injection_offset would be null)
+    if (html.script_injection_offset.unwrap() == null or html.bundled_html_text == null) {
+        // The HTML file was deleted, return a 404 error
+        debug.log("HTML route requested but file was deleted: route_bundle_index={d}", .{route_bundle_index.get()});
+
+        sendBuiltInNotFound(resp);
+        return;
+    }
+
     const blob = html.cached_response orelse generate: {
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
@@ -1353,8 +1592,15 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
     assert(html.html_bundle.data.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
-    const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
-    const bundled_html = html.bundled_html_text orelse unreachable;
+
+    // This should be checked before calling generateHTMLPayload, but let's be defensive
+    const script_injection_offset = (html.script_injection_offset.unwrap() orelse {
+        @panic("generateHTMLPayload called with null script_injection_offset");
+    }).get();
+
+    const bundled_html = html.bundled_html_text orelse {
+        @panic("generateHTMLPayload called with null bundled_html_text");
+    };
 
     // The bundler records an offsets in development mode, splitting the HTML
     // file into two chunks. DevServer is able to insert style/script tags
@@ -2723,6 +2969,8 @@ pub fn handleParseTaskFailure(
     });
 
     if (err == error.FileNotFound or err == error.ModuleNotFound) {
+        dev.handleEntrypointDeleted(abs_path, graph, bv2);
+
         // Special-case files being deleted. Note that if a file had never
         // existed, resolution would fail first.
         switch (graph) {
@@ -2736,6 +2984,89 @@ pub fn handleParseTaskFailure(
             .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
         }
     }
+}
+
+/// We rely a lot on the files we parse in the bundle graph to know which files
+/// to add to the watcher.
+///
+/// There is one wrinkle with this:
+///
+/// If an entrypoint is deleted it will never get parsed and then never will be
+/// watched
+///
+/// So if we get `error.FileNotFound` on an entrypoint, we'll manually add it to
+/// the watcher to pick up if it got changed again.
+fn handleEntrypointDeleted(dev: *DevServer, abs_path: []const u8, graph_kind: bake.Graph, bv2: *BundleV2) void {
+    _ = bv2;
+    const fd, const loader = switch (graph_kind) {
+        .server, .ssr => out: {
+            const graph = &dev.server_graph;
+            const index = graph.bundled_files.getIndex(abs_path) orelse return;
+            const loader = bun.options.Loader.fromString(abs_path) orelse bun.options.Loader.file;
+            const file = &graph.bundled_files.values()[index];
+            if (file.is_route) {
+                break :out .{ bun.invalid_fd, loader };
+            }
+            return;
+        },
+        .client => out: {
+            const graph = &dev.client_graph;
+            const index = graph.bundled_files.getIndex(abs_path) orelse return;
+            const loader = bun.options.Loader.fromString(abs_path) orelse bun.options.Loader.file;
+            const file = &graph.bundled_files.values()[index];
+            if (file.flags.is_html_route or file.flags.is_hmr_root) {
+                // const dirname = std.fs.path.dirname(abs_path) orelse abs_path;
+                // if (bv2.transpiler.resolver.fs.fs.entries.get(dirname)) |entry| {
+                //     const data = entry.entries.data;
+                //     std.debug.print("LEN: {d}\n", .{data.size});
+                // }
+                break :out .{ bun.invalid_fd, loader };
+            }
+
+            return;
+        },
+    };
+
+    // macOS watches on file descriptors, but we may not have a open file handle
+    // to the deleted file... We need to add it to a list and have the watcher
+    // special case it
+    if (comptime bun.Environment.isMac) {
+        // Add to deleted entrypoints watchlist (thread-safe)
+        const deleted_entrypoints = dev.deleted_entrypoints.lock();
+        defer dev.deleted_entrypoints.unlock();
+
+        deleted_entrypoints.add(abs_path, loader) catch bun.outOfMemory();
+
+        // Also watch the parent directory for changes
+        // TODO: is this needed?
+        const parent_dir = std.fs.path.dirname(abs_path) orelse abs_path;
+        _ = dev.bun_watcher.addDirectory(
+            fd,
+            parent_dir,
+            bun.hash32(parent_dir),
+            false,
+        );
+
+        return;
+    }
+
+    // Linux watches on file paths, so we can just add the deleted file to the
+    // watcher here
+    if (comptime bun.Environment.isLinux) {
+        _ = dev.bun_watcher.addFile(
+            fd,
+            abs_path,
+            bun.hash32(abs_path),
+            loader,
+            bun.invalid_fd,
+            null,
+            false,
+        );
+        return;
+    }
+
+    // We don't do need to do anything on Windows since it recursively watches
+    // the directory
 }
 
 /// Return a log to write resolution failures into.
@@ -3678,6 +4009,14 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
     defer dev.bun_watcher.flushEvictions();
 
+    // macOS: Take note of and de-dupe directories
+    var allocation_scope = bun.AllocationScope.init(dev.allocator);
+    defer allocation_scope.deinit();
+    var sfb = std.heap.stackFallback(if (comptime bun.Environment.isMac) 1024 else 0, allocation_scope.allocator());
+    const temp_allocator = sfb.get();
+    var deleted_entrypoints_processor = DeletedEntrypointWatchlist.Processor.init(temp_allocator);
+    defer deleted_entrypoints_processor.processAndDeinit(dev, ev);
+
     for (events) |event| {
         // TODO: why does this out of bounds when you delete every file in the directory?
         if (event.index >= file_paths.len) continue;
@@ -3699,6 +4038,14 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
+                // macOS watches on FDs, not paths. So if an entrypoint is
+                // deleted we lose its file descriptor. What do we do then?
+                // We'll check if its parent directory changed and test to see
+                // if the file is back again.
+                if (comptime bun.Environment.isMac) {
+                    deleted_entrypoints_processor.addDirectory(file_path);
+                }
+
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {

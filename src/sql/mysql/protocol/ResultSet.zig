@@ -57,9 +57,10 @@ pub const Row = struct {
             allocator.free(cells);
         }
 
-        for (cells) |*value| {
+        for (cells, 0..) |*value, index| {
             if (decodeLengthInt(reader.peek())) |result| {
                 reader.skip(result.bytes_read);
+                const column = this.columns[index];
                 if (result.value == 0xfb) { // NULL value
                     value.* = SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 } else {
@@ -69,6 +70,17 @@ pub const Row = struct {
                     const slice = string_data.slice();
                     value.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
                 }
+                value.index = switch (column.name_or_index) {
+                    // The indexed columns can be out of order.
+                    .index => |i| i,
+
+                    else => @intCast(index),
+                };
+                value.isIndexedColumn = switch (column.name_or_index) {
+                    .duplicate => 2,
+                    .index => 1,
+                    .name => 0,
+                };
             } else {
                 return error.InvalidResultRow;
             }
@@ -110,6 +122,17 @@ pub const Row = struct {
 
             const column = this.columns[i];
             value.* = try decodeBinaryValue(column.column_type, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.index = switch (column.name_or_index) {
+                // The indexed columns can be out of order.
+                .index => |idx| idx,
+
+                else => @intCast(i),
+            };
+            value.isIndexedColumn = switch (column.name_or_index) {
+                .duplicate => 2,
+                .index => 1,
+                .name => 0,
+            };
         }
 
         this.values = cells;

@@ -12,7 +12,19 @@ pub fn executeQuery(
 
     try packet.end();
 }
+pub fn prepareRequest(
+    query: []const u8,
+    comptime Context: type,
+    writer: NewWriter(Context),
+) !void {
+    var packet = try writer.start(0);
+    try writer.int1(@intFromEnum(CommandType.COM_STMT_PREPARE));
+    try writer.write(query);
+
+    try packet.end();
+}
 
 const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
 const CommandType = @import("./protocol/CommandType.zig").CommandType;
 const encodeLengthInt = @import("./protocol/EncodeInt.zig").encodeLengthInt;
+const ExecutePrepareStatement = @import("./protocol/PreparedStatement.zig").Execute;

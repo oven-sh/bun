@@ -26,7 +26,6 @@ pub const deref = RefCount.deref;
 pub const Status = enum(u8) {
     /// The query was just enqueued, statement status can be checked for more details
     pending,
-    written,
     /// The query is being bound to the statement
     binding,
     /// The query is running
@@ -104,6 +103,7 @@ pub fn onWriteFail(
 }
 
 pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) !void {
+    var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
         .param_types = statement.params,
@@ -112,7 +112,13 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
     defer execute.deinit();
     try this.bind(&execute, globalObject);
     try execute.write(writer);
-    this.status = .written;
+    this.status = .running;
+    // they are no true pipelining in MySQL using this protocol
+    // TODO: implement X Protocol
+    // we will reuse this because each result set will return again all columns
+    statement.columns_received = 0;
+    statement.header_received = false;
+    try packet.end();
 }
 
 pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
@@ -202,7 +208,7 @@ pub fn allowGC(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
     js.targetSetCached(thisValue, globalObject, .zero);
 }
 
-pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
+pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
     this.ref();
     defer this.deref();
 
@@ -224,7 +230,7 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
-    const tag = CommandTag.init(command_tag_str);
+    const tag: CommandTag = .{ .SELECT = result_count };
 
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
@@ -363,7 +369,10 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     const writer = connection.writer();
     // We need a strong reference to the query so that it doesn't get GC'd
     this.ref();
+    const can_execute = connection.canExecuteQuery();
     if (this.flags.simple) {
+        // simple queries are always text in MySQL
+        this.flags.binary = false;
         debug("executeQuery", .{});
 
         const stmt = bun.default_allocator.create(MySQLStatement) catch {
@@ -377,7 +386,6 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         };
         this.statement = stmt;
 
-        const can_execute = !connection.hasQueryRunning();
         if (can_execute) {
             connection.sequence_id = 0;
             MySQLRequest.executeQuery(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
@@ -415,6 +423,8 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         }
         return .js_undefined;
     }
+    // prepared statements are always binary in MySQL
+    this.flags.binary = true;
 
     const columns_value = js.columnsGetCached(callframe.this()) orelse .js_undefined;
 
@@ -431,7 +441,6 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         return globalObject.throwError(err, "failed to allocate statement");
     };
 
-    const has_params = signature.fields.len > 0;
     var did_write = false;
 
     enqueue: {
@@ -441,16 +450,19 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
             signature.deinit();
             signature = Signature{};
 
-            if (has_params and this.statement.?.status == .parsing) {
-                // if it has params, we need to wait for PrepareOk to be received before we can write the data
-            } else {
-                this.flags.binary = true;
+            if (this.statement.?.status == .parsing) {
+                // we always need the id to be able to execute the query
+            } else if (can_execute) {
                 debug("doRun: binding and executing query", .{});
                 this.bindAndExecute(writer, this.statement.?, globalObject) catch |err| {
                     if (!globalObject.hasException())
                         return globalObject.throwError(err, "failed to bind and execute query");
                     return error.JSError;
                 };
+                connection.sequence_id = 0;
+                connection.pipelined_requests += 1;
+                connection.flags.is_ready_for_query = false;
+                connection.flushDataAndResetTimeout();
                 did_write = true;
             }
 
@@ -464,25 +476,36 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         stmt.* = .{
             .signature = signature,
             .ref_count = .initExactRefs(2),
-            .status = .parsing,
+            .status = .pending,
             .statement_id = 0,
         };
         this.statement = stmt;
         entry.value_ptr.* = stmt;
     }
 
-    this.status = if (did_write) .binding else .pending;
+    this.status = if (did_write) .running else .pending;
     try connection.requests.writeItem(this);
-    debug("doRun: wrote query to connection", .{});
     this.thisValue.upgrade(globalObject);
 
     js.targetSetCached(this_value, globalObject, query);
+
     if (did_write) {
         connection.flushDataAndResetTimeout();
+    } else if (can_execute) {
+        debug("doRun: preparing query", .{});
+
+        this.statement.?.status = .parsing;
+        MySQLRequest.prepareRequest(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
+            this.deref();
+            return globalObject.throwError(err, "failed to prepare query");
+        };
+        connection.flags.waiting_to_prepare = true;
+        connection.sequence_id = 0;
+        connection.flushDataAndResetTimeout();
     } else {
+        debug("doRun: wrote query to queue", .{});
         connection.resetConnectionTimeout();
     }
-
     return .js_undefined;
 }
 

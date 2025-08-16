@@ -870,18 +870,6 @@ pub const Putter = struct {
     count: usize = 0,
     globalObject: *jsc.JSGlobalObject,
 
-    extern fn JSC__constructObjectFromDataCell(
-        *jsc.JSGlobalObject,
-        JSValue,
-        JSValue,
-        [*]SQLDataCell,
-        u32,
-        SQLDataCell.Flags,
-        u8, // result_mode
-        ?[*]jsc.JSObject.ExternColumnIdentifier, // names
-        u32, // names count
-    ) JSValue;
-
     pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
         var names_count: u32 = 0;
@@ -892,7 +880,7 @@ pub const Putter = struct {
             }
         }
 
-        return JSC__constructObjectFromDataCell(
+        return SQLDataCell.JSC__constructObjectFromDataCell(
             globalObject,
             array,
             structure,

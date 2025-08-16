@@ -11,6 +11,9 @@ column_length: u32 = 0,
 column_type: types.FieldType = .MYSQL_TYPE_NULL,
 flags: ColumnFlags = .{},
 decimals: u8 = 0,
+name_or_index: ColumnIdentifier = .{
+    .name = .{ .empty = {} },
+},
 
 pub const ColumnFlags = packed struct {
     NOT_NULL: bool = false,
@@ -74,6 +77,8 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.flags = ColumnFlags.fromInt(try reader.int(u16));
     this.decimals = try reader.int(u8);
 
+    this.name_or_index = try ColumnIdentifier.init(this.name);
+
     // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
     // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
     reader.skip(2);
@@ -88,3 +93,4 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const Data = @import("../../shared/Data.zig").Data;
 const types = @import("../MySQLTypes.zig");
+const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;

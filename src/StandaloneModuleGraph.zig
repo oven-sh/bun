@@ -6,7 +6,7 @@ pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
-    compile_argv: []const u8 = "",
+    compile_exec_argv: []const u8 = "",
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -280,7 +280,7 @@ pub const StandaloneModuleGraph = struct {
         byte_count: usize = 0,
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
-        compile_argv_ptr: bun.StringPointer = .{},
+        compile_exec_argv_ptr: bun.StringPointer = .{},
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -325,16 +325,12 @@ pub const StandaloneModuleGraph = struct {
             .bytes = raw_bytes[0..offsets.byte_count],
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
-            .compile_argv = sliceToZ(raw_bytes, offsets.compile_argv_ptr),
+            .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
         };
     }
 
     fn sliceTo(bytes: []const u8, ptr: bun.StringPointer) []const u8 {
         if (ptr.length == 0) return "";
-
-        // Validate offset is within bounds
-        if (ptr.offset >= bytes.len) return "";
-        if (ptr.offset + ptr.length > bytes.len) return "";
 
         return bytes[ptr.offset..][0..ptr.length];
     }
@@ -342,24 +338,10 @@ pub const StandaloneModuleGraph = struct {
     fn sliceToZ(bytes: []const u8, ptr: bun.StringPointer) [:0]const u8 {
         if (ptr.length == 0) return "";
 
-        // Validate offset is within bounds
-        if (ptr.offset >= bytes.len) {
-            if (comptime Environment.isDebug) {
-                bun.Output.debugWarn("sliceToZ: offset {d} >= bytes.len {d}", .{ ptr.offset, bytes.len });
-            }
-            return "";
-        }
-        if (ptr.offset + ptr.length > bytes.len) {
-            if (comptime Environment.isDebug) {
-                bun.Output.debugWarn("sliceToZ: offset+length {d} > bytes.len {d}", .{ ptr.offset + ptr.length, bytes.len });
-            }
-            return "";
-        }
-
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -400,7 +382,7 @@ pub const StandaloneModuleGraph = struct {
         string_builder.cap += trailer.len;
         string_builder.cap += 16;
         string_builder.cap += @sizeOf(Offsets);
-        string_builder.countZ(compile_argv);
+        string_builder.countZ(compile_exec_argv);
 
         try string_builder.allocate(allocator);
 
@@ -483,9 +465,9 @@ pub const StandaloneModuleGraph = struct {
         }
 
         const offsets = Offsets{
-            .compile_argv_ptr = string_builder.appendCountZ(compile_argv),
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
+            .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
             .byte_count = string_builder.len,
         };
 
@@ -908,9 +890,9 @@ pub const StandaloneModuleGraph = struct {
         output_format: bun.options.Format,
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
-        compile_argv: []const u8,
+        compile_exec_argv: []const u8,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
             return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to generate module graph bytes: {s}", .{@errorName(err)}) catch "failed to generate module graph bytes");
         };
         if (bytes.len == 0) return CompileResult.fail("no output files to bundle");

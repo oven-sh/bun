@@ -433,7 +433,7 @@ pub const BuildCommand = struct {
                     this_transpiler.options.output_format,
                     ctx.bundler_options.windows_hide_console,
                     ctx.bundler_options.windows_icon,
-                    ctx.bundler_options.compile_argv orelse "",
+                    ctx.bundler_options.compile_exec_argv orelse "",
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

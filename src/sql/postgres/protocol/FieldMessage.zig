@@ -55,7 +55,7 @@ pub const FieldMessage = union(FieldType) {
         return switch (tag) {
             .severity => FieldMessage{ .severity = String.cloneUTF8(message) },
             // Ignore this one for now.
-            // .localized_severity => FieldMessage{ .localized_severity = String.createUTF8(message) },
+            // .localized_severity => FieldMessage{ .localized_severity = String.cloneUTF8(message) },
             .code => FieldMessage{ .code = String.cloneUTF8(message) },
             .message => FieldMessage{ .message = String.cloneUTF8(message) },
             .detail => FieldMessage{ .detail = String.cloneUTF8(message) },

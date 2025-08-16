@@ -276,7 +276,7 @@ pub const BunTest = struct {
         group.begin(@src());
         defer group.end();
 
-        if (this.in_run_loop) return bun.assert(false); // already running
+        if (this.in_run_loop) return; // already running. this can happen because of waitForPromise. the promise will resolve inside the waitForPromise and call run() from bunTestThenOrCatch.
         this.in_run_loop = true;
         defer this.in_run_loop = false;
 

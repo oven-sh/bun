@@ -223,6 +223,6 @@ pub const MaybeOwnedWithOpts = @import("./owned/maybe.zig").MaybeOwned;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const meta = @import("./owned/meta.zig");
+const meta = @import("./meta.zig");
 const AddConst = meta.AddConst;
 const PointerInfo = meta.PointerInfo;

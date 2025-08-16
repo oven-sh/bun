@@ -135,7 +135,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const NullableAllocator = bun.allocators.NullableAllocator;
 
-const meta = @import("./meta.zig");
+const meta = @import("../meta.zig");
 const AddConst = meta.AddConst;
 const PointerInfo = meta.PointerInfo;
 

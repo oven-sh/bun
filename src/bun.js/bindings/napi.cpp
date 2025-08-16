@@ -2823,7 +2823,10 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (function != nullptr && !env->isVMTerminating()) [[likely]] {
+    // Always attempt removal like Node.js (no VM terminating check)
+    // Node.js has no such check in RemoveEnvironmentCleanupHook
+    // See: node/src/api/hooks.cc:142-143
+    if (function != nullptr) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 
@@ -2832,14 +2835,18 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 
 extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_cleanup_hook_handle handle)
 {
-    ASSERT(handle != nullptr);
-    napi_env env = handle->env;
+    // Node.js returns napi_invalid_arg for NULL handle
+    // See: node/src/node_api.cc:849-855
+    if (handle == nullptr) {
+        return napi_invalid_arg;
+    }
 
+    napi_env env = handle->env;
     NAPI_PREAMBLE(env);
 
-    if (!env->isVMTerminating()) {
-        env->removeAsyncCleanupHook(handle);
-    }
+    // Always attempt removal like Node.js (no VM terminating check)
+    // Node.js has no such check in napi_remove_async_cleanup_hook
+    env->removeAsyncCleanupHook(handle);
 
     NAPI_RETURN_SUCCESS(env);
 }

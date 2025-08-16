@@ -437,6 +437,7 @@ pub const BuildCommand = struct {
                     this_transpiler.options.output_format,
                     ctx.bundler_options.windows_hide_console,
                     ctx.bundler_options.windows_icon,
+                    ctx.bundler_options.compile_argv orelse "",
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);
@@ -446,6 +447,10 @@ pub const BuildCommand = struct {
                     Output.printErrorln("{s}", .{result.error_message orelse "failed to create executable"});
                     Global.exit(1);
                 }
+
+                );
+
+                    
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,

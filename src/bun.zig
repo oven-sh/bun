@@ -3759,8 +3759,8 @@ pub const safety = @import("./safety.zig");
 pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
     _ = globalObject;
     _ = callFrame;
-    const use_system_ca = @extern(*bool, .{ .name = "Bun__Node__UseSystemCA" });
-    return jsc.JSValue.jsBoolean(use_system_ca.*);
+    const Arguments = @import("./cli/Arguments.zig");
+    return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
 
 const CopyFile = @import("./copy_file.zig");

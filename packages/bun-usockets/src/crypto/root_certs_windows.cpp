@@ -7,6 +7,7 @@
 
 // Forward declaration to avoid including OpenSSL headers here
 // This prevents conflicts with Windows macros like X509_NAME
+// Note: We don't use STACK_OF macro here since we don't have OpenSSL headers
 
 // Structure to hold raw certificate data
 struct RawCertificate {
@@ -42,19 +43,17 @@ static void LoadRawCertsFromStore(std::vector<RawCertificate>& raw_certs,
 
 // Main function to load raw system certificates on Windows
 // Returns certificates as raw DER data to avoid OpenSSL header conflicts
-extern "C" void us_load_system_certificates_windows_raw(
-    std::vector<RawCertificate>* raw_certs) {
-  if (!raw_certs) return;
-
+extern void us_load_system_certificates_windows_raw(
+    std::vector<RawCertificate>& raw_certs) {
   // Load from Current User stores
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"ROOT");
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"TrustedPeople");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"ROOT");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_CURRENT_USER, L"TrustedPeople");
   
   // Load from Local Machine stores (system-wide certificates)
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"ROOT");
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"CA");
-  LoadRawCertsFromStore(*raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"TrustedPeople");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"ROOT");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"CA");
+  LoadRawCertsFromStore(raw_certs, CERT_SYSTEM_STORE_LOCAL_MACHINE, L"TrustedPeople");
 }
 
 #endif // _WIN32

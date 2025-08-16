@@ -1267,7 +1267,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
-export var Bun__Node__UseSystemCA = false;
+pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;
 

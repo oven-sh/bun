@@ -45,7 +45,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
     auto size = sk_X509_num(root_extra_cert_instances);
     if (size < 0) size = 0; // root_extra_cert_instances is nullptr
 
-    auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+    JSC::MarkedArgumentBuffer args;
     for (auto i = 0; i < size; i++) {
         BIO* bio = BIO_new(BIO_s_mem());
         if (!bio) {
@@ -66,10 +66,18 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        args.append(JSC::jsString(vm, str));
         BIO_free(bio);
     }
 
+    if (args.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto rootCertificates = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
@@ -83,7 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     auto size = sk_X509_num(root_system_cert_instances);
     if (size < 0) size = 0; // root_system_cert_instances is nullptr
 
-    auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+    JSC::MarkedArgumentBuffer args;
     for (auto i = 0; i < size; i++) {
         BIO* bio = BIO_new(BIO_s_mem());
         if (!bio) {
@@ -108,10 +116,18 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        args.append(JSC::jsString(vm, str));
         BIO_free(bio);
     }
 
+    if (args.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto rootCertificates = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 

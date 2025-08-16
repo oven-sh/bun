@@ -2,13 +2,13 @@ import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  // Test that the --compile-argv flag works for both runtime processing and execArgv
-  itBundled("compile/CompileArgvDualBehavior", {
+  // Test that the --compile-exec-argv flag works for both runtime processing and execArgv
+  itBundled("compile/CompileExecArgvDualBehavior", {
     compile: true,
-    compileArgv: "--title=CompileArgvDualBehavior --smol",
+    compileArgv: "--title=CompileExecArgvDualBehavior --smol",
     files: {
       "/entry.ts": /* js */ `
-        // Test that --compile-argv both processes flags AND populates execArgv
+        // Test that --compile-exec-argv both processes flags AND populates execArgv
         console.log("execArgv:", JSON.stringify(process.execArgv));
         console.log("argv:", JSON.stringify(process.argv));
 
@@ -22,8 +22,8 @@ describe("bundler", () => {
           process.exit(1);
         }
         
-        if (process.execArgv.findIndex(arg => arg === "--title=CompileArgvDualBehavior") === -1) {
-          console.error("FAIL: --title=CompileArgvDualBehavior not found in execArgv");
+        if (process.execArgv.findIndex(arg => arg === "--title=CompileExecArgvDualBehavior") === -1) {
+          console.error("FAIL: --title=CompileExecArgvDualBehavior not found in execArgv");
           process.exit(1);
         }
 
@@ -32,8 +32,8 @@ describe("bundler", () => {
           process.exit(1);
         }
 
-        if (process.title !== "CompileArgvDualBehavior") {
-          console.error("FAIL: process.title mismatch. Expected: CompileArgvDualBehavior, Got:", process.title);
+        if (process.title !== "CompileExecArgvDualBehavior") {
+          console.error("FAIL: process.title mismatch. Expected: CompileExecArgvDualBehavior, Got:", process.title);
           process.exit(1);
         }
 

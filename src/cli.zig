@@ -420,7 +420,7 @@ pub const Command = struct {
             // Compile options
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
-            compile_argv: ?[]const u8 = null,
+            compile_exec_argv: ?[]const u8 = null,
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
         };
@@ -639,9 +639,9 @@ pub const Command = struct {
                 var offset_for_passthrough: usize = if (bun.argv.len > 1) 1 else 0;
 
                 const ctx: *ContextData = brk: {
-                    if (graph.compile_argv.len > 0) {
+                    if (graph.compile_exec_argv.len > 0) {
                         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                        try bun.appendOptionsEnv(graph.compile_argv, &argv_list, bun.default_allocator);
+                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
                         offset_for_passthrough += (argv_list.items.len -| bun.argv.len);
                         bun.argv = argv_list.items;
 

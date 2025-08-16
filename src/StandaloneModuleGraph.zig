@@ -366,7 +366,7 @@ pub const StandaloneModuleGraph = struct {
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
-        for (output_files) |output_file| {
+        for (output_files) |*output_file| {
             string_builder.countZ(output_file.dest_path);
             string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
@@ -413,7 +413,7 @@ pub const StandaloneModuleGraph = struct {
         var source_map_arena = bun.ArenaAllocator.init(allocator);
         defer source_map_arena.deinit();
 
-        for (output_files) |output_file| {
+        for (output_files) |*output_file| {
             if (!output_file.output_kind.isFileInStandaloneMode()) {
                 continue;
             }
@@ -483,9 +483,9 @@ pub const StandaloneModuleGraph = struct {
         }
 
         const offsets = Offsets{
+            .compile_argv_ptr = string_builder.appendCountZ(compile_argv),
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
-            .compile_argv_ptr = string_builder.appendCountZ(compile_argv),
             .byte_count = string_builder.len,
         };
 
@@ -514,16 +514,18 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool = false,
     };
 
-    pub const CompileResult = struct {
-        success: bool,
-        error_message: ?[]const u8 = null,
-
-        pub fn ok() CompileResult {
-            return .{ .success = true };
-        }
+    pub const CompileResult = union(enum) {
+        success: void,
+        error_message: []const u8,
 
         pub fn fail(msg: []const u8) CompileResult {
-            return .{ .success = false, .error_message = msg };
+            return .{ .error_message = msg };
+        }
+
+        pub fn deinit(this: *const @This()) void {
+            if (this.* == .error_message) {
+                bun.default_allocator.free(this.error_message);
+            }
         }
     };
 
@@ -663,6 +665,7 @@ pub const StandaloneModuleGraph = struct {
                 cleanup(zname, fd);
                 Global.exit(1);
             };
+
             break :brk fd;
         };
 
@@ -911,7 +914,9 @@ pub const StandaloneModuleGraph = struct {
             return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to generate module graph bytes: {s}", .{@errorName(err)}) catch "failed to generate module graph bytes");
         };
         if (bytes.len == 0) return CompileResult.fail("no output files to bundle");
+        defer allocator.free(bytes);
 
+        var free_self_exe = false;
         const self_exe = if (target.isDefault())
             bun.selfExePath() catch |err| {
                 return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to get self executable path: {s}", .{@errorName(err)}) catch "failed to get self executable path");
@@ -939,9 +944,12 @@ pub const StandaloneModuleGraph = struct {
                 };
             }
 
-            break :blk allocator.dupeZ(u8, dest_z) catch {
-                return CompileResult.fail("failed to copy executable path");
-            };
+            free_self_exe = true;
+            break :blk allocator.dupeZ(u8, dest_z) catch bun.outOfMemory();
+        };
+
+        defer if (free_self_exe) {
+            allocator.free(self_exe);
         };
 
         const fd = inject(
@@ -951,6 +959,11 @@ pub const StandaloneModuleGraph = struct {
             target,
         );
         bun.debugAssert(fd.kind == .system);
+
+        if (Environment.isPosix) {
+            // Set executable permissions (0o755 = rwxr-xr-x) - makes it executable for owner, readable/executable for group and others
+            _ = Syscall.fchmod(fd, 0o755);
+        }
 
         if (Environment.isWindows) {
             var outfile_buf: bun.OSPathBuffer = undefined;
@@ -979,7 +992,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.debug("Warning: Failed to set Windows icon for executable: {s}", .{@errorName(err)});
                 };
             }
-            return CompileResult.ok();
+            return .success;
         }
 
         var buf: bun.PathBuffer = undefined;
@@ -1010,7 +1023,7 @@ pub const StandaloneModuleGraph = struct {
             }
         };
 
-        return CompileResult.ok();
+        return .success;
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {

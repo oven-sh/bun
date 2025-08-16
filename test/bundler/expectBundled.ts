@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader, CompileBuildOptions } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
@@ -148,7 +148,7 @@ export interface BundlerTestInput {
   /** Use when doing something weird with entryPoints and you need to check other output paths. */
   outputPaths?: string[];
   /** Use --compile */
-  compile?: boolean;
+  compile?: boolean | string | CompileBuildOptions;
   /** Use --compile-argv to prepend arguments to standalone executable */
   compileArgv?: string | string[];
 
@@ -1024,6 +1024,19 @@ function expectBundled(
       if (!ESBUILD) {
         const buildOutDir = useOutFile ? path.dirname(outfile!) : outdir!;
 
+        if (outfile && compile) {
+          if (typeof compile === "boolean" && compile) {
+            compile = {
+              outfile: outfile,
+            };
+          } else if (typeof compile === "string") {
+            compile = {
+              target: compile,
+              outfile: outfile,
+            };
+          }
+        }
+
         const buildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
@@ -1051,6 +1064,7 @@ function expectBundled(
           drop,
           define: define ?? {},
           throw: false,
+          compile,
         } as BuildConfig;
 
         if (dotenv) {

@@ -1,15 +1,16 @@
-const CompileTarget = @This();
-
 /// Used for `bun build --compile`
 ///
 /// This downloads and extracts the bun binary for the target platform
 /// It uses npm to download the bun binary from the npm registry
 /// It stores the downloaded binary into the bun install cache.
 ///
+const CompileTarget = @This();
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const strings = bun.strings;
 const Output = bun.Output;
+const jsc = bun.jsc;
 
 os: Environment.OperatingSystem = Environment.os,
 arch: Environment.Architecture = Environment.arch,
@@ -449,6 +450,15 @@ pub fn from(input_: []const u8) CompileTarget {
     };
 }
 
+// Exists for consistentcy with values.
+pub fn defineKeys(_: *const CompileTarget) []const []const u8 {
+    return &.{
+        "process.platform",
+        "process.arch",
+        "process.versions.bun",
+    };
+}
+
 pub fn defineValues(this: *const CompileTarget) []const []const u8 {
     // Use inline else to avoid extra allocations.
     switch (this.os) {
@@ -469,6 +479,28 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
             else => @panic("TODO"),
         },
     }
+}
+
+pub fn fromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!CompileTarget {
+    const slice = try value.toSlice(global, bun.default_allocator);
+    defer slice.deinit();
+    if (!strings.hasPrefixComptime(slice.slice(), "bun-")) {
+        return global.throwInvalidArguments("Expected compile target to start with 'bun-', got {s}", .{slice.slice()});
+    }
+
+    return fromSlice(global, slice.slice());
+}
+
+pub fn fromSlice(global: *jsc.JSGlobalObject, slice_with_bun_prefix: []const u8) bun.JSError!CompileTarget {
+    const slice = slice_with_bun_prefix["bun-".len..];
+    const target_parsed = tryFrom(slice) catch {
+        return global.throwInvalidArguments("Unknown compile target: {s}", .{slice_with_bun_prefix});
+    };
+    if (!target_parsed.isSupported()) {
+        return global.throwInvalidArguments("Unsupported compile target: {s}", .{slice_with_bun_prefix});
+    }
+
+    return target_parsed;
 }
 
 const std = @import("std");

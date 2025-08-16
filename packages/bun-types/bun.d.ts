@@ -2319,18 +2319,19 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  type CompileTarget =
-    | "darwin-aarch64"
-    | "darwin-x64"
-    | "darwin-x64-baseline"
-    | "linux-aarch64"
-    | "linux-x64"
-    | "linux-x64-baseline"
-    | "linux-aarch64-musl"
-    | "linux-x64-musl"
-    | "linux-x64-musl-baseline"
-    | "windows-x64"
-    | "windows-x64-baseline";
+  namespace _BunBuildInterface {
+    type Architecture = "x64" | "arm64";
+    type Libc = "glibc" | "musl";
+    type SIMD = "baseline" | "modern";
+    type Target =
+      | `bun-darwin-${Architecture}`
+      | `bun-darwin-x64-${SIMD}`
+      | `bun-linux-${Architecture}`
+      | `bun-linux-${Architecture}-${Libc}`
+      | "bun-windows-x64"
+      | `bun-windows-x64-${SIMD}`
+      | `bun-linux-x64-${SIMD}-${Libc}`;
+  }
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
@@ -2521,23 +2522,20 @@ declare module "bun" {
      * ```
      */
     tsconfig?: string;
+
+    outdir?: string;
   }
 
-  // Regular build config - uses outdir for output directory
-  interface RegularBuildConfig extends BuildConfigBase {
-    /**
-     * Output directory for bundled files
-     */
-    outdir?: string;
-
-    /**
-     * Enable code splitting
-     * @default true
-     */
-    splitting?: boolean;
-
-    compile?: never;
-    outfile?: never;
+  interface CompileBuildOptions {
+    target?: _BunBuildInterface.Target;
+    execArgv?: string[];
+    executablePath?: string;
+    outfile?: string;
+    windows?: {
+      hideConsole?: boolean;
+      icon?: string;
+      title?: string;
+    };
   }
 
   // Compile build config - uses outfile for executable output
@@ -2553,7 +2551,9 @@ declare module "bun" {
      * // Create executable for current platform
      * await Bun.build({
      *   entrypoints: ['./app.js'],
-     *   compile: true,
+     *   compile: {
+     *     target: 'linux-x64',
+     *   },
      *   outfile: './my-app'
      * });
      *
@@ -2565,23 +2565,13 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: true | CompileTarget;
-
-    /**
-     * Output path for the compiled executable
-     * Only available when `compile` is set
-     */
-    outfile?: string;
-
-    // These options are not allowed with compile
-    outdir?: never;
-    splitting?: never;
+    compile: boolean | _BunBuildInterface.Target | CompileBuildOptions;
   }
 
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  type BuildConfig = RegularBuildConfig | CompileBuildConfig;
+  type BuildConfig = BuildConfigBase | CompileBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt

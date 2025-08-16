@@ -1,10 +1,4 @@
 pub const BuildCommand = struct {
-    const compile_define_keys = &.{
-        "process.platform",
-        "process.arch",
-        "process.versions.bun",
-    };
-
     pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
@@ -26,7 +20,9 @@ pub const BuildCommand = struct {
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
+            const compile_define_keys = compile_target.defineKeys();
             const compile_define_values = compile_target.defineValues();
+
             if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
@@ -443,8 +439,8 @@ pub const BuildCommand = struct {
                     Global.exit(1);
                 };
 
-                if (!result.success) {
-                    Output.printErrorln("{s}", .{result.error_message orelse "failed to create executable"});
+                if (result != .success) {
+                    Output.printErrorln("{s}", .{result.error_message});
                     Global.exit(1);
                 }
 

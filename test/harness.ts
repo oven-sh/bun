@@ -264,6 +264,24 @@ export function tempDirWithFiles(
   return base;
 }
 
+class DisposableString extends String {
+  [Symbol.dispose]() {
+    fs.rmSync(this + "", { recursive: true, force: true });
+  }
+  [Symbol.asyncDispose]() {
+    return fs.promises.rm(this + "", { recursive: true, force: true });
+  }
+}
+
+export function tempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): DisposableString {
+  const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
+
+  return new DisposableString(base);
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);

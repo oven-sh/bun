@@ -284,8 +284,8 @@ struct RawCertificate {
 };
 
 // Defined in root_certs_windows.cpp - loads raw certificate data
-extern "C" void us_load_system_certificates_windows_raw(
-    std::vector<RawCertificate>* raw_certs);
+extern void us_load_system_certificates_windows_raw(
+    std::vector<RawCertificate>& raw_certs);
 
 // Convert raw Windows certificates to OpenSSL X509 format
 void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
@@ -296,7 +296,7 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
   
   // Load raw certificates from Windows stores
   std::vector<RawCertificate> raw_certs;
-  us_load_system_certificates_windows_raw(&raw_certs);
+  us_load_system_certificates_windows_raw(raw_certs);
   
   // Convert each raw certificate to X509
   for (const auto& raw_cert : raw_certs) {

@@ -70,12 +70,16 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             var i: usize = 0;
             while (i < graph.compile_argv.len) {
                 // Skip whitespace
-                while (i < graph.compile_argv.len and std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
+                while (i < graph.compile_argv.len and std.ascii.isWhitespace(graph.compile_argv[i])) {
+                    i += 1;
+                }
                 if (i >= graph.compile_argv.len) break;
 
                 const start = i;
                 // Find end of argument (until next whitespace or end)
-                while (i < graph.compile_argv.len and !std.ascii.isWhitespace(graph.compile_argv[i])) : (i += 1) {}
+                while (i < graph.compile_argv.len and !std.ascii.isWhitespace(graph.compile_argv[i])) {
+                    i += 1;
+                }
 
                 const arg = graph.compile_argv[start..i];
                 if (arg.len > 0) {

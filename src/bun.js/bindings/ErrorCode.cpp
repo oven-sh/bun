@@ -2368,6 +2368,26 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
     }
 
+    case Bun::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(21);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Response body's content-length of "_s, str0, " byte(s) does not match the content-length of "_s, str1, " byte(s) set in header"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, message));
+    }
+
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto arg0 = callFrame->argument(1);
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), JSC::jsString(vm, WTF::String("no cipher match"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), JSC::jsString(vm, WTF::String("SSL routines"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "cipher"_s), arg0);
+        return JSC::JSValue::encode(err);
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2428,17 +2448,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
-    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
-        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
-
-        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
-
-        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
-
-        return JSC::JSValue::encode(err);
-    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:
@@ -2501,6 +2510,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
     case ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+    case ErrorCode::ERR_HTTP_TRAILER_INVALID:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
 
     default: {
         break;

@@ -1,7 +1,7 @@
 const { validateInteger } = require("internal/validators");
-const { Agent, globalAgent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { Agent, globalAgent } = require("node:_http_agent");
 const { ClientRequest } = require("node:_http_client");
-const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
+const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Server, ServerResponse } = require("node:_http_server");
@@ -58,7 +58,7 @@ const http_exports = {
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
     validateInteger(max, "max", 1);
-    $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
+    parsers.max = max;
   },
   globalAgent,
   ClientRequest,

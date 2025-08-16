@@ -950,7 +950,9 @@ pub const Installer = struct {
                         .rel_buf = rel_buf,
                     };
 
-                    bin_linker.link(false);
+                    if (this.installer.manager.options.bin_links) {
+                        bin_linker.link(false);
+                    }
 
                     if (bin_linker.err) |err| {
                         return .failure(.{ .binaries = err });
@@ -1183,7 +1185,9 @@ pub const Installer = struct {
                 .rel_buf = link_rel_buf,
             };
 
-            bin_linker.link(false);
+            if (this.manager.options.bin_links) {
+                bin_linker.link(false);
+            }
 
             if (bin_linker.err) |err| {
                 return err;

@@ -71,6 +71,9 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+/// whether to create symlinks (or .cmd shims on Windows) for package executables
+bin_links: bool = true,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -277,6 +280,10 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.bin_links) |bin_links| {
+            this.bin_links = bin_links;
         }
 
         if (config.cafile) |cafile| {
@@ -541,6 +548,10 @@ pub fn load(
 
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (cli.bin_links) |bin_links| {
+            this.bin_links = bin_links;
         }
 
         const disable_progress_bar = default_disable_progress_bar or cli.no_progress;

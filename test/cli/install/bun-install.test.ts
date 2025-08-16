@@ -8595,3 +8595,104 @@ test("non-optional dependencies need to be resolvable in text lockfile", async (
 
   expect(await exited).toBe(1);
 });
+
+it("should respect --bin-links and --no-bin-links flags", async () => {
+  const package_json = JSON.stringify({
+    name: "test-bin-links",
+    dependencies: {
+      "prettier": "^2.0.0",
+    },
+  });
+
+  await writeFile(join(package_dir, "package.json"), package_json);
+
+  // Test with --no-bin-links
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-bin-links", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const exitCode = await exited;
+    const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+
+    if (exitCode !== 0) {
+      console.log("STDERR:", stderrText);
+      console.log("STDOUT:", stdoutText);
+    }
+
+    expect(exitCode).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
+  }
+
+  // Test with --bin-links (default behavior)
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--bin-links", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const exitCode = await exited;
+    expect(exitCode).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(true);
+    expect(await exists(join(package_dir, "node_modules", ".bin", "prettier"))).toBe(true);
+  }
+});
+
+it("should respect binLinks setting from bunfig.toml", async () => {
+  const package_json = JSON.stringify({
+    name: "test-bin-links-config",
+    dependencies: {
+      "prettier": "^2.0.0",
+    },
+  });
+
+  await writeFile(join(package_dir, "package.json"), package_json);
+
+  // Test with binLinks = false in bunfig.toml
+  {
+    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbinLinks = false");
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(false);
+  }
+
+  // Test with binLinks = true in bunfig.toml
+  {
+    await writeFile(join(package_dir, "bunfig.toml"), "[install]\nbinLinks = true");
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--registry", "https://registry.npmjs.org/"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(package_dir, "node_modules", ".bin"))).toBe(true);
+    expect(await exists(join(package_dir, "node_modules", ".bin", "prettier"))).toBe(true);
+  }
+
+  // Clean up bunfig.toml
+  await rm(join(package_dir, "bunfig.toml"), { force: true });
+});

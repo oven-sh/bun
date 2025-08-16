@@ -301,7 +301,9 @@ pub const PackageInstaller = struct {
                 break :global false;
             };
 
-            bin_linker.link(global);
+            if (this.manager.options.bin_links) {
+                bin_linker.link(global);
+            }
 
             if (bin_linker.err) |err| {
                 if (log_level != .silent) {

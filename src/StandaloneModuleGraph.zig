@@ -331,7 +331,7 @@ pub const StandaloneModuleGraph = struct {
 
     fn sliceTo(bytes: []const u8, ptr: bun.StringPointer) []const u8 {
         if (ptr.length == 0) return "";
-        
+
         // Validate offset is within bounds
         if (ptr.offset >= bytes.len) return "";
         if (ptr.offset + ptr.length > bytes.len) return "";
@@ -341,7 +341,7 @@ pub const StandaloneModuleGraph = struct {
 
     fn sliceToZ(bytes: []const u8, ptr: bun.StringPointer) [:0]const u8 {
         if (ptr.length == 0) return "";
-        
+
         // Validate offset is within bounds
         if (ptr.offset >= bytes.len) {
             if (comptime Environment.isDebug) {

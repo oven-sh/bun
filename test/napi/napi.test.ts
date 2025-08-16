@@ -583,7 +583,7 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
   const [node, bun] = await Promise.all(
     ["node", bunExe()].map(async executable => {
       const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
-      const env = { ...rest, ...envArgs };
+      const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
       const exec = spawn({
         cmd: [
           executable,

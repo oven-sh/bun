@@ -139,7 +139,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
-    clap.parseParam("--compile-argv <STR>             Prepend arguments to the standalone executable's argv") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -887,12 +887,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
 
-        if (args.option("--compile-argv")) |compile_argv| {
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
             if (!ctx.bundler_options.compile) {
-                Output.errGeneric("--compile-argv requires --compile", .{});
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.compile_argv = compile_argv;
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
         }
 
         if (args.flag("--windows-hide-console")) {

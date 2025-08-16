@@ -141,6 +141,27 @@ The root directory to run tests from. Default `.`.
 root = "./__tests__"
 ```
 
+### `test.glob`
+
+Customize the file patterns used to identify test files. Can be a single string or an array of strings. Patterns are resolved relative to the bunfig.toml directory.
+
+```toml
+[test]
+# Single pattern
+glob = "*.mytest.js"
+
+# Multiple patterns
+glob = ["*.mytest.js", "*.spec.ts", "**/*.unit.js"]
+```
+
+By default, Bun uses these patterns:
+- `*.test.{js|jsx|ts|tsx}`
+- `*_test.{js|jsx|ts|tsx}`
+- `*.spec.{js|jsx|ts|tsx}`
+- `*_spec.{js|jsx|ts|tsx}`
+
+When custom patterns are specified, they completely replace the default patterns.
+
 ### `test.preload`
 
 Same as the top-level `preload` field, but only applies to `bun test`.

@@ -14,6 +14,8 @@ scan_dir_buf: bun.PathBuffer = undefined,
 options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
+/// Custom glob patterns for test files. If set, these override the default patterns.
+custom_glob_patterns: ?[]const string = null,
 
 const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
@@ -32,6 +34,7 @@ pub fn init(
     alloc: Allocator,
     transpiler: *Transpiler,
     initial_results_capacity: usize,
+    custom_glob_patterns: ?[]const string,
 ) Allocator.Error!Scanner {
     const results = try std.ArrayListUnmanaged(bun.PathString).initCapacity(
         alloc,
@@ -42,6 +45,7 @@ pub fn init(
         .options = &transpiler.options,
         .fs = transpiler.fs,
         .test_files = results,
+        .custom_glob_patterns = custom_glob_patterns,
     };
 }
 
@@ -129,6 +133,18 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
+    
+    // If custom glob patterns are provided, use them instead of default patterns
+    if (this.custom_glob_patterns) |patterns| {
+        for (patterns) |pattern| {
+            if (bun.glob.match(bun.default_allocator, pattern, name).matches()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Fall back to default test name suffixes
     const name_without_extension = name[0 .. name.len - extname.len];
     inline for (test_name_suffixes) |suffix| {
         if (strings.endsWithComptime(name_without_extension, suffix)) return true;
@@ -223,3 +239,4 @@ const jest = jsc.Jest;
 
 const strings = bun.strings;
 const StringOrTinyString = strings.StringOrTinyString;
+const string = []const u8;

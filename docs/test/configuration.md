@@ -20,6 +20,28 @@ The `root` option specifies a root directory for test discovery, overriding the 
 root = "src"  # Only scan for tests in the src directory
 ```
 
+#### glob
+
+The `glob` option allows you to customize the patterns used to identify test files, overriding the default patterns. You can specify a single string or an array of strings.
+
+```toml
+[test]
+glob = "*.mytest.js"  # Single pattern
+```
+
+```toml
+[test]
+glob = ["*.mytest.js", "*.spec.ts", "**/*.unit.js"]  # Multiple patterns
+```
+
+By default, `bun test` searches for files matching these patterns:
+- `*.test.{js|jsx|ts|tsx}` 
+- `*_test.{js|jsx|ts|tsx}`
+- `*.spec.{js|jsx|ts|tsx}`
+- `*_spec.{js|jsx|ts|tsx}`
+
+When you specify custom `glob` patterns, these default patterns are completely replaced with your custom ones. The patterns are resolved relative to the directory containing your `bunfig.toml` file.
+
 ### Reporters
 
 #### reporter.junit

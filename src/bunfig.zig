@@ -352,6 +352,48 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (test_.get("glob")) |expr| brk: {
+                        // Get the directory containing the bunfig file for relative path resolution
+                        const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse "./";
+                        
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                // Resolve pattern relative to bunfig.toml directory if it's not absolute
+                                if (std.fs.path.isAbsolute(pattern)) {
+                                    patterns[0] = pattern;
+                                } else {
+                                    patterns[0] = try std.fs.path.join(allocator, &[_][]const u8{ bunfig_dir, pattern });
+                                }
+                                this.ctx.test_options.glob_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "test.glob array must contain only strings");
+                                        return;
+                                    }
+                                    const pattern = try item.data.e_string.string(allocator);
+                                    // Resolve pattern relative to bunfig.toml directory if it's not absolute
+                                    if (std.fs.path.isAbsolute(pattern)) {
+                                        patterns[i] = pattern;
+                                    } else {
+                                        patterns[i] = try std.fs.path.join(allocator, &[_][]const u8{ bunfig_dir, pattern });
+                                    }
+                                }
+                                this.ctx.test_options.glob_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "test.glob must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 

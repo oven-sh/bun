@@ -79,6 +79,95 @@ pub const SavedMappings = struct {
     }
 };
 
+/// Compact variant that uses LineOffsetTable.Compact for reduced memory usage
+pub const SavedMappingsCompact = struct {
+    compact_table: *SourceMap.LineOffsetTable.Compact,
+    sources_count: usize,
+
+    pub fn init(allocator: Allocator, vlq_mappings: []const u8) !*SavedMappingsCompact {
+        return bun.new(SavedMappingsCompact, .{
+            .compact_table = try SourceMap.LineOffsetTable.Compact.init(allocator, vlq_mappings),
+            .sources_count = 1, // Default to 1 source
+        });
+    }
+
+    pub fn deinit(this: *SavedMappingsCompact) void {
+        this.compact_table.deref();
+        bun.destroy(this);
+    }
+
+    fn toCompactMappings(this: *SavedMappingsCompact) anyerror!ParsedSourceMap {
+        // For error reporting and other uses, stay in compact format
+        // Increment ref count and return compact data
+        this.compact_table.ref();
+
+        // Calculate proper input line count - use the last line index as the total
+        const input_line_count = if (this.compact_table.line_offsets().len() > 1)
+            this.compact_table.line_offsets().len() - 1
+        else
+            1;
+
+        return ParsedSourceMap{
+            .ref_count = .init(),
+            .input_line_count = input_line_count,
+            .mappings = .{ .compact = this.compact_table },
+            .external_source_names = &.{},
+            .underlying_provider = .none,
+            .is_standalone_module_graph = false,
+        };
+    }
+
+    fn toFullMappings(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
+        const line_offsets = this.compact_table.line_offsets();
+        // Parse the VLQ mappings using the existing parser for coverage analysis
+        const input_line_count = if (line_offsets.len() > 1)
+            line_offsets.len() - 1
+        else
+            1;
+
+        const result = SourceMap.Mapping.parse(
+            allocator,
+            this.compact_table.vlq_mappings,
+            null, // estimated mapping count
+            @intCast(this.sources_count), // use stored sources count
+            input_line_count, // input line count - use proper calculation
+            .{ .allow_names = true, .sort = true }, // Enable names support for coverage
+        );
+        switch (result) {
+            .fail => |fail| {
+                if (Output.enable_ansi_colors_stderr) {
+                    try fail.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
+                        false,
+                        true,
+                    );
+                } else {
+                    try fail.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
+                        false,
+                        false,
+                    );
+                }
+                return fail.err;
+            },
+            .success => |success| {
+                return success;
+            },
+        }
+    }
+
+    pub fn toMapping(this: *SavedMappingsCompact, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
+        // Check if coverage is enabled - only then convert to full format
+        if (bun.cli.Command.get().test_options.coverage.enabled) {
+            return this.toFullMappings(allocator, path);
+        } else {
+            return this.toCompactMappings();
+        }
+    }
+};
+
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -86,6 +175,7 @@ pub const SavedMappings = struct {
 pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
     SavedMappings,
+    SavedMappingsCompact,
     SourceProviderMap,
     BakeSourceProvider,
 });
@@ -142,6 +232,20 @@ pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: *
 
 pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
+fn deinitValue(value: Value) void {
+    if (value.get(ParsedSourceMap)) |source_map| {
+        source_map.deref();
+    } else if (value.get(SavedMappings)) |saved_mappings| {
+        var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+        saved.deinit();
+    } else if (value.get(SavedMappingsCompact)) |saved_compact| {
+        var compact: *SavedMappingsCompact = saved_compact;
+        compact.deinit();
+    } else if (value.get(SourceProviderMap)) |provider| {
+        _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+    }
+}
+
 pub fn deinit(this: *SavedSourceMap) void {
     {
         this.lock();
@@ -149,15 +253,8 @@ pub fn deinit(this: *SavedSourceMap) void {
 
         var iter = this.map.valueIterator();
         while (iter.next()) |val| {
-            var value = Value.from(val.*);
-            if (value.get(ParsedSourceMap)) |source_map| {
-                source_map.deref();
-            } else if (value.get(SavedMappings)) |saved_mappings| {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-                saved.deinit();
-            } else if (value.get(SourceProviderMap)) |provider| {
-                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
-            }
+            const value = Value.from(val.*);
+            deinitValue(value);
         }
     }
 
@@ -166,7 +263,22 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
+    // Check if coverage is enabled - if so, use full format for easier unpacking
+    // Otherwise use compact format for memory savings
+    if (bun.cli.Command.get().test_options.coverage.enabled) {
+        const data = try bun.default_allocator.dupe(u8, mappings.list.items);
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, data.ptr)));
+    } else {
+        // The mappings buffer has a 24-byte header when prepend_count is true
+        // We need to skip this header for the compact format
+        const vlq_data = if (mappings.list.items.len > vlq_offset)
+            mappings.list.items[vlq_offset..]
+        else
+            mappings.list.items;
+
+        const compact = try SavedMappingsCompact.init(bun.default_allocator, vlq_data);
+        try this.putValue(source.path.text, Value.init(compact));
+    }
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -175,16 +287,8 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
 
     const entry = try this.map.getOrPut(bun.hash(path));
     if (entry.found_existing) {
-        var old_value = Value.from(entry.value_ptr.*);
-        if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
-            var source_map: *ParsedSourceMap = parsed_source_map;
-            source_map.deref();
-        } else if (old_value.get(SavedMappings)) |saved_mappings| {
-            var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-            saved.deinit();
-        } else if (old_value.get(SourceProviderMap)) |provider| {
-            _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
-        }
+        const old_value = Value.from(entry.value_ptr.*);
+        deinitValue(old_value);
     }
     entry.value_ptr.* = value.ptr();
 }
@@ -221,6 +325,20 @@ fn getWithContent(
                 _ = this.map.remove(mapping.key_ptr.*);
                 return .{};
             });
+            mapping.value_ptr.* = Value.init(result).ptr();
+            result.ref();
+
+            return .{ .map = result };
+        },
+        @field(Value.Tag, @typeName(SavedMappingsCompact)) => {
+            defer this.unlock();
+            var saved_compact = Value.from(mapping.value_ptr.*).as(SavedMappingsCompact);
+            const parsed_map = saved_compact.toMapping(bun.default_allocator, path) catch {
+                // On failure, remove the entry and return null to indicate no sourcemap
+                _ = this.map.remove(mapping.key_ptr.*);
+                return .{};
+            };
+            const result = bun.new(ParsedSourceMap, parsed_map);
             mapping.value_ptr.* = Value.init(result).ptr();
             result.ref();
 

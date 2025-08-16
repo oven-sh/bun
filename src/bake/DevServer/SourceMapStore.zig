@@ -459,7 +459,7 @@ pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventL
 
 pub const GetResult = struct {
     index: bun.GenericIndex(u32, Entry),
-    mappings: SourceMap.Mapping.List,
+    mappings: SourceMap.MappingsData,
     file_paths: []const []const u8,
     entry_files: *const bun.MultiArrayList(PackedMap.RefOrEmpty),
 

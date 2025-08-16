@@ -135,28 +135,13 @@ pub fn constructor(
         }
     }
 
-    // Parse the VLQ mappings
-    const parse_result = bun.sourcemap.Mapping.parse(
-        bun.default_allocator,
-        mappings_str.slice(),
-        null, // estimated_mapping_count
-        @intCast(sources.items.len), // sources_count
-        std.math.maxInt(i32),
-        .{ .allow_names = true, .sort = true },
-    );
-
-    const mapping_list = switch (parse_result) {
-        .success => |parsed| parsed,
-        .fail => |fail| {
-            if (fail.loc.toNullable()) |loc| {
-                return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s} at {d}", .{ fail.msg, loc.start }));
-            }
-            return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s}", .{fail.msg}));
-        },
-    };
+    const compact_sourcemap = try bun.sourcemap.LineOffsetTable.Compact.init(bun.default_allocator, mappings_str.slice());
 
     const source_map = bun.new(JSSourceMap, .{
-        .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, mapping_list),
+        .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, .{
+            .mappings = .{ .compact = compact_sourcemap },
+            .ref_count = .init(),
+        }),
         .sources = sources.items,
         .names = names.items,
     });

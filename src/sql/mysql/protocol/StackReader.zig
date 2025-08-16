@@ -6,6 +6,9 @@ message_start: *usize,
 pub fn markMessageStart(this: @This()) void {
     this.message_start.* = this.offset.*;
 }
+pub fn setOffsetFromStart(this: @This(), offset: usize) void {
+    this.offset.* = this.message_start.* + offset;
+}
 
 pub fn ensureCapacity(this: @This(), length: usize) bool {
     return this.buffer.len >= (this.offset.* + length);

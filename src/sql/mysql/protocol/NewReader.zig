@@ -6,6 +6,7 @@ pub fn NewReaderWrap(
     comptime ensureCapacityFn_: (fn (ctx: Context, count: usize) bool),
     comptime readFunction_: (fn (ctx: Context, count: usize) anyerror!Data),
     comptime readZ_: (fn (ctx: Context) anyerror!Data),
+    comptime setOffsetFromStart_: (fn (ctx: Context, offset: usize) void),
 ) type {
     return struct {
         wrapped: Context,
@@ -15,13 +16,17 @@ pub fn NewReaderWrap(
         const skipFn = skipFn_;
         const peekFn = peekFn_;
         const markMessageStartFn = markMessageStartFn_;
-
+        const setOffsetFromStartFn = setOffsetFromStart_;
         pub const Ctx = Context;
 
         pub const is_wrapped = true;
 
         pub fn markMessageStart(this: @This()) void {
             markMessageStartFn(this.wrapped);
+        }
+
+        pub fn setOffsetFromStart(this: @This(), offset: usize) void {
+            return setOffsetFromStartFn(this.wrapped, offset);
         }
 
         pub fn read(this: @This(), count: usize) anyerror!Data {
@@ -84,7 +89,7 @@ pub fn NewReader(comptime Context: type) type {
         return Context;
     }
 
-    return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureCapacity, Context.read, Context.readZ);
+    return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureCapacity, Context.read, Context.readZ, Context.setOffsetFromStart);
 }
 
 pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {

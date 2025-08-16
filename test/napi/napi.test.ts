@@ -593,8 +593,8 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
           typeof args == "string" ? args : JSON.stringify(args),
         ],
         env,
-        stdout: "pipe",
-        stderr: "pipe",
+        stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stderr: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
         stdin: "inherit",
       });
       const exitCode = await exec.exited;

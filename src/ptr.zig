@@ -6,10 +6,9 @@ pub const CowSliceZ = @import("./ptr/CowSlice.zig").CowSliceZ;
 pub const CowString = CowSlice(u8);
 
 pub const owned = @import("./ptr/owned.zig");
-pub const Owned = owned.Owned;
-pub const OwnedWithOpts = owned.OwnedWithOpts;
-pub const MaybeOwned = owned.MaybeOwned;
-pub const MaybeOwnedWithOpts = owned.MaybeOwnedWithOpts;
+pub const Owned = owned.Owned; // owned pointer allocated with default allocator
+pub const DynamicOwned = owned.Dynamic; // owned pointer allocated with any allocator
+pub const MaybeOwned = owned.maybe.MaybeOwned; // owned or borrowed pointer
 
 pub const shared = @import("./ptr/shared.zig");
 pub const Shared = shared.Shared;

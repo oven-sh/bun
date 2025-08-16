@@ -40,6 +40,7 @@
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
+#include "BunProcessStorage.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -792,6 +793,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
     zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1
     zstdDecompress                                 BunObject_callback_zstdDecompress                                    DontDelete|Function 1
+    experimental_processStorage                    constructProcessStorageObject                                        DontDelete|PropertyCallback
 @end
 */
 

@@ -747,6 +747,7 @@ src/interchange.zig
 src/interchange/json.zig
 src/interchange/toml.zig
 src/interchange/toml/lexer.zig
+src/interchange/yaml.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig

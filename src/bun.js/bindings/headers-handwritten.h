@@ -229,9 +229,11 @@ const BunLoaderType BunLoaderTypeTSX = 3;
 const BunLoaderType BunLoaderTypeCSS = 4;
 const BunLoaderType BunLoaderTypeFILE = 5;
 const BunLoaderType BunLoaderTypeJSON = 6;
-const BunLoaderType BunLoaderTypeTOML = 7;
-const BunLoaderType BunLoaderTypeWASM = 8;
-const BunLoaderType BunLoaderTypeNAPI = 9;
+const BunLoaderType BunLoaderTypeJSONC = 7;
+const BunLoaderType BunLoaderTypeTOML = 8;
+const BunLoaderType BunLoaderTypeYAML = 9;
+const BunLoaderType BunLoaderTypeWASM = 10;
+const BunLoaderType BunLoaderTypeNAPI = 11;
 
 #pragma mark - Stream
 

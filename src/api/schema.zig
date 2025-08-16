@@ -331,6 +331,7 @@ pub const api = struct {
         file,
         json,
         toml,
+        yaml,
         wasm,
         napi,
         base64,

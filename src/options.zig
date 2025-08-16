@@ -610,6 +610,7 @@ pub const Loader = enum(u8) {
     json,
     jsonc,
     toml,
+    yaml,
     wasm,
     napi,
     base64,
@@ -679,7 +680,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json, .jsonc => bun.http.MimeType.json,
+            .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => {
@@ -727,6 +728,7 @@ pub const Loader = enum(u8) {
         map.set(.file, "input");
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
+        map.set(.yaml, "input.yaml");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
@@ -751,7 +753,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -769,6 +771,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -796,6 +799,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .json },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -835,6 +839,7 @@ pub const Loader = enum(u8) {
             .json => .json,
             .jsonc => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -855,6 +860,7 @@ pub const Loader = enum(u8) {
             .file => .file,
             .json => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -885,8 +891,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
-            // toml is included because we can serialize to the same AST as JSON
-            .toml => true,
+            // toml and yaml are included because we can serialize to the same AST as JSON
+            .toml, .yaml => true,
 
             else => false,
         };
@@ -901,7 +907,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1072,6 +1078,8 @@ const default_loaders_posix = .{
     .{ ".cts", .ts },
 
     .{ ".toml", .toml },
+    .{ ".yaml", .yaml },
+    .{ ".yml", .yaml },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
@@ -1510,7 +1518,7 @@ const default_loader_ext = [_]string{
     ".ts",    ".tsx",
     ".mts",   ".cts",
 
-    ".toml",  ".wasm",
+    ".toml",  ".yaml", ".yml", ".wasm",
     ".txt",   ".text",
 
     ".jsonc",
@@ -1529,6 +1537,8 @@ const node_modules_default_loader_ext = [_]string{
     ".ts",
     ".mts",
     ".toml",
+    ".yaml",
+    ".yml",
     ".txt",
     ".json",
     ".jsonc",

@@ -47,6 +47,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .json,
         .jsonc,
         .toml,
+        .yaml,
         .wasm,
         .napi,
         .base64,

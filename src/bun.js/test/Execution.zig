@@ -7,6 +7,7 @@ const ConcurrentGroup = struct {
     sequence_start: usize,
     sequence_end: usize,
     executing: bool = false,
+    concurrent: bool,
 };
 const ExecutionSequence = struct {
     entry_start: usize,
@@ -39,29 +40,32 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
     groupLog.begin(@src());
     defer groupLog.end();
 
-    if (this.order_index >= this.order.items.len) return .done;
+    while (true) {
+        if (this.order_index >= this.order.items.len) return .done;
 
-    this.order.items[this.order_index].executing = true;
+        this.order.items[this.order_index].executing = true;
 
-    // loop over items in the group and advance their execution
-    const group = &this.order.items[this.order_index];
-    if (!group.executing) this.resetGroup(this.order_index);
-    var status: describe2.RunOneResult = .done;
-    for (group.sequence_start..group.sequence_end) |sequence_index| {
-        switch (try this.runSequence(sequence_index, callback_queue)) {
-            .done => {},
-            .execute => status = .execute,
+        // loop over items in the group and advance their execution
+        const group = &this.order.items[this.order_index];
+        if (!group.executing) this.resetGroup(this.order_index);
+        var status: describe2.RunOneResult = .done;
+        for (group.sequence_start..group.sequence_end) |sequence_index| {
+            switch (try this.runSequence(sequence_index, callback_queue)) {
+                .done => {},
+                .execute => status = .execute,
+            }
         }
-    }
 
-    if (status == .done) {
+        if (status == .execute) return .execute;
         this.order_index += 1;
     }
-    return .execute;
 }
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
+pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
+
+    const sequence_index: usize = @intCast(data);
+    groupLog.log("runOneCompleted sequence_index {d}", .{sequence_index});
 
     if (result_is_error) {
         _ = result_value;
@@ -71,10 +75,11 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error
     bun.assert(this.order_index < this.order.items.len);
     const group = &this.order.items[this.order_index];
 
-    if (group.sequence_start + 1 != group.sequence_end) {
-        @panic("TODO support concurrent groups (requires passing additional data to completed callback)");
+    if (sequence_index < group.sequence_start or sequence_index >= group.sequence_end) {
+        bun.debugAssert(false);
+        return;
     }
-    const sequence = &this._sequences.items[group.sequence_start];
+    const sequence = &this._sequences.items[sequence_index];
     bun.assert(sequence.entry_index < sequence.entry_end);
     sequence.executing = false;
     sequence.entry_index += 1;
@@ -115,17 +120,18 @@ pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *des
     defer groupLog.end();
 
     const sequence = &this._sequences.items[sequence_index];
-    if (sequence.executing) return .done; // can't advance; already executing
+    if (sequence.executing) return .execute; // can't advance; already executing
     if (sequence.entry_index >= sequence.entry_end) {
         sequence.remaining_repeat_count -= 1;
-        if (sequence.remaining_repeat_count <= 0) return .done;
+        if (sequence.remaining_repeat_count <= 0) return .done; // done
         this.resetSequence(sequence_index);
     }
 
     const next_item = this._entries.items[sequence.entry_index];
     sequence.executing = true;
-    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, next_item.callback.get()), .done_parameter = true });
-    return .execute;
+    groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, next_item.callback.get()), .done_parameter = true, .data = sequence_index });
+    return .execute; // execute
 }
 
 pub fn generateOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError!void {
@@ -147,7 +153,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         const sequences_start = this._sequences.items.len;
         try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
-        try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end }); // add concurrentgroup to order
+        try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
 
     for (current.entries.items) |entry| {
@@ -162,7 +168,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         const sequences_start = this._sequences.items.len;
         try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
-        try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end }); // add concurrentgroup to order
+        try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
 }
 pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError!void {
@@ -208,7 +214,18 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
     const sequences_start = this._sequences.items.len;
     try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
     const sequences_end = this._sequences.items.len;
-    try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end }); // add concurrentgroup to order
+    try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
+}
+
+pub fn appendOrExtendConcurrentGroup(this: *Execution, concurrent: bool, sequences_start: usize, sequences_end: usize) bun.JSError!void {
+    if (concurrent and this.order.items.len > 0) {
+        const previous_group = &this.order.items[this.order.items.len - 1];
+        if (previous_group.concurrent and previous_group.sequence_end == sequences_start) {
+            previous_group.sequence_end = sequences_end; // extend the previous group to include this sequence
+            return;
+        }
+    }
+    try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end, .concurrent = concurrent }); // otherwise, add a new concurrentgroup to order
 }
 
 pub fn dumpSub(globalThis: *jsc.JSGlobalObject, current: TestScheduleEntry) bun.JSError!void {

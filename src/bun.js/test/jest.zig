@@ -364,11 +364,9 @@ pub const Jest = struct {
         const module = JSValue.createEmptyObject(globalObject, 14);
 
         const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.testFn, false);
-        module.put(
-            globalObject,
-            ZigString.static("test"),
-            test_fn,
-        );
+        module.put(globalObject, ZigString.static("test"), test_fn);
+
+        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.testConcurrentFn, false));
 
         inline for (.{ "only", "skip", "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
             const name = ZigString.static(method_name);
@@ -391,6 +389,7 @@ pub const Jest = struct {
             test_fn,
         );
         const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.describeFn, false);
+        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.describeConcurrentFn, false));
         inline for (.{
             "only",
             "skip",

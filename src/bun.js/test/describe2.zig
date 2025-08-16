@@ -17,7 +17,34 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback);
+                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback, .{ .self_concurrent = false });
+                return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
+            },
+            .execution => {
+                return globalObject.throw("Cannot call describe() inside a test", .{});
+            },
+            .done => return globalObject.throw("Cannot call describe() after the test run has completed", .{}),
+        }
+    }
+    pub fn describeConcurrentFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        const name, const callback = callframe.argumentsAsArray(2);
+
+        switch (bunTest.phase) {
+            .collection => {
+                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback, .{ .self_concurrent = true });
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -45,7 +72,35 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueTestCallback(globalObject, name, callback);
+                try bunTest.collection.enqueueTestCallback(globalObject, name, callback, .{ .self_concurrent = false });
+                return .js_undefined;
+            },
+            .execution => {
+                return globalObject.throw("TODO: queue this test callback to call after this test ends", .{});
+            },
+            .done => return globalObject.throw("Cannot call test() after the test run has completed", .{}),
+        }
+    }
+
+    pub fn testConcurrentFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        group.begin(@src());
+        defer group.end();
+        errdefer group.log("ended in error", .{});
+
+        const vm = globalObject.bunVM();
+        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
+            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
+        }
+        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
+        }
+        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        const name, const callback = callFrame.argumentsAsArray(2);
+
+        switch (bunTest.phase) {
+            .collection => {
+                try bunTest.collection.enqueueTestCallback(globalObject, name, callback, .{ .self_concurrent = true });
                 return .js_undefined;
             },
             .execution => {
@@ -177,13 +232,17 @@ pub const BunTest = struct {
         backing.destroy(this.allocation_scope);
     }
 
-    pub fn ref(this: *BunTest) *anyopaque {
+    const RefData = struct {
+        buntest: *BunTest,
+        data: u64,
+        pub fn deinit(this: *RefData) void {
+            // TODO jsvalue(this).unprotect()
+            this.buntest.gpa.destroy(this);
+        }
+    };
+    pub fn ref(this: *BunTest, data: u64) *anyopaque {
         // TODO jsvalue(this).protect()
-        return this;
-    }
-    pub fn unref(this: *BunTest) void {
-        // TODO jsvalue(this).unprotect()
-        _ = this;
+        return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
     }
 
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
@@ -195,10 +254,11 @@ pub const BunTest = struct {
 
         const result, const this_ptr = callframe.argumentsAsArray(2);
 
-        var this: *BunTest = this_ptr.asPromisePtr(BunTest);
-        defer this.unref();
+        const refdata: *RefData = this_ptr.asPromisePtr(RefData);
+        defer refdata.deinit();
+        const this = refdata.buntest;
 
-        try this.runOneCompleted(globalThis, is_catch, result);
+        try this.runOneCompleted(globalThis, is_catch, result, refdata.data);
         try this.run(globalThis);
         return .js_undefined;
     }
@@ -208,8 +268,8 @@ pub const BunTest = struct {
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         return bunTestThenOrCatch(globalThis, callframe, true);
     }
-    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue) void {
-        promise.then(globalThis, this.ref(), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
+    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: u64) void {
+        promise.then(globalThis, this.ref(data), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
     pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
@@ -232,6 +292,7 @@ pub const BunTest = struct {
                 .execution => try this.execution.runOne(globalThis, &callback_queue),
                 .done => .done,
             };
+            group.log("-> runOne status: {s}", .{@tagName(status)});
             if (status == .done) {
                 group.log("-> advancing", .{});
                 bun.assert(callback_queue.items.len == 0);
@@ -254,7 +315,6 @@ pub const BunTest = struct {
                     .continue_async => {},
                 }
             }
-            if (callback_queue.items.len == 0) final_result = .continue_sync;
 
             group.log("-> final_result: {s}", .{@tagName(final_result)});
             switch (final_result) {
@@ -310,10 +370,10 @@ pub const BunTest = struct {
         }
     }
 
-    fn runOneCompleted(this: *BunTest, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
+    fn runOneCompleted(this: *BunTest, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
         switch (this.phase) {
-            .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value),
-            .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value),
+            .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value, data),
+            .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value, data),
             .done => bun.debugAssert(false),
         }
     }
@@ -348,12 +408,12 @@ pub const BunTest = struct {
 
         if (!is_error and result.asPromise() != null) {
             group.log("callTestCallback -> promise", .{});
-            this.addThen(globalThis, result);
+            this.addThen(globalThis, result, cfg.data);
             return .continue_async;
         }
 
         group.log("callTestCallback -> sync", .{});
-        try this.runOneCompleted(globalThis, is_error, result);
+        try this.runOneCompleted(globalThis, is_error, result, cfg.data);
         return .continue_sync;
     }
 };
@@ -363,6 +423,7 @@ pub const CallbackQueue = std.ArrayList(CallbackEntry);
 pub const CallbackEntry = struct {
     callback: Strong,
     done_parameter: bool,
+    data: u64,
 };
 
 pub const Collection = @import("./Collection.zig");
@@ -375,8 +436,9 @@ pub const DescribeScope = struct {
     afterEach: std.ArrayList(*ExecutionEntry),
     afterAll: std.ArrayList(*ExecutionEntry),
     name: Strong.Optional,
+    concurrent: bool,
 
-    pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope) DescribeScope {
+    pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope, self_concurrent: bool) DescribeScope {
         return .{
             .entries = .init(gpa),
             .beforeEach = .init(gpa),
@@ -385,6 +447,7 @@ pub const DescribeScope = struct {
             .afterEach = .init(gpa),
             .parent = parent,
             .name = .empty,
+            .concurrent = self_concurrent or if (parent) |p| p.concurrent else false,
         };
     }
     pub fn destroy(this: *DescribeScope, buntest: *BunTest) void {
@@ -421,6 +484,7 @@ pub const ExecutionEntry = struct {
     tag: ExecutionEntryTag,
     callback: Strong,
     name: Strong.Optional,
+    concurrent: bool,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();
         this.name.deinit();

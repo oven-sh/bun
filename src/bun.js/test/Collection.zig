@@ -4,8 +4,7 @@ locked: bool = false, // set to true after collection phase ends
 describe_callback_queue: std.ArrayList(QueuedDescribe), // TODO: don't use orderedRemove(0) on this, instead keep an index or use a fifo?
 
 root_scope: *DescribeScope,
-active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope/_previous_scope
-_previous_scope: ?*DescribeScope, // TODO: this only exists for 'result.then()'. we should change it so we pass {BunTest.ref(), active_scope} to the user data parameter of .then().
+active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope
 
 const QueuedDescribe = struct {
     name: Strong,
@@ -22,13 +21,12 @@ pub fn init(gpa: std.mem.Allocator) Collection {
     group.begin(@src());
     defer group.end();
 
-    const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null));
+    const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null, false));
 
     return .{
         .describe_callback_queue = std.ArrayList(QueuedDescribe).init(gpa),
         .root_scope = root_scope,
         .active_scope = root_scope,
-        ._previous_scope = null,
     };
 }
 pub fn deinit(this: *Collection) void {
@@ -43,7 +41,7 @@ fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -53,7 +51,7 @@ pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObjec
     bun.assert(!this.locked);
     const buntest = this.bunTest();
 
-    const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, this.active_scope));
+    const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, this.active_scope, cfg.self_concurrent));
     new_scope.name = .init(buntest.gpa, name);
     try this.active_scope.entries.append(.{ .describe = new_scope });
 
@@ -66,7 +64,7 @@ pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObjec
     });
 }
 
-pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -81,6 +79,7 @@ pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, n
         .tag = .test_callback,
         .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
         .name = .init(this.bunTest().gpa, name),
+        .concurrent = this.active_scope.concurrent or cfg.self_concurrent,
     });
     try this.active_scope.entries.append(.{ .test_callback = test_callback });
 }
@@ -96,6 +95,7 @@ pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, c
         .tag = tag,
         .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
         .name = .empty,
+        .concurrent = this.active_scope.concurrent,
     });
     try @field(this.active_scope, @tagName(tag)).append(hook_callback);
 }
@@ -123,12 +123,10 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     this.active_scope = new_scope;
     group.log("collection:runOne set scope to {}", .{(this.active_scope.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter)});
 
-    bun.assert(this._previous_scope == null);
-    this._previous_scope = previous_scope;
-    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, callback), .done_parameter = false });
+    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, callback), .done_parameter = false, .data = @intFromPtr(previous_scope) });
     return .execute;
 }
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue) bun.JSError!void {
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -140,9 +138,7 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, resul
         group.log("TODO: print error", .{});
     }
 
-    bun.assert(this._previous_scope != null);
-    const prev_scope = this._previous_scope.?;
-    this._previous_scope = null;
+    const prev_scope: *DescribeScope = @ptrFromInt(data);
     group.log("collection:runOneCompleted reset scope back from {}", .{(this.active_scope.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter)});
     this.active_scope = prev_scope;
     group.log("collection:runOneCompleted reset scope back to {}", .{(this.active_scope.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter)});

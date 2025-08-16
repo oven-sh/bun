@@ -196,3 +196,58 @@ test("Bun.experimental_processStorage concurrent access", async () => {
 
   storage.clear();
 });
+
+test("Bun.experimental_processStorage getOrSetItem", () => {
+  const storage = Bun.experimental_processStorage;
+  storage.clear();
+  
+  // Test setting a new item
+  const result1 = storage.getOrSetItem("new-key", "default-value");
+  expect(result1).toBe("default-value");
+  expect(storage.getItem("new-key")).toBe("default-value");
+  
+  // Test getting an existing item (should not overwrite)
+  storage.setItem("existing-key", "existing-value");
+  const result2 = storage.getOrSetItem("existing-key", "new-default");
+  expect(result2).toBe("existing-value");
+  expect(storage.getItem("existing-key")).toBe("existing-value");
+  
+  // Test with type conversion
+  const result3 = storage.getOrSetItem("number-key", 42);
+  expect(result3).toBe("42");
+  expect(storage.getItem("number-key")).toBe("42");
+  
+  storage.clear();
+});
+
+test("Bun.experimental_processStorage takeItem", () => {
+  const storage = Bun.experimental_processStorage;
+  storage.clear();
+  
+  // Test taking a non-existent item
+  const result1 = storage.takeItem("non-existent");
+  expect(result1).toBe(null);
+  
+  // Test taking an existing item
+  storage.setItem("to-take", "take-me");
+  const result2 = storage.takeItem("to-take");
+  expect(result2).toBe("take-me");
+  
+  // Verify item was removed
+  expect(storage.getItem("to-take")).toBe(null);
+  
+  // Test taking the same item again (should be null)
+  const result3 = storage.takeItem("to-take");
+  expect(result3).toBe(null);
+  
+  // Test with multiple items
+  storage.setItem("item1", "value1");
+  storage.setItem("item2", "value2");
+  
+  const taken1 = storage.takeItem("item1");
+  expect(taken1).toBe("value1");
+  expect(storage.getItem("item1")).toBe(null);
+  expect(storage.getItem("item2")).toBe("value2"); // Should still exist
+  
+  storage.clear();
+});

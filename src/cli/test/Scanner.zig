@@ -133,7 +133,7 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
-    
+
     // If custom glob patterns are provided, use them instead of default patterns
     if (this.custom_glob_patterns) |patterns| {
         for (patterns) |pattern| {
@@ -143,7 +143,7 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
         }
         return false;
     }
-    
+
     // Fall back to default test name suffixes
     const name_without_extension = name[0 .. name.len - extname.len];
     inline for (test_name_suffixes) |suffix| {
@@ -226,6 +226,8 @@ inline fn allocator(self: *const Scanner) Allocator {
     return self.dirs_to_scan.allocator;
 }
 
+const string = []const u8;
+
 const std = @import("std");
 const BundleOptions = @import("../../options.zig").BundleOptions;
 const Allocator = std.mem.Allocator;
@@ -239,4 +241,3 @@ const jest = jsc.Jest;
 
 const strings = bun.strings;
 const StringOrTinyString = strings.StringOrTinyString;
-const string = []const u8;

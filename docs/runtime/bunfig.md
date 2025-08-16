@@ -155,6 +155,7 @@ glob = ["*.mytest.js", "*.spec.ts", "**/*.unit.js"]
 ```
 
 By default, Bun uses these patterns:
+
 - `*.test.{js|jsx|ts|tsx}`
 - `*_test.{js|jsx|ts|tsx}`
 - `*.spec.{js|jsx|ts|tsx}`

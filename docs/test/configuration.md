@@ -35,7 +35,8 @@ glob = ["*.mytest.js", "*.spec.ts", "**/*.unit.js"]  # Multiple patterns
 ```
 
 By default, `bun test` searches for files matching these patterns:
-- `*.test.{js|jsx|ts|tsx}` 
+
+- `*.test.{js|jsx|ts|tsx}`
 - `*_test.{js|jsx|ts|tsx}`
 - `*.spec.{js|jsx|ts|tsx}`
 - `*_spec.{js|jsx|ts|tsx}`

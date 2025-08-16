@@ -356,7 +356,7 @@ pub const Bunfig = struct {
                     if (test_.get("glob")) |expr| brk: {
                         // Get the directory containing the bunfig file for relative path resolution
                         const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse "./";
-                        
+
                         switch (expr.data) {
                             .e_string => |str| {
                                 const pattern = try str.string(allocator);

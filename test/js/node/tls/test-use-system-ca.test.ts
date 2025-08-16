@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
 import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe("--use-system-ca", () => {
@@ -12,11 +12,7 @@ describe("--use-system-ca", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
@@ -32,11 +28,7 @@ describe("--use-system-ca", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
@@ -52,11 +44,7 @@ describe("--use-system-ca", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
@@ -72,11 +60,7 @@ describe("--use-system-ca", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");

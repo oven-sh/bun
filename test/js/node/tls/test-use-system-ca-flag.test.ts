@@ -1,7 +1,7 @@
 // Test that --use-system-ca flag and NODE_USE_SYSTEM_CA environment variable work
 
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("--use-system-ca flag is accepted", async () => {
@@ -12,11 +12,7 @@ test("--use-system-ca flag is accepted", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout.trim()).toBe("OK");
@@ -31,11 +27,7 @@ test("NODE_USE_SYSTEM_CA=1 environment variable works", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout.trim()).toBe("OK");
@@ -60,11 +52,7 @@ test("--use-system-ca with HTTPS request", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("STATUS:");
@@ -89,11 +77,7 @@ test("NODE_USE_SYSTEM_CA=1 with HTTPS request", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("STATUS:");

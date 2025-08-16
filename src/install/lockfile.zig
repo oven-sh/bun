@@ -902,7 +902,9 @@ pub fn hoist(
         .manager = manager,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
+        .hoist_visited_packages = std.AutoHashMap(Tree.PackageID, void).init(allocator),
     };
+    defer builder.hoist_visited_packages.deinit();
 
     try (Tree{}).processSubtree(
         Tree.root_dep_id,

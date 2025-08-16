@@ -34,7 +34,7 @@ export function getStdioWriteStream(
   process: typeof globalThis.process,
   fd: number,
   isTTY: boolean,
-  _fdType: BunProcessStdinFdType,
+  fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
@@ -55,6 +55,17 @@ export function getStdioWriteStream(
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
+
+    // When stdout/stderr are piped or connected to a socket, they should have Symbol.asyncIterator
+    // to match Node.js behavior where they become Duplex streams (Socket)
+    // But when redirected to a file, they shouldn't have it
+    if (fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket) {
+      stream[Symbol.asyncIterator] = function () {
+        return (async function* () {
+          // stdout/stderr don't produce readable data, so yield nothing
+        })();
+      };
+    }
   }
 
   if (fd === 1 || fd === 2) {

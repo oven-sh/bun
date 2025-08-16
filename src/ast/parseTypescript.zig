@@ -24,7 +24,9 @@ pub fn ParseTypescript(
                 //   }
                 //
                 // This matches the behavior of the TypeScript compiler.
-                try decorators.append(try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator));
+                try decorators.ensureUnusedCapacity(1);
+                try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator, &decorators.unusedCapacitySlice()[0]);
+                decorators.items.len += 1;
             }
 
             return decorators.items;

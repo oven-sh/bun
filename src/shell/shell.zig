@@ -154,7 +154,7 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
+const log = bun.Output.scoped(.SHELL, .hidden);
 
 pub const GlobalJS = struct {
     globalThis: *jsc.JSGlobalObject,

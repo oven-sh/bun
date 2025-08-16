@@ -239,6 +239,7 @@ pub const BuildCommand = struct {
                     try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
                         options.defines.RawDefines,
                         allocator,
+                        user_defines.keys.len + 4,
                         user_defines.keys,
                         user_defines.values,
                     ), ctx.args.drop, log, allocator)
@@ -436,6 +437,7 @@ pub const BuildCommand = struct {
                     this_transpiler.options.output_format,
                     ctx.bundler_options.windows_hide_console,
                     ctx.bundler_options.windows_icon,
+                    ctx.bundler_options.compile_exec_argv orelse "",
                 );
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {

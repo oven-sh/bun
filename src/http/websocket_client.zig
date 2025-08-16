@@ -1554,7 +1554,7 @@ const Copy = union(enum) {
     }
 };
 
-const log = Output.scoped(.WebSocketClient, false);
+const log = Output.scoped(.WebSocketClient, .visible);
 
 const string = []const u8;
 

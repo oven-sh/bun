@@ -357,5 +357,19 @@ pub fn voidFieldTypeDiscardHelper(data: anytype) void {
     _ = data;
 }
 
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
+}
+
 const bun = @import("bun");
 const std = @import("std");

@@ -1,4 +1,4 @@
-pub const log = Output.scoped(.IPC, false);
+pub const log = Output.scoped(.IPC, .visible);
 
 const IsInternal = enum { internal, external };
 const SerializeAndSendResult = enum {

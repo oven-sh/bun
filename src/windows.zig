@@ -3274,7 +3274,7 @@ pub fn userUniqueId() u32 {
         return 0;
     }
     const name = buf[0..size];
-    bun.Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
+    bun.Output.scoped(.windowsUserUniqueId, .visible)("username: {}", .{bun.fmt.utf16(name)});
     return bun.hash32(std.mem.sliceAsBytes(name));
 }
 

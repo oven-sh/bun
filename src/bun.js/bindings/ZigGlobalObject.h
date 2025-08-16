@@ -168,7 +168,6 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
-    void queueTaskOnTimeout(WebCore::EventLoopTask* task, int timeout);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
@@ -322,7 +321,7 @@ public:
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    void drainMicrotasks();
+    uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();

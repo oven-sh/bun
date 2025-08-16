@@ -431,7 +431,7 @@ const TestAnalyzer = struct {
     }
 };
 export fn getTests(opts_array: u64) u64 {
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
@@ -485,7 +485,7 @@ export fn getTests(opts_array: u64) u64 {
 
 export fn transform(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);
@@ -555,7 +555,7 @@ export fn transform(opts_array: u64) u64 {
 
 export fn scan(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);

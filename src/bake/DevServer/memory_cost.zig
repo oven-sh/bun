@@ -142,6 +142,20 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
                 other_bytes += dir_name.len;
             }
         },
+        .deleted_entrypoints = if (bun.Environment.isMac) {
+            const watchlist = dev.deleted_entrypoints.lock();
+            defer dev.deleted_entrypoints.unlock();
+
+            other_bytes += watchlist.entries_by_dir.capacity() * (@sizeOf([]const u8) + @sizeOf(std.ArrayListUnmanaged(DeletedEntrypointWatchlist.Entry)));
+            var iter = watchlist.entries_by_dir.iterator();
+            while (iter.next()) |kv| {
+                other_bytes += kv.key_ptr.len;
+                other_bytes += memoryCostArrayList(kv.value_ptr.*);
+                for (kv.value_ptr.items) |entry| {
+                    other_bytes += entry.abs_path.len;
+                }
+            }
+        } else {},
         .html_router = {
             // std does not provide a way to measure exact allocation size of HashMapUnmanaged
             other_bytes += dev.html_router.map.capacity() * (@sizeOf(*HTMLBundle.HTMLBundleRoute) + @sizeOf([]const u8));
@@ -215,6 +229,7 @@ const HTMLBundle = jsc.API.HTMLBundle;
 
 const DevServer = bun.bake.DevServer;
 const DeferredRequest = DevServer.DeferredRequest;
+const DeletedEntrypointWatchlist = DevServer.DeletedEntrypointWatchlist;
 const HmrSocket = DevServer.HmrSocket;
 const IncrementalResult = DevServer.IncrementalResult;
 

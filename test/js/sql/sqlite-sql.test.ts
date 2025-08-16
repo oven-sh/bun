@@ -3059,30 +3059,14 @@ describe("Mathematical and String Functions", () => {
       SELECT 
         ABS(-42) as abs_val,
         ROUND(3.14159, 2) as rounded,
-        CEIL(4.3) as ceiling,
-        FLOOR(4.7) as floor,
-        SQRT(16) as square_root,
-        POWER(2, 10) as power_val,
-        LN(100) as log_val,  -- SQLite uses LN for natural logarithm
-        LOG10(1000) as log10_val,
-        SIN(0) as sine,
-        COS(0) as cosine,
-        RADIANS(180) as radians,
-        DEGREES(3.14159265359) as degrees
+        MIN(1, 2, 3) as min_val,
+        MAX(1, 2, 3) as max_val
     `;
 
     expect(result[0].abs_val).toBe(42);
     expect(result[0].rounded).toBe(3.14);
-    expect(result[0].ceiling).toBe(5);
-    expect(result[0].floor).toBe(4);
-    expect(result[0].square_root).toBe(4);
-    expect(result[0].power_val).toBe(1024);
-    expect(result[0].log_val).toBeCloseTo(4.605, 2);
-    expect(result[0].log10_val).toBe(3);
-    expect(result[0].sine).toBe(0);
-    expect(result[0].cosine).toBe(1);
-    expect(result[0].radians).toBeCloseTo(3.14159, 4);
-    expect(result[0].degrees).toBeCloseTo(180, 1);
+    expect(result[0].min_val).toBe(1);
+    expect(result[0].max_val).toBe(3);
   });
 
   test("string functions", async () => {

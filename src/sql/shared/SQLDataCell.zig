@@ -138,9 +138,22 @@ pub const SQLDataCell = extern struct {
         has_duplicate_columns: bool = false,
         _: u29 = 0,
     };
+
+    pub extern fn JSC__constructObjectFromDataCell(
+        *jsc.JSGlobalObject,
+        JSValue,
+        JSValue,
+        [*]SQLDataCell,
+        u32,
+        SQLDataCell.Flags,
+        u8, // result_mode
+        ?[*]jsc.JSObject.ExternColumnIdentifier, // names
+        u32, // names count
+    ) JSValue;
 };
 
 const std = @import("std");
 const bun = @import("bun");
-const JSValue = bun.jsc.JSValue;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
 const Data = @import("./Data.zig").Data;

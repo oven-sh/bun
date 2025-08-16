@@ -3839,7 +3839,6 @@ src/sql/postgres/protocol/ArrayList.zig
 src/sql/postgres/protocol/Authentication.zig
 src/sql/postgres/protocol/BackendKeyData.zig
 src/sql/postgres/protocol/Close.zig
-src/sql/postgres/protocol/ColumnIdentifier.zig
 src/sql/postgres/protocol/CommandComplete.zig
 src/sql/postgres/protocol/CopyData.zig
 src/sql/postgres/protocol/CopyFail.zig
@@ -3887,6 +3886,7 @@ src/sql/postgres/types/numeric.zig
 src/sql/postgres/types/PostgresString.zig
 src/sql/postgres/types/Tag.zig
 src/sql/shared/CachedStructure.zig
+src/sql/shared/ColumnIdentifier.zig
 src/sql/shared/ConnectionFlags.zig
 src/sql/shared/Data.zig
 src/sql/shared/ObjectIterator.zig

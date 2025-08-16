@@ -35,7 +35,10 @@ enum SQLQueryResultMode {
   values = 1,
   raw = 2,
 }
-const escapeIdentifier = function escape(str) {
+const escapeIdentifier = function escape(str, adapter) {
+  if (adapter === "mysql") {
+    return "`" + str.replaceAll("`", "``") + "`";
+  }
   return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
 };
 class SQLResultArray extends PublicArray {
@@ -258,7 +261,7 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-function normalizeQuery(strings, values, binding_idx = 1) {
+function normalizeQuery(strings, values, adapter, binding_idx = 1) {
   if (typeof strings === "string") {
     // identifier or unsafe query
     return [strings, values || []];
@@ -281,7 +284,7 @@ function normalizeQuery(strings, values, binding_idx = 1) {
       if (values.length > i) {
         const value = values[i];
         if (value instanceof Query) {
-          const [sub_query, sub_values] = normalizeQuery(value[_strings], value[_values], binding_idx);
+          const [sub_query, sub_values] = normalizeQuery(value[_strings], value[_values], adapter, binding_idx);
           query += sub_query;
           for (let j = 0; j < sub_values.length; j++) {
             binding_values.push(sub_values[j]);
@@ -307,7 +310,7 @@ function normalizeQuery(strings, values, binding_idx = 1) {
 
             query += "(";
             for (let j = 0; j < columnCount; j++) {
-              query += escapeIdentifier(columns[j]);
+              query += escapeIdentifier(columns[j], adapter);
               if (j < lastColumnIndex) {
                 query += ", ";
               }
@@ -322,7 +325,11 @@ function normalizeQuery(strings, values, binding_idx = 1) {
                 for (let k = 0; k < columnCount; k++) {
                   const column = columns[k];
                   const columnValue = item[column];
-                  query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
+                  if (adapter === "mysql") {
+                    query += `?${k < lastColumnIndex ? ", " : ""}`;
+                  } else {
+                    query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
+                  }
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
                   } else {
@@ -341,7 +348,11 @@ function normalizeQuery(strings, values, binding_idx = 1) {
               for (let j = 0; j < columnCount; j++) {
                 const column = columns[j];
                 const columnValue = item[column];
-                query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
+                if (adapter === "mysql") {
+                  query += `?${j < lastColumnIndex ? ", " : ""}`;
+                } else {
+                  query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
+                }
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
@@ -359,7 +370,11 @@ function normalizeQuery(strings, values, binding_idx = 1) {
             const lastItemIndex = itemsCount - 1;
             query += "(";
             for (let j = 0; j < itemsCount; j++) {
-              query += `$${binding_idx++}${j < lastItemIndex ? ", " : ""}`;
+              if (adapter === "mysql") {
+                query += `?${j < lastItemIndex ? ", " : ""}`;
+              } else {
+                query += `$${binding_idx++}${j < lastItemIndex ? ", " : ""}`;
+              }
               if (columnCount > 0) {
                 // we must use a key from a object
                 if (columnCount > 1) {
@@ -407,7 +422,11 @@ function normalizeQuery(strings, values, binding_idx = 1) {
             for (let i = 0; i < columnCount; i++) {
               const column = columns[i];
               const columnValue = item[column];
-              query += `${escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+              if (adapter === "mysql") {
+                query += `${escapeIdentifier(column, adapter)} = ?${i < lastColumnIndex ? ", " : ""}`;
+              } else {
+                query += `${escapeIdentifier(column, adapter)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+              }
               if (typeof columnValue === "undefined") {
                 binding_values.push(null);
               } else {
@@ -418,7 +437,11 @@ function normalizeQuery(strings, values, binding_idx = 1) {
           }
         } else {
           //TODO: handle sql.array parameters
-          query += `$${binding_idx++} `;
+          if (adapter === "mysql") {
+            query += `? `;
+          } else {
+            query += `$${binding_idx++} `;
+          }
           if (typeof value === "undefined") {
             binding_values.push(null);
           } else {
@@ -463,7 +486,7 @@ class Query extends PublicPromise {
       if (!(flags & SQLQueryFlags.unsafe)) {
         // identifier (cannot be executed in safe mode)
         flags |= SQLQueryFlags.notTagged;
-        strings = escapeIdentifier(strings);
+        strings = escapeIdentifier(strings, adapter);
       }
     }
     this[_resolve] = resolve_;
@@ -618,34 +641,39 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
+function handleLast(query, queries) {
+  if (queries) {
+    const queriesIndex = queries.indexOf(query);
+    if (queriesIndex !== -1) {
+      queries.splice(queriesIndex, 1);
+    }
+  }
+  try {
+    query.resolve(query[_results]);
+  } catch {}
+}
 function onResolveSQLQuery(query, result, commandTag, count, queries, is_last) {
   /// simple queries
   if (query[_flags] & SQLQueryFlags.simple) {
     // simple can have multiple results or a single result
-    if (is_last) {
-      if (queries) {
-        const queriesIndex = queries.indexOf(query);
-        if (queriesIndex !== -1) {
-          queries.splice(queriesIndex, 1);
-        }
-      }
-      try {
-        query.resolve(query[_results]);
-      } catch {}
+    if (is_last && !result) {
+      handleLast(query, queries);
       return;
     }
     $assert(result instanceof SQLResultArray, "Invalid result array");
     // prepare for next query
     query[_handle].setPendingValue(new SQLResultArray());
+    if (query[_adapter] !== "mysql") {
+      result.command = commandTag;
 
-    if (typeof commandTag === "string") {
-      if (commandTag.length > 0) {
-        result.command = commandTag;
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
       }
-    } else {
-      result.command = cmds[commandTag];
     }
-
     result.count = count || 0;
     const last_result = query[_results];
 
@@ -659,6 +687,9 @@ function onResolveSQLQuery(query, result, commandTag, count, queries, is_last) {
         // 3 or more results
         last_result.push(result);
       }
+    }
+    if (is_last) {
+      handleLast(query, queries);
     }
     return;
   }
@@ -1276,7 +1307,7 @@ async function createConnection(options, onConnected, onClose) {
 }
 
 function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple, adapter) {
-  const [sqlString, final_values] = normalizeQuery(strings, values);
+  const [sqlString, final_values] = normalizeQuery(strings, values, adapter);
   if (!allowUnsafeTransaction) {
     if (poolSize !== 1) {
       const upperCaseSqlString = sqlString.toUpperCase().trim();

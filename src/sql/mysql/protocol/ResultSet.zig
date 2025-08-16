@@ -2,18 +2,37 @@ const ResultSet = @This();
 pub const Header = @import("./ResultSetHeader.zig");
 
 pub const Row = struct {
-    values: []Value = &[_]Value{},
+    values: []SQLDataCell = &[_]SQLDataCell{},
     columns: []const ColumnDefinition41,
     binary: bool = false,
+    bigint: bool = false,
 
-    extern fn MySQL__toJSFromRow(*jsc.JSGlobalObject, jsc.JSValue, jsc.JSValue, *anyopaque, usize) jsc.JSValue;
-    pub fn toJS(this: *Row, structure_value: JSValue, array_value: JSValue, globalObject: *jsc.JSGlobalObject) JSValue {
-        return MySQL__toJSFromRow(globalObject, structure_value, array_value, this.values.ptr, this.columns.len);
+    pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) JSValue {
+        var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
+        var names_count: u32 = 0;
+        if (cached_structure) |c| {
+            if (c.fields) |f| {
+                names = f.ptr;
+                names_count = @truncate(f.len);
+            }
+        }
+
+        return SQLDataCell.JSC__constructObjectFromDataCell(
+            globalObject,
+            array,
+            structure,
+            this.values.ptr,
+            @truncate(this.values.len),
+            flags,
+            @intFromEnum(result_mode),
+            names,
+            names_count,
+        );
     }
 
     pub fn deinit(this: *Row, allocator: std.mem.Allocator) void {
         for (this.values) |*value| {
-            value.deinit(allocator);
+            value.deinit();
         }
         allocator.free(this.values);
 
@@ -29,31 +48,33 @@ pub const Row = struct {
     }
 
     fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
-        const values = try allocator.alloc(Value, this.columns.len);
+        const cells = try allocator.alloc(SQLDataCell, this.columns.len);
+        @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
         errdefer {
-            for (values) |*value| {
-                value.deinit(allocator);
+            for (cells) |*value| {
+                value.deinit();
             }
-            allocator.free(values);
+            allocator.free(cells);
         }
 
-        for (values) |*value| {
+        for (cells) |*value| {
             if (decodeLengthInt(reader.peek())) |result| {
                 reader.skip(result.bytes_read);
                 if (result.value == 0xfb) { // NULL value
-                    value.* = .{ .null = {} };
+                    value.* = SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 } else {
                     // TODO: check to parse number date etc from this.columns info, you can check postgres to see more text parsing
-                    value.* = .{
-                        .string_data = try reader.read(@intCast(result.value)),
-                    };
+                    var string_data = try reader.read(@intCast(result.value));
+                    defer string_data.deinit();
+                    const slice = string_data.slice();
+                    value.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
                 }
             } else {
                 return error.InvalidResultRow;
             }
         }
 
-        this.values = values;
+        this.values = cells;
     }
 
     fn decodeBinary(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
@@ -66,32 +87,32 @@ pub const Row = struct {
         var null_bitmap = try reader.read(bitmap_bytes);
         defer null_bitmap.deinit();
 
-        const values = try allocator.alloc(Value, this.columns.len);
+        const cells = try allocator.alloc(SQLDataCell, this.columns.len);
+        @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
         errdefer {
-            for (values) |*value| {
-                value.deinit(allocator);
+            for (cells) |*value| {
+                value.deinit();
             }
-            allocator.free(values);
+            allocator.free(cells);
         }
-
         // Skip first 2 bits of null bitmap (reserved)
         const bitmap_offset: usize = 2;
 
-        for (values, 0..) |*value, i| {
+        for (cells, 0..) |*value, i| {
             const byte_pos = (bitmap_offset + i) >> 3;
             const bit_pos = @as(u3, @truncate((bitmap_offset + i) & 7));
             const is_null = (null_bitmap.slice()[byte_pos] & (@as(u8, 1) << bit_pos)) != 0;
 
             if (is_null) {
-                value.* = .{ .null = {} };
+                value.* = SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 continue;
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(column.column_type, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(column.column_type, this.bigint, column.flags.UNSIGNED, Context, reader);
         }
 
-        this.values = values;
+        this.values = cells;
     }
 
     pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;
@@ -107,3 +128,6 @@ const decodeBinaryValue = @import("./DecodeBinaryValue.zig").decodeBinaryValue;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const Value = @import("../MySQLTypes.zig").Value;
+const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
+const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const CachedStructure = @import("../../shared/CachedStructure.zig");

@@ -265,3 +265,9 @@ sql([1, 2, 3], "notAKey");
 expectType<Bun.SQLQuery<"hey">>();
 expectType<Bun.SQLTransactionContextCallback<"hey">>();
 expectType<Bun.SQLSavepointContextCallback<"hey">>();
+
+// check some types exist
+expectType<Bun.SQL.AwaitPromisesArray<[]>>;
+expectType<Bun.SQL.SQLiteOptions>;
+expectType<Bun.SQL.PostgresOptions>;
+expectType<Bun.SQL.ContextCallbackResult<unknown>>;

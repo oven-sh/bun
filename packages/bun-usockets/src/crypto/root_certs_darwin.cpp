@@ -114,7 +114,19 @@ public:
         }
         
         // Load constants and functions
-        if (!load_constants() || !load_functions()) {
+        if (!load_constants()) {
+            if (handle) {
+                dlclose(handle);
+                handle = nullptr;
+            }
+            if (cf_handle) {
+                dlclose(cf_handle);
+                cf_handle = nullptr;
+            }
+            return false;
+        }
+        
+        if (!load_functions()) {
             if (handle) {
                 dlclose(handle);
                 handle = nullptr;
@@ -132,23 +144,48 @@ public:
 private:
     bool load_constants() {
         // Load Security framework constants
-        kSecClass = *(CFStringRef*)dlsym(handle, "kSecClass");
-        kSecClassCertificate = *(CFStringRef*)dlsym(handle, "kSecClassCertificate");
-        kSecMatchLimit = *(CFStringRef*)dlsym(handle, "kSecMatchLimit");
-        kSecMatchLimitAll = *(CFStringRef*)dlsym(handle, "kSecMatchLimitAll");
-        kSecReturnRef = *(CFStringRef*)dlsym(handle, "kSecReturnRef");
+        void* ptr = dlsym(handle, "kSecClass");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecClass not found\n"); return false; }
+        kSecClass = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(handle, "kSecClassCertificate");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecClassCertificate not found\n"); return false; }
+        kSecClassCertificate = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(handle, "kSecMatchLimit");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecMatchLimit not found\n"); return false; }
+        kSecMatchLimit = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(handle, "kSecMatchLimitAll");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecMatchLimitAll not found\n"); return false; }
+        kSecMatchLimitAll = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(handle, "kSecReturnRef");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecReturnRef not found\n"); return false; }
+        kSecReturnRef = *(CFStringRef*)ptr;
         
         // Load CoreFoundation constants
-        kCFBooleanTrue = *(CFBooleanRef*)dlsym(cf_handle, "kCFBooleanTrue");
-        kCFAllocatorDefault = *(CFAllocatorRef*)dlsym(cf_handle, "kCFAllocatorDefault");
-        kCFTypeArrayCallBacks = (CFArrayCallBacks*)dlsym(cf_handle, "kCFTypeArrayCallBacks");
-        kCFTypeDictionaryKeyCallBacks = (CFDictionaryKeyCallBacks*)dlsym(cf_handle, "kCFTypeDictionaryKeyCallBacks");
-        kCFTypeDictionaryValueCallBacks = (CFDictionaryValueCallBacks*)dlsym(cf_handle, "kCFTypeDictionaryValueCallBacks");
+        ptr = dlsym(cf_handle, "kCFBooleanTrue");
+        if (!ptr) { fprintf(stderr, "DEBUG: kCFBooleanTrue not found\n"); return false; }
+        kCFBooleanTrue = *(CFBooleanRef*)ptr;
         
-        return kSecClass && kSecClassCertificate && kSecMatchLimit && 
-               kSecMatchLimitAll && kSecReturnRef && kCFBooleanTrue &&
-               kCFAllocatorDefault && kCFTypeArrayCallBacks &&
-               kCFTypeDictionaryKeyCallBacks && kCFTypeDictionaryValueCallBacks;
+        ptr = dlsym(cf_handle, "kCFAllocatorDefault");
+        if (!ptr) { fprintf(stderr, "DEBUG: kCFAllocatorDefault not found\n"); return false; }
+        kCFAllocatorDefault = *(CFAllocatorRef*)ptr;
+        
+        ptr = dlsym(cf_handle, "kCFTypeArrayCallBacks");
+        if (!ptr) { fprintf(stderr, "DEBUG: kCFTypeArrayCallBacks not found\n"); return false; }
+        kCFTypeArrayCallBacks = (CFArrayCallBacks*)ptr;
+        
+        ptr = dlsym(cf_handle, "kCFTypeDictionaryKeyCallBacks");
+        if (!ptr) { fprintf(stderr, "DEBUG: kCFTypeDictionaryKeyCallBacks not found\n"); return false; }
+        kCFTypeDictionaryKeyCallBacks = (CFDictionaryKeyCallBacks*)ptr;
+        
+        ptr = dlsym(cf_handle, "kCFTypeDictionaryValueCallBacks");
+        if (!ptr) { fprintf(stderr, "DEBUG: kCFTypeDictionaryValueCallBacks not found\n"); return false; }
+        kCFTypeDictionaryValueCallBacks = (CFDictionaryValueCallBacks*)ptr;
+        
+        return true;
     }
     
     bool load_functions() {

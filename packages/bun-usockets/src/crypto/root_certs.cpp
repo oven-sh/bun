@@ -203,7 +203,20 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 }
 
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  return us_get_default_ca_certificates()->root_system_cert_instances;
+  auto certs = us_get_default_ca_certificates();
+  
+  // If system certificates haven't been loaded yet, load them now
+  if (certs->root_system_cert_instances == NULL) {
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&certs->root_system_cert_instances);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&certs->root_system_cert_instances);
+#else
+    us_load_system_certificates_linux(&certs->root_system_cert_instances);
+#endif
+  }
+  
+  return certs->root_system_cert_instances;
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {

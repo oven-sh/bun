@@ -165,6 +165,90 @@ describe("basic", () => {
   }
 });
 
+describe("workspace catalog dependencies", () => {
+  test("installs dependencies for all subpackages using same dependency different version", async () => {
+    const { packageDir } = await registry.createTestDir();
+
+    // Create root package.json with workspace catalogs
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "bun-catalog",
+        private: true,
+        workspaces: {
+          packages: ["packages/*"],
+          catalogs: {
+            v1: {
+              "no-deps": "1.0.0",
+            },
+            v2: {
+              "no-deps": "2.0.0",
+            },
+          },
+        },
+      }),
+    );
+
+    // Create subpackage a with catalog:v1 dependency
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        main: "index.js",
+        license: "MIT",
+        dependencies: {
+          "no-deps": "catalog:v1",
+        },
+      }),
+    );
+
+    // Create subpackage b with catalog:v2 dependency
+    await write(
+      join(packageDir, "packages", "b", "package.json"),
+      JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        main: "index.js",
+        license: "MIT",
+        dependencies: {
+          "no-deps": "catalog:v2",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // Both subpackages should be able to require their respective versions
+    // Package a should have access to no-deps@1.0.0
+    const pkgANodeModules = join(packageDir, "packages", "a", "node_modules");
+    const pkgBNodeModules = join(packageDir, "packages", "b", "node_modules");
+    
+    // Package a should have access to no-deps@1.0.0 either in its own node_modules or root
+    let hasNoDepsV1 = false;
+    if (await exists(join(pkgANodeModules, "no-deps", "package.json"))) {
+      const pkgJson = await file(join(pkgANodeModules, "no-deps", "package.json")).json();
+      hasNoDepsV1 = pkgJson.version === "1.0.0";
+    } else if (await exists(join(packageDir, "node_modules", "no-deps", "package.json"))) {
+      const pkgJson = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+      hasNoDepsV1 = pkgJson.version === "1.0.0";
+    }
+
+    // Package b should have access to no-deps@2.0.0 either in its own node_modules or root
+    let hasNoDepsV2 = false;
+    if (await exists(join(pkgBNodeModules, "no-deps", "package.json"))) {
+      const pkgJson = await file(join(pkgBNodeModules, "no-deps", "package.json")).json();
+      hasNoDepsV2 = pkgJson.version === "2.0.0";
+    } else if (await exists(join(packageDir, "node_modules", "no-deps", "package.json"))) {
+      const pkgJson = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+      hasNoDepsV2 = pkgJson.version === "2.0.0";
+    }
+
+    expect(hasNoDepsV1).toBe(true);
+    expect(hasNoDepsV2).toBe(true);
+  });
+});
+
 describe("errors", () => {
   test("fails gracefully when no catalog is found for a package", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

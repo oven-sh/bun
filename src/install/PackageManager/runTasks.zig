@@ -665,62 +665,21 @@ pub fn runTasks(
                         },
                         else => @compileError("unexpected context type"),
                     }
-                } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
-                    // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
-                    // We need to make sure we resolve the dependencies first before calling the onExtract callback
-                    // TODO: move this into a separate function
-                    var any_root = false;
-                    var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
-                    var dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
-
-                    defer {
-                        dependency_list.deinit(manager.allocator);
-                        if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {
-                            if (any_root) {
-                                callbacks.onResolve(extract_ctx);
-                            }
+                } else {
+                    // No callback - do the default package processing
+                    if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| {
+                        _ = pkg;
+                        // Assign the resolution for the primary dependency  
+                        if (dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                            manager.assignResolution(dependency_id, package_id);
                         }
                     }
-
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
-                            .dependency, .root_dependency => |id| {
-                                var version = &manager.lockfile.buffers.dependencies.items[id].version;
-                                switch (version.tag) {
-                                    .git => {
-                                        version.value.git.package_name = pkg.name;
-                                    },
-                                    .github => {
-                                        version.value.github.package_name = pkg.name;
-                                    },
-                                    .tarball => {
-                                        version.value.tarball.package_name = pkg.name;
-                                    },
-
-                                    // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
-                                    // will still have the original.
-                                    else => {},
-                                }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
-                            },
-                            else => {
-                                // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
-                            },
-                        }
-                    }
-                } else if (manager.task_queue.getEntry(Task.Id.forManifest(
-                    manager.lockfile.str(&manager.lockfile.packages.items(.name)[package_id]),
-                ))) |dependency_list_entry| {
-                    // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
-                    const dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
-
-                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
                 }
 
-                manager.setPreinstallState(package_id, manager.lockfile, .done);
+                // Only set preinstall state if we have a valid package_id
+                if (package_id != invalid_package_id) {
+                    manager.setPreinstallState(package_id, manager.lockfile, .done);
+                }
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {

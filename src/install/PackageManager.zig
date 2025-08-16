@@ -1279,9 +1279,35 @@ pub fn onExtractDefault(
     data: *const ExtractData,
     log_level: Options.LogLevel,
 ) void {
-    _ = data;
-    _ = log_level;
-    _ = dependency_id;
+    // The runtime callback takes full control of extraction handling
+    // We need to process the extracted package and assign resolutions
+    
+    // Get the dependency to find out what type of resolution this is
+    const dependency = manager.lockfile.buffers.dependencies.items[dependency_id];
+    var package_id = manager.lockfile.buffers.resolutions.items[dependency_id];
+    
+    // For git/github dependencies, we need to create the package from the extracted tarball
+    switch (dependency.version.tag) {
+        .git, .github => {
+            // Create a simple Resolution struct that processExtractedTarballPackage can use
+            // We just need the tag to be correct for the switch statement inside processExtractedTarballPackage
+            var res = bun.install.Resolution{
+                .tag = if (dependency.version.tag == .git) .git else .github,
+                .value = .{ .uninitialized = {} },
+            };
+            
+            if (manager.processExtractedTarballPackage(&package_id, dependency_id, &res, data, log_level)) |pkg| {
+                _ = pkg;
+                // Assign the resolution for the primary dependency
+                if (dependency_id != bun.install.invalid_package_id and package_id != bun.install.invalid_package_id) {
+                    manager.assignResolution(dependency_id, package_id);
+                }
+            }
+        },
+        else => {
+            // For other types, the package should already exist
+        },
+    }
 
     // Process any dependency_install_context items in the task queue
     if (manager.task_queue.fetchRemove(task_id)) |removed| {
@@ -1297,8 +1323,8 @@ pub fn onExtractDefault(
             switch (cb.*) {
                 .dependency_install_context => |context| {
                     // The package is already in the cache, we just need to link/copy it to node_modules
-                    const package_id = manager.lockfile.buffers.resolutions.items[context.dependency_id];
-                    const name = manager.lockfile.packages.items(.name)[package_id];
+                    const context_package_id = manager.lockfile.buffers.resolutions.items[context.dependency_id];
+                    const name = manager.lockfile.packages.items(.name)[context_package_id];
 
                     // TODO: Actually implement the linking/copying from cache to node_modules
                     // This is a simplified version - the actual implementation would need to:
@@ -1380,6 +1406,8 @@ const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;
 const initializeStore = bun.install.initializeStore;
+const Store = bun.install.Store;
+const ExtractData = bun.install.ExtractData;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

@@ -7,8 +7,6 @@
 
 // Forward declaration to avoid including OpenSSL headers here
 // This prevents conflicts with Windows macros like X509_NAME
-struct stack_st_X509;
-typedef struct stack_st_X509 STACK_OF(X509);
 
 // Structure to hold raw certificate data
 struct RawCertificate {

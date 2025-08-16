@@ -57,9 +57,11 @@ test("process.execArgv should be empty in compiled executables and argv should w
     // The fix: execArgv should be empty in compiled executables (no --compile-argv was used)
     expect(result.execArgv).toEqual([]);
 
-    // argv should contain: ["bun", "/$bunfs/root/check-execargv", ...userArgs]
+    // argv should contain: ["bun", script_path, ...userArgs]
     expect(result.argv.length).toBe(6);
     expect(result.argv[0]).toBe("bun");
+    // The script path contains "check-execargv" and uses platform-specific virtual paths
+    // Windows: B:\~BUN\..., Unix: /$bunfs/...
     expect(result.argv[1]).toContain("check-execargv");
     expect(result.argv[2]).toBe("-a");
     expect(result.argv[3]).toBe("--b");

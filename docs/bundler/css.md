@@ -5,6 +5,16 @@ Bun's bundler has built-in support for CSS with the following features:
 - CSS Modules
 - Tailwind (via a native bundler plugin)
 
+## CSS Chunking
+
+When multiple entry points import the same CSS files, use `--css-chunking` to reduce duplication by grouping shared CSS into separate chunks:
+
+```bash
+bun build ./home.ts ./about.ts --css-chunking --outdir ./dist
+```
+
+This creates separate CSS files for shared imports, reducing total CSS size in multi-page applications.
+
 ## Transpiling
 
 Bun's CSS bundler lets you use modern/future CSS features without having to worry about browser compatibility — all thanks to its transpiling and vendor prefixing features which are enabled by default.

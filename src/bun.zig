@@ -92,10 +92,7 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
 /// Conversion rules:
 /// - If finite and within target integer range: truncates toward zero
 /// - If NaN: returns 0
-/// - If positive infinity: returns target max value
-/// - If negative infinity: returns target min value  
-/// - If finite but larger than target max: returns target max value
-/// - If finite but smaller than target min: returns target min value
+/// - If out-of-range (including infinities): clamp to target min/max bounds
 pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     const Float = @TypeOf(value);
     comptime {
@@ -110,15 +107,7 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
         return 0;
     }
     
-    // Handle infinities
-    if (std.math.isPositiveInf(value)) {
-        return std.math.maxInt(Int);
-    }
-    if (std.math.isNegativeInf(value)) {
-        return std.math.minInt(Int);
-    }
-    
-    // Handle finite values
+    // Handle out-of-range values (including infinities)
     const min_float = @as(Float, @floatFromInt(std.math.minInt(Int)));
     const max_float = @as(Float, @floatFromInt(std.math.maxInt(Int)));
     

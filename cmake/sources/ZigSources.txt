@@ -280,6 +280,7 @@ src/bun.js/ProcessAutoKiller.zig
 src/bun.js/rare_data.zig
 src/bun.js/ResolveMessage.zig
 src/bun.js/RuntimeTranspilerCache.zig
+src/bun.js/SafeStrong.zig
 src/bun.js/SavedSourceMap.zig
 src/bun.js/Strong.zig
 src/bun.js/test/Collection.zig

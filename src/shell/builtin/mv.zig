@@ -96,9 +96,14 @@ pub const ShellMvBatchedTask = struct {
 
         switch (Syscall.renameat(this.cwd, src, this.cwd, this.target)) {
             .err => |e| {
-                if (e.getErrno() == .NOTDIR) {
+                if (e.getErrno() == .XDEV) {
+                    // Cross-device move: fall back to copy + delete
+                    this.moveAcrossFilesystems(src, this.target);
+                } else if (e.getErrno() == .NOTDIR) {
                     this.err = e.withPath(this.target);
-                } else this.err = e;
+                } else {
+                    this.err = e;
+                }
             },
             else => {},
         }
@@ -120,8 +125,14 @@ pub const ShellMvBatchedTask = struct {
                     ResolvePath.basename(src),
                 }, .auto);
 
-                this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
-                return false;
+                if (e.getErrno() == .XDEV) {
+                    // Cross-device move: fall back to copy + delete
+                    this.moveAcrossFilesystems(src, target_path);
+                    return this.err == null;
+                } else {
+                    this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
+                    return false;
+                }
             },
             else => {},
         }
@@ -152,11 +163,13 @@ pub const ShellMvBatchedTask = struct {
     ///     rm -rf source_file
     /// ```
     fn moveAcrossFilesystems(this: *@This(), src: [:0]const u8, dest: [:0]const u8) void {
-        _ = this;
-        _ = src;
-        _ = dest;
-
-        // TODO
+        // Use Bun's cross-device move functionality
+        switch (Syscall.moveFileZSlowMaybe(this.cwd, src, this.cwd, dest)) {
+            .err => |e| {
+                this.err = e.withPath(dest);
+            },
+            .result => {},
+        }
     }
 
     pub fn runFromMainThread(this: *@This()) void {

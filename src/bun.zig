@@ -86,6 +86,52 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
+/// Converts a floating-point value to an integer following Rust semantics.
+/// This provides safe conversion that mimics Rust's `as` operator behavior,
+/// unlike Zig's `@intFromFloat` which panics on out-of-range values.
+///
+/// Conversion rules:
+/// - If finite and within target integer range: truncates toward zero
+/// - If NaN: returns 0
+/// - If out-of-range (including infinities): clamp to target min/max bounds
+pub fn intFromFloat(comptime Int: type, value: anytype) Int {
+    const Float = @TypeOf(value);
+    comptime {
+        // Simple type check - let the compiler do the heavy lifting
+        if (!(Float == f32 or Float == f64)) {
+            @compileError("intFromFloat: value must be f32 or f64");
+        }
+    }
+
+    // Handle NaN
+    if (std.math.isNan(value)) {
+        return 0;
+    }
+
+    // Handle out-of-range values (including infinities)
+    const min_int = std.math.minInt(Int);
+    const max_int = std.math.maxInt(Int);
+
+    // Check the truncated value directly against integer bounds
+    const truncated = @trunc(value);
+
+    // Use f64 for comparison to avoid precision issues
+    if (truncated > @as(f64, @floatFromInt(max_int))) {
+        return max_int;
+    }
+    if (truncated < @as(f64, @floatFromInt(min_int))) {
+        return min_int;
+    }
+
+    // Additional safety check: ensure we can safely convert
+    if (truncated != truncated) { // Check for NaN in truncated value
+        return 0;
+    }
+
+    // Safe to convert - truncate toward zero
+    return @as(Int, @intFromFloat(truncated));
+}
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;

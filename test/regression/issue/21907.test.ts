@@ -56,7 +56,7 @@ test("CSS parser should handle extremely large floating-point values without cra
   
   // This would previously crash with "integer part of floating point value out of bounds"
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "input.css", "--outdir", dir],
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -74,18 +74,54 @@ test("CSS parser should handle extremely large floating-point values without cra
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("integer part of floating point value out of bounds");
   
-  // Verify the output contains our CSS properly formatted
-  const outputContent = await Bun.file(`${dir}/input.css`).text();
+  // Verify the output CSS is properly processed with intFromFloat conversions
+  const outputContent = await Bun.file(`${dir}/out/input.css`).text();
   
-  // Should contain the large floating-point values properly serialized
-  expect(outputContent).toContain("border-radius:");
-  expect(outputContent).toContain("3.40282e");
+  // Helper function to normalize CSS output for snapshots
+  function normalizeCSSOutput(output: string): string {
+    return output
+      .replace(/\/\*.*?\*\//g, "/* [path] */") // Replace comment paths
+      .trim();
+  }
   
-  // Verify color values are properly clamped/converted
-  expect(outputContent).toContain("color:");
-  expect(outputContent).toContain("background:");
-  
-  // Verify percentage values are handled
-  expect(outputContent).toContain("width:");
-  expect(outputContent).toContain("height:");
+  // Test the actual output with inline snapshot - this ensures all intFromFloat
+  // conversions work correctly and captures any changes in output format
+  expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
+    "/* [path] */
+    .test-rounded-full {
+      border-radius: 3.40282e+38px;
+      width: 2147480000px;
+      height: -2147480000px;
+    }
+
+    .test-negative {
+      border-radius: -3.40282e+38px;
+    }
+
+    .test-very-large, .test-large-integer {
+      border-radius: 3.40282e38px;
+    }
+
+    .test-colors {
+      color: #f0f;
+      background: red;
+    }
+
+    .test-percentages {
+      width: 1000000000000000000%;
+      height: -1000000000000000000%;
+    }
+
+    .test-boundaries {
+      margin: 2147480000px;
+      padding: -2147480000px;
+      left: 4294970000px;
+    }
+
+    .test-normal {
+      width: 10px;
+      height: 20.5px;
+      margin: 0;
+    }"
+  `);
 });

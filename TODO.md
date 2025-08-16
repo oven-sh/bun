@@ -1,5 +1,6 @@
 Complete before merge:
 
+- [ ] add back gc cleaning up an unused callback. need to identify when the callback will never be used again and swap it with null.
 - [ ] add tests & pass existing tests
 - [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
 - [ ] remove describe2.ts

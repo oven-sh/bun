@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-test("process.execArgv should be empty in compiled executables", async () => {
+test("process.execArgv should be empty in compiled executables and argv should work correctly", async () => {
   const dir = tempDirWithFiles("process-execargv-compile", {
     "check-execargv.js": `
       console.log(JSON.stringify({
@@ -15,7 +15,7 @@ test("process.execArgv should be empty in compiled executables", async () => {
   // First test regular execution - execArgv should be empty for script args
   {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "check-execargv.js"), "-a", "--b"],
+      cmd: [bunExe(), join(dir, "check-execargv.js"), "-a", "--b", "arg1", "arg2"],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -23,8 +23,13 @@ test("process.execArgv should be empty in compiled executables", async () => {
 
     const result = JSON.parse(await proc.stdout.text());
     expect(result.execArgv).toEqual([]);
-    expect(result.argv).toContain("-a");
-    expect(result.argv).toContain("--b");
+    
+    // Verify argv structure: [executable, script, ...userArgs]
+    expect(result.argv.length).toBeGreaterThanOrEqual(4);
+    expect(result.argv[result.argv.length - 4]).toBe("-a");
+    expect(result.argv[result.argv.length - 3]).toBe("--b");
+    expect(result.argv[result.argv.length - 2]).toBe("arg1");
+    expect(result.argv[result.argv.length - 1]).toBe("arg2");
   }
 
   // Build compiled executable
@@ -38,10 +43,10 @@ test("process.execArgv should be empty in compiled executables", async () => {
     expect(await buildProc.exited).toBe(0);
   }
 
-  // Test compiled executable - execArgv should be empty
+  // Test compiled executable - execArgv should be empty, argv should work normally
   {
     await using proc = Bun.spawn({
-      cmd: [join(dir, "check-execargv"), "-a", "--b"],
+      cmd: [join(dir, "check-execargv"), "-a", "--b", "arg1", "arg2"],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -49,11 +54,16 @@ test("process.execArgv should be empty in compiled executables", async () => {
 
     const result = JSON.parse(await proc.stdout.text());
 
-    // The fix: execArgv should be empty in compiled executables
+    // The fix: execArgv should be empty in compiled executables (no --compile-argv was used)
     expect(result.execArgv).toEqual([]);
 
-    // argv should still contain all arguments
-    expect(result.argv).toContain("-a");
-    expect(result.argv).toContain("--b");
+    // argv should contain: ["bun", "/$bunfs/root/check-execargv", ...userArgs]
+    expect(result.argv.length).toBe(6);
+    expect(result.argv[0]).toBe("bun");
+    expect(result.argv[1]).toContain("check-execargv");
+    expect(result.argv[2]).toBe("-a");
+    expect(result.argv[3]).toBe("--b");
+    expect(result.argv[4]).toBe("arg1");
+    expect(result.argv[5]).toBe("arg2");
   }
 });

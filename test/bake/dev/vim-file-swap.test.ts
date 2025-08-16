@@ -43,8 +43,8 @@ devTest("vim file swap hot reload for entrypoints", {
       const originalFile = path.join(dev.rootDir, "index.html");
       fs.unlinkSync(originalFile);
 
-      // Step 3: Rename .index.html.swp to index.html
-      fs.cpSync(swapFile, originalFile);
+      // Step 3: Rename .index.html.swp to index.html (atomic operation)
+      fs.renameSync(swapFile, originalFile);
 
       // Wait a bit for file watcher to detect changes
       await new Promise(resolve => setTimeout(resolve, 100));

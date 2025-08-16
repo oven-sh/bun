@@ -28,7 +28,7 @@ pub const DeletedEntrypointWatchlist = struct {
     };
 
     /// parent directory -> list of deleted entries in that directory
-    entries_by_dir: std.StringArrayHashMapUnmanaged(bun.SmallList(Entry, 2)) = .{},
+    entries_by_dir: bun.StringArrayHashMapUnmanaged(bun.SmallList(Entry, 2)) = .{},
 
     /// Should be `dev.allocator`
     allocator: Allocator,
@@ -41,7 +41,7 @@ pub const DeletedEntrypointWatchlist = struct {
             fd: bun.FD = bun.invalid_fd,
         };
 
-        deduped_directories: std.StringArrayHashMapUnmanaged(bun.SmallList(EntrypointToProcess, 2)),
+        deduped_directories: bun.StringArrayHashMapUnmanaged(bun.SmallList(EntrypointToProcess, 2)),
         temp_allocator: std.mem.Allocator,
 
         pub fn init(temp_allocator: std.mem.Allocator) Processor {

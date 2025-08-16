@@ -1319,10 +1319,14 @@ pub const SecurityScanSubprocess = struct {
 
         pipe_fds[1].close();
 
-        _ = bun.sys.setNonblocking(pipe_fds[0]);
+        if (comptime bun.Environment.isPosix) {
+            _ = bun.sys.setNonblocking(pipe_fds[0]);
+        }
         this.remaining_fds = 1;
         this.ipc_reader.flags.nonblocking = true;
-        this.ipc_reader.flags.socket = false;
+        if (comptime bun.Environment.isPosix) {
+            this.ipc_reader.flags.socket = false;
+        }
         try this.ipc_reader.start(pipe_fds[0], true).unwrap();
 
         var process = spawned.toProcess(&this.manager.event_loop, false);

@@ -891,6 +891,7 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
         compile_exec_argv: []const u8,
+        self_exe_path: ?[]const u8,
     ) !CompileResult {
         const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
             return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to generate module graph bytes: {s}", .{@errorName(err)}) catch "failed to generate module graph bytes");
@@ -899,7 +900,10 @@ pub const StandaloneModuleGraph = struct {
         defer allocator.free(bytes);
 
         var free_self_exe = false;
-        const self_exe = if (target.isDefault())
+        const self_exe = if (self_exe_path) |path| brk: {
+            free_self_exe = true;
+            break :brk allocator.dupeZ(u8, path) catch bun.outOfMemory();
+        } else if (target.isDefault())
             bun.selfExePath() catch |err| {
                 return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to get self executable path: {s}", .{@errorName(err)}) catch "failed to get self executable path");
             }

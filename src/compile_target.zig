@@ -66,6 +66,11 @@ pub fn isDefault(this: *const CompileTarget) bool {
 }
 
 pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
+    if (bun.getenvZ("BUN_COMPILE_TARGET_TARBALL_URL")) |url| {
+        if (strings.hasPrefixComptime(url, "http://") or strings.hasPrefixComptime(url, "https://"))
+            return url;
+    }
+
     return try this.toNPMRegistryURLWithURL(buf, "https://registry.npmjs.org");
 }
 

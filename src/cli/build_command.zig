@@ -434,6 +434,7 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.windows_hide_console,
                     ctx.bundler_options.windows_icon,
                     ctx.bundler_options.compile_exec_argv orelse "",
+                    null,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

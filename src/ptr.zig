@@ -11,12 +11,20 @@ pub const OwnedWithOpts = owned.OwnedWithOpts;
 pub const MaybeOwned = owned.MaybeOwned;
 pub const MaybeOwnedWithOpts = owned.MaybeOwnedWithOpts;
 
+pub const shared = @import("./ptr/shared.zig");
+pub const Shared = shared.Shared;
+pub const AtomicShared = shared.AtomicShared;
+
 pub const ref_count = @import("./ptr/ref_count.zig");
+/// Deprecated; use `Shared(*T)`.
 pub const RefCount = ref_count.RefCount;
+/// Deprecated; use `AtomicShared(*T)`.
 pub const ThreadSafeRefCount = ref_count.ThreadSafeRefCount;
+/// Deprecated; use `Shared(*T)`.
 pub const RefPtr = ref_count.RefPtr;
 
 pub const TaggedPointer = @import("./ptr/tagged_pointer.zig").TaggedPointer;
 pub const TaggedPointerUnion = @import("./ptr/tagged_pointer.zig").TaggedPointerUnion;
 
+/// Deprecated; use `Shared(*T).Weak`.
 pub const WeakPtr = @import("./ptr/weak_ptr.zig").WeakPtr;

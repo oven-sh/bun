@@ -48,6 +48,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/OptionsList.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -5290,6 +5291,41 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     return vm->heap.sizeAfterLastFullCollection();
+}
+
+JSC::VM* JSC__VM__create(unsigned char HeapType0)
+{
+    JSC::HeapType heapType = HeapType0 == 0 ? JSC::HeapType::Small : JSC::HeapType::Large;
+    
+    // First attempt with current JIT settings
+    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapType);
+    if (vmPtr) {
+        return vmPtr.leakRef();
+    }
+    
+    // If first attempt failed, try again with JIT disabled
+    bool originalJIT = JSC::Options::useJIT();
+    bool originalConcurrentJIT = JSC::Options::useConcurrentJIT();
+    bool originalBBQJIT = JSC::Options::useBBQJIT();
+    
+    JSC::Options::useJIT() = false;
+    JSC::Options::useConcurrentJIT() = false;
+    JSC::Options::useBBQJIT() = false;
+    
+    vmPtr = JSC::VM::tryCreate(heapType);
+    
+    if (vmPtr) {
+        fprintf(stderr, "warning: JIT disabled due to JavaScriptCore initialization failure\n");
+        return vmPtr.leakRef();
+    }
+    
+    // Restore original settings if second attempt also failed
+    JSC::Options::useJIT() = originalJIT;
+    JSC::Options::useConcurrentJIT() = originalConcurrentJIT;
+    JSC::Options::useBBQJIT() = originalBBQJIT;
+    
+    fprintf(stderr, "error: failed to initialize JavaScriptCore\n");
+    exit(1);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__VM__isJITEnabled()

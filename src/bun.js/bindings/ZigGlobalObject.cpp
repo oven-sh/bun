@@ -257,6 +257,58 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
     return getWebKitBytecodeCacheVersion();
 }
 
+// Navigator property getters - defined early to be available in lambdas
+JSC_DEFINE_CUSTOM_GETTER(navigatorUserAgentGetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    UNUSED_PARAM(thisValue);
+    auto& vm = JSC::getVM(globalObject);
+    auto str = WTF::String::fromUTF8(Bun__userAgent);
+    return JSC::JSValue::encode(JSC::jsString(vm, str));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(navigatorPlatformGetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    UNUSED_PARAM(thisValue);
+    auto& vm = JSC::getVM(globalObject);
+// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
+// https://github.com/oven-sh/bun/issues/4588
+#if OS(DARWIN)
+    return JSC::JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
+#elif OS(WINDOWS)
+    return JSC::JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
+#elif OS(LINUX)
+    return JSC::JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+#else
+    return JSC::JSValue::encode(JSC::jsString(vm, String("Unknown"_s)));
+#endif
+}
+
+JSC_DEFINE_CUSTOM_GETTER(navigatorHardwareConcurrencyGetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    UNUSED_PARAM(thisValue);
+    auto& vm = JSC::getVM(globalObject);
+    UNUSED_PARAM(vm);
+    int cpuCount = 0;
+#ifdef __APPLE__
+    size_t count_len = sizeof(cpuCount);
+    sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
+#elif OS(WINDOWS)
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    cpuCount = sysinfo.dwNumberOfProcessors;
+#else
+    // TODO: windows
+    cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    return JSC::JSValue::encode(JSC::jsNumber(cpuCount));
+}
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     static bool has_loaded_jsc = false;
@@ -3090,39 +3142,27 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = 0;
-#ifdef __APPLE__
-            size_t count_len = sizeof(cpuCount);
-            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
-#elif OS(WINDOWS)
-            SYSTEM_INFO sysinfo;
-            GetSystemInfo(&sysinfo);
-            cpuCount = sysinfo.dwNumberOfProcessors;
-#else
-            // TODO: windows
-            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
-
-            auto str = WTF::String::fromUTF8(Bun__userAgent);
-            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
-            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
-
             JSC::JSObject* obj = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 4);
-            obj->putDirect(init.vm, userAgentIdentifier, JSC::jsString(init.vm, str));
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
-// https://github.com/oven-sh/bun/issues/4588
-#if OS(DARWIN)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("MacIntel"_s)));
-#elif OS(WINDOWS)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Win32"_s)));
-#elif OS(LINUX)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Linux x86_64"_s)));
-#endif
+            // Define getter-only properties like Node.js
+            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
+            JSC::Identifier platformIdentifier = JSC::Identifier::fromString(init.vm, "platform"_s);
+            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
 
-            obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
+            obj->putDirectCustomAccessor(init.vm, userAgentIdentifier,
+                JSC::CustomGetterSetter::create(init.vm, navigatorUserAgentGetter, nullptr),
+                PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete);
+
+            obj->putDirectCustomAccessor(init.vm, platformIdentifier,
+                JSC::CustomGetterSetter::create(init.vm, navigatorPlatformGetter, nullptr),
+                PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete);
+
+            obj->putDirectCustomAccessor(init.vm, hardwareConcurrencyIdentifier,
+                JSC::CustomGetterSetter::create(init.vm, navigatorHardwareConcurrencyGetter, nullptr),
+                PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete);
+
             init.set(obj);
         });
 

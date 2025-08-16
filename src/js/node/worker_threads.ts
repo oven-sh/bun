@@ -17,7 +17,7 @@ const {
   // node:worker_threads instance instead of the Web Worker instance.
   Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
 };
-const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
+const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
 const {

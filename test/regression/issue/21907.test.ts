@@ -1,21 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
-import { join } from "path";
-import { tmpdir } from "os";
-import { mkdirSync, writeFileSync } from "fs";
+import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 
 test("CSS parser should handle extremely large floating-point values without crashing", async () => {
   // Test for regression of issue #21907: "integer part of floating point value out of bounds"
   // This was causing crashes on Windows when processing TailwindCSS with rounded-full class
   
-  const tempDir = join(tmpdir(), `bun-test-${Date.now()}`);
-  mkdirSync(tempDir, { recursive: true });
-  
-  const cssFile = join(tempDir, "test.css");
-  
-  // Create CSS with extremely large floating-point values that would cause the crash
-  // Tests multiple conversion paths that use intFromFloat with different target types
-  const cssContent = `
+  const dir = tempDirWithFiles("css-large-float-regression", {
+    "input.css": `
 /* Tests intFromFloat(i32, value) in serializeDimension */
 .test-rounded-full {
   border-radius: 3.40282e38px;
@@ -54,41 +45,29 @@ test("CSS parser should handle extremely large floating-point values without cra
   left: 4294967295px; /* u32 max */
 }
 
-/* Tests NaN and infinity handling (though these would be filtered out earlier) */
+/* Tests normal values */
 .test-normal {
   width: 10px;
   height: 20.5px;
   margin: 0px;
 }
-`;
-  
-  writeFileSync(cssFile, cssContent);
+`
+  });
   
   // This would previously crash with "integer part of floating point value out of bounds"
-  const { stdout, stderr, exitCode } = await new Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-  }>((resolve) => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "build", cssFile, "--outdir", tempDir],
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: tempDir,
-    });
-    
-    proc.exited.then(async exitCode => {
-      const [stdoutText, stderrText] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-      ]);
-      resolve({
-        stdout: stdoutText,
-        stderr: stderrText,
-        exitCode,
-      });
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", dir],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   
   // Should not crash and should exit successfully
   expect(exitCode).toBe(0);
@@ -96,8 +75,7 @@ test("CSS parser should handle extremely large floating-point values without cra
   expect(stderr).not.toContain("integer part of floating point value out of bounds");
   
   // Verify the output contains our CSS properly formatted
-  const outputFile = join(tempDir, "test.css");
-  const outputContent = await Bun.file(outputFile).text();
+  const outputContent = await Bun.file(`${dir}/input.css`).text();
   
   // Should contain the large floating-point values properly serialized
   expect(outputContent).toContain("border-radius:");

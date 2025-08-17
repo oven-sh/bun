@@ -1,5 +1,6 @@
 
 
+#include "BunString.h"
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -194,7 +195,8 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {
-        auto impl = str->impl.wtf->isolatedCopy();
+        Ref<WTF::StringImpl> impl = *str->impl.wtf;
+        impl = Bun::toCrossThreadShareable(impl);
         if (impl.ptr() != str->impl.wtf) {
             str->impl.wtf = &impl.leakRef();
         }
@@ -291,10 +293,21 @@ bool isCrossThreadShareable(const WTF::String& string)
         return false;
 
     // 2) Don't share slices or external buffers that might have ownership issues
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->bufferOwnership() == StringImpl::BufferExternal)
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return false;
 
     return true;
+}
+
+Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
+{
+    if (impl->isAtom() || impl->isSymbol())
+        return impl;
+
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return impl->isolatedCopy();
+
+    return impl;
 }
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
@@ -309,7 +322,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
         return string.isolatedCopy();
 
     // 2) Don't share slices or external buffers that might have ownership issues
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->bufferOwnership() == StringImpl::BufferExternal)
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return string.isolatedCopy();
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread

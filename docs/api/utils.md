@@ -788,14 +788,7 @@ const formatted = "\u001b[1m\u001b[4mBold and underlined\u001b[0m";
 console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
 ```
 
-### Performance
-
 `Bun.stripANSI` is significantly faster than the popular [`strip-ansi`](https://www.npmjs.com/package/strip-ansi) npm package:
-
-- **6-57x faster** depending on string length and content
-- **57x faster** for short strings (11-13 characters)
-- **16x faster** for medium strings (16K characters)
-- **6x faster** for large strings (213K characters)
 
 ```ts
 // Benchmark results (Bun vs npm/strip-ansi):

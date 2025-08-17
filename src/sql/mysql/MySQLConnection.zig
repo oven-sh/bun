@@ -104,13 +104,14 @@ pub fn canPipeline(this: *@This()) bool {
     }
 
     _ = this;
-    // TODO: fix pipelining
-    // return this.status == .connected and this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+    // TODO: understand better the rules for pipelining in MYSQL
+    return false;
+    // return this.status == .connected and
+    //     this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
     //     !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
     //     !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
     //     !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
     //     this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
-    return false;
 }
 pub const AuthState = union(enum) {
     pending: void,

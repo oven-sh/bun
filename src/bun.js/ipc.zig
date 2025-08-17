@@ -118,11 +118,10 @@ const advanced = struct {
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *jsc.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         const serialized = try value.serialize(global, .{
-            // You can't do transfer() across processes. That does not work.
-            .forTransfer = false,
+            // IPC sends across process.
+            .forCrossProcessTransfer = true,
 
-            // This is for cross-process serialization, so it must go through the Storage version.
-            .forCrossProcess = true,
+            .forStorage = false,
         });
         defer serialized.deinit();
 

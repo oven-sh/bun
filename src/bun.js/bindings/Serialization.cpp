@@ -17,8 +17,8 @@ struct SerializedValueSlice {
 
 enum class SerializedFlags : uint8_t {
     None = 0,
-    ForTransfer = 1 << 0,
-    ForCrossProcess = 1 << 1,
+    ForCrossProcessTransfer = 1 << 0,
+    ForStorage = 1 << 1,
 };
 
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
@@ -30,9 +30,9 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto forStorage = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcess)) ? SerializationForStorage::Yes : SerializationForStorage::No;
+    auto forStorage = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForStorage)) ? SerializationForStorage::Yes : SerializationForStorage::No;
     auto context = SerializationContext::Default;
-    auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForTransfer)) ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
+    auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcessTransfer)) ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
     EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());

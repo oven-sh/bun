@@ -2187,8 +2187,8 @@ pub const JSValue = enum(i64) {
     };
 
     pub const SerializedFlags = packed struct(u8) {
-        forTransfer: bool = false,
-        forCrossProcess: bool = false,
+        forCrossProcessTransfer: bool = false,
+        forStorage: bool = false,
         _padding: u6 = 0,
     };
 
@@ -2196,8 +2196,8 @@ pub const JSValue = enum(i64) {
     /// Must be freed when you are done with the bytes.
     pub inline fn serialize(this: JSValue, global: *JSGlobalObject, flags: SerializedFlags) bun.JSError!SerializedScriptValue {
         var flags_u8: u8 = 0;
-        if (flags.forTransfer) flags_u8 |= 1 << 0;
-        if (flags.forCrossProcess) flags_u8 |= 1 << 1;
+        if (flags.forCrossProcessTransfer) flags_u8 |= 1 << 0;
+        if (flags.forStorage) flags_u8 |= 1 << 1;
 
         const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, flags_u8 });
         return .{ .data = value.bytes.?[0..value.size], .handle = value.handle.? };

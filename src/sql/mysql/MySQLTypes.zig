@@ -416,13 +416,13 @@ pub const Value = union(enum) {
     date: DateTime,
     timestamp: Timestamp,
     time: Time,
-    decimal: Decimal,
+    // decimal: Decimal,
 
-    pub fn deinit(this: *Value, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Value, _: std.mem.Allocator) void {
         switch (this.*) {
             inline .string, .bytes => |*slice| slice.deinit(),
             inline .string_data, .bytes_data => |*data| data.deinit(),
-            .decimal => |*decimal| decimal.deinit(allocator),
+            // .decimal => |*decimal| decimal.deinit(allocator),
             else => {},
         }
     }
@@ -448,7 +448,7 @@ pub const Value = union(enum) {
             inline .date, .timestamp, .time => |d| {
                 stream.pos = d.toBinary(field_type, &buffer);
             },
-            .decimal => |dec| return try dec.toBinary(field_type),
+            // .decimal => |dec| return try dec.toBinary(field_type),
             .string_data, .bytes_data => |data| return data,
             .string, .bytes => |slice| return if (slice.len > 0)
                 Data{ .temporary = slice.slice() }
@@ -884,15 +884,13 @@ pub const Value = union(enum) {
             bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
         }
 
-        pub fn fromData(data: *const Data) !Decimal {
-            return fromBinary(data.slice());
-        }
+        // pub fn fromData(data: *const Data) !Decimal {
+        //     return fromBinary(data.slice());
+        // }
 
-        pub fn fromBinary(val: []const u8) Decimal {
-            _ = val; // autofix
-            // TODO: handle overflow
-            bun.todoPanic(@src(), "Decimal.fromBinary not implemented", .{});
-        }
+        // pub fn fromBinary(_: []const u8) Decimal {
+        //     bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
+        // }
     };
 };
 

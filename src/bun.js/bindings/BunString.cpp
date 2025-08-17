@@ -302,7 +302,7 @@ bool isCrossThreadShareable(const WTF::String& string)
 Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 {
     if (impl->isAtom() || impl->isSymbol())
-        return impl;
+        return impl->isolatedCopy();
 
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return impl->isolatedCopy();

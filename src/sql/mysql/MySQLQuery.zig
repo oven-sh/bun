@@ -476,9 +476,8 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
 
                 .parsing, .pending => {},
             }
-            if (stmt.status == .parsing) {
-                // we always need the id to be able to execute the query
-            } else break :enqueue;
+
+            break :enqueue;
         }
 
         const stmt = bun.default_allocator.create(MySQLStatement) catch |err| {

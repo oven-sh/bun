@@ -118,7 +118,7 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
             },
             else => error.InvalidBinaryValue,
         },
-        .MYSQL_TYPE_NEWDECIMAL, .MYSQL_TYPE_STRING, .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING => {
+        .MYSQL_TYPE_ENUM, .MYSQL_TYPE_SET, .MYSQL_TYPE_GEOMETRY, .MYSQL_TYPE_NEWDECIMAL, .MYSQL_TYPE_STRING, .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING => {
             if (raw) {
                 var data = try reader.rawEncodeLenData();
                 defer data.deinit();

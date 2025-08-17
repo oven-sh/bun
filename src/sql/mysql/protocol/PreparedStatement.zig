@@ -60,6 +60,25 @@ pub const Execute = struct {
         }
     }
 
+    fn writeNullBitmap(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) !void {
+        const MYSQL_MAX_PARAMS = (std.math.maxInt(u16) / 8) + 1;
+
+        var null_bitmap_buf: [MYSQL_MAX_PARAMS]u8 = undefined;
+        const bitmap_bytes = (this.params.len + 7) / 8;
+        const null_bitmap = null_bitmap_buf[0..bitmap_bytes];
+        @memset(null_bitmap, 0);
+
+        for (this.params, 0..) |param, i| {
+            if (param == .empty) {
+                null_bitmap[i >> 3] |= @as(u8, 1) << @as(u3, @truncate(i & 7));
+            } else {
+                bun.assert(param.slice().len > 0);
+            }
+        }
+
+        try writer.write(null_bitmap);
+    }
+
     pub fn writeInternal(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) !void {
         try writer.int1(@intFromEnum(CommandType.COM_STMT_EXECUTE));
         try writer.int4(this.statement_id);
@@ -67,21 +86,7 @@ pub const Execute = struct {
         try writer.int4(this.iteration_count);
 
         if (this.params.len > 0) {
-            var null_bitmap_buf: [32]u8 = undefined;
-            const bitmap_bytes = (this.params.len + 7) / 8;
-            const null_bitmap = null_bitmap_buf[0..bitmap_bytes];
-            @memset(null_bitmap, 0);
-
-            for (this.params, 0..) |param, i| {
-                if (param == .empty) {
-                    null_bitmap[i >> 3] |= @as(u8, 1) << @as(u3, @truncate(i & 7));
-                } else {
-                    bun.assert(param.slice().len > 0);
-                }
-            }
-            debug("Null bitmap: {s}", .{std.fmt.fmtSliceHexLower(null_bitmap)});
-
-            try writer.write(null_bitmap);
+            try this.writeNullBitmap(Context, writer);
 
             // Write new params bind flag
             try writer.int1(@intFromBool(this.new_params_bind_flag));
@@ -104,8 +109,7 @@ pub const Execute = struct {
                 if (param_type.type.isBinaryFormatSupported()) {
                     try writer.write(value);
                 } else {
-                    try writer.writeArray(encodeLengthInt(value.len));
-                    try writer.write(value);
+                    try writer.writeLengthEncodedString(value);
                 }
             }
         }
@@ -147,6 +151,5 @@ const NewReader = @import("./NewReader.zig").NewReader;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const FieldType = @import("../MySQLTypes.zig").FieldType;
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
 const Param = @import("../MySQLStatement.zig").Param;
 const debug = bun.Output.scoped(.PreparedStatement, false);

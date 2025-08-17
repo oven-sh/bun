@@ -48,8 +48,7 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
     // Write auth response based on capabilities
     const auth_data = this.auth_response.slice();
     if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
-        try writer.write(encodeLengthInt(auth_data.len).slice());
-        try writer.write(auth_data);
+        try writer.writeLengthEncodedString(auth_data);
     } else if (this.capability_flags.CLIENT_SECURE_CONNECTION) {
         try writer.int1(@intCast(auth_data.len));
         try writer.write(auth_data);
@@ -78,14 +77,12 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
             total_length += entry.value_ptr.len;
         }
 
-        try writer.write(encodeLengthInt(total_length).slice());
+        try writer.writeLengthEncodedInt(total_length);
 
         it = this.connect_attrs.iterator();
         while (it.next()) |entry| {
-            try writer.write(encodeLengthInt(entry.key_ptr.len).slice());
-            try writer.write(entry.key_ptr.*);
-            try writer.write(encodeLengthInt(entry.value_ptr.len).slice());
-            try writer.write(entry.value_ptr.*);
+            try writer.writeLengthEncodedString(entry.key_ptr.*);
+            try writer.writeLengthEncodedString(entry.value_ptr.*);
         }
     }
 

@@ -7,10 +7,6 @@ pub fn executeQuery(
     // resets the sequence id to zero every time we send a query
     var packet = try writer.start(0);
     try writer.int1(@intFromEnum(CommandType.COM_QUERY));
-    // Quantity of parameters, we use simple query only without params so the behavior is the same with postgres
-    try writer.write(encodeLengthInt(0).slice());
-    // Number of parameter sets. Currently always 1
-    try writer.write(encodeLengthInt(1).slice());
     try writer.write(query);
 
     try packet.end();
@@ -30,7 +26,6 @@ pub fn prepareRequest(
 
 const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
 const CommandType = @import("./protocol/CommandType.zig").CommandType;
-const encodeLengthInt = @import("./protocol/EncodeInt.zig").encodeLengthInt;
 const ExecutePrepareStatement = @import("./protocol/PreparedStatement.zig").Execute;
 const bun = @import("bun");
 const debug = bun.Output.scoped(.MySQLRequest, false);

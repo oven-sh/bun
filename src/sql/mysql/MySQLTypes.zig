@@ -346,9 +346,9 @@ pub const FieldType = enum(u8) {
             .MYSQL_TYPE_TINY,
             .MYSQL_TYPE_SHORT,
             .MYSQL_TYPE_LONG,
+            .MYSQL_TYPE_LONGLONG,
             .MYSQL_TYPE_FLOAT,
             .MYSQL_TYPE_DOUBLE,
-            .MYSQL_TYPE_LONGLONG,
             .MYSQL_TYPE_TIME,
             .MYSQL_TYPE_DATE,
             .MYSQL_TYPE_DATETIME,
@@ -460,6 +460,9 @@ pub const Value = union(enum) {
     }
 
     pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
+        if (value.isEmptyOrUndefinedOrNull()) {
+            return Value{ .null = {} };
+        }
         return switch (field_type) {
             .MYSQL_TYPE_TINY => Value{ .bool = value.toBoolean() },
             .MYSQL_TYPE_SHORT => {

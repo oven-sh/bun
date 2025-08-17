@@ -80,6 +80,7 @@ pub fn reject(this: *Capabilities) void {
     this.CLIENT_ODBC = false;
     this.CLIENT_LOCAL_FILES = false;
     this.CLIENT_OPTIONAL_RESULTSET_METADATA = false;
+    this.CLIENT_QUERY_ATTRIBUTES = false;
 }
 
 pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
@@ -159,7 +160,6 @@ pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
         .CLIENT_CONNECT_WITH_DB = has_db_name,
         .CLIENT_DEPRECATE_EOF = true,
         .CLIENT_SSL = ssl,
-        .CLIENT_QUERY_ATTRIBUTES = true,
         .CLIENT_MULTI_STATEMENTS = true,
         .CLIENT_MULTI_RESULTS = true,
     };

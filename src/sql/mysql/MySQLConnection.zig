@@ -552,13 +552,7 @@ fn advance(this: *@This()) void {
                         switch (statement.status) {
                             .failed => {
                                 debug("stmt failed", .{});
-                                if (req.flags.simple) {
-                                    this.nonpipelinable_requests -= 1;
-                                } else if (req.flags.pipelined) {
-                                    this.pipelined_requests -= 1;
-                                } else if (this.flags.waiting_to_prepare) {
-                                    this.flags.waiting_to_prepare = false;
-                                }
+                                this.cleanupSuccessQuery(req);
                                 req.onError(statement.error_response, this.globalObject);
                                 if (offset == 0) {
                                     req.deref();
@@ -1730,6 +1724,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     .columns = statement.columns,
                     .binary = request.flags.binary,
                     .raw = request.flags.result_mode == .raw,
+                    .bigint = request.flags.bigint,
                 };
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);

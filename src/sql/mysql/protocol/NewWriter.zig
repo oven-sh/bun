@@ -16,8 +16,13 @@ pub fn NewWriterWrap(
 
         pub const WrappedWriter = @This();
 
-        pub inline fn writeArray(this: @This(), data: anytype) anyerror!void {
-            try writeFn(this.wrapped, data.slice());
+        pub inline fn writeLengthEncodedInt(this: @This(), data: u64) anyerror!void {
+            try writeFn(this.wrapped, encodeLengthInt(data).slice());
+        }
+
+        pub inline fn writeLengthEncodedString(this: @This(), data: []const u8) anyerror!void {
+            try this.writeLengthEncodedInt(data.len);
+            try writeFn(this.wrapped, data);
         }
 
         pub fn write(this: @This(), data: []const u8) anyerror!void {
@@ -121,3 +126,4 @@ const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;
 const PacketHeader = @import("./PacketHeader.zig");
 const debug = bun.Output.scoped(.NewWriter, false);
+const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;

@@ -7,6 +7,7 @@ pub const Row = struct {
     binary: bool = false,
     raw: bool = false,
     bigint: bool = false,
+    globalObject: *jsc.JSGlobalObject,
 
     pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
@@ -48,6 +49,82 @@ pub const Row = struct {
         }
     }
 
+    fn parseValueAndSetCell(this: *Row, cell: *SQLDataCell, column: *const ColumnDefinition41, value: *const Data) void {
+        return switch (column.column_type) {
+            .MYSQL_TYPE_FLOAT, .MYSQL_TYPE_DOUBLE => {
+                const val: f64 = bun.parseDouble(value.slice()) catch std.math.nan(f64);
+                cell.* = SQLDataCell{ .tag = .float8, .value = .{ .float8 = val } };
+            },
+            .MYSQL_TYPE_TINY => {
+                const str = value.slice();
+                const val: u8 = if (str.len > 0 and (str[0] == '1' or str[0] == 't' or str[0] == 'T')) 1 else 0;
+                cell.* = SQLDataCell{ .tag = .bool, .value = .{ .bool = val } };
+            },
+            .MYSQL_TYPE_SHORT => {
+                if (column.flags.UNSIGNED) {
+                    const val: u16 = std.fmt.parseInt(u16, value.slice(), 10) catch 0;
+                    cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
+                } else {
+                    const val: i16 = std.fmt.parseInt(i16, value.slice(), 10) catch 0;
+                    cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
+                }
+            },
+            .MYSQL_TYPE_LONG => {
+                if (column.flags.UNSIGNED) {
+                    const val: u32 = std.fmt.parseInt(u32, value.slice(), 10) catch 0;
+                    cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
+                } else {
+                    const val: i32 = std.fmt.parseInt(i32, value.slice(), 10) catch std.math.minInt(i32);
+                    cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
+                }
+            },
+            .MYSQL_TYPE_LONGLONG => {
+                if (this.bigint) {
+                    if (column.flags.UNSIGNED) {
+                        const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
+                        // if is bigger than i64, it will be a string
+                        // TODO: check we can handle this as bigint too currently we dont have .uint8 we need to add it
+                        if (val < std.math.maxInt(i64)) {
+                            cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = @intCast(val) } };
+                        } else {
+                            const slice = value.slice();
+                            cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                        }
+                    } else {
+                        const val: i64 = std.fmt.parseInt(i64, value.slice(), 10) catch std.math.minInt(i64);
+                        cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
+                    }
+                } else {
+                    const slice = value.slice();
+                    cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                }
+            },
+            .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
+                cell.* = SQLDataCell.raw(value);
+            },
+            .MYSQL_TYPE_JSON => {
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            },
+
+            .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIME, .MYSQL_TYPE_DATETIME, .MYSQL_TYPE_TIMESTAMP => {
+                var str = bun.String.init(value.slice());
+                defer str.deref();
+                const date = brk: {
+                    break :brk str.parseDate(this.globalObject) catch |err| {
+                        _ = this.globalObject.takeException(err);
+                        break :brk std.math.nan(f64);
+                    };
+                };
+                cell.* = SQLDataCell{ .tag = .date, .value = .{ .date = date } };
+            },
+            else => {
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            },
+        };
+    }
+
     fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
         const cells = try allocator.alloc(SQLDataCell, this.columns.len);
         @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
@@ -75,9 +152,7 @@ pub const Row = struct {
                         reader.skip(result.bytes_read);
                         var string_data = try reader.read(@intCast(result.value));
                         defer string_data.deinit();
-                        const slice = string_data.slice();
-                        // TODO: check to parse number date etc from this.columns info, you can check postgres to see more text parsing
-                        value.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                        this.parseValueAndSetCell(value, &column, &string_data);
                     }
                 }
                 value.index = switch (column.name_or_index) {
@@ -164,3 +239,4 @@ const Value = @import("../MySQLTypes.zig").Value;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const CachedStructure = @import("../../shared/CachedStructure.zig");
+const Data = @import("../../shared/Data.zig").Data;

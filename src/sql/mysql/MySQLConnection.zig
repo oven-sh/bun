@@ -1685,6 +1685,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
                 const allocator = stack_fallback.get();
                 var row = ResultSet.Row{
+                    .globalObject = this.globalObject,
                     .columns = statement.columns,
                     .binary = request.flags.binary,
                     .raw = request.flags.result_mode == .raw,

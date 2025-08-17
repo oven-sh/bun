@@ -74,6 +74,7 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.character_set = try reader.int(u16);
     this.column_length = try reader.int(u32);
     this.column_type = @enumFromInt(try reader.int(u8));
+    debug("column_type: {s}", .{@tagName(this.column_type)});
     this.flags = ColumnFlags.fromInt(try reader.int(u16));
     this.decimals = try reader.int(u8);
 

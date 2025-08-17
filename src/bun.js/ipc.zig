@@ -1081,8 +1081,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 if (!ack) return;
 
                 // Get file descriptor and clear it
-                const fd = send_queue.incoming_fd.?;
-                send_queue.incoming_fd = null;
+                const fd: bun.FD = bun.take(&send_queue.incoming_fd).?;
 
                 const target: bun.jsc.JSValue = switch (send_queue.owner) {
                     .subprocess => |subprocess| subprocess.this_jsvalue,

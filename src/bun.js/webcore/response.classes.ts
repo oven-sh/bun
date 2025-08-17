@@ -133,7 +133,14 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
-    structuredClone: { transferable: false, tag: 254, storable: true },
+    structuredClone: {
+      transferable: false,
+      tag: 254,
+
+      // TODO: fix this.
+      // We should support it unless i'ts a file descriptor.
+      storable: false,
+    },
     estimatedSize: true,
     values: ["stream"],
     overridesToJS: true,

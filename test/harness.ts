@@ -282,7 +282,14 @@ export function bunRun(file: string, env?: Record<string, string> | NodeJS.Proce
     stdout: !dump ? "pipe" : "inherit",
     stderr: !dump ? "pipe" : "inherit",
   });
-  if (!result.success) throw new Error(String(result.stderr) + "\n" + String(result.stdout));
+  if (!result.success) {
+    if (dump) {
+      throw new Error(
+        "exited with code " + result.exitCode + (result.signalCode ? `signal: ${result.signalCode}` : ""),
+      );
+    }
+    throw new Error(String(result.stderr) + "\n" + String(result.stdout));
+  }
   return {
     stdout: String(result.stdout ?? "").trim(),
     stderr: String(result.stderr ?? "").trim(),

@@ -521,7 +521,7 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = try Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator());
+        const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
         return bun.BundleV2.generateFromJavaScript(
             config,

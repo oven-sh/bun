@@ -3034,14 +3034,23 @@ pub const BundleV2 = struct {
                     if (loader == .html and entry.kind == .asset) {
                         // Overload `path.text` to point to the final URL
                         // This information cannot be queried while printing because a lock wouldn't get held.
-                        const hash = dev_server.assets.getHash(path.text) orelse @panic("cached asset not found");
-                        import_record.path.text = path.text;
-                        import_record.path.namespace = "file";
-                        import_record.path.pretty = std.fmt.allocPrint(this.graph.allocator, bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
-                            &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
-                            std.fs.path.extension(path.text),
-                        }) catch bun.outOfMemory();
-                        import_record.path.is_disabled = false;
+                        if (dev_server.assets.getHash(path.text)) |hash| {
+                            import_record.path.text = path.text;
+                            import_record.path.namespace = "file";
+                            import_record.path.pretty = std.fmt.allocPrint(this.graph.allocator, bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
+                                &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
+                                std.fs.path.extension(path.text),
+                            }) catch bun.outOfMemory();
+                            import_record.path.is_disabled = false;
+                        } else {
+                            // Asset is cached in bundled_files but not in assets.path_map
+                            // This can happen due to race conditions or inconsistent state
+                            // Fall back to normal asset processing
+                            import_record.path.text = path.text;
+                            import_record.path.pretty = rel;
+                            import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                            import_record.path.is_disabled = false;
+                        }
                     } else {
                         import_record.path.text = path.text;
                         import_record.path.pretty = rel;

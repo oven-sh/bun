@@ -589,6 +589,7 @@ fn advance(this: *@This()) void {
                                 };
 
                                 this.sequence_id = 0;
+                                req.flags.pipelined = true;
                                 this.pipelined_requests += 1;
                                 this.flags.is_ready_for_query = false;
                                 this.flushDataAndResetTimeout();

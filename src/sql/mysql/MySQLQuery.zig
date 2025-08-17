@@ -467,6 +467,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
                             return error.JSError;
                         };
                         connection.sequence_id = 0;
+                        this.flags.pipelined = true;
                         connection.pipelined_requests += 1;
                         connection.flags.is_ready_for_query = false;
                         connection.flushDataAndResetTimeout();

@@ -195,7 +195,7 @@ interface setSocketOptionsFn {
 export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
 export const structuredCloneAdvanced: (
   value: any,
-  transferList?: any[],
+  transferList: any[],
   forTransfer: boolean,
   forStorage: boolean,
   serializationContext: "worker" | "window" | "postMessage" | "default",

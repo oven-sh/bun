@@ -139,7 +139,7 @@ export default [
 
       // TODO: fix this.
       // We should support it unless i'ts a file descriptor.
-      storable: false,
+      storable: true,
     },
     estimatedSize: true,
     values: ["stream"],

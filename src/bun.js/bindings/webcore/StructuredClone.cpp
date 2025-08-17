@@ -195,7 +195,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
         }
     }
 
-    SerializationForTransfer forTransfer = isForTransfer ? SerializationForTransfer::Yes : SerializationForTransfer::No;
+    SerializationForCrossProcessTransfer forTransfer = isForTransfer ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
     SerializationForStorage forStorage = isForStorage ? SerializationForStorage::Yes : SerializationForStorage::No;
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;

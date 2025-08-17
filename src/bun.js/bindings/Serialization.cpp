@@ -32,7 +32,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto forStorage = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcess)) ? SerializationForStorage::Yes : SerializationForStorage::No;
     auto context = SerializationContext::Default;
-    auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForTransfer)) ? SerializationForTransfer::Yes : SerializationForTransfer::No;
+    auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForTransfer)) ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
     EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());

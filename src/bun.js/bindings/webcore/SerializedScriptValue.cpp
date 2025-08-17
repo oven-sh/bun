@@ -890,7 +890,7 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
-        SerializationForStorage forStorage, SerializationForTransfer forTransfer)
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -992,7 +992,7 @@ private:
         WasmModuleArray& wasmModules,
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForTransfer forTransfer)
+        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
         : CloneBase(lexicalGlobalObject)
         , m_buffer(out)
         , m_emptyIdentifier(Identifier::fromString(lexicalGlobalObject->vm(), emptyString()))
@@ -1951,7 +1951,7 @@ private:
             auto _cloneable = StructuredCloneableSerialize::fromJS(value);
             if (_cloneable) {
                 auto cloneable = _cloneable.value();
-                const bool isTransferCompatible = m_forTransfer == SerializationForTransfer::Yes ? cloneable.isForTransfer : true;
+                const bool isTransferCompatible = m_forTransfer == SerializationForCrossProcessTransfer::Yes ? cloneable.isForTransfer : true;
                 const bool isStorageCompatible = m_forStorage == SerializationForStorage::Yes ? cloneable.isForStorage : true;
                 if (!isTransferCompatible || !isStorageCompatible) {
                     write(ObjectTag);
@@ -2563,7 +2563,7 @@ private:
     Vector<RefPtr<WebCodecsVideoFrame>>& m_serializedVideoFrames;
 #endif
     SerializationForStorage m_forStorage;
-    SerializationForTransfer m_forTransfer;
+    SerializationForCrossProcessTransfer m_forTransfer;
 };
 
 SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
@@ -5739,7 +5739,7 @@ static bool canDetachRTCDataChannels(const Vector<Ref<RTCDataChannel>>& channels
 }
 #endif
 
-RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForTransfer forTransfer)
+RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer);
@@ -5754,13 +5754,13 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject&
 //     return create(globalObject, value, WTFMove(transferList), messagePorts, forStorage, SerializationErrorMode::NonThrowing, serializationContext);
 // }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     return create(globalObject, value, WTFMove(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
 }
 
 // ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context)
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

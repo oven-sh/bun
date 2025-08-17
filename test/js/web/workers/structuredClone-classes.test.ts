@@ -1,4 +1,6 @@
 import { structuredCloneAdvanced } from "bun:internal-for-testing";
+import { serialize, deserialize } from "bun:jsc";
+import { bunEnv, bunExe } from "harness";
 
 enum TransferMode {
   no = 0,
@@ -64,6 +66,34 @@ const testTypes = [
     },
   },
 ];
+
+describe("serialize & deserialize", () => {
+  for (const testType of testTypes) {
+    test(`${testType.name}`, async () => {
+      const original = testType.createValue();
+      const serialized = serialize(original);
+
+      const result = Bun.spawnSync({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        import {deserialize, serialize} from "bun:jsc";
+        const serialized = deserialize(await Bun.stdin.bytes());
+        const cloned = serialize(serialized);
+        process.stdout.write(cloned);
+        `,
+        ],
+        env: bunEnv,
+        stdin: serialized,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const cloned = deserialize(result.stdout);
+      testType.expectedAfterClone(original, cloned, TransferMode.no, true);
+    });
+  }
+});
 
 const contexts = ["default", "worker", "window"] as const;
 const transferModes = [

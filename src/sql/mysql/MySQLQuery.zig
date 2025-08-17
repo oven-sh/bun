@@ -444,28 +444,41 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
 
     enqueue: {
         if (entry.found_existing) {
-            this.statement = entry.value_ptr.*;
-            this.statement.?.ref();
+            const stmt = entry.value_ptr.*;
+            this.statement = stmt;
+            stmt.ref();
             signature.deinit();
             signature = Signature{};
+            switch (stmt.status) {
+                .failed => {
+                    this.statement = null;
+                    const error_response = stmt.error_response.toJS(globalObject);
+                    stmt.deref();
+                    this.deref();
+                    // If the statement failed, we need to throw the error
+                    return globalObject.throwValue(error_response);
+                },
+                .prepared => {
+                    if (can_execute or connection.canPipeline()) {
+                        debug("doRun: binding and executing query", .{});
+                        this.bindAndExecute(writer, this.statement.?, globalObject) catch |err| {
+                            if (!globalObject.hasException())
+                                return globalObject.throwError(err, "failed to bind and execute query");
+                            return error.JSError;
+                        };
+                        connection.sequence_id = 0;
+                        connection.pipelined_requests += 1;
+                        connection.flags.is_ready_for_query = false;
+                        connection.flushDataAndResetTimeout();
+                        did_write = true;
+                    }
+                },
 
-            if (this.statement.?.status == .parsing) {
-                // we always need the id to be able to execute the query
-            } else if (can_execute) {
-                debug("doRun: binding and executing query", .{});
-                this.bindAndExecute(writer, this.statement.?, globalObject) catch |err| {
-                    if (!globalObject.hasException())
-                        return globalObject.throwError(err, "failed to bind and execute query");
-                    return error.JSError;
-                };
-                connection.sequence_id = 0;
-                connection.pipelined_requests += 1;
-                connection.flags.is_ready_for_query = false;
-                connection.flushDataAndResetTimeout();
-                did_write = true;
+                .parsing, .pending => {},
             }
-
-            break :enqueue;
+            if (stmt.status == .parsing) {
+                // we always need the id to be able to execute the query
+            } else break :enqueue;
         }
 
         const stmt = bun.default_allocator.create(MySQLStatement) catch |err| {

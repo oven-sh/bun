@@ -373,10 +373,11 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 switch (stmt.status) {
                     .failed => {
                         this.statement = null;
+                        const error_response = stmt.error_response.?.toJS(globalObject);
                         stmt.deref();
                         this.deref();
                         // If the statement failed, we need to throw the error
-                        return globalObject.throwValue(this.statement.?.error_response.?.toJS(globalObject));
+                        return globalObject.throwValue(error_response);
                     },
                     .prepared => {
                         if (!connection.hasQueryRunning() or connection.canPipeline()) {

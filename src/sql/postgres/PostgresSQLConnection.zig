@@ -1152,7 +1152,9 @@ fn advance(this: *PostgresSQLConnection) void {
                             } else {
                                 // deinit later
                                 req.status = .fail;
+                                offset += 1;
                             }
+
                             continue;
                         },
                         .prepared => {
@@ -1180,9 +1182,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                 } else {
                                     // deinit later
                                     req.status = .fail;
+                                    offset += 1;
                                 }
                                 debug("bind and execute failed: {s}", .{@errorName(err)});
-
                                 continue;
                             };
 

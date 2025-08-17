@@ -103,11 +103,14 @@ pub fn canPipeline(this: *@This()) bool {
         return false;
     }
 
-    return this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
-        !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
-        !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
-        !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
-        this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+    _ = this;
+    // TODO: fix pipelining
+    // return this.status == .connected and this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+    //     !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
+    //     !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
+    //     !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
+    //     this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+    return false;
 }
 pub const AuthState = union(enum) {
     pending: void,
@@ -509,14 +512,10 @@ fn advance(this: *@This()) void {
         var req: *MySQLQuery = this.requests.peekItem(offset);
         switch (req.status) {
             .pending => {
-                // Move this to simple if pipelining is possible using prepared statements
-                // this effectively means we can't pipeline prepared statements
-                if (!this.flags.is_ready_for_query and !this.flags.waiting_to_prepare) {
-                    return;
-                }
-
                 if (req.flags.simple) {
-                    if (this.nonpipelinable_requests > 0) {
+                    if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
+                        debug("cannot execute simple query, pipelined_requests: {d}, is_ready_for_query: {}", .{ this.pipelined_requests, this.flags.is_ready_for_query });
+                        // need to wait for the previous request to finish before starting simple queries
                         return;
                     }
 
@@ -549,65 +548,102 @@ fn advance(this: *@This()) void {
                     return;
                 } else {
                     if (req.statement) |statement| {
-                        if (statement.status == .pending and !this.flags.waiting_to_prepare) {
-                            // We're waiting for prepare response
-                            req.statement.?.status = .parsing;
-                            var query_str = req.query.toUTF8(bun.default_allocator);
-                            defer query_str.deinit();
-                            MySQLRequest.prepareRequest(query_str.slice(), Writer, this.writer()) catch |err| {
-                                if (this.globalObject.tryTakeException()) |err_| {
-                                    req.onJSError(err_, this.globalObject);
-                                } else {
-                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                        switch (statement.status) {
+                            .failed => {
+                                debug("stmt failed", .{});
+                                if (req.flags.simple) {
+                                    this.nonpipelinable_requests -= 1;
+                                } else if (req.flags.pipelined) {
+                                    this.pipelined_requests -= 1;
+                                } else if (this.flags.waiting_to_prepare) {
+                                    this.flags.waiting_to_prepare = false;
                                 }
+                                req.onError(statement.error_response, this.globalObject);
                                 if (offset == 0) {
                                     req.deref();
                                     this.requests.discard(1);
                                 } else {
                                     // deinit later
                                     req.status = .fail;
+                                    offset += 1;
                                 }
-                                debug("executeQuery failed: {s}", .{@errorName(err)});
+                                continue;
+                            },
+                            .prepared => {
+                                req.bindAndExecute(this.writer(), statement, this.globalObject) catch |err| {
+                                    if (this.globalObject.tryTakeException()) |err_| {
+                                        req.onJSError(err_, this.globalObject);
+                                    } else {
+                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    }
+                                    if (offset == 0) {
+                                        req.deref();
+                                        this.requests.discard(1);
+                                    } else {
+                                        // deinit later
+                                        req.status = .fail;
+                                        offset += 1;
+                                    }
+                                    debug("executeQuery failed: {s}", .{@errorName(err)});
+                                    continue;
+                                };
+
+                                this.sequence_id = 0;
+                                this.pipelined_requests += 1;
+                                this.flags.is_ready_for_query = false;
+                                this.flushDataAndResetTimeout();
+                                if (this.flags.use_unnamed_prepared_statements or !this.canPipeline()) {
+                                    debug("cannot pipeline more stmt", .{});
+                                    return;
+                                }
                                 offset += 1;
                                 continue;
-                            };
-                            this.sequence_id = 0;
-                            this.flags.waiting_to_prepare = true;
-                            this.flags.is_ready_for_query = false;
-                            this.flushDataAndResetTimeout();
-                            return;
-                        } else if (statement.status == .prepared) {
-                            req.bindAndExecute(this.writer(), statement, this.globalObject) catch |err| {
-                                if (this.globalObject.tryTakeException()) |err_| {
-                                    req.onJSError(err_, this.globalObject);
-                                } else {
-                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                            },
+                            .pending => {
+                                if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
+                                    debug("need to wait to finish the pipeline before starting a new query preparation", .{});
+                                    // need to wait to finish the pipeline before starting a new query preparation
+                                    return;
                                 }
-                                if (offset == 0) {
-                                    req.deref();
-                                    this.requests.discard(1);
-                                } else {
-                                    // deinit later
-                                    req.status = .fail;
-                                }
-                                debug("executeQuery failed: {s}", .{@errorName(err)});
-                                offset += 1;
-                                continue;
-                            };
-                            this.sequence_id = 0;
-                            this.pipelined_requests += 1;
-                            this.flags.is_ready_for_query = false;
-                            this.flushDataAndResetTimeout();
-                            return;
+                                // We're waiting for prepare response
+                                req.statement.?.status = .parsing;
+                                var query_str = req.query.toUTF8(bun.default_allocator);
+                                defer query_str.deinit();
+                                MySQLRequest.prepareRequest(query_str.slice(), Writer, this.writer()) catch |err| {
+                                    if (this.globalObject.tryTakeException()) |err_| {
+                                        req.onJSError(err_, this.globalObject);
+                                    } else {
+                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                    }
+                                    if (offset == 0) {
+                                        req.deref();
+                                        this.requests.discard(1);
+                                    } else {
+                                        // deinit later
+                                        req.status = .fail;
+                                        offset += 1;
+                                    }
+                                    debug("executeQuery failed: {s}", .{@errorName(err)});
+                                    continue;
+                                };
+                                this.sequence_id = 0;
+                                this.flags.waiting_to_prepare = true;
+                                this.flags.is_ready_for_query = false;
+                                this.flushDataAndResetTimeout();
+                                return;
+                            },
+                            .parsing => {
+                                // we are still parsing, lets wait for it to be prepared or failed
+                                return;
+                            },
                         }
                     }
                 }
-                offset += 1;
-                continue;
             },
             .binding, .running, .partial_response => {
-                offset += 1;
-                continue;
+                // if we are binding it will switch to running immediately
+                // if we are running, we need to wait for it to be success or fail
+                return;
             },
             .success => {
                 this.cleanupSuccessQuery(req);
@@ -811,7 +847,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const idle_timeout = arguments[11].toInt32();
     const connection_timeout = arguments[12].toInt32();
     const max_lifetime = arguments[13].toInt32();
-    // const use_unnamed_prepared_statements = arguments[14].asBoolean();
+    const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 
@@ -834,6 +870,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .connection_timeout_ms = @intCast(connection_timeout),
         .max_lifetime_interval_ms = @intCast(max_lifetime),
         .character_set = CharacterSet.default,
+        .flags = .{
+            .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
+        },
     };
 
     {

@@ -721,7 +721,9 @@ pub fn DeriveParse(comptime T: type) type {
                                 return .{ .result = @enumFromInt(field.value) };
                             }
                         }
-                        unreachable;
+                        // The Map matched an identifier, but it's not in our current void_fields subset.
+                        // This can happen when the global ComptimeEnumMap contains identifiers from other enum types
+                        // that aren't part of the current union being parsed. Reset and try parsing as payload fields.
                     }
                     input.reset(&state);
                 }
@@ -762,7 +764,9 @@ pub fn DeriveParse(comptime T: type) type {
                             return .{ .result = @enumFromInt(field.value) };
                         }
                     }
-                    unreachable;
+                    // The Map matched an identifier, but it's not in our current void_fields subset.
+                    // This can happen when the global ComptimeEnumMap contains identifiers from other enum types
+                    // that aren't part of the current union being parsed. Fall through to return an error.
                 }
                 return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             }

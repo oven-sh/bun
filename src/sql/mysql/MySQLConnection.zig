@@ -1518,17 +1518,21 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         return error.UnexpectedPacket;
     };
     if (statement.statement_id > 0) {
-        if (statement.params_received < statement.params_expected) {
+        if (statement.params_received < statement.params.len) {
             var column = ColumnDefinition41{};
             defer column.deinit();
-            // we dont care about this information
             try column.decode(reader);
+            debug("stmt param {d}: {s} unsigned? {}", .{ statement.params_received, @tagName(column.column_type), column.flags.UNSIGNED });
+            statement.params[statement.params_received] = .{
+                .type = column.column_type,
+                .flags = column.flags,
+            };
             statement.params_received += 1;
         } else if (statement.columns_received < statement.columns.len) {
             try statement.columns[statement.columns_received].decode(reader);
             statement.columns_received += 1;
         }
-        if (statement.columns_received == statement.columns.len and statement.params_received == statement.params_expected) {
+        if (statement.columns_received == statement.columns.len and statement.params_received == statement.params.len) {
             statement.status = .prepared;
             this.flags.waiting_to_prepare = false;
             this.flags.is_ready_for_query = true;
@@ -1552,7 +1556,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
             // Read parameter definitions if any
             if (ok.num_params > 0) {
-                statement.params_expected = ok.num_params;
+                statement.params = try bun.default_allocator.alloc(MySQLStatement.Param, ok.num_params);
                 statement.params_received = 0;
             }
 

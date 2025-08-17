@@ -104,10 +104,11 @@ pub fn onWriteFail(
 
 pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) !void {
     debug("bindAndExecute", .{});
+    bun.assertf(statement.params.len == statement.params_received and statement.statement_id > 0, "statement is not prepared", .{});
     var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
-        .param_types = statement.signature.fields,
+        .param_types = statement.params,
         .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };
@@ -119,7 +120,7 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
     try packet.end();
 }
 
-pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
+fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
     const thisValue = this.thisValue.get();
     const binding_value = js.bindingGetCached(thisValue) orelse .zero;
     const columns_value = js.columnsGetCached(thisValue) orelse .zero;
@@ -136,15 +137,15 @@ pub fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject
     }
     while (try iter.next()) |js_value| {
         const param = execute.param_types[i];
-        debug("param: {s} {}", .{ @tagName(param), param.isBinaryFormatSupported() });
+        debug("param: {s} unsigned? {}", .{ @tagName(param.type), param.flags.UNSIGNED });
         var value = try Value.fromJS(
             js_value,
             globalObject,
-            param,
-            false,
+            param.type,
+            param.flags.UNSIGNED,
         );
         defer value.deinit(bun.default_allocator);
-        params[i] = try value.toData(param);
+        params[i] = try value.toData(param.type);
         i += 1;
     }
 

@@ -47,12 +47,12 @@ pub const Execute = struct {
     flags: u8 = 0,
     /// Number of times to execute the statement (usually 1)
     iteration_count: u32 = 1,
-    /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
-    new_params_bind_flag: bool = true,
     /// Parameter values to bind to the prepared statement
     params: []Data = &[_]Data{},
     /// Types of each parameter in the prepared statement
-    param_types: []const FieldType = &[_]FieldType{},
+    param_types: []const Param,
+    /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
+    new_params_bind_flag: bool,
 
     pub fn deinit(this: *Execute) void {
         for (this.params) |*param| {
@@ -79,6 +79,7 @@ pub const Execute = struct {
                     bun.assert(param.slice().len > 0);
                 }
             }
+            debug("Null bitmap: {s}", .{std.fmt.fmtSliceHexLower(null_bitmap)});
 
             try writer.write(null_bitmap);
 
@@ -88,19 +89,19 @@ pub const Execute = struct {
             if (this.new_params_bind_flag) {
                 // Write parameter types
                 for (this.param_types) |param_type| {
-                    debug("New params bind flag: {s} {}", .{ @tagName(param_type), param_type.isBinaryFormatSupported() });
-                    try writer.int1(@intFromEnum(param_type));
-                    try writer.int1(0); // we never send unsigned for now
+                    debug("New params bind flag {s} unsigned? {}", .{ @tagName(param_type.type), param_type.flags.UNSIGNED });
+                    try writer.int1(@intFromEnum(param_type.type));
+                    try writer.int1(@intFromBool(param_type.flags.UNSIGNED));
                 }
             }
 
             // Write parameter values
             for (this.params, this.param_types) |*param, param_type| {
-                if (param.* == .empty or param_type == .MYSQL_TYPE_NULL) continue;
+                if (param.* == .empty or param_type.type == .MYSQL_TYPE_NULL) continue;
 
                 const value = param.slice();
-                debug("Write param: {s} {s}", .{ @tagName(param_type), std.fmt.fmtSliceHexLower(value) });
-                if (param_type.isBinaryFormatSupported()) {
+                debug("Write param type {s} len {d} hex {s}", .{ @tagName(param_type.type), value.len, std.fmt.fmtSliceHexLower(value) });
+                if (param_type.type.isBinaryFormatSupported()) {
                     try writer.write(value);
                 } else {
                     try writer.writeArray(encodeLengthInt(value.len));

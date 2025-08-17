@@ -4,7 +4,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 cached_structure: CachedStructure = .{},
 ref_count: RefCount = RefCount.init(),
 statement_id: u32 = 0,
-params_expected: u32 = 0,
+params: []Param = &[_]Param{},
 params_received: u32 = 0,
 
 columns: []ColumnDefinition41 = &[_]ColumnDefinition41{},
@@ -48,6 +48,9 @@ pub fn deinit(this: *MySQLStatement) void {
     }
     if (this.columns.len > 0) {
         bun.default_allocator.free(this.columns);
+    }
+    if (this.params.len > 0) {
+        bun.default_allocator.free(this.params);
     }
     this.cached_structure.deinit();
     this.error_response.deinit();

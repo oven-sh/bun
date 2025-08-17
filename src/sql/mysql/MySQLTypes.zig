@@ -281,7 +281,7 @@ pub const FieldType = enum(u8) {
         if (value.isCell()) {
             const tag = value.jsType();
             if (tag.isStringLike()) {
-                return .MYSQL_TYPE_VARCHAR;
+                return .MYSQL_TYPE_STRING;
             }
 
             if (tag == .JSDate) {
@@ -353,14 +353,14 @@ pub const FieldType = enum(u8) {
             .MYSQL_TYPE_DATE,
             .MYSQL_TYPE_DATETIME,
             .MYSQL_TYPE_TIMESTAMP,
-            .MYSQL_TYPE_TINY_BLOB,
-            .MYSQL_TYPE_MEDIUM_BLOB,
-            .MYSQL_TYPE_LONG_BLOB,
-            .MYSQL_TYPE_BLOB,
-            .MYSQL_TYPE_STRING,
-            .MYSQL_TYPE_VARCHAR,
-            .MYSQL_TYPE_VAR_STRING,
-            .MYSQL_TYPE_JSON,
+            // .MYSQL_TYPE_TINY_BLOB,
+            // .MYSQL_TYPE_MEDIUM_BLOB,
+            // .MYSQL_TYPE_LONG_BLOB,
+            // .MYSQL_TYPE_BLOB,
+            // .MYSQL_TYPE_STRING,
+            // .MYSQL_TYPE_VARCHAR,
+            // .MYSQL_TYPE_VAR_STRING,
+            // .MYSQL_TYPE_JSON,
             => true,
             else => false,
         };

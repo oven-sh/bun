@@ -279,14 +279,31 @@ pub const PatchFile = struct {
 
         for (patch.hunks.items) |*hunk| {
             var line_cursor = hunk.header.patched.start - 1;
+            
+            // Validate hunk start position is within bounds
+            if (line_cursor > lines.items.len) {
+                return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+            }
+            
             for (hunk.parts.items) |*part_| {
                 const part: *PatchMutationPart = part_;
                 switch (part.type) {
                     .context => {
                         // TODO: check if the lines match in the original file?
+                        
+                        // Validate context lines exist
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+                        
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
+                        // Validate insertion position is within bounds
+                        if (line_cursor > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+                        
                         const lines_to_insert = lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len) catch bun.outOfMemory();
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
@@ -296,6 +313,12 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
+                        
+                        // Validate deletion range is within bounds
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+                        
                         lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
                         if (part.no_newline_at_end_of_file) {
                             lines.append(bun.default_allocator, "") catch bun.outOfMemory();

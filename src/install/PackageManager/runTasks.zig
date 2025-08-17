@@ -65,6 +65,9 @@ pub fn runTasks(
                         }
                     }
                 }
+            } else {
+                // Patch application failed - propagate error to cause install failure
+                return error.InstallFailed;
             }
         }
     }

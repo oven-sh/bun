@@ -794,7 +794,7 @@ console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
 
 - **6-57x faster** depending on string length and content
 - **57x faster** for short strings (11-13 characters)
-- **16x faster** for medium strings (16K characters) 
+- **16x faster** for medium strings (16K characters)
 - **6x faster** for large strings (213K characters)
 
 ```ts

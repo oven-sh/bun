@@ -1938,7 +1938,7 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
-            
+
             var found_any_catalog_or_catalog_object = false;
             var has_workspaces = false;
             if (json.get("workspaces")) |workspaces_expr| {

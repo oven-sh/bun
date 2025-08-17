@@ -790,12 +790,45 @@ console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
 
 `Bun.stripANSI` is significantly faster than the popular [`strip-ansi`](https://www.npmjs.com/package/strip-ansi) npm package:
 
-```ts
-// Benchmark results (Bun vs npm/strip-ansi):
-// 11 chars no-ansi:     8.13 ns vs 466.79 ns  (~57x faster)
-// 13 chars ansi:       51.68 ns vs 546.77 ns  (~11x faster)
-// 16K chars:          298.39 ns vs   4.85 µs  (~16x faster)
-// 213K chars:        227.65 µs vs   1.36 ms  (~6x faster)
+```js
+> bun bench/snippets/strip-ansi.mjs
+cpu: Apple M3 Max
+runtime: bun 1.2.21 (arm64-darwin)
+
+benchmark                               avg (min … max) p75 / p99 
+------------------------------------------------------- ----------
+Bun.stripANSI      11 chars no-ansi        8.13 ns/iter   8.27 ns 
+                                   (7.45 ns … 33.59 ns)  10.29 ns 
+
+Bun.stripANSI      13 chars ansi          51.68 ns/iter  52.51 ns 
+                                 (46.16 ns … 113.71 ns)  57.71 ns 
+
+Bun.stripANSI  16,384 chars long-no-ansi 298.39 ns/iter 305.44 ns 
+                                (281.50 ns … 331.65 ns) 320.70 ns 
+
+Bun.stripANSI 212,992 chars long-ansi    227.65 µs/iter 234.50 µs 
+                                (216.46 µs … 401.92 µs) 262.25 µs 
+```
+
+```js
+> node bench/snippets/strip-ansi.mjs
+cpu: Apple M3 Max
+runtime: node 24.6.0 (arm64-darwin)
+
+benchmark                                avg (min … max) p75 / p99
+-------------------------------------------------------- ---------
+npm/strip-ansi      11 chars no-ansi      466.79 ns/iter 468.67 ns
+                                 (454.08 ns … 570.67 ns) 543.67 ns
+
+npm/strip-ansi      13 chars ansi         546.77 ns/iter 550.23 ns
+                                 (532.74 ns … 651.08 ns) 590.35 ns
+
+npm/strip-ansi  16,384 chars long-no-ansi   4.85 µs/iter   4.89 µs
+                                     (4.71 µs … 5.00 µs)   4.98 µs
+
+npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
+                                     (1.27 ms … 1.73 ms)   1.49 ms
+
 ```
 
 This makes `Bun.stripANSI` ideal for performance-critical applications that need to process terminal output, log files, or any text containing ANSI escape sequences.

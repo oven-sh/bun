@@ -795,19 +795,19 @@ console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
 cpu: Apple M3 Max
 runtime: bun 1.2.21 (arm64-darwin)
 
-benchmark                               avg (min … max) p75 / p99 
+benchmark                               avg (min … max) p75 / p99
 ------------------------------------------------------- ----------
-Bun.stripANSI      11 chars no-ansi        8.13 ns/iter   8.27 ns 
-                                   (7.45 ns … 33.59 ns)  10.29 ns 
+Bun.stripANSI      11 chars no-ansi        8.13 ns/iter   8.27 ns
+                                   (7.45 ns … 33.59 ns)  10.29 ns
 
-Bun.stripANSI      13 chars ansi          51.68 ns/iter  52.51 ns 
-                                 (46.16 ns … 113.71 ns)  57.71 ns 
+Bun.stripANSI      13 chars ansi          51.68 ns/iter  52.51 ns
+                                 (46.16 ns … 113.71 ns)  57.71 ns
 
-Bun.stripANSI  16,384 chars long-no-ansi 298.39 ns/iter 305.44 ns 
-                                (281.50 ns … 331.65 ns) 320.70 ns 
+Bun.stripANSI  16,384 chars long-no-ansi 298.39 ns/iter 305.44 ns
+                                (281.50 ns … 331.65 ns) 320.70 ns
 
-Bun.stripANSI 212,992 chars long-ansi    227.65 µs/iter 234.50 µs 
-                                (216.46 µs … 401.92 µs) 262.25 µs 
+Bun.stripANSI 212,992 chars long-ansi    227.65 µs/iter 234.50 µs
+                                (216.46 µs … 401.92 µs) 262.25 µs
 ```
 
 ```js
@@ -830,7 +830,6 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
                                      (1.27 ms … 1.73 ms)   1.49 ms
 
 ```
-
 
 ## `estimateShallowMemoryUsageOf` in `bun:jsc`
 

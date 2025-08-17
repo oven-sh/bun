@@ -5768,6 +5768,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers
     if ((context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
         && forStorage == SerializationForStorage::No
+        && forTransfer == SerializationForCrossProcessTransfer::No
         && transferList.isEmpty()
         && messagePorts.isEmpty()
         && value.isString()) {

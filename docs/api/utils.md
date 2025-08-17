@@ -772,6 +772,41 @@ console.log(obj); // => { foo: "bar" }
 
 Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.
 
+## `Bun.stripANSI()` ~6-57x faster `strip-ansi` alternative
+
+`Bun.stripANSI(text: string): string`
+
+Strip ANSI escape codes from a string. This is useful for removing colors and formatting from terminal output.
+
+```ts
+const coloredText = "\u001b[31mHello\u001b[0m \u001b[32mWorld\u001b[0m";
+const plainText = Bun.stripANSI(coloredText);
+console.log(plainText); // => "Hello World"
+
+// Works with various ANSI codes
+const formatted = "\u001b[1m\u001b[4mBold and underlined\u001b[0m";
+console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
+```
+
+### Performance
+
+`Bun.stripANSI` is significantly faster than the popular [`strip-ansi`](https://www.npmjs.com/package/strip-ansi) npm package:
+
+- **6-57x faster** depending on string length and content
+- **57x faster** for short strings (11-13 characters)
+- **16x faster** for medium strings (16K characters) 
+- **6x faster** for large strings (213K characters)
+
+```ts
+// Benchmark results (Bun vs npm/strip-ansi):
+// 11 chars no-ansi:     8.13 ns vs 466.79 ns  (~57x faster)
+// 13 chars ansi:       51.68 ns vs 546.77 ns  (~11x faster)
+// 16K chars:          298.39 ns vs   4.85 µs  (~16x faster)
+// 213K chars:        227.65 µs vs   1.36 ms  (~6x faster)
+```
+
+This makes `Bun.stripANSI` ideal for performance-critical applications that need to process terminal output, log files, or any text containing ANSI escape sequences.
+
 ## `estimateShallowMemoryUsageOf` in `bun:jsc`
 
 The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.

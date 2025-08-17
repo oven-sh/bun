@@ -30,7 +30,7 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });
 
 test("cloneable and non-transferable not-equals (BunFile)", () => {
@@ -66,7 +66,7 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });
 
 test("cloneable and non-transferable not-equals (net.BlockList)", () => {
@@ -100,5 +100,5 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv);
+  bunRun(joinP(dir, "index.ts"), bunEnv, true);
 });

@@ -269,7 +269,7 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv, dump = false) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -278,11 +278,14 @@ export function bunRun(file: string, env?: Record<string, string> | NodeJS.Proce
       NODE_ENV: undefined,
       ...env,
     },
+    stdin: "ignore",
+    stdout: !dump ? "pipe" : "inherit",
+    stderr: !dump ? "pipe" : "inherit",
   });
-  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  if (!result.success) throw new Error(String(result.stderr) + "\n" + String(result.stdout));
   return {
-    stdout: result.stdout.toString("utf8").trim(),
-    stderr: result.stderr.toString("utf8").trim(),
+    stdout: String(result.stdout ?? "").trim(),
+    stderr: String(result.stderr ?? "").trim(),
   };
 }
 

@@ -1566,54 +1566,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() == 0) {
-        throwTypeError(globalObject, throwScope, "structuredClone requires 1 argument"_s);
-        return {};
-    }
-
-    JSC::JSValue value = callFrame->argument(0);
-    JSC::JSValue options = callFrame->argument(1);
-
-    Vector<JSC::Strong<JSC::JSObject>> transferList;
-
-    if (options.isObject()) {
-        JSC::JSObject* optionsObject = options.getObject();
-        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (transferListValue.isObject()) {
-            JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
-                for (unsigned i = 0; i < transferListArray->length(); i++) {
-                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                    if (transferListValue.isObject()) {
-                        JSC::JSObject* transferListObject = transferListValue.getObject();
-                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
-                    }
-                }
-            }
-        }
-    }
-
-    Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
-    if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
-        RELEASE_AND_RETURN(throwScope, {});
-    }
-    throwScope.assertNoException();
-
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    return JSValue::encode(deserialized);
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

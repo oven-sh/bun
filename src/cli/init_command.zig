@@ -1046,7 +1046,7 @@ const Template = enum {
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = bun.strings.lastIndexOf(agent_rule, "---\n") orelse 0;
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
 
             InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
         }

@@ -198,6 +198,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(await redis.publish(testChannel, testMessage)).toBe(1);
       console.log("Published message to the channel.");
+      
+      // Clean up subscription to avoid affecting other tests
+      await redis.unsubscribe(testChannel);
     });
 
     test("setting in subscriber mode gracefully fails", async () => {
@@ -206,6 +209,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(testChannel, () => {});
 
       expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
+      
+      // Clean up subscription
+      await redis.unsubscribe(testChannel);
     });
 
     test("setting after unsubscribing works", async () => {
@@ -217,26 +223,27 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(redis.set(testKey, testValue)).resolves.toEqual("OK");
     });
 
-    //test("subscribing to a channel receives messages", async () => {
-    //  const TEST_MESSAGE_COUNT = 128;
-    //  const redis = await connectedRedis();
+    test("subscribing to a channel receives messages", async () => {
+      const TEST_MESSAGE_COUNT = 128;
+      const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
 
-    //  var receiveCount = 0;
-    //  await redis.subscribe(testChannel, (message, channel) => {
-    //    receiveCount++;
-    //    expect(channel).toBe(testChannel);
-    //    expect(message).toBe(testMessage);
-    //  });
+      var receiveCount = 0;
+      await subscriber.subscribe(testChannel, (message, channel) => {
+        receiveCount++;
+        expect(channel).toBe(testChannel);
+        expect(message).toBe(testMessage);
+      });
 
-    //  Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-    //    expect(await redis.publish(testChannel, testMessage)).toBe(1);
-    //  });
+      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+        expect(await redis.publish(testChannel, testMessage)).toBe(1);
+      });
 
-    //  // Wait a little bit just to ensure all the messages are flushed.
-    //  await sleep(flushTimeoutMs);
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
 
-    //  expect(receiveCount).toBe(TEST_MESSAGE_COUNT);
-    //});
+      expect(receiveCount).toBe(TEST_MESSAGE_COUNT);
+    });
 
     //test("messages are received in order", async () => {
     //  const TEST_MESSAGE_COUNT = 1024;

@@ -3,10 +3,14 @@ pub const SubscriptionCtx = struct {
 
     // channel -> callback
     _callback_map: jsc.JSValue,
+    original_enable_offline_queue: bool,
+    original_enable_auto_pipelining: bool,
 
-    pub fn init(globalObject: *jsc.JSGlobalObject) Self {
+    pub fn init(globalObject: *jsc.JSGlobalObject, enable_offline_queue: bool, enable_auto_pipelining: bool) Self {
         const self = Self{
             ._callback_map = jsc.JSMap.create(globalObject),
+            .original_enable_offline_queue = enable_offline_queue,
+            .original_enable_auto_pipelining = enable_auto_pipelining,
         };
 
         self._callback_map.protect();
@@ -18,19 +22,25 @@ pub const SubscriptionCtx = struct {
         return jsc.JSMap.fromJS(this._callback_map).?;
     }
 
+    /// Get the total number of channels that this subscription context is
+    /// subscribed to.
+    pub fn subscriptionCount(this: *Self, globalObject: *jsc.JSGlobalObject) usize {
+        return this.subscriptionCallbackMap().size(globalObject);
+    }
+
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
-    pub fn hasSubscriptions(this: *const Self) bool {
-        return this._subscriptions > 0;
+    pub fn hasSubscriptions(this: *Self, globalObject: *jsc.JSGlobalObject) bool {
+        return this.subscriptionCount(globalObject) > 0;
     }
 
     pub fn clearReceiveHandlers(
         this: *Self,
         globalObject: *jsc.JSGlobalObject,
         channelName: JSValue,
-    ) bun.JSError!void {
+    ) void {
         const map = this.subscriptionCallbackMap();
-        try map.remove(globalObject, channelName);
+        _ = map.remove(globalObject, channelName);
     }
 
     /// Set a handler for receiving messages on a specific channel
@@ -254,19 +264,26 @@ pub const JSValkeyClient = struct {
             return ctx;
         }
 
+        // Save the original flag values and create a new subscription context
+        this.subscription_ctx = SubscriptionCtx.init(
+            globalObject,
+            this.client.flags.enable_offline_queue,
+            this.client.flags.auto_pipelining,
+        );
+
         // We need to make sure we disable the offline queue.
-        // TODO(markovejnovic): Make sure you re-enable these before merging
-        // the PR!!!
         this.client.flags.enable_offline_queue = false;
         this.client.flags.auto_pipelining = false;
 
-        // Create a new subscription context
-        this.subscription_ctx = SubscriptionCtx.init(globalObject);
         return &this.subscription_ctx.?;
     }
 
     pub fn deleteSubscriptionCtx(this: *JSValkeyClient) void {
         if (this.subscription_ctx) |*ctx| {
+            // Restore the original flag values when leaving subscription mode
+            this.client.flags.enable_offline_queue = ctx.original_enable_offline_queue;
+            this.client.flags.auto_pipelining = ctx.original_enable_auto_pipelining;
+
             ctx.deinit();
         }
 

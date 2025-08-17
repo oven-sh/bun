@@ -773,6 +773,99 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
     return promise.toJS();
 }
 
+pub fn unsubscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    // Check if we're in subscription mode
+    if (!this.isSubscriber()) {
+        return globalObject.throw("Not in subscription mode", .{});
+    }
+
+    const args_view = callframe.arguments();
+
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 8);
+    defer {
+        for (redis_channels.items) |*item| {
+            item.deinit();
+        }
+        redis_channels.deinit();
+    }
+
+    // If no arguments, unsubscribe from all channels
+    if (args_view.len == 0) {
+        // Send UNSUBSCRIBE command without any channels (unsubscribes from all)
+        const command: valkey.Command = .{
+            .command = "UNSUBSCRIBE",
+            .args = .{ .args = &.{} },
+        };
+        const promise = this.send(
+            globalObject,
+            callframe.this(),
+            &command,
+        ) catch |err| {
+            return protocol.valkeyErrorToJS(globalObject, "Failed to send UNSUBSCRIBE command", err);
+        };
+
+        // Clear all subscriptions and exit subscription mode
+        this.deleteSubscriptionCtx();
+
+        return promise.toJS();
+    }
+
+    // The first argument can be a channel or an array of channels
+    const channelOrMany = callframe.argument(0);
+
+    // Get the subscription context
+    var subscription_ctx = this.subscription_ctx orelse {
+        return globalObject.throw("Subscription context not found", .{});
+    };
+
+    // Handle array of channels or single channel
+    if (channelOrMany.isArray()) {
+        // It is an array, so let's iterate over it
+        var array_iter = try channelOrMany.arrayIterator(globalObject);
+        while (try array_iter.next()) |channel_arg| {
+            const channel = (try fromJS(globalObject, channel_arg)) orelse {
+                return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
+            };
+            redis_channels.appendAssumeCapacity(channel);
+            // Clear the handlers for this channel
+            subscription_ctx.clearReceiveHandlers(globalObject, channel_arg);
+        }
+    } else if (channelOrMany.isString()) {
+        // It is a single string channel
+        const channel = (try fromJS(globalObject, channelOrMany)) orelse {
+            return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
+        };
+        redis_channels.appendAssumeCapacity(channel);
+        // Clear the handlers for this channel
+        subscription_ctx.clearReceiveHandlers(globalObject, channelOrMany);
+    } else {
+        return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string or array");
+    }
+
+    // Send UNSUBSCRIBE command
+    const command: valkey.Command = .{
+        .command = "UNSUBSCRIBE",
+        .args = .{ .args = redis_channels.items },
+    };
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &command,
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send UNSUBSCRIBE command", err);
+    };
+
+    // Check if we have any remaining subscriptions
+    // If the callback map is empty, we can exit subscription mode
+    if (!subscription_ctx.hasSubscriptions(globalObject)) {
+        // No more subscriptions, exit subscription mode
+        this.deleteSubscriptionCtx();
+    }
+
+    return promise.toJS();
+}
+
 // Implement on("event", callback) for pub/sub event handling
 pub fn on(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     _ = this;
@@ -1081,7 +1174,6 @@ pub fn zrevrank(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfr
 }
 // pub const subscribe = compile.@"(...strings: string[])"("subscribe", "SUBSCRIBE").call; // Replaced with custom implementation above
 pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE").call;
-pub const unsubscribe = compile.@"(...strings: string[])"("unsubscribe", "UNSUBSCRIBE").call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE").call;
 pub fn pubsub(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     if (this.isSubscriber()) {

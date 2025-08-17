@@ -29,6 +29,10 @@ pub const JSMap = opaque {
         return bun.cpp.JSC__JSMap__remove(this, globalObject, key);
     }
 
+    pub fn size(this: *JSMap, globalObject: *JSGlobalObject) usize {
+        return bun.cpp.JSC__JSMap__size(this, globalObject);
+    }
+
     pub fn fromJS(value: JSValue) ?*JSMap {
         if (value.jsTypeLoose() == .Map) {
             return bun.cast(*JSMap, value.asEncoded().asPtr.?);

@@ -42,7 +42,7 @@ const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 const t = new Bun.Transpiler({ loader: "tsx" });
 
 let start = performance.now();
-const silent = process.env.BUN_SILENT === "1";
+const silent = process.env.BUN_SILENT === "1" || process.env.CLAUDECODE;
 function markVerbose(log: string) {
   const now = performance.now();
   console.log(`${log} (${(now - start).toFixed(0)}ms)`);

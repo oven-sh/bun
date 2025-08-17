@@ -526,7 +526,11 @@ fn advance(this: *@This()) void {
                     debug("execute simple query: {d} {s}", .{ this.sequence_id, query_str.slice() });
 
                     MySQLRequest.executeQuery(query_str.slice(), MySQLConnection.Writer, this.writer()) catch |err| {
-                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                        if (this.globalObject.tryTakeException()) |err_| {
+                            req.onJSError(err_, this.globalObject);
+                        } else {
+                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                        }
                         if (offset == 0) {
                             req.deref();
                             this.requests.discard(1);
@@ -551,7 +555,11 @@ fn advance(this: *@This()) void {
                             var query_str = req.query.toUTF8(bun.default_allocator);
                             defer query_str.deinit();
                             MySQLRequest.prepareRequest(query_str.slice(), Writer, this.writer()) catch |err| {
-                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                if (this.globalObject.tryTakeException()) |err_| {
+                                    req.onJSError(err_, this.globalObject);
+                                } else {
+                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                }
                                 if (offset == 0) {
                                     req.deref();
                                     this.requests.discard(1);
@@ -570,7 +578,11 @@ fn advance(this: *@This()) void {
                             return;
                         } else if (statement.status == .prepared) {
                             req.bindAndExecute(this.writer(), statement, this.globalObject) catch |err| {
-                                req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                if (this.globalObject.tryTakeException()) |err_| {
+                                    req.onJSError(err_, this.globalObject);
+                                } else {
+                                    req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                }
                                 if (offset == 0) {
                                     req.deref();
                                     this.requests.discard(1);
@@ -1703,8 +1715,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     request.flags.result_mode,
                     cached_structure,
                 );
-                if (this.globalObject.hasException()) {
-                    request.onJSError(this.globalObject.tryTakeException().?, this.globalObject);
+                if (this.globalObject.tryTakeException()) |err| {
+                    request.onJSError(err, this.globalObject);
                     return error.JSError;
                 }
                 statement.result_count += 1;

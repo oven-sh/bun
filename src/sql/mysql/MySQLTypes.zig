@@ -460,17 +460,29 @@ pub const Value = union(enum) {
     }
 
     pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
-        // TODO: Handle unsigned
-        _ = unsigned; // autofix
-
         return switch (field_type) {
             .MYSQL_TYPE_TINY => Value{ .bool = value.toBoolean() },
-            .MYSQL_TYPE_SHORT => Value{ .short = try globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16), .field_name = "i16" }) },
-            .MYSQL_TYPE_LONG => Value{ .int = try globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32), .field_name = "i32" }) },
-            .MYSQL_TYPE_LONGLONG => Value{ .long = try globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64), .field_name = "i64" }) },
+            .MYSQL_TYPE_SHORT => {
+                if (unsigned) {
+                    return Value{ .ushort = try globalObject.validateIntegerRange(value, u16, 0, .{ .min = std.math.minInt(u16), .max = std.math.maxInt(u16), .field_name = "u16" }) };
+                }
+                return Value{ .short = try globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16), .field_name = "i16" }) };
+            },
+            .MYSQL_TYPE_LONG => {
+                if (unsigned) {
+                    return Value{ .uint = try globalObject.validateIntegerRange(value, u32, 0, .{ .min = std.math.minInt(u32), .max = std.math.maxInt(u32), .field_name = "u32" }) };
+                }
+                return Value{ .int = try globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32), .field_name = "i32" }) };
+            },
+            .MYSQL_TYPE_LONGLONG => {
+                if (unsigned) {
+                    return Value{ .ulong = try globalObject.validateIntegerRange(value, u64, 0, .{ .field_name = "u64" }) };
+                }
+                return Value{ .long = try globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64), .field_name = "i64" }) };
+            },
 
-            // .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerceToDoubleCheckingErrors(globalObject)) },
-            // .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerceToDoubleCheckingErrors(globalObject) },
+            .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerce(f64, globalObject)) },
+            .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerce(f64, globalObject) },
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATE => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },

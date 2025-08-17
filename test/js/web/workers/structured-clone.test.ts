@@ -1,8 +1,8 @@
+import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { join } from "path";
-import { serialize, deserialize } from "bun:jsc";
-import { bunExe } from "js/bun/shell/test_builder";
 import { bunEnv } from "harness";
+import { bunExe } from "js/bun/shell/test_builder";
+import { join } from "path";
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
   const cloned = deserialize(serialized);

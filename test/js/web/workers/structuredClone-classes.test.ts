@@ -1,5 +1,5 @@
 import { structuredCloneAdvanced } from "bun:internal-for-testing";
-import { serialize, deserialize } from "bun:jsc";
+import { deserialize, serialize } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
 
 enum TransferMode {

@@ -91,7 +91,7 @@ pub const Execute = struct {
                 for (this.param_types) |param_type| {
                     debug("New params bind flag {s} unsigned? {}", .{ @tagName(param_type.type), param_type.flags.UNSIGNED });
                     try writer.int1(@intFromEnum(param_type.type));
-                    try writer.int1(@intFromBool(param_type.flags.UNSIGNED));
+                    try writer.int1(if (param_type.flags.UNSIGNED) 0x80 else 0);
                 }
             }
 

@@ -3898,15 +3898,20 @@ uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (vm.isTerminationException(exception)) [[unlikely]] {
+            return 1;
+        }
+
 #if ASSERT_ENABLED
-    if (auto* exception = scope.exception()) {
         scope.clearException();
         Bun__reportError(this, JSValue::encode(exception));
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwScope.throwException(this, exception);
         throwScope.release();
-    }
 #endif
+    }
     scope.assertNoExceptionExceptTermination();
 
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {

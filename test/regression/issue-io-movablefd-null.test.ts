@@ -9,15 +9,15 @@
  * but get() returned null on Windows.
  */
 import { $ } from "bun";
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // This test may not be able to reproduce the exact conditions that caused the panic
 // (which involved specific timing with MovableFD being moved/taken on Windows),
 // but it tests basic shell execution to ensure the fix doesn't break normal operation.
 test("shell exec should not panic with null MovableFD", async () => {
   $.nothrow();
-  
+
   // Test basic shell execution that would go through the same code path
   const result = await $`echo "hello world"`.env(bunEnv);
   expect(result.stdout.toString().trim()).toBe("hello world");
@@ -31,13 +31,9 @@ test("shell exec with bun exec should not panic", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(), 
-    proc.exited,
-  ]);
-  
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
   expect(exitCode).toBe(0);
   expect(stdout.trim()).toBe("hello");
   expect(stderr).toBe("");
@@ -45,7 +41,7 @@ test("shell exec with bun exec should not panic", async () => {
 
 test("shell exec with multiple commands should not panic", async () => {
   $.nothrow();
-  
+
   // Test a more complex shell operation that might exercise the IO code paths more
   const result = await $`echo start && echo middle && echo end`.env(bunEnv);
   expect(result.stdout.toString().trim()).toBe("start\nmiddle\nend");

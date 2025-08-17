@@ -1049,8 +1049,6 @@ const Template = enum {
             const end_of_frontmatter = bun.strings.lastIndexOf(agent_rule, "---\n") orelse 0;
 
             InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
-            Output.prettyln(" + <r><d>CLAUDE.md<r>", .{});
-            Output.flush();
         }
     }
 

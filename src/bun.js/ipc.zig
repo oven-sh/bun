@@ -117,7 +117,13 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *jsc.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = try value.serialize(global, true);
+        const serialized = try value.serialize(global, .{
+            // You can't do transfer() across processes. That does not work.
+            .forTransfer = false,
+
+            // This is for cross-process serialization, so it must go through the Storage version.
+            .forCrossProcess = true,
+        });
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -510,7 +516,7 @@ pub const SendQueue = struct {
         }
         this.keep_alive.disable();
         this.socket = .closed;
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
@@ -519,7 +525,7 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
         log("SendQueue#_windowsOnClosed", .{});
@@ -1353,7 +1359,7 @@ pub const IPCHandlers = struct {
 
         pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            send_queue._onAfterIPCClosed();
+            send_queue.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, SendQueue._onAfterIPCClosed).init(send_queue));
         }
     };
 };

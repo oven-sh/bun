@@ -101,6 +101,9 @@ public:
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(StringView);
 
+    // Fast path for postMessage with pure strings
+    static Ref<SerializedScriptValue> createStringFastPath(const String& string);
+
     static Ref<SerializedScriptValue> nullValue();
 
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
@@ -200,6 +203,9 @@ private:
 #endif
     );
 
+    // Constructor for string fast path
+    explicit SerializedScriptValue(const String& fastPathString);
+
     size_t computeMemoryCost() const;
 
     Vector<unsigned char> m_data;
@@ -221,6 +227,11 @@ private:
     Vector<WebCodecsVideoFrameData> m_serializedVideoFrames;
 #endif
     // Vector<URLKeepingBlobAlive> m_blobHandles;
+
+    // Fast path for postMessage with pure strings - avoids serialization overhead
+    String m_fastPathString;
+    bool m_isStringFastPath { false };
+
     size_t m_memoryCost { 0 };
 };
 

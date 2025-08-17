@@ -15,8 +15,14 @@ struct SerializedValueSlice {
     WebCore::SerializedScriptValue* value; // NOLINT
 };
 
+enum class SerializedFlags : uint8_t {
+    None = 0,
+    ForTransfer = 1 << 0,
+    ForCrossProcess = 1 << 1,
+};
+
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
-extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, bool forTransferBool)
+extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, const SerializedFlags flags)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -24,9 +30,9 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto forStorage = SerializationForStorage::No;
+    auto forStorage = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcess)) ? SerializationForStorage::Yes : SerializationForStorage::No;
     auto context = SerializationContext::Default;
-    auto forTransferEnum = forTransferBool ? SerializationForTransfer::Yes : SerializationForTransfer::No;
+    auto forTransferEnum = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForTransfer)) ? SerializationForTransfer::Yes : SerializationForTransfer::No;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
     EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());

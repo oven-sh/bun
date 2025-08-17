@@ -279,6 +279,46 @@ BunString toStringView(StringView view)
     };
 }
 
+bool isCrossThreadShareable(const WTF::String& string)
+{
+    if (!string.impl())
+        return false;
+
+    auto* impl = string.impl();
+
+    // 1) Never share atomics/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return false;
+
+    // 2) Don't share slices or external buffers that might have ownership issues
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->bufferOwnership() == StringImpl::BufferExternal)
+        return false;
+
+    return true;
+}
+
+WTF::String toCrossThreadShareable(const WTF::String& string)
+{
+    if (!string.impl())
+        return string;
+
+    auto* impl = string.impl();
+
+    // 1) Never share atomics/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return string.isolatedCopy();
+
+    // 2) Don't share slices or external buffers that might have ownership issues
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->bufferOwnership() == StringImpl::BufferExternal)
+        return string.isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    const_cast<StringImpl*>(impl)->hash();
+
+    return string;
+}
+
 }
 
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)

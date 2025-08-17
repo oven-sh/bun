@@ -292,7 +292,7 @@ bool isCrossThreadShareable(const WTF::String& string)
     if (impl->isAtom() || impl->isSymbol())
         return false;
 
-    // 2) Don't share slices or external buffers that might have ownership issues
+    // 2) Don't share slices
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return false;
 
@@ -306,6 +306,10 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return impl->isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    impl->hash();
 
     return impl;
 }
@@ -321,7 +325,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     if (impl->isAtom() || impl->isSymbol())
         return string.isolatedCopy();
 
-    // 2) Don't share slices or external buffers that might have ownership issues
+    // 2) Don't share slices
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return string.isolatedCopy();
 

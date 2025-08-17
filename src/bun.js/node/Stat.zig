@@ -37,10 +37,11 @@ pub fn StatType(comptime big: bool) type {
                 return @as(i64, sec * std.time.ms_per_s) +|
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
-                return @floatFromInt(bun.timespec.ms(&bun.timespec{
-                    .sec = @intCast(tv_sec),
-                    .nsec = @intCast(tv_nsec),
-                }));
+                // Cast to larger integer to avoid overflow, then convert to float
+                const sec_ms: i64 = @as(i64, tv_sec) * std.time.ms_per_s;
+                const sec_as_ms: f64 = @floatFromInt(sec_ms);
+                const nsec_as_ms: f64 = @as(f64, @floatFromInt(tv_nsec)) / std.time.ns_per_ms;
+                return sec_as_ms + nsec_as_ms;
             }
         }
 

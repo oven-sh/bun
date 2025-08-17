@@ -831,7 +831,6 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
 
 ```
 
-This makes `Bun.stripANSI` ideal for performance-critical applications that need to process terminal output, log files, or any text containing ANSI escape sequences.
 
 ## `estimateShallowMemoryUsageOf` in `bun:jsc`
 

@@ -21,7 +21,7 @@ const WindowsNamedPipe = @This();
 
 wrapper: ?WrapperType,
 pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
-vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
+vm: *bun.jsc.VirtualMachine, //TODO: create a timeout version that dont need the jsc VM
 
 writer: bun.io.StreamingWriter(WindowsNamedPipe, .{
     .onClose = onClose,
@@ -36,7 +36,7 @@ handlers: Handlers,
 connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
 event_loop_timer: EventLoopTimer = .{
-    .next = .{},
+    .next = .epoch,
     .tag = .WindowsNamedPipe,
 },
 current_timeout: u32 = 0,
@@ -261,7 +261,7 @@ pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
 pub fn from(
     pipe: *uv.Pipe,
     handlers: WindowsNamedPipe.Handlers,
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
 ) WindowsNamedPipe {
     if (Environment.isPosix) {
         @compileError("WindowsNamedPipe is not supported on POSIX systems");
@@ -298,7 +298,7 @@ fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
     this.flush();
 }
 
-pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) JSC.Maybe(void) {
+pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -344,9 +344,9 @@ pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*Borin
             this.onOpen();
         }
     }
-    return .{ .result = {} };
+    return .success;
 }
-pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 
@@ -379,10 +379,10 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.A
     }
 
     onConnect(this, uv.ReturnCode.zero);
-    return .{ .result = {} };
+    return .success;
 }
 
-pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
     // ref because we are connecting
@@ -414,7 +414,7 @@ pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.
     this.connect_req.data = this;
     return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
 }
-pub fn startTLS(this: *WindowsNamedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.flags.is_ssl = true;
     if (this.start(is_client)) {
         this.wrapper = try WrapperType.init(ssl_options, is_client, .{
@@ -459,8 +459,8 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
-pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8, is_end: bool) i32 {
-    log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
+    log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
         return @as(i32, @intCast(wrapper.writeData(data) catch 0));
     } else {
@@ -469,7 +469,7 @@ pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8, is_end: bool) i
     return @intCast(data.len);
 }
 
-pub fn rawWrite(this: *WindowsNamedPipe, encoded_data: []const u8, _: bool) i32 {
+pub fn rawWrite(this: *WindowsNamedPipe, encoded_data: []const u8) i32 {
     this.internalWrite(encoded_data);
     return @intCast(encoded_data.len);
 }
@@ -573,15 +573,18 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
-const uv = bun.windows.libuv;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const uws = bun.uws;
-const BoringSSL = bun.BoringSSL.c;
-const EventLoopTimer = bun.api.Timer.EventLoopTimer;
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const log = bun.Output.scoped(.WindowsNamedPipe, false);
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const Environment = bun.Environment;
+const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
+
 const std = @import("std");
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const jsc = bun.jsc;
+const BoringSSL = bun.BoringSSL.c;
+const uv = bun.windows.libuv;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+
+const uws = bun.uws;
 const UpgradedDuplex = uws.UpgradedDuplex;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;

@@ -1,14 +1,3 @@
-const Semver = bun.Semver;
-const String = Semver.String;
-const std = @import("std");
-const Repository = @import("./repository.zig").Repository;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const bun = @import("bun");
-const OOM = bun.OOM;
-const Dependency = bun.install.Dependency;
-
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
     _padding: [7]u8 = .{0} ** 7,
@@ -189,6 +178,37 @@ pub const Resolution = extern struct {
         };
     }
 
+    const StorePathFormatter = struct {
+        res: *const Resolution,
+        string_buf: string,
+        // opts: String.StorePathFormatter.Options,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            const string_buf = this.string_buf;
+            const res = this.res.value;
+            switch (this.res.tag) {
+                .root => try writer.writeAll("root"),
+                .npm => try writer.print("{}", .{res.npm.version.fmt(string_buf)}),
+                .local_tarball => try writer.print("{}", .{res.local_tarball.fmtStorePath(string_buf)}),
+                .remote_tarball => try writer.print("{}", .{res.remote_tarball.fmtStorePath(string_buf)}),
+                .folder => try writer.print("{}", .{res.folder.fmtStorePath(string_buf)}),
+                .git => try writer.print("{}", .{res.git.fmtStorePath("git+", string_buf)}),
+                .github => try writer.print("{}", .{res.github.fmtStorePath("github+", string_buf)}),
+                .workspace => try writer.print("{}", .{res.workspace.fmtStorePath(string_buf)}),
+                .symlink => try writer.print("{}", .{res.symlink.fmtStorePath(string_buf)}),
+                .single_file_module => try writer.print("{}", .{res.single_file_module.fmtStorePath(string_buf)}),
+                else => {},
+            }
+        }
+    };
+
+    pub fn fmtStorePath(this: *const Resolution, string_buf: string) StorePathFormatter {
+        return .{
+            .res = this,
+            .string_buf = string_buf,
+        };
+    }
+
     pub fn fmtURL(this: *const Resolution, string_bytes: []const u8) URLFormatter {
         return URLFormatter{ .resolution = this, .buf = string_bytes };
     }
@@ -257,7 +277,7 @@ pub const Resolution = extern struct {
 
         buf: []const u8,
 
-        pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             const buf = formatter.buf;
             const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
@@ -280,7 +300,7 @@ pub const Resolution = extern struct {
         buf: []const u8,
         path_sep: bun.fmt.PathFormatOptions.Sep,
 
-        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             const buf = formatter.buf;
             const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
@@ -407,3 +427,17 @@ pub const Resolution = extern struct {
         }
     };
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Repository = @import("./repository.zig").Repository;
+const VersionedURL = @import("./versioned_url.zig").VersionedURL;
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const strings = bun.strings;
+const Dependency = bun.install.Dependency;
+
+const Semver = bun.Semver;
+const String = Semver.String;

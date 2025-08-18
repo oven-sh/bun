@@ -23,19 +23,21 @@
 
 const common = require('../common');
 
-if (common.isWindows)
+if (common.isWindows) {
   common.skip('SIGUSR1 and SIGHUP signals are not supported');
-if (!common.isMainThread)
+}
+
+const { isMainThread } = require('worker_threads');
+
+if (!isMainThread) {
   common.skip('Signal handling in Workers is not supported');
+}
 
 console.log(`process.pid: ${process.pid}`);
 
-// On Bun in Linux, SIGUSR1 is reserved for the GC.
-// So we need to use a different signal.
-const SIGNAL = process.platform === 'linux' ? 'SIGUSR2' : 'SIGUSR1';
+process.on('SIGUSR1', common.mustCall());
 
-process.on(SIGNAL, common.mustCall());
-process.on(SIGNAL, common.mustCall(function() {
+process.on('SIGUSR1', common.mustCall(function() {
   setTimeout(function() {
     console.log('End.');
     process.exit(0);
@@ -47,7 +49,7 @@ setInterval(function() {
   console.log(`running process...${++i}`);
 
   if (i === 5) {
-    process.kill(process.pid, SIGNAL);
+    process.kill(process.pid, 'SIGUSR1');
   }
 }, 1);
 

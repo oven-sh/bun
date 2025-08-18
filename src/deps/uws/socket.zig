@@ -317,29 +317,29 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             }
         }
 
-        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+        pub fn write(this: ThisSocket, data: []const u8) i32 {
             return switch (this.socket) {
-                .upgradedDuplex => |socket| socket.encodeAndWrite(data, msg_more),
-                .pipe => |pipe| if (comptime Environment.isWindows) pipe.encodeAndWrite(data, msg_more) else 0,
-                .connected => |socket| socket.write(is_ssl, data, msg_more),
+                .upgradedDuplex => |socket| socket.encodeAndWrite(data),
+                .pipe => |pipe| if (comptime Environment.isWindows) pipe.encodeAndWrite(data) else 0,
+                .connected => |socket| socket.write(is_ssl, data),
                 .connecting, .detached => 0,
             };
         }
 
         pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
             return switch (this.socket) {
-                .upgradedDuplex, .pipe => this.write(data, false),
+                .upgradedDuplex, .pipe => this.write(data),
                 .connected => |socket| socket.writeFd(data, file_descriptor),
                 .connecting, .detached => 0,
             };
         }
 
-        pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+        pub fn rawWrite(this: ThisSocket, data: []const u8) i32 {
             return switch (this.socket) {
-                .connected => |socket| socket.rawWrite(is_ssl, data, msg_more),
+                .connected => |socket| socket.rawWrite(is_ssl, data),
                 .connecting, .detached => 0,
-                .upgradedDuplex => |socket| socket.rawWrite(data, msg_more),
-                .pipe => |pipe| if (comptime Environment.isWindows) pipe.rawWrite(data, msg_more) else 0,
+                .upgradedDuplex => |socket| socket.rawWrite(data),
+                .pipe => |pipe| if (comptime Environment.isWindows) pipe.rawWrite(data) else 0,
             };
         }
 
@@ -1136,10 +1136,10 @@ pub const AnySocket = union(enum) {
         }
     }
 
-    pub fn write(this: AnySocket, data: []const u8, msg_more: bool) i32 {
+    pub fn write(this: AnySocket, data: []const u8) i32 {
         return switch (this) {
-            .SocketTCP => |sock| sock.write(data, msg_more),
-            .SocketTLS => |sock| sock.write(data, msg_more),
+            .SocketTCP => |sock| sock.write(data),
+            .SocketTLS => |sock| sock.write(data),
         };
     }
 
@@ -1194,8 +1194,6 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
     }
 }
 
-const us_socket_t = uws.us_socket_t;
-
 const c = struct {
     pub const us_socket_events_t = extern struct {
         on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.C) ?*us_socket_t = null,
@@ -1213,15 +1211,20 @@ const c = struct {
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
+const debug = bun.Output.scoped(.uws, .visible);
+
+const std = @import("std");
+
 const bun = @import("bun");
+const Environment = bun.Environment;
+const BoringSSL = bun.BoringSSL.c;
+
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;
-const Environment = bun.Environment;
-const SocketContext = uws.SocketContext;
-const debug = bun.Output.scoped(.uws, false);
-const std = @import("std");
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const BunSocketContextOptions = uws.SocketContext.BunSocketContextOptions;
-const WindowsNamedPipe = uws.WindowsNamedPipe;
 const UpgradedDuplex = uws.UpgradedDuplex;
-const BoringSSL = bun.BoringSSL.c;
+const WindowsNamedPipe = uws.WindowsNamedPipe;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;
+const us_socket_t = uws.us_socket_t;
+
+const SocketContext = uws.SocketContext;
+const BunSocketContextOptions = uws.SocketContext.BunSocketContextOptions;

@@ -16,33 +16,139 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
-#include <list>
+#include <optional>
 #include <unordered_set>
+#include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_crash_in_gc(napi_env);
+extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
+static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
+
 namespace Napi {
-struct AsyncCleanupHook {
-    napi_async_cleanup_hook function = nullptr;
-    void* data = nullptr;
-    napi_async_cleanup_hook_handle handle = nullptr;
+
+static constexpr int DEFAULT_NAPI_VERSION = 10;
+
+struct CleanupHook {
+    void* data;
+    size_t insertionCounter;
+
+    CleanupHook(void* data, size_t insertionCounter)
+        : data(data)
+        , insertionCounter(insertionCounter)
+    {
+    }
+
+    size_t hash() const
+    {
+        return std::hash<void*> {}(data);
+    }
 };
+
+struct SyncCleanupHook : CleanupHook {
+    void (*function)(void*);
+
+    SyncCleanupHook(void (*function)(void*), void* data, size_t insertionCounter)
+        : CleanupHook(data, insertionCounter)
+        , function(function)
+    {
+    }
+
+    bool operator==(const SyncCleanupHook& other) const
+    {
+        return this == &other || (function == other.function && data == other.data);
+    }
+};
+
+struct AsyncCleanupHook : CleanupHook {
+    napi_async_cleanup_hook function;
+    napi_async_cleanup_hook_handle handle = nullptr;
+
+    AsyncCleanupHook(napi_async_cleanup_hook function, napi_async_cleanup_hook_handle handle, void* data, size_t insertionCounter)
+        : CleanupHook(data, insertionCounter)
+        , function(function)
+        , handle(handle)
+    {
+    }
+
+    bool operator==(const AsyncCleanupHook& other) const
+    {
+        if (this == &other || (function == other.function && data == other.data)) {
+            if (handle && other.handle) {
+                return equal(handle, other.handle);
+            }
+
+            return !handle && !other.handle;
+        }
+
+        return false;
+    }
+};
+
+struct EitherCleanupHook : std::variant<SyncCleanupHook, AsyncCleanupHook> {
+    template<typename Self>
+    auto& get(this Self& self)
+    {
+        using Hook = MatchConst<Self, CleanupHook>::type;
+
+        if (auto* sync = std::get_if<SyncCleanupHook>(&self)) {
+            return static_cast<Hook&>(*sync);
+        }
+
+        return static_cast<Hook&>(std::get<AsyncCleanupHook>(self));
+    }
+
+    struct Hash {
+        static size_t operator()(const EitherCleanupHook& hook)
+        {
+            return hook.get().hash();
+        }
+    };
+
+private:
+    template<typename T, typename U>
+    struct MatchConst {
+        using type = U;
+    };
+
+    template<typename T, typename U>
+    struct MatchConst<const T, U> {
+        using type = const U;
+    };
+};
+
+using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
+
+void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
-    std::list<Napi::AsyncCleanupHook>::iterator iter;
+    Napi::HookSet::iterator iter;
 
     napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
         : env(env)
         , iter(iter)
     {
     }
+
+    bool operator==(const napi_async_cleanup_hook_handle__& other) const
+    {
+        return this == &other || (env == other.env && iter == other.iter);
+    }
 };
 
-#define NAPI_ABORT(message) Bun__crashHandler(message "", sizeof(message "") - 1)
+static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_handle two)
+{
+    return one == two || *one == *two;
+}
+
+#define NAPI_ABORT(message)                                    \
+    do {                                                       \
+        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__crashHandler(message "", sizeof(message "") - 1); \
+    } while (0)
 
 #define NAPI_PERISH(...)                                                      \
     do {                                                                      \
@@ -66,6 +172,7 @@ public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
+        , m_vm(JSC::getVM(globalObject))
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -78,18 +185,7 @@ public:
     void cleanup()
     {
         while (!m_cleanupHooks.empty()) {
-            auto [function, data] = m_cleanupHooks.back();
-            m_cleanupHooks.pop_back();
-            ASSERT(function != nullptr);
-            function(data);
-        }
-
-        while (!m_asyncCleanupHooks.empty()) {
-            auto [function, data, handle] = m_asyncCleanupHooks.back();
-            ASSERT(function != nullptr);
-            function(handle, data);
-            delete handle;
-            m_asyncCleanupHooks.pop_back();
+            drain();
         }
 
         m_isFinishingFinalizers = true;
@@ -127,55 +223,77 @@ public:
     }
 
     /// Will abort the process if a duplicate entry would be added.
+    /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
     {
-        for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
+        // Always check for duplicates like Node.js CHECK_EQ
+        // See: node/src/cleanup_queue-inl.h:24 (CHECK_EQ runs in all builds)
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
+                NAPI_RELEASE_ASSERT(function != sync->function || data != sync->data, "Attempted to add a duplicate NAPI environment cleanup hook");
+            }
         }
 
-        m_cleanupHooks.emplace_back(function, data);
+        m_cleanupHooks.emplace(Napi::SyncCleanupHook(function, data, ++m_cleanupHookCounter));
     }
 
     void removeCleanupHook(void (*function)(void*), void* data)
     {
         for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
-            if (iter->first == function && iter->second == data) {
-                m_cleanupHooks.erase(iter);
-                return;
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&*iter)) {
+                if (sync->function == function && sync->data == data) {
+                    m_cleanupHooks.erase(iter);
+                    return;
+                }
             }
         }
 
-        NAPI_PERISH("Attempted to remove a NAPI environment cleanup hook that had never been added");
+        // Node.js silently ignores removal of non-existent hooks
+        // See: node/src/cleanup_queue-inl.h:27-30
     }
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
-        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
-        }
-
-        auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
-        iter->handle = new napi_async_cleanup_hook_handle__(this, iter);
-        return iter->handle;
-    }
-
-    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
-    {
-        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            if (existing_handle == handle) {
-                m_asyncCleanupHooks.erase(handle->iter);
-                delete handle;
-                return;
+        // Always check for duplicates like Node.js CHECK_EQ
+        // Node.js async cleanup hooks also use the same CleanupQueue with CHECK_EQ
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+                NAPI_RELEASE_ASSERT(function != async->function || data != async->data, "Attempted to add a duplicate async NAPI environment cleanup hook");
             }
         }
 
-        NAPI_PERISH("Attempted to remove an async NAPI environment cleanup hook that had never been added");
+        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this, m_cleanupHooks.end());
+
+        auto [iter, inserted] = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter));
+        NAPI_RELEASE_ASSERT(inserted, "Attempted to add a duplicate async NAPI environment cleanup hook");
+        handle->iter = iter;
+        return handle.release();
+    }
+
+    bool removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    {
+        if (handle == nullptr) {
+            return false; // Invalid handle
+        }
+
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+                if (async->handle == handle) {
+                    m_cleanupHooks.erase(handle->iter);
+                    delete handle;
+                    return true;
+                }
+            }
+        }
+
+        // Node.js silently ignores removal of non-existent handles
+        // See: node/src/node_api.cc:849-855
+        return false;
     }
 
     bool inGC() const
     {
-        JSC::VM& vm = JSC::getVM(m_globalObject);
-        return vm.isCollectorBusyOnCurrentThread();
+        return this->vm().isCollectorBusyOnCurrentThread();
     }
 
     void checkGC() const
@@ -189,7 +307,7 @@ public:
 
     bool isVMTerminating() const
     {
-        return JSC::getVM(m_globalObject).hasTerminationRequest();
+        return this->vm().hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
@@ -202,11 +320,51 @@ public:
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
+            throwPendingException();
         }
+    }
+
+    void scheduleException(JSC::JSValue exception)
+    {
+        if (exception.isEmpty()) {
+            m_pendingException.clear();
+        }
+
+        m_pendingException.set(m_vm, exception);
+    }
+
+    bool throwPendingException()
+    {
+        if (!m_pendingException) {
+            return false;
+        }
+
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        JSC::throwException(globalObject(), scope, m_pendingException.get());
+        m_pendingException.clear();
+        return true;
+    }
+
+    void clearPendingException()
+    {
+        m_pendingException.clear();
+    }
+
+    bool hasPendingException() const
+    {
+        return static_cast<bool>(m_pendingException);
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
+    inline JSC::VM& vm() const { return m_vm; }
+    inline std::optional<JSC::JSValue> pendingException() const
+    {
+        if (!m_pendingException) {
+            return std::nullopt;
+        }
+        return m_pendingException.get();
+    }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
@@ -296,8 +454,44 @@ private:
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
-    std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
-    std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
+    JSC::VM& m_vm;
+    Napi::HookSet m_cleanupHooks;
+    JSC::Strong<JSC::Unknown> m_pendingException;
+    size_t m_cleanupHookCounter = 0;
+
+    // Returns a vector of hooks in reverse order of insertion.
+    std::vector<Napi::EitherCleanupHook> getHooks() const
+    {
+        std::vector<Napi::EitherCleanupHook> hooks(m_cleanupHooks.begin(), m_cleanupHooks.end());
+        std::sort(hooks.begin(), hooks.end(), [](const Napi::EitherCleanupHook& left, const Napi::EitherCleanupHook& right) {
+            return left.get().insertionCounter > right.get().insertionCounter;
+        });
+        return hooks;
+    }
+
+    void drain()
+    {
+        std::vector<Napi::EitherCleanupHook> hooks = getHooks();
+
+        for (const Napi::EitherCleanupHook& hook : hooks) {
+            if (auto set_iter = m_cleanupHooks.find(hook); set_iter != m_cleanupHooks.end()) {
+                m_cleanupHooks.erase(set_iter);
+            } else {
+                // Already removed during removal of a different cleanup hook
+                continue;
+            }
+
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
+                ASSERT(sync->function != nullptr);
+                sync->function(sync->data);
+            } else {
+                auto& async = std::get<Napi::AsyncCleanupHook>(hook);
+                ASSERT(async.function != nullptr);
+                async.function(async.handle, async.data);
+                delete async.handle;
+            }
+        }
+    }
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
@@ -309,6 +503,7 @@ class JSSourceCode;
 }
 
 namespace Napi {
+
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
@@ -334,6 +529,11 @@ public:
         return jscWeakValueHandleOwner;
     }
 };
+
+// If a module registered itself by calling napi_module_register in a static constructor, run this
+// to run the module's entrypoint.
+void executePendingNapiModule(Zig::GlobalObject* globalObject);
+
 }
 
 namespace Zig {
@@ -388,11 +588,11 @@ public:
         case WeakTypeTag::Primitive:
             return m_value.primitive;
         case WeakTypeTag::Cell:
-            return JSC::JSValue(m_value.cell.get());
+            return m_value.cell.get();
         case WeakTypeTag::String:
-            return JSC::JSValue(m_value.string.get());
+            return m_value.string.get();
         default:
-            return JSC::JSValue();
+            return {};
         }
     }
 
@@ -648,5 +848,79 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+extern "C" napi_status napi_set_last_error(napi_env env, napi_status status);
+class NAPICallFrame {
+public:
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
+        : NAPICallFrame(globalObject, callFrame, dataPtr)
+    {
+        m_storedNewTarget = storedNewTarget;
+        m_isConstructorCall = !m_storedNewTarget.isEmpty();
+    }
+
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
+        : m_callFrame(callFrame)
+        , m_dataPtr(dataPtr)
+    {
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
+        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
+        // `this` to an object.
+        // TODO change to global? or find another way to avoid JSGlobalProxy
+        JSC::JSObject* jscThis = globalObject->globalThis();
+        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            jscThis = m_callFrame->thisValue().toObject(globalObject);
+            // https://tc39.es/ecma262/#sec-toobject
+            // toObject only throws for undefined and null, which we checked for
+            scope.assertNoException();
+        }
+        m_callFrame->setThisValue(jscThis);
+    }
+
+    JSValue thisValue() const
+    {
+        return m_callFrame->thisValue();
+    }
+
+    napi_callback_info toNapi()
+    {
+        return reinterpret_cast<napi_callback_info>(this);
+    }
+
+    ALWAYS_INLINE void* dataPtr() const
+    {
+        return m_dataPtr;
+    }
+
+    void extract(size_t* argc, // [in-out] Specifies the size of the provided argv array
+                               // and receives the actual count of args.
+        napi_value* argv, // [out] Array of values
+        napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
+        void** data, Zig::GlobalObject* globalObject);
+
+    JSValue newTarget()
+    {
+        if (!m_isConstructorCall) {
+            return JSValue();
+        }
+
+        if (m_storedNewTarget.isUndefined()) {
+            // napi_get_new_target:
+            // "This API returns the new.target of the constructor call. If the current callback
+            // is not a constructor call, the result is NULL."
+            // they mean a null pointer, not JavaScript null
+            return JSValue();
+        } else {
+            return m_storedNewTarget;
+        }
+    }
+
+private:
+    JSC::CallFrame* m_callFrame;
+    void* m_dataPtr;
+    JSValue m_storedNewTarget;
+    bool m_isConstructorCall = false;
+};
 
 }

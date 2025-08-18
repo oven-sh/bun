@@ -1,26 +1,10 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
-const invalid_package_id = Install.invalid_package_id;
-const Resolution = Install.Resolution;
-const string = bun.string;
-const strings = bun.strings;
-const PathBuffer = bun.PathBuffer;
-const FileSystem = bun.fs.FileSystem;
-const path = bun.path;
-const glob = bun.glob;
-const Table = bun.fmt.Table;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OOM = bun.OOM;
-
 pub const OutdatedCommand = struct {
+    const OutdatedInfo = struct {
+        package_id: PackageID,
+        dep_id: DependencyID,
+        workspace_pkg_id: PackageID,
+        is_catalog: bool,
+    };
     fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
         return if (dep.version.tag == .catalog) blk: {
             const catalog_dep = manager.lockfile.catalogs.get(
@@ -109,8 +93,13 @@ pub const OutdatedCommand = struct {
 
                     try updateManifestsIfNecessary(manager, workspace_pkg_ids);
                     try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
+                } else if (manager.options.do.recursive) {
+                    const all_workspaces = getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+                    defer bun.default_allocator.free(all_workspaces);
+
+                    try updateManifestsIfNecessary(manager, all_workspaces);
+                    try printOutdatedInfoTable(manager, all_workspaces, true, enable_ansi_colors);
                 } else {
-                    // just the current workspace
                     const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
 
@@ -139,6 +128,23 @@ pub const OutdatedCommand = struct {
         /// allocated.
         pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
     };
+
+    fn getAllWorkspaces(
+        allocator: std.mem.Allocator,
+        manager: *PackageManager,
+    ) OOM![]const PackageID {
+        const lockfile = manager.lockfile;
+        const packages = lockfile.packages.slice();
+        const pkg_resolutions = packages.items(.resolution);
+
+        var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
+        for (pkg_resolutions, 0..) |resolution, pkg_id| {
+            if (resolution.tag != .workspace and resolution.tag != .root) continue;
+            try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
+        }
+
+        return workspace_pkg_ids.toOwnedSlice(allocator);
+    }
 
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
@@ -222,6 +228,108 @@ pub const OutdatedCommand = struct {
         return workspace_pkg_ids.items;
     }
 
+    const GroupedOutdatedInfo = struct {
+        package_id: PackageID,
+        dep_id: DependencyID,
+        workspace_pkg_id: PackageID,
+        is_catalog: bool,
+        grouped_workspace_names: ?[]const u8,
+    };
+
+    fn groupCatalogDependencies(
+        manager: *PackageManager,
+        outdated_items: []const OutdatedInfo,
+        _: []const PackageID,
+    ) !std.ArrayListUnmanaged(GroupedOutdatedInfo) {
+        const allocator = bun.default_allocator;
+        const lockfile = manager.lockfile;
+        const string_buf = lockfile.buffers.string_bytes.items;
+        const packages = lockfile.packages.slice();
+        const pkg_names = packages.items(.name);
+        const dependencies = lockfile.buffers.dependencies.items;
+
+        var result = std.ArrayListUnmanaged(GroupedOutdatedInfo){};
+
+        const CatalogKey = struct {
+            name_hash: u64,
+            catalog_name_hash: u64,
+            behavior: Behavior,
+        };
+        var catalog_map = std.AutoHashMap(CatalogKey, std.ArrayList(PackageID)).init(allocator);
+        defer catalog_map.deinit();
+        defer {
+            var iter = catalog_map.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+        }
+        for (outdated_items) |item| {
+            if (item.is_catalog) {
+                const dep = dependencies[item.dep_id];
+                const name_hash = bun.hash(dep.name.slice(string_buf));
+                const catalog_name = dep.version.value.catalog.slice(string_buf);
+                const catalog_name_hash = bun.hash(catalog_name);
+                const key = CatalogKey{ .name_hash = name_hash, .catalog_name_hash = catalog_name_hash, .behavior = dep.behavior };
+
+                const entry = try catalog_map.getOrPut(key);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = std.ArrayList(PackageID).init(allocator);
+                }
+                try entry.value_ptr.append(item.workspace_pkg_id);
+            } else {
+                try result.append(allocator, .{
+                    .package_id = item.package_id,
+                    .dep_id = item.dep_id,
+                    .workspace_pkg_id = item.workspace_pkg_id,
+                    .is_catalog = false,
+                    .grouped_workspace_names = null,
+                });
+            }
+        }
+
+        // Second pass: add grouped catalog dependencies
+        for (outdated_items) |item| {
+            if (!item.is_catalog) continue;
+
+            const dep = dependencies[item.dep_id];
+            const name_hash = bun.hash(dep.name.slice(string_buf));
+            const catalog_name = dep.version.value.catalog.slice(string_buf);
+            const catalog_name_hash = bun.hash(catalog_name);
+            const key = CatalogKey{ .name_hash = name_hash, .catalog_name_hash = catalog_name_hash, .behavior = dep.behavior };
+
+            const workspace_list = catalog_map.get(key) orelse continue;
+
+            if (workspace_list.items[0] != item.workspace_pkg_id) continue;
+            var workspace_names = std.ArrayList(u8).init(allocator);
+            defer workspace_names.deinit();
+
+            const cat_name = dep.version.value.catalog.slice(string_buf);
+            if (cat_name.len > 0) {
+                try workspace_names.appendSlice("catalog:");
+                try workspace_names.appendSlice(cat_name);
+                try workspace_names.appendSlice(" (");
+            } else {
+                try workspace_names.appendSlice("catalog (");
+            }
+            for (workspace_list.items, 0..) |workspace_id, i| {
+                if (i > 0) try workspace_names.appendSlice(", ");
+                const workspace_name = pkg_names[workspace_id].slice(string_buf);
+                try workspace_names.appendSlice(workspace_name);
+            }
+            try workspace_names.append(')');
+
+            try result.append(allocator, .{
+                .package_id = item.package_id,
+                .dep_id = item.dep_id,
+                .workspace_pkg_id = item.workspace_pkg_id,
+                .is_catalog = true,
+                .grouped_workspace_names = try workspace_names.toOwnedSlice(),
+            });
+        }
+
+        return result;
+    }
+
     fn printOutdatedInfoTable(
         manager: *PackageManager,
         workspace_pkg_ids: []const PackageID,
@@ -283,7 +391,7 @@ pub const OutdatedCommand = struct {
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
-        var outdated_ids: std.ArrayListUnmanaged(struct { package_id: PackageID, dep_id: DependencyID, workspace_pkg_id: PackageID }) = .{};
+        var outdated_ids: std.ArrayListUnmanaged(OutdatedInfo) = .{};
         defer outdated_ids.deinit(manager.allocator);
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
@@ -372,6 +480,7 @@ pub const OutdatedCommand = struct {
                         .package_id = package_id,
                         .dep_id = @intCast(dep_id),
                         .workspace_pkg_id = workspace_pkg_id,
+                        .is_catalog = dep.version.tag == .catalog,
                     },
                 ) catch bun.outOfMemory();
             }
@@ -379,11 +488,23 @@ pub const OutdatedCommand = struct {
 
         if (outdated_ids.items.len == 0) return;
 
+        // Group catalog dependencies
+        var grouped_ids = try groupCatalogDependencies(manager, outdated_ids.items, workspace_pkg_ids);
+        defer grouped_ids.deinit(bun.default_allocator);
+
+        // Recalculate max workspace length after grouping
+        var new_max_workspace: usize = max_workspace;
+        for (grouped_ids.items) |item| {
+            if (item.grouped_workspace_names) |names| {
+                if (names.len > new_max_workspace) new_max_workspace = names.len;
+            }
+        }
+
         const package_column_inside_length = @max("Packages".len, max_name);
         const current_column_inside_length = @max("Current".len, max_current);
         const update_column_inside_length = @max("Update".len, max_update);
         const latest_column_inside_length = @max("Latest".len, max_latest);
-        const workspace_column_inside_length = @max("Workspace".len, max_workspace);
+        const workspace_column_inside_length = @max("Workspace".len, new_max_workspace);
 
         const column_left_pad = 1;
         const column_right_pad = 1;
@@ -424,112 +545,113 @@ pub const OutdatedCommand = struct {
         table.printTopLineSeparator();
         table.printColumnNames();
 
-        for (workspace_pkg_ids) |workspace_pkg_id| {
-            inline for ([_]Behavior{
-                .{ .prod = true },
-                .{ .dev = true },
-                .{ .peer = true },
-                .{ .optional = true },
-            }) |group_behavior| {
-                for (outdated_ids.items) |ids| {
-                    if (workspace_pkg_id != ids.workspace_pkg_id) continue;
-                    const package_id = ids.package_id;
-                    const dep_id = ids.dep_id;
+        // Print grouped items sorted by behavior type
+        inline for ([_]Behavior{
+            .{ .prod = true },
+            .{ .dev = true },
+            .{ .peer = true },
+            .{ .optional = true },
+        }) |group_behavior| {
+            for (grouped_ids.items) |item| {
+                const package_id = item.package_id;
+                const dep_id = item.dep_id;
 
-                    const dep = dependencies[dep_id];
-                    if (!dep.behavior.includes(group_behavior)) continue;
+                const dep = dependencies[dep_id];
+                if (!dep.behavior.includes(group_behavior)) continue;
 
-                    const package_name = pkg_names[package_id].slice(string_buf);
-                    const resolution = pkg_resolutions[package_id];
+                const package_name = pkg_names[package_id].slice(string_buf);
+                const resolution = pkg_resolutions[package_id];
 
-                    var expired = false;
-                    const manifest = manager.manifests.byNameAllowExpired(
-                        manager,
-                        manager.scopeForPackageName(package_name),
-                        package_name,
-                        &expired,
-                        .load_from_memory_fallback_to_disk,
-                    ) orelse continue;
+                var expired = false;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &expired,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse continue;
 
-                    const latest = manifest.findByDistTag("latest") orelse continue;
-                    const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                    const update = if (resolved_version.tag == .npm)
-                        manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                const latest = manifest.findByDistTag("latest") orelse continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const update = if (resolved_version.tag == .npm)
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                else
+                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+                table.printLineSeparator();
+
+                {
+                    // package name
+                    const behavior_str = if (dep.behavior.dev)
+                        " (dev)"
+                    else if (dep.behavior.peer)
+                        " (peer)"
+                    else if (dep.behavior.optional)
+                        " (optional)"
                     else
-                        manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                        "";
 
-                    table.printLineSeparator();
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    {
-                        // package name
-                        const behavior_str = if (dep.behavior.dev)
-                            " (dev)"
-                        else if (dep.behavior.peer)
-                            " (peer)"
-                        else if (dep.behavior.optional)
-                            " (optional)"
-                        else
-                            "";
-
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                        Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
-                        for (package_name.len + behavior_str.len..package_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                    }
-
-                    {
-                        // current version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                        version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{version_buf.items});
-                        for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
-
-                    {
-                        // update version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                        version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                        for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
-
-                    {
-                        // latest version
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                        version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                        Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                        for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                        version_buf.clearRetainingCapacity();
-                    }
-
-                    if (was_filtered) {
-                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
-                        for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                        const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
-                        Output.pretty("{s}", .{workspace_name});
-
-                        for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                    }
-
-                    Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
+                    Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
+                    for (package_name.len + behavior_str.len..package_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                 }
+
+                {
+                    // current version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
+
+                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{version_buf.items});
+                    for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
+
+                {
+                    // update version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
+
+                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
+
+                {
+                    // latest version
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
+
+                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
+
+                if (was_filtered) {
+                    Output.pretty("{s}", .{table.symbols.verticalEdge()});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
+
+                    const workspace_name = if (item.grouped_workspace_names) |names|
+                        names
+                    else
+                        pkg_names[item.workspace_pkg_id].slice(string_buf);
+                    Output.pretty("{s}", .{workspace_name});
+
+                    for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                }
+
+                Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
             }
         }
 
         table.printBottomLineSeparator();
     }
 
-    fn updateManifestsIfNecessary(
+    pub fn updateManifestsIfNecessary(
         manager: *PackageManager,
         workspace_pkg_ids: []const PackageID,
     ) !void {
@@ -651,3 +773,29 @@ pub const OutdatedCommand = struct {
         }
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const glob = bun.glob;
+const path = bun.path;
+const strings = bun.strings;
+const Command = bun.cli.Command;
+const FileSystem = bun.fs.FileSystem;
+const Table = bun.fmt.Table;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const PackageID = Install.PackageID;
+const Resolution = Install.Resolution;
+const invalid_package_id = Install.invalid_package_id;
+const Behavior = Install.Dependency.Behavior;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

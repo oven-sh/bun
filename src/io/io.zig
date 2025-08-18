@@ -3,18 +3,12 @@
 //!
 //! Most I/O happens on the main thread.
 
-const bun = @import("bun");
-const std = @import("std");
-const sys = bun.sys;
-const linux = std.os.linux;
-const Environment = bun.Environment;
 pub const heap = @import("./heap.zig");
-const JSC = bun.JSC;
 
-const log = bun.Output.scoped(.loop, false);
+pub const openForWriting = @import("./openForWriting.zig").openForWriting;
+pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
-const posix = std.posix;
-const assert = bun.assert;
+const log = bun.Output.scoped(.loop, .visible);
 
 pub const Source = @import("./source.zig").Source;
 
@@ -349,9 +343,6 @@ pub const Action = union(enum) {
     };
 };
 
-const ReadFile = bun.webcore.Blob.read_file.ReadFile;
-const WriteFile = bun.webcore.Blob.write_file.WriteFile;
-
 const Pollable = struct {
     const Tag = enum(bun.TaggedPointer.Tag) {
         empty,
@@ -630,7 +621,7 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
         log("register: {s} ({})", .{ @tagName(flag), fd });
@@ -664,7 +655,7 @@ pub const Poll = struct {
                 &event,
             );
 
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
             // Only mark if it successfully registered.
@@ -684,7 +675,7 @@ pub const Poll = struct {
         });
         this.flags.remove(.needs_rearm);
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 };
 
@@ -700,3 +691,14 @@ pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
 pub const MaxBuf = @import("./MaxBuf.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const assert = bun.assert;
+const sys = bun.sys;
+const ReadFile = bun.webcore.Blob.read_file.ReadFile;
+const WriteFile = bun.webcore.Blob.write_file.WriteFile;
+
+const std = @import("std");
+const posix = std.posix;
+const linux = std.os.linux;

@@ -1,39 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Command = bun.CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const http = bun.http;
-const OOM = bun.OOM;
-const HeaderBuilder = http.HeaderBuilder;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const strings = bun.strings;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const File = bun.sys.File;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const path = bun.path;
-const FileSystem = bun.fs.FileSystem;
-const Environment = bun.Environment;
-const Archive = bun.libarchive.lib.Archive;
-const logger = bun.logger;
-const Dependency = install.Dependency;
-const Pack = bun.CLI.PackCommand;
-const Lockfile = install.Lockfile;
-const MimeType = http.MimeType;
-const Expr = bun.js_parser.Expr;
-const prompt = bun.CLI.InitCommand.prompt;
-const Npm = install.Npm;
-const Run = bun.CLI.RunCommand;
-const DotEnv = bun.DotEnv;
-const Open = @import("../open.zig");
-const E = bun.JSAst.E;
-const G = bun.JSAst.G;
-
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
         return struct {
@@ -1149,7 +1113,7 @@ pub const PublishCommand = struct {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 
-                    var iter = bun.DirIterator.iterate(dir, .u8);
+                    var iter = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
@@ -1246,7 +1210,7 @@ pub const PublishCommand = struct {
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
-            // headers.count("user-agent", "npm/10.8.3 node/v22.6.0 darwin arm64 workspaces/false");
+            // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
 
@@ -1295,7 +1259,7 @@ pub const PublishCommand = struct {
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
-            // headers.append("user-agent", "npm/10.8.3 node/v22.6.0 darwin arm64 workspaces/false");
+            // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
 
@@ -1377,3 +1341,45 @@ pub const PublishCommand = struct {
         return buf.items;
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Open = @import("../open.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const URL = bun.URL;
+const logger = bun.logger;
+const path = bun.path;
+const sha = bun.sha;
+const strings = bun.strings;
+const Expr = bun.js_parser.Expr;
+const File = bun.sys.File;
+const FileSystem = bun.fs.FileSystem;
+const Archive = bun.libarchive.lib.Archive;
+
+const E = bun.ast.E;
+const G = bun.ast.G;
+
+const Command = bun.cli.Command;
+const Pack = bun.cli.PackCommand;
+const Run = bun.cli.RunCommand;
+const prompt = bun.cli.InitCommand.prompt;
+
+const http = bun.http;
+const HeaderBuilder = http.HeaderBuilder;
+const MimeType = http.MimeType;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;

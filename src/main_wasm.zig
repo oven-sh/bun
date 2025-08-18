@@ -1,21 +1,7 @@
-const bun = @import("bun");
-const JSParser = bun.js_parser;
-const JSPrinter = bun.js_printer;
-const JSAst = bun.JSAst;
-const Api = @import("./api/schema.zig").Api;
-const Logger = bun.logger;
-const global = @import("bun");
-const default_allocator = global.default_allocator;
-const std = @import("std");
-const Define = @import("./defines.zig");
-const Options = @import("./options.zig");
-const ApiWriter = @import("./api/schema.zig").Writer;
-const ApiReader = @import("./api/schema.zig").Reader;
-const Output = global.Output;
+const Main = @This();
 
 export var code_buffer_ptr: ?[*]const u8 = null;
 pub const bindgen = true;
-const Main = @This();
 pub const os = struct {
     pub const c = Main.system;
     pub const system = Main.system;
@@ -160,8 +146,8 @@ pub const system = struct {
 export fn cycleStart() void {}
 export fn cycleEnd() void {}
 
-var transform_response: Api.TransformResponse = std.mem.zeroes(Api.TransformResponse);
-var output_files: [1]Api.OutputFile = undefined;
+var transform_response: api.TransformResponse = std.mem.zeroes(api.TransformResponse);
+var output_files: [1]api.OutputFile = undefined;
 var buffer_writer: JSPrinter.BufferWriter = undefined;
 var writer: JSPrinter.BufferPrinter = undefined;
 var define: *Define.Define = undefined;
@@ -183,14 +169,13 @@ var error_stream = std.io.fixedBufferStream(&error_stream_buf);
 var output_source: global.Output.Source = undefined;
 var init_counter: usize = 0;
 export fn init(heapsize: u32) void {
-    const Mimalloc = @import("./allocators/mimalloc.zig");
     defer init_counter +%= 1;
     if (init_counter == 0) {
 
         // reserve 256 MB upfront
-        Mimalloc.mi_option_set(.allow_decommit, 0);
-        Mimalloc.mi_option_set(.limit_os_alloc, 1);
-        _ = Mimalloc.mi_reserve_os_memory(heapsize, false, true);
+        mimalloc.mi_option_set(.allow_decommit, 0);
+        mimalloc.mi_option_set(.limit_os_alloc, 1);
+        _ = mimalloc.mi_reserve_os_memory(heapsize, false, true);
 
         JSAst.Stmt.Data.Store.create(default_allocator);
         JSAst.Expr.Data.Store.create(default_allocator);
@@ -204,13 +189,12 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 
 const TestAnalyzer = struct {
     string_buffer: std.ArrayList(u8),
-    items: std.ArrayList(Api.TestResponseItem),
+    items: std.ArrayList(api.TestResponseItem),
 
     pub fn visitExpr(this: *TestAnalyzer, parser: *bun.js_parser.TSXParser, expr: JSAst.Expr) !void {
         switch (expr.data) {
@@ -221,14 +205,14 @@ const TestAnalyzer = struct {
                         switch (label_expr.data) {
                             .e_string => |str| {
                                 try str.toUTF8(this.string_buffer.allocator);
-                                const ptr = Api.StringPointer{
+                                const ptr = api.StringPointer{
                                     .offset = this.string_buffer.items.len,
                                     .length = str.data.len,
                                 };
                                 try this.string_buffer.appendSlice(str.data);
-                                try this.items.append(Api.TestResponseItem{
+                                try this.items.append(api.TestResponseItem{
                                     .byte_offset = expr.loc.start,
-                                    .kind = if (call.target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,
+                                    .kind = if (call.target.isRef(parser.jest.describe)) api.TestKind.describe_fn else .test_fn,
                                     .label = ptr,
                                 });
                             },
@@ -246,14 +230,14 @@ const TestAnalyzer = struct {
                             switch (label_expr.data) {
                                 .e_string => |str| {
                                     try str.toUTF8(this.string_buffer.allocator);
-                                    const ptr = Api.StringPointer{
+                                    const ptr = api.StringPointer{
                                         .offset = this.string_buffer.items.len,
                                         .length = str.data.len,
                                     };
                                     try this.string_buffer.appendSlice(str.data);
-                                    try this.items.append(Api.TestResponseItem{
+                                    try this.items.append(api.TestResponseItem{
                                         .byte_offset = expr.loc.start,
-                                        .kind = if (target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,
+                                        .kind = if (target.isRef(parser.jest.describe)) api.TestKind.describe_fn else .test_fn,
                                         .label = ptr,
                                     });
                                 },
@@ -408,7 +392,7 @@ const TestAnalyzer = struct {
             .s_import => |import| {
                 if (bun.strings.eqlComptime(parser.import_records.items[import.import_record_index].path.text, "bun:test")) {
                     for (import.items) |item| {
-                        const clause: bun.JSAst.ClauseItem = item;
+                        const clause: bun.ast.ClauseItem = item;
                         if (bun.strings.eqlComptime(clause.alias, "test")) {
                             parser.jest.@"test" = clause.name.ref.?;
                         } else if (bun.strings.eqlComptime(clause.alias, "it")) {
@@ -426,7 +410,7 @@ const TestAnalyzer = struct {
     pub fn visitParts(
         this: *TestAnalyzer,
         parser: *bun.js_parser.TSXParser,
-        parts: []bun.JSAst.Part,
+        parts: []bun.ast.Part,
     ) anyerror!void {
         var jest = &parser.jest;
         if (parser.symbols.items[jest.it.innerIndex()].use_count_estimate == 0) {
@@ -447,12 +431,12 @@ const TestAnalyzer = struct {
     }
 };
 export fn getTests(opts_array: u64) u64 {
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
+    var opts = api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
     var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
     code.contents_is_recycled = true;
     defer {
@@ -467,7 +451,7 @@ export fn getTests(opts_array: u64) u64 {
 
     var anaylzer = TestAnalyzer{
         .items = std.ArrayList(
-            Api.TestResponseItem,
+            api.TestResponseItem,
         ).init(allocator),
         .string_buffer = std.ArrayList(
             u8,
@@ -490,7 +474,7 @@ export fn getTests(opts_array: u64) u64 {
     var output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
-    var response = Api.GetTestsResponse{
+    var response = api.GetTestsResponse{
         .tests = anaylzer.items.items,
         .contents = anaylzer.string_buffer.items,
     };
@@ -501,14 +485,14 @@ export fn getTests(opts_array: u64) u64 {
 
 export fn transform(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);
 
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.Transform.decode(&reader) catch unreachable;
-    const loader_ = opts.loader orelse Api.Loader.tsx;
+    var opts = api.Transform.decode(&reader) catch unreachable;
+    const loader_ = opts.loader orelse api.Loader.tsx;
 
     defer {
         JSAst.Stmt.Data.Store.reset();
@@ -555,8 +539,8 @@ export fn transform(opts_array: u64) u64 {
         output_files[0] = .{ .data = "", .path = path };
     }
 
-    transform_response = Api.TransformResponse{
-        .status = if (result == .ast and log.errors == 0) Api.TransformResponseStatus.success else Api.TransformResponseStatus.fail,
+    transform_response = api.TransformResponse{
+        .status = if (result == .ast and log.errors == 0) api.TransformResponseStatus.success else api.TransformResponseStatus.fail,
         .files = &output_files,
         .errors = (log.toAPI(allocator) catch unreachable).msgs,
     };
@@ -571,14 +555,14 @@ export fn transform(opts_array: u64) u64 {
 
 export fn scan(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
-    var arena = Arena.init() catch unreachable;
+    var arena = Arena.init();
     var allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);
 
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.Scan.decode(&reader) catch unreachable;
-    const loader_ = opts.loader orelse Api.Loader.tsx;
+    var opts = api.Scan.decode(&reader) catch unreachable;
+    const loader_ = opts.loader orelse api.Loader.tsx;
 
     defer {
         JSAst.Stmt.Data.Store.reset();
@@ -603,21 +587,21 @@ export fn scan(opts_array: u64) u64 {
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
     if (log.errors == 0) {
-        var scan_result = std.mem.zeroes(Api.ScanResult);
+        var scan_result = std.mem.zeroes(api.ScanResult);
         var output = std.ArrayList(u8).init(default_allocator);
         var output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
 
         if (result == .ast) {
-            var scanned_imports = allocator.alloc(Api.ScannedImport, result.ast.import_records.len) catch unreachable;
+            var scanned_imports = allocator.alloc(api.ScannedImport, result.ast.import_records.len) catch unreachable;
             var scanned_i: usize = 0;
             for (result.ast.import_records.slice()) |import_record| {
                 if (import_record.kind == .internal) continue;
-                scanned_imports[scanned_i] = Api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
+                scanned_imports[scanned_i] = api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
                 scanned_i += 1;
             }
 
-            scan_result = Api.ScanResult{
+            scan_result = api.ScanResult{
                 .exports = result.ast.named_exports.keys(),
                 .imports = scanned_imports[0..scanned_i],
                 .errors = (log.toAPI(allocator) catch unreachable).msgs,
@@ -631,7 +615,7 @@ export fn scan(opts_array: u64) u64 {
         var output = std.ArrayList(u8).init(default_allocator);
         var output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
-        var scan_result = Api.ScanResult{
+        var scan_result = api.ScanResult{
             .exports = &.{},
             .imports = &.{},
             .errors = (log.toAPI(allocator) catch unreachable).msgs,
@@ -664,3 +648,22 @@ comptime {
     _ = bun_malloc;
     _ = getTests;
 }
+
+const Define = @import("./defines.zig");
+const Options = @import("./options.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const global = @import("bun");
+const JSAst = bun.ast;
+const JSParser = bun.js_parser;
+const JSPrinter = bun.js_printer;
+const Logger = bun.logger;
+const Output = global.Output;
+const default_allocator = global.default_allocator;
+const mimalloc = bun.mimalloc;
+const Arena = bun.allocators.MimallocArena;
+
+const ApiReader = bun.schema.Reader;
+const ApiWriter = bun.schema.Writer;
+const api = bun.schema.api;

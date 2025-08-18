@@ -1,3 +1,5 @@
+const Exit = @This();
+
 state: enum {
     idle,
     waiting_io,
@@ -5,12 +7,11 @@ state: enum {
     done,
 } = .idle,
 
-pub fn start(this: *Exit) Maybe(void) {
+pub fn start(this: *Exit) Yield {
     const args = this.bltn().argsSlice();
     switch (args.len) {
         0 => {
-            this.bltn().done(0);
-            return Maybe(void).success;
+            return this.bltn().done(0);
         },
         1 => {
             const first_arg = args[0][0..std.mem.len(args[0]) :0];
@@ -18,8 +19,7 @@ pub fn start(this: *Exit) Maybe(void) {
                 error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required\n")) % 256),
                 error.InvalidCharacter => return this.fail("exit: numeric argument required\n"),
             };
-            this.bltn().done(exit_code);
-            return Maybe(void).success;
+            return this.bltn().done(exit_code);
         },
         else => {
             return this.fail("exit: too many arguments\n");
@@ -27,46 +27,41 @@ pub fn start(this: *Exit) Maybe(void) {
     }
 }
 
-fn fail(this: *Exit, msg: []const u8) Maybe(void) {
+fn fail(this: *Exit, msg: []const u8) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_io;
-        this.bltn().stderr.enqueue(this, msg, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, msg, safeguard);
     }
     _ = this.bltn().writeNoIO(.stderr, msg);
-    this.bltn().done(1);
-    return Maybe(void).success;
+    return this.bltn().done(1);
 }
 
-pub fn next(this: *Exit) void {
+pub fn next(this: *Exit) Yield {
     switch (this.state) {
-        .idle => @panic("Unexpected \"idle\" state in Exit. This indicates a bug in Bun. Please file a GitHub issue."),
+        .idle => shell.unreachableState("Exit.next", "idle"),
         .waiting_io => {
-            return;
+            return .suspended;
         },
         .err => {
-            this.bltn().done(1);
-            return;
+            return this.bltn().done(1);
         },
         .done => {
-            this.bltn().done(1);
-            return;
+            return this.bltn().done(1);
         },
     }
 }
 
-pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Exit, _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_io);
     }
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
-        this.next();
-        return;
+        return this.next();
     }
     this.state = .done;
-    this.next();
+    return this.next();
 }
 
 pub fn deinit(this: *Exit) void {
@@ -79,15 +74,17 @@ pub inline fn bltn(this: *Exit) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const shell = bun.shell;
+
 const interpreter = @import("../interpreter.zig");
-const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const ExitCode = shell.ExitCode;
-const Exit = @This();
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
 
+const Interpreter = interpreter.Interpreter;
+const Builtin = Interpreter.Builtin;
+
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;

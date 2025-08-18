@@ -1,30 +1,10 @@
-const bun = @import("bun");
-const Maybe = bun.JSC.Maybe;
-
 const WORD = c_ushort;
 const LARGE_INTEGER = i64;
-const std = @import("std");
-const windows = bun.windows;
-const HANDLE = windows.HANDLE;
-const DWORD = windows.DWORD;
-const OVERLAPPED = std.os.windows.OVERLAPPED;
-const ULONG_PTR = std.os.windows.ULONG_PTR;
-const HMODULE = HANDLE;
-const ULONG = windows.ULONG;
-const WCHAR = windows.WCHAR;
 const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
-const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;
 const LPFN_CONNECTEX = *const anyopaque;
-const FILE = std.c.FILE;
-const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
-const INPUT_RECORD = windows.INPUT_RECORD;
-const sockaddr = std.posix.sockaddr;
-const sockaddr_storage = std.os.linux.sockaddr_storage;
-const BOOL = windows.BOOL;
-const Env = bun.Environment;
 
-pub const log = bun.Output.scoped(.uv, true);
+pub const log = bun.Output.scoped(.uv, .hidden);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -887,6 +867,7 @@ pub const UV_EILSEQ: c_int = -4027;
 pub const UV_ESOCKTNOSUPPORT: c_int = -4025;
 pub const UV_ENODATA: c_int = -4024;
 pub const UV_EUNATCH: c_int = -4023;
+pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 pub const uv_errno_t = c_int;
 pub const UV_UNKNOWN_HANDLE: c_int = 0;
@@ -1297,14 +1278,14 @@ pub const struct_uv_write_s = extern struct {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         const rc = uv_write(req, stream, @ptrCast(input), 1, null);
         if (rc.toError(.write)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 };
 pub const uv_write_t = struct_uv_write_s;
@@ -1375,14 +1356,14 @@ pub const Pipe = extern struct {
     pub fn init(this: *Pipe, loop: *Loop, ipc: bool) Maybe(void) {
         if (uv_pipe_init(loop, this, if (ipc) 1 else 0).toError(.pipe)) |err| return .{ .err = err };
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
         const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn listenNamedPipe(this: *@This(), named_pipe: []const u8, backlog: i32, context: anytype, comptime onClientConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
@@ -1396,7 +1377,7 @@ pub const Pipe = extern struct {
         if (uv_pipe_bind2(this, named_pipe.ptr, named_pipe.len, @intCast(flags)).toError(.bind2)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn connect(this: *@This(), req: *uv_connect_t, name: []const u8, context: anytype, comptime onConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
@@ -1409,7 +1390,7 @@ pub const Pipe = extern struct {
         if (uv_pipe_connect2(req, this, @ptrCast(name.ptr), name.len, UV_PIPE_NO_TRUNCATE, &Wrapper.uvConnectCb).toError(.connect2)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
@@ -1483,7 +1464,7 @@ pub const struct_uv_tty_s = extern struct {
         return if (uv_tty_init(loop, this, file, 0).toError(.open)) |err|
             .{ .err = err }
         else
-            .{ .result = {} };
+            .success;
     }
 
     const Mode = enum(c_uint) {
@@ -2050,8 +2031,6 @@ pub const struct_uv_cpu_info_s = extern struct {
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
 
-const sockaddr_in = std.os.linux.sockaddr.in;
-const sockaddr_in6 = std.os.linux.sockaddr.in6;
 pub const addr_union = extern union {
     address4: std.os.linux.sockaddr.in,
     address6: std.os.linux.sockaddr.in6,
@@ -2971,14 +2950,14 @@ fn StreamMixin(comptime Type: type) type {
             if (uv_listen(@ptrCast(this), backlog, &Wrapper.uvConnectCb).toError(.listen)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn accept(this: *Type, client: *Type) Maybe(void) {
             if (uv_accept(@ptrCast(this), @ptrCast(client)).toError(.accept)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn readStart(
@@ -3010,7 +2989,7 @@ fn StreamMixin(comptime Type: type) type {
             if (uv_read_start(@ptrCast(this), @ptrCast(&Wrapper.uvAllocb), @ptrCast(&Wrapper.uvReadcb)).toError(.listen)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn readStop(this: *Type) void {
@@ -3036,7 +3015,7 @@ fn StreamMixin(comptime Type: type) type {
                 if (uv_write(uv_data, @ptrCast(this), @ptrCast(input), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
                     return .{ .err = err };
                 }
-                return .{ .result = {} };
+                return .success;
             }
 
             var req: uv_write_t = std.mem.zeroes(uv_write_t);
@@ -3044,7 +3023,7 @@ fn StreamMixin(comptime Type: type) type {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn tryWrite(this: *Type, input: []const u8) Maybe(usize) {
@@ -3102,3 +3081,29 @@ pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
     };
 }
+
+const std = @import("std");
+const FILE = std.c.FILE;
+const sockaddr = std.posix.sockaddr;
+const sockaddr_storage = std.os.linux.sockaddr_storage;
+
+const bun = @import("bun");
+const Env = bun.Environment;
+const Maybe = bun.sys.Maybe;
+
+const windows = bun.windows;
+const BOOL = windows.BOOL;
+const DWORD = windows.DWORD;
+const HANDLE = windows.HANDLE;
+const HMODULE = HANDLE;
+const INPUT_RECORD = windows.INPUT_RECORD;
+const ULONG = windows.ULONG;
+const WCHAR = windows.WCHAR;
+
+const sockaddr_in = std.os.linux.sockaddr.in;
+const sockaddr_in6 = std.os.linux.sockaddr.in6;
+
+const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
+const OVERLAPPED = std.os.windows.OVERLAPPED;
+const ULONG_PTR = std.os.windows.ULONG_PTR;
+const WIN32_FIND_DATAW = std.os.windows.WIN32_FIND_DATAW;

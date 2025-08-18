@@ -316,6 +316,20 @@ pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
 
+    pub fn assertSSL(this: AnyResponse) *uws.NewApp(true).Response {
+        return switch (this) {
+            .SSL => |resp| resp,
+            .TCP => bun.Output.panic("Expected SSL response, got TCP response", .{}),
+        };
+    }
+
+    pub fn assertNoSSL(this: AnyResponse) *uws.NewApp(false).Response {
+        return switch (this) {
+            .SSL => bun.Output.panic("Expected TCP response, got SSL response", .{}),
+            .TCP => |resp| resp,
+        };
+    }
+
     pub fn markNeedsMore(this: AnyResponse) void {
         return switch (this) {
             inline else => |resp| resp.markNeedsMore(),
@@ -679,10 +693,11 @@ const c = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const uws = bun.uws;
-const Socket = uws.Socket;
-const SocketContext = uws.SocketContext;
 const Environment = bun.Environment;
 
+const uws = bun.uws;
+const Socket = uws.Socket;
 const SocketAddress = uws.SocketAddress;
+const SocketContext = uws.SocketContext;

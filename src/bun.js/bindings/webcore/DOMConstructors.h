@@ -868,7 +868,7 @@ static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase 
 
 class DOMConstructors {
     WTF_MAKE_NONCOPYABLE(DOMConstructors);
-    WTF_MAKE_FAST_ALLOCATED(DOMConstructors);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMConstructors);
 
 public:
     using ConstructorArray = std::array<JSC::WriteBarrier<JSC::JSObject>, numberOfDOMConstructors>;

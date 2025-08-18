@@ -1,30 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const css = @import("./css_parser.zig");
-const css_values = css.css_values;
-
-const Parser = css.Parser;
-const ParserOptions = css.ParserOptions;
-const Result = css.Result;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
-const CSSNumber = css.CSSNumber;
-const CSSNumberFns = css.CSSNumberFns;
-const CSSInteger = css.CSSInteger;
-const CSSIntegerFns = css.CSSIntegerFns;
-const CustomIdent = css.CustomIdent;
-const CustomIdentFns = css.CustomIdentFns;
-const DashedIdent = css.DashedIdent;
-const DashedIdentFns = css.DashedIdentFns;
-const Ident = css.Ident;
-const IdentFns = css.IdentFns;
-const VendorPrefix = css.VendorPrefix;
-
 pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Allocator) T {
     const tyinfo = @typeInfo(T);
 
@@ -496,9 +469,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
-            .baby_list => {
-                return bun.BabyList(result.child).deepClone2(this, allocator);
-            },
+            .baby_list => this.deepCloneInfallible(allocator),
             .small_list => this.deepClone(allocator),
         };
     }
@@ -515,7 +486,6 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     return T.deepClone(this, allocator);
 }
 
-const Angle = css_values.angle.Angle;
 pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {
     return switch (T) {
         CSSNumber => CSSNumberFns.tryFromAngle(angle),
@@ -675,3 +645,30 @@ pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
         else => T.hash(this, hasher),
     };
 }
+
+const css = @import("./css_parser.zig");
+const CSSInteger = css.CSSInteger;
+const CSSIntegerFns = css.CSSIntegerFns;
+const CSSNumber = css.CSSNumber;
+const CSSNumberFns = css.CSSNumberFns;
+const CustomIdent = css.CustomIdent;
+const CustomIdentFns = css.CustomIdentFns;
+const DashedIdent = css.DashedIdent;
+const DashedIdentFns = css.DashedIdentFns;
+const Ident = css.Ident;
+const IdentFns = css.IdentFns;
+const Parser = css.Parser;
+const ParserOptions = css.ParserOptions;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const VendorPrefix = css.VendorPrefix;
+const css_values = css.css_values;
+const Angle = css_values.angle.Angle;
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

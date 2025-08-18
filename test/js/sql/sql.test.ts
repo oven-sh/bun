@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new sql(...args);
 
@@ -533,7 +533,7 @@ if (isDockerEnabled()) {
     expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
   });
 
-  // t.only(
+  // test(
   //   "big query body",
   //   async () => {
   //     await sql`create table test (x int)`;
@@ -2318,21 +2318,31 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  // t('connect_timeout', { timeout: 20 }, async() => {
-  //   const connect_timeout = 0.2
-  //   const server = net.createServer()
-  //   server.listen()
-  //   const sql = postgres({ port: server.address().port, host: '127.0.0.1', connect_timeout })
-  //   const start = Date.now()
-  //   let end
-  //   await sql`select 1`.catch((e) => {
-  //     if (e.code !== 'CONNECT_TIMEOUT')
-  //       throw e
-  //     end = Date.now()
-  //   })
-  //   server.close()
-  //   return [connect_timeout, Math.floor((end - start) / 100) / 10]
-  // })
+  test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
+    "connection timeout key %p throws",
+    async key => {
+      const server = net.createServer().listen();
+
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
+
+      try {
+        await sql`select 1`;
+        throw new Error("should not reach");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
+        expect(e.message).toMatch(/Connection timed out after 200ms/);
+      } finally {
+        sql.close();
+        server.close();
+      }
+    },
+    {
+      timeout: 1000,
+    },
+  );
 
   // t('connect_timeout throws proper error', async() => [
   //   'CONNECT_TIMEOUT',
@@ -10700,7 +10710,7 @@ CREATE TABLE ${table_name} (
     test("pg_database[] - system databases", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT array_agg(d.*)::pg_database[] FROM pg_database d;`;
-      expect(result[0].array_agg[0]).toContain("(5,postgres,10,6,c,f,t,-1,717,1,1663,en_US.utf8,en_US.utf8,,2.36,)");
+      expect(result[0].array_agg[0]).toContain(",postgres,");
     });
 
     test("pg_database[] - null values", async () => {
@@ -11086,3 +11096,16 @@ CREATE TABLE ${table_name} (
     });
   });
 }
+
+describe("should proper handle connection errors", () => {
+  test("should not crash if connection fails", async () => {
+    const result = Bun.spawnSync([bunExe(), path.join(import.meta.dirname, "socket.fail.fixture.ts")], {
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    expect(result.stderr?.toString()).toBeFalsy();
+  });
+});

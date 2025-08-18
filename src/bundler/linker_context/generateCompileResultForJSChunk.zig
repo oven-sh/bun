@@ -1,7 +1,6 @@
 pub fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
     const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
     const ctx = part_range.ctx;
-    defer ctx.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
     defer worker.unget();
 
@@ -17,7 +16,7 @@ pub fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
 
     if (Environment.show_crash_trace) {
         const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
-        if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
+        if (bun.cli.debug_flags.hasPrintBreakpoint(path)) {
             @breakpoint();
         }
     }
@@ -65,31 +64,31 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 
     return .{
         .javascript = .{
-            .result = result,
             .source_index = part_range.source_index.get(),
+            .result = result,
         },
     };
 }
 
-const bun = @import("bun");
-const Index = bun.bundle_v2.Index;
-const js_printer = bun.js_printer;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPool = bun.bundle_v2.ThreadPool;
-const ThreadPoolLib = bun.ThreadPool;
-
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-
-const js_ast = bun.js_ast;
-
-const renamer = bun.renamer;
-const Scope = js_ast.Scope;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const ThreadPoolLib = bun.ThreadPool;
+const default_allocator = bun.default_allocator;
+const js_printer = bun.js_printer;
+const renamer = bun.renamer;
+
+const js_ast = bun.ast;
+const Scope = js_ast.Scope;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
-const PartRange = bundler.PartRange;
 const CompileResult = bundler.CompileResult;
+const Index = bun.bundle_v2.Index;
+const PartRange = bundler.PartRange;
+const ThreadPool = bun.bundle_v2.ThreadPool;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;

@@ -1,16 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const CompressionStream = @import("./../node_zlib_binding.zig").CompressionStream;
-const CountedKeepAlive = @import("./../node_zlib_binding.zig").CountedKeepAlive;
-const Error = @import("./../node_zlib_binding.zig").Error;
-const validators = @import("./../util/validators.zig");
-
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub const js = JSC.Codegen.JSNativeZstd;
+pub const js = jsc.Codegen.JSNativeZstd;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -26,17 +18,17 @@ pub const getOnError = impl.getOnError;
 pub const finalize = impl.finalize;
 
 ref_count: RefCount,
-globalThis: *JSC.JSGlobalObject,
+globalThis: *jsc.JSGlobalObject,
 stream: Context = .{},
 write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
-this_value: JSC.Strong.Optional = .empty,
+this_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
 pending_close: bool = false,
 closed: bool = false,
-task: JSC.WorkPoolTask = .{ .callback = undefined },
+task: jsc.WorkPoolTask = .{ .callback = undefined },
 
-pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
     const arguments = callframe.argumentsAsArray(1);
 
     var mode = arguments[0];
@@ -61,14 +53,14 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 }
 
 pub fn estimatedSize(this: *const @This()) usize {
-    return @sizeOf(@This()) + switch (this.stream.mode) {
-        .ZSTD_COMPRESS => bun.c.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
-        .ZSTD_DECOMPRESS => bun.c.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
+    return @sizeOf(@This()) + @as(usize, switch (this.stream.mode) {
+        .ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
+        .ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
         else => 0,
-    };
+    });
 }
 
-pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(4);
     const this_value = callframe.this();
     if (callframe.argumentsCount() != 4) return globalThis.ERR(.MISSING_ARGS, "init(initParamsArray, pledgedSrcSize, writeState, processCallback)", .{}).throw();
@@ -83,7 +75,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     this.write_result = writeState.asU32().ptr;
 
     const write_js_callback = try validators.validateFunction(globalThis, "processCallback", processCallback_value);
-    js.writeCallbackSetCached(this_value, globalThis, write_js_callback);
+    js.writeCallbackSetCached(this_value, globalThis, write_js_callback.withAsyncContextIfNeeded(globalThis));
 
     var pledged_src_size: u64 = std.math.maxInt(u64);
     if (pledgedSrcSize_value.isNumber()) {
@@ -107,7 +99,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     return .jsBoolean(true);
 }
 
-pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     _ = this;
     _ = globalThis;
     _ = callframe;
@@ -260,3 +252,13 @@ const Context = struct {
         this.state = null;
     }
 };
+
+const std = @import("std");
+const validators = @import("../util/validators.zig");
+
+const CompressionStream = @import("../node_zlib_binding.zig").CompressionStream;
+const CountedKeepAlive = @import("../node_zlib_binding.zig").CountedKeepAlive;
+const Error = @import("../node_zlib_binding.zig").Error;
+
+const bun = @import("bun");
+const jsc = bun.jsc;

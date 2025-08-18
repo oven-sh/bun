@@ -1,8 +1,5 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
 
-const ArrayList = std.ArrayListUnmanaged;
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -32,7 +29,7 @@ pub const starting_style = @import("./starting_style.zig");
 
 pub const tailwind = @import("./tailwind.zig");
 
-const debug = bun.Output.scoped(.CSS_MINIFY, false);
+const debug = bun.Output.scoped(.CSS_MINIFY, .visible);
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -669,3 +666,8 @@ fn mergeStyleRules(
     }
     return false;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

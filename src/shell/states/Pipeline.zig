@@ -4,17 +4,24 @@ base: State,
 node: *const ast.Pipeline,
 /// Based on precedence rules pipeline can only be child of a stmt or
 /// binary
+///
+/// *WARNING*: Do not directly call `this.parent.childDone`, it should
+///            be handed in `Pipeline.next()`
 parent: ParentPtr,
 exited_count: u32,
 cmds: ?[]CmdOrResult,
 pipes: ?[]Pipe,
 io: IO,
 state: union(enum) {
-    idle,
-    executing,
+    starting_cmds: struct {
+        idx: u32,
+    },
+    pending,
     waiting_write_err,
-    done,
-} = .idle,
+    done: struct {
+        exit_code: ExitCode = 0,
+    },
+} = .{ .starting_cmds = .{ .idx = 0 } },
 
 pub const ParentPtr = StatePtrUnion(.{
     Stmt,
@@ -44,14 +51,14 @@ const CmdOrResult = union(enum) {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Pipeline,
     parent: ParentPtr,
     io: IO,
 ) *Pipeline {
-    const pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
+    const pipeline = parent.create(Pipeline);
     pipeline.* = .{
-        .base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.pipeline, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .exited_count = 0,
@@ -67,16 +74,16 @@ fn getIO(this: *Pipeline) IO {
     return this.io;
 }
 
-fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype) void {
+fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype) Yield {
     const handler = struct {
         fn enqueueCb(ctx: *Pipeline) void {
             ctx.state = .waiting_write_err;
         }
     };
-    this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+    return this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
 }
 
-fn setupCommands(this: *Pipeline) bun.shell.interpret.CoroutineResult {
+fn setupCommands(this: *Pipeline) ?Yield {
     const cmd_count = brk: {
         var i: u32 = 0;
         for (this.node.items) |*item| {
@@ -88,9 +95,9 @@ fn setupCommands(this: *Pipeline) bun.shell.interpret.CoroutineResult {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.interpreter.allocator.alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
-    if (this.cmds == null) return .cont;
-    var pipes = this.base.interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    if (this.cmds == null) return null;
+    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -100,8 +107,7 @@ fn setupCommands(this: *Pipeline) bun.shell.interpret.CoroutineResult {
                 closefd(pipe[1]);
             }
             const system_err = err.toShellSystemError();
-            this.writeFailingError("bun: {s}\n", .{system_err.message});
-            return .yield;
+            return this.writeFailingError("bun: {s}\n", .{system_err.message});
         }
     }
 
@@ -116,12 +122,11 @@ fn setupCommands(this: *Pipeline) bun.shell.interpret.CoroutineResult {
                 cmd_io.stdin = stdin;
                 cmd_io.stdout = stdout;
                 _ = cmd_io.stderr.ref();
-                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
+                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), cmd_io, .pipeline)) {
                     .result => |s| s,
                     .err => |err| {
                         const system_err = err.toShellSystemError();
-                        this.writeFailingError("bun: {s}\n", .{system_err.message});
-                        return .yield;
+                        return this.writeFailingError("bun: {s}\n", .{system_err.message});
                     },
                 };
                 this.cmds.?[i] = .{
@@ -142,55 +147,66 @@ fn setupCommands(this: *Pipeline) bun.shell.interpret.CoroutineResult {
 
     this.pipes = pipes;
 
-    return .cont;
+    return null;
 }
 
-pub fn start(this: *Pipeline) void {
-    if (this.setupCommands() == .yield) return;
-
-    if (this.state == .waiting_write_err or this.state == .done) return;
-    const cmds = this.cmds orelse {
-        this.state = .done;
-        this.parent.childDone(this, 0);
-        return;
-    };
-
-    if (comptime bun.Environment.allow_assert) {
-        assert(this.exited_count == 0);
+pub fn start(this: *Pipeline) Yield {
+    if (this.setupCommands()) |yield| return yield;
+    if (this.state == .waiting_write_err or this.state == .done) return .suspended;
+    if (this.cmds == null) {
+        this.state = .{ .done = .{} };
+        return .done;
     }
+
+    assert(this.exited_count == 0);
+
     log("pipeline start {x} (count={d})", .{ @intFromPtr(this), this.node.items.len });
+
     if (this.node.items.len == 0) {
-        this.state = .done;
-        this.parent.childDone(this, 0);
-        return;
+        this.state = .{ .done = .{} };
+        return .done;
     }
 
-    for (cmds) |*cmd_or_result| {
-        assert(cmd_or_result.* == .cmd);
-        log("Pipeline start cmd", .{});
-        var cmd = cmd_or_result.cmd;
-        cmd.call("start", .{}, void);
+    return .{ .pipeline = this };
+}
+
+pub fn next(this: *Pipeline) Yield {
+    switch (this.state) {
+        .starting_cmds => {
+            const cmds = this.cmds.?;
+            const idx = this.state.starting_cmds.idx;
+            if (idx >= cmds.len) {
+                this.state = .pending;
+                return .suspended;
+            }
+            log("Pipeline(0x{x}) starting cmd {d}/{d}", .{ @intFromPtr(this), idx + 1, cmds.len });
+            this.state.starting_cmds.idx += 1;
+            const cmd_or_result = cmds[idx];
+            assert(cmd_or_result == .cmd);
+            return cmd_or_result.cmd.call("start", .{}, Yield);
+        },
+        .pending => shell.unreachableState("Pipeline.next", "pending"),
+        .waiting_write_err => shell.unreachableState("Pipeline.next", "waiting_write_err"),
+        .done => return this.parent.childDone(this, this.state.done.exit_code),
     }
 }
 
-pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_write_err);
     }
 
     if (err) |e| {
         this.base.throw(&shell.ShellErr.newSys(e));
-        return;
+        return .failed;
     }
 
-    this.state = .done;
-    this.parent.childDone(this, 0);
+    this.state = .{ .done = .{} };
+    return .done;
 }
 
-pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) void {
-    if (comptime bun.Environment.allow_assert) {
-        assert(this.cmds.?.len > 0);
-    }
+pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
+    assert(this.cmds.?.len > 0);
 
     const idx = brk: {
         const ptr_value: u64 = @bitCast(child.ptr.repr);
@@ -204,7 +220,7 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) void {
         @panic("Invalid pipeline state");
     };
 
-    log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
+    log("Pipeline(0x{x}) child done ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
     // We duped the subshell for commands in the pipeline so we need to
     // deinitialize it.
     if (child.ptr.is(Cmd)) {
@@ -226,18 +242,22 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) void {
     this.cmds.?[idx] = .{ .result = exit_code };
     this.exited_count += 1;
 
+    log("Pipeline(0x{x}) check exited_count={d} cmds.len={d}", .{ @intFromPtr(this), this.exited_count, this.cmds.?.len });
     if (this.exited_count >= this.cmds.?.len) {
         var last_exit_code: ExitCode = 0;
-        for (this.cmds.?) |cmd_or_result| {
+        var i: i64 = @as(i64, @intCast(this.cmds.?.len)) - 1;
+        while (i > 0) : (i -= 1) {
+            const cmd_or_result = this.cmds.?[@intCast(i)];
             if (cmd_or_result == .result) {
                 last_exit_code = cmd_or_result.result;
                 break;
             }
         }
-        this.state = .done;
-        this.parent.childDone(this, last_exit_code);
-        return;
+        this.state = .{ .done = .{ .exit_code = last_exit_code } };
+        return .{ .pipeline = this };
     }
+
+    return .suspended;
 }
 
 pub fn deinit(this: *Pipeline) void {
@@ -249,26 +269,26 @@ pub fn deinit(this: *Pipeline) void {
         }
     }
     if (this.pipes) |pipes| {
-        this.base.interpreter.allocator.free(pipes);
+        this.base.allocator().free(pipes);
     }
     if (this.cmds) |cmds| {
-        this.base.interpreter.allocator.free(cmds);
+        this.base.allocator().free(cmds);
     }
     this.io.deref();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
     for (pipes) |*pipe| {
         if (bun.Environment.isWindows) {
-            var fds: [2]uv.uv_file = undefined;
-            if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
-                return .{ .err = Syscall.Error.fromCode(e, .pipe) };
-            }
-            pipe[0] = .fromUV(fds[0]);
-            pipe[1] = .fromUV(fds[1]);
+            pipe.* = switch (bun.sys.pipe()) {
+                .result => |p| p,
+                .err => |e| return .{ .err = e },
+            };
         } else {
-            switch (bun.sys.socketpair(
+            switch (bun.sys.socketpairForShell(
+                // switch (bun.sys.socketpair(
                 std.posix.AF.UNIX,
                 std.posix.SOCK.STREAM,
                 0,
@@ -280,10 +300,10 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
         }
         set_count.* += 1;
     }
-    return Maybe(void).success;
+    return .success;
 }
 
-fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.OutKind {
+fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.OutKind {
     // Last command in the pipeline should write to stdout
     if (proc_idx == cmd_count - 1) return io.stdout.ref();
     return .{
@@ -296,42 +316,40 @@ fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop:
     };
 }
 
-fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {
+fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: jsc.EventLoopHandle) IO.InKind {
     // First command in the pipeline should read from stdin
     if (proc_idx == 0) return io.stdin.ref();
     return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
+const assert = bun.assert;
+const jsc = bun.jsc;
+const Maybe = bun.sys.Maybe;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const Pipe = bun.shell.interpret.Pipe;
-const closefd = bun.shell.interpret.closefd;
-const IOReader = bun.shell.Interpreter.IOReader;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-
 const Assigns = bun.shell.Interpreter.Assigns;
 const Async = bun.shell.Interpreter.Async;
-const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
-const CondExpr = bun.shell.Interpreter.CondExpr;
 const Binary = bun.shell.Interpreter.Binary;
-const Subshell = bun.shell.Interpreter.Subshell;
+const Cmd = bun.shell.Interpreter.Cmd;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const IOReader = bun.shell.Interpreter.IOReader;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const If = bun.shell.Interpreter.If;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
-const assert = bun.assert;
-const Syscall = bun.shell.interpret.Syscall;
-
-const windows = bun.windows;
-const uv = windows.libuv;
+const Pipe = bun.shell.interpret.Pipe;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const closefd = bun.shell.interpret.closefd;
+const log = bun.shell.interpret.log;

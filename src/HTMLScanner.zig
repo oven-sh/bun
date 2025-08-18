@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const ImportRecord = @import("./import_record.zig").ImportRecord;
-const ImportKind = @import("./import_record.zig").ImportKind;
-const lol = @import("./deps/lol-html.zig");
-const logger = bun.logger;
-const fs = bun.fs;
+const HTMLScanner = @This();
 
 allocator: std.mem.Allocator,
 import_records: ImportRecord.List = .{},
@@ -53,7 +47,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
     try this.import_records.push(this.allocator, record);
 }
 
-const debug = bun.Output.scoped(.HTMLScanner, true);
+const debug = bun.Output.scoped(.HTMLScanner, .hidden);
 
 pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
     _ = bytes; // bytes are not written in scan phase
@@ -303,4 +297,12 @@ pub fn HTMLProcessor(
     };
 }
 
-const HTMLScanner = @This();
+const lol = @import("./deps/lol-html.zig");
+const std = @import("std");
+
+const ImportKind = @import("./import_record.zig").ImportKind;
+const ImportRecord = @import("./import_record.zig").ImportRecord;
+
+const bun = @import("bun");
+const fs = bun.fs;
+const logger = bun.logger;

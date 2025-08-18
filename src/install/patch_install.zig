@@ -1,32 +1,12 @@
-const bun = @import("bun");
-const std = @import("std");
-
-const string = bun.string;
-const stringZ = bun.stringZ;
-const Output = bun.Output;
-const Global = bun.Global;
-const Progress = bun.Progress;
-const String = bun.Semver.String;
-
-const logger = bun.logger;
-const Loc = logger.Loc;
-
-const PackageManager = bun.PackageManager;
 pub const PackageID = bun.install.PackageID;
 pub const DependencyID = bun.install.DependencyID;
 
-const Task = bun.install.Task;
 pub const Lockfile = @import("./lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
-
-const ThreadPool = bun.ThreadPool;
 
 pub const Resolution = @import("./resolution.zig").Resolution;
 
 pub const PackageInstall = bun.install.PackageInstall;
-
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
 
 pub const bun_hash_tag = bun.install.bun_hash_tag;
 pub const max_hex_hash_len: comptime_int = brk: {
@@ -50,7 +30,7 @@ pub const PatchTask = struct {
     pre: bool = false,
     next: ?*PatchTask = null,
 
-    const debug = bun.Output.scoped(.InstallPatch, false);
+    const debug = bun.Output.scoped(.InstallPatch, .visible);
 
     const Maybe = bun.sys.Maybe;
 
@@ -84,7 +64,7 @@ pub const PatchTask = struct {
         cache_dir_subpath_without_patch_hash: stringZ,
 
         /// this is non-null if this was called before a Task, for example extracting
-        task_id: ?Task.Id.Type = null,
+        task_id: ?Task.Id = null,
         install_context: ?struct {
             dependency_id: DependencyID,
             tree_id: Lockfile.Tree.Id,
@@ -324,7 +304,7 @@ pub const PatchTask = struct {
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,
             .destination_dir_subpath_buf = tmpname_buf[0..],
-            .patch = .{},
+            .patch = null,
             .progress = null,
             .package_name = pkg_name,
             .package_version = resolution_label,
@@ -598,3 +578,23 @@ pub const PatchTask = struct {
         return pt;
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const std = @import("std");
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const PackageManager = bun.PackageManager;
+const Progress = bun.Progress;
+const ThreadPool = bun.ThreadPool;
+const String = bun.Semver.String;
+const Task = bun.install.Task;
+
+const logger = bun.logger;
+const Loc = logger.Loc;

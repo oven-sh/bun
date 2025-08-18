@@ -3,18 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "src/index.tsx",
-  "module": "src/index.tsx",
   "scripts": {
     "dev": "bun --hot src/index.tsx",
     "start": "NODE_ENV=production bun src/index.tsx",
     "build": "bun run build.ts"
   },
   "dependencies": {
-    "bun-plugin-tailwind": "^0.0.14",
+    "bun-plugin-tailwind": "^0.0.15",
     "react": "^19",
     "react-dom": "^19",
-    "tailwindcss": "^4.0.6"
+    "tailwindcss": "^4.1.11"
   },
   "devDependencies": {
     "@types/react": "^19",

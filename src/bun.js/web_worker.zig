@@ -1,13 +1,8 @@
 //! Shared implementation of Web and Node `Worker`
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Output = bun.Output;
-const log = Output.scoped(.Worker, true);
-const std = @import("std");
-const JSValue = jsc.JSValue;
-const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
 const WebWorker = @This();
+
+const log = Output.scoped(.Worker, .hidden);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -255,7 +250,7 @@ pub fn create(
 pub fn startWithErrorHandling(
     this: *WebWorker,
 ) void {
-    bun.Analytics.Features.workers_spawned += 1;
+    bun.analytics.Features.workers_spawned += 1;
     start(this) catch |err| {
         Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
     };
@@ -296,7 +291,7 @@ pub fn start(
         var diag: bun.clap.Diagnostic = .{};
         var iter: bun.clap.args.SliceIterator = .init(new_args.items);
 
-        var args = bun.clap.parseEx(bun.clap.Help, bun.CLI.Command.Tag.RunCommand.params(), &iter, .{
+        var args = bun.clap.parseEx(bun.clap.Help, bun.cli.Command.Tag.RunCommand.params(), &iter, .{
             .diagnostic = &diag,
             .allocator = bun.default_allocator,
 
@@ -315,7 +310,7 @@ pub fn start(
         // this should go through most flags and update the options.
     }
 
-    this.arena = try bun.MimallocArena.init();
+    this.arena = bun.MimallocArena.init();
     var vm = try jsc.VirtualMachine.initWorker(this, .{
         .allocator = this.arena.?.allocator(),
         .args = transform_options,
@@ -374,7 +369,9 @@ fn flushLogs(this: *WebWorker) void {
     const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch bun.outOfMemory();
     const str = err.toBunString(vm.global) catch @panic("unexpected exception");
     defer str.deref();
-    WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
+    bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
+        _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
+    };
 }
 
 fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_instance_or_exception: jsc.JSValue) void {
@@ -419,7 +416,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
+    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -431,10 +428,6 @@ fn setStatus(this: *WebWorker, status: Status) void {
     log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
     this.status.store(status, .release);
-}
-
-fn unhandledError(this: *WebWorker, _: anyerror) void {
-    this.flushLogs();
 }
 
 fn spin(this: *WebWorker) void {
@@ -575,7 +568,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
-    bun.Analytics.Features.workers_terminated += 1;
+    bun.analytics.Features.workers_terminated += 1;
 
     log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;
@@ -620,4 +613,13 @@ comptime {
     _ = WebWorker__updatePtr;
 }
 
+const std = @import("std");
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
 const assert = bun.assert;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

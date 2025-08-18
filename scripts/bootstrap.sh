@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 11
+# Version: 18
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -130,7 +130,7 @@ create_directory() {
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
 	path="$(execute "$mktemp" -d)"
-	grant_to_user "$path"	
+	grant_to_user "$path"
 	print "$path"
 }
 
@@ -191,8 +191,19 @@ download_file() {
 
 	fetch "$file_url" >"$file_tmp_path"
 	grant_to_user "$file_tmp_path"
-	
+
 	print "$file_tmp_path"
+}
+
+# path=$(download_and_verify_file URL sha256)
+download_and_verify_file() {
+	file_url="$1"
+	hash="$2"
+
+	path=$(download_file "$file_url")
+	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c' >/dev/null 2>&1
+
+	print "$path"
 }
 
 append_to_profile() {
@@ -317,7 +328,7 @@ check_operating_system() {
 			distro="$("$sw_vers" -productName)"
 			release="$("$sw_vers" -productVersion)"
 		fi
-	
+
 		case "$arch" in
 		x64)
 			sysctl="$(which sysctl)"
@@ -400,7 +411,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt)" ]; then
+		if [ -f "$(which apt-get)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -470,10 +481,8 @@ check_ulimit() {
 
 	print "Checking ulimits..."
 	systemd_conf="/etc/systemd/system.conf"
-	if [ -f "$systemd_conf" ]; then
-		limits_conf="/etc/security/limits.d/99-unlimited.conf"
-		create_file "$limits_conf"
-	fi
+	limits_conf="/etc/security/limits.d/99-unlimited.conf"
+	create_file "$limits_conf"
 
 	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
 	for limit in $limits; do
@@ -495,6 +504,10 @@ check_ulimit() {
 		fi
 
 		if [ -f "$systemd_conf" ]; then
+			# in systemd's configuration you need to say "infinity" when you mean "unlimited"
+			if [ "$limit_value" = "unlimited" ]; then
+				limit_value="infinity"
+			fi
 			append_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
 		fi
 	done
@@ -534,7 +547,7 @@ check_ulimit() {
 		append_file "$dpkg_conf" "force-unsafe-io"
 		append_file "$dpkg_conf" "no-debsig"
 
-		apt_conf="/etc/apt/apt.conf.d/99-ci-options" 
+		apt_conf="/etc/apt/apt.conf.d/99-ci-options"
 		execute_sudo create_directory "$(dirname "$apt_conf")"
 		append_file "$apt_conf" 'Acquire::Languages "none";'
 		append_file "$apt_conf" 'Acquire::GzipIndexes "true";'
@@ -549,7 +562,7 @@ check_ulimit() {
 package_manager() {
 	case "$pm" in
 	apt)
-		execute_sudo apt "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -598,6 +611,7 @@ install_packages() {
 		package_manager install \
 			--yes \
 			--no-install-recommends \
+			--fix-missing \
 			"$@"
 		;;
 	dnf)
@@ -662,9 +676,15 @@ install_brew() {
 install_common_software() {
 	case "$pm" in
 	apt)
-		install_packages \
-			apt-transport-https \
-			software-properties-common
+		# software-properties-common is not available in Debian Trixie
+		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
+			install_packages \
+				apt-transport-https
+		else
+			install_packages \
+				apt-transport-https \
+				software-properties-common
+		fi
 		;;
 	dnf)
 		install_packages \
@@ -673,7 +693,7 @@ install_common_software() {
 	esac
 
 	case "$distro" in
-	amzn)
+	amzn | alpine)
 		install_packages \
 			tar
 		;;
@@ -711,12 +731,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	# https://unofficial-builds.nodejs.org/download/release/
-	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
-		print "16.9.1"
-	else
-		print "22.9.0"
-	fi
+	print "24.3.0"
 }
 
 nodejs_version() {
@@ -724,48 +739,173 @@ nodejs_version() {
 }
 
 install_nodejs() {
-	case "$pm" in
-	dnf | yum)
-		bash="$(require bash)"
-		script=$(download_file "https://rpm.nodesource.com/setup_$(nodejs_version).x")
-		execute_sudo "$bash" "$script"
-		;;
-	apt)
-		bash="$(require bash)"
-		script="$(download_file "https://deb.nodesource.com/setup_$(nodejs_version).x")"
-		execute_sudo "$bash" "$script"
-		;;
-	esac
+	# Download Node.js directly from nodejs.org
+	nodejs_version="$(nodejs_version_exact)"
 
-	case "$pm" in
-	apk)
-		install_packages nodejs npm
+	# Determine platform name for Node.js download
+	case "$os" in
+	darwin)
+		nodejs_platform="darwin"
+		;;
+	linux)
+		nodejs_platform="linux"
 		;;
 	*)
-		install_packages nodejs
+		error "Unsupported OS for Node.js download: $os"
 		;;
 	esac
 
-	# Some distros do not install the node headers by default.
-	# These are needed for certain FFI tests, such as: `cc.test.ts`
-	case "$distro" in
-	alpine | amzn)
-		install_nodejs_headers
+	# Determine architecture name for Node.js download
+	case "$arch" in
+	x64)
+		nodejs_arch="x64"
+		;;
+	aarch64)
+		nodejs_arch="arm64"
+		;;
+	*)
+		error "Unsupported architecture for Node.js download: $arch"
 		;;
 	esac
+
+	case "$abi" in
+	musl)
+		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
+		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
+		;;
+	*)
+		nodejs_mirror="https://nodejs.org/dist"
+		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch"
+		;;
+	esac
+
+	# Download Node.js binary archive
+	nodejs_url="$nodejs_mirror/v$nodejs_version/$nodejs_foldername.tar.gz"
+	nodejs_tar="$(download_file "$nodejs_url")"
+	nodejs_extract_dir="$(dirname "$nodejs_tar")"
+
+	# Extract Node.js
+	execute tar -xzf "$nodejs_tar" -C "$nodejs_extract_dir"
+
+	# Install Node.js binaries to system
+	nodejs_dir="$nodejs_extract_dir/$nodejs_foldername"
+
+	# Copy bin files preserving symlinks
+	for file in "$nodejs_dir/bin/"*; do
+		filename="$(basename "$file")"
+		if [ -L "$file" ]; then
+			# Get the symlink target
+			target="$(readlink "$file")"
+			# The symlinks are relative (like ../lib/node_modules/npm/bin/npm-cli.js)
+			# and will work correctly from /usr/local/bin since we're copying
+			# node_modules to /usr/local/lib/node_modules
+			execute_sudo ln -sf "$target" "/usr/local/bin/$filename"
+		elif [ -f "$file" ]; then
+			# Copy regular files
+			execute_sudo cp -f "$file" "/usr/local/bin/$filename"
+			execute_sudo chmod +x "/usr/local/bin/$filename"
+		fi
+	done
+
+	# Copy node_modules directory to lib
+	if [ -d "$nodejs_dir/lib/node_modules" ]; then
+		execute_sudo mkdir -p "/usr/local/lib"
+		execute_sudo cp -Rf "$nodejs_dir/lib/node_modules" "/usr/local/lib/"
+	fi
+
+	# Copy include files if they exist
+	if [ -d "$nodejs_dir/include" ]; then
+		execute_sudo mkdir -p "/usr/local/include"
+		execute_sudo cp -Rf "$nodejs_dir/include/node" "/usr/local/include/"
+	fi
+
+	# Copy share files if they exist (man pages, etc.)
+	if [ -d "$nodejs_dir/share" ]; then
+		execute_sudo mkdir -p "/usr/local/share"
+		# Copy only node-specific directories
+		for sharedir in "$nodejs_dir/share/"*; do
+			if [ -d "$sharedir" ]; then
+				dirname="$(basename "$sharedir")"
+				execute_sudo cp -Rf "$sharedir" "/usr/local/share/"
+			fi
+		done
+	fi
+
+	# Ensure /usr/local/bin is in PATH
+	if ! echo "$PATH" | grep -q "/usr/local/bin"; then
+		print "Adding /usr/local/bin to PATH"
+		append_to_profile 'export PATH="/usr/local/bin:$PATH"'
+		export PATH="/usr/local/bin:$PATH"
+	fi
+
+	# Verify Node.js installation
+	if ! command -v node >/dev/null 2>&1; then
+		error "Node.js installation failed: 'node' command not found in PATH"
+	fi
+
+	installed_version="$(node --version 2>/dev/null || echo "unknown")"
+	expected_version="v$nodejs_version"
+
+	if [ "$installed_version" != "$expected_version" ]; then
+		error "Node.js installation failed: expected version $expected_version but got $installed_version. Please check your PATH and try running 'which node' to debug."
+	fi
+
+	print "Node.js $installed_version installed successfully"
+
+	# Ensure that Node.js headers are always pre-downloaded so that we don't rely on node-gyp
+	install_nodejs_headers
 }
 
 install_nodejs_headers() {
-	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	nodejs_version="$(nodejs_version_exact)"
+	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
 	execute tar -xzf "$nodejs_headers_tar" -C "$nodejs_headers_dir"
 
-	nodejs_headers_include="$nodejs_headers_dir/node-v$(nodejs_version_exact)/include"
-	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+	nodejs_headers_include="$nodejs_headers_dir/node-v$nodejs_version/include"
+	execute_sudo cp -R "$nodejs_headers_include" "/usr/local/"
+
+	# Also install to node-gyp cache locations for different node-gyp versions
+	# This ensures node-gyp finds headers without downloading them
+	setup_node_gyp_cache "$nodejs_version" "$nodejs_headers_dir/node-v$nodejs_version"
+}
+
+setup_node_gyp_cache() {
+	nodejs_version="$1"
+	headers_source="$2"
+
+	cache_dir="$home/.cache/node-gyp/$nodejs_version"
+
+	create_directory "$cache_dir"
+
+	# Copy headers
+	if [ -d "$headers_source/include" ]; then
+		cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
+	fi
+
+	# Create installVersion file (node-gyp expects this)
+	echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
+
+	# For Linux, we don't need .lib files like Windows
+	# but create the directory structure node-gyp expects
+	case "$arch" in
+	x86_64|amd64)
+		create_directory "$cache_dir/lib/x64" 2>/dev/null || true
+		;;
+	aarch64|arm64)
+		create_directory "$cache_dir/lib/arm64" 2>/dev/null || true
+		;;
+	*)
+		create_directory "$cache_dir/lib" 2>/dev/null || true
+		;;
+	esac
+
+	# Ensure entire path is accessible, not just last component
+	grant_to_user "$home/.cache"
 }
 
 bun_version_exact() {
-	print "1.2.0"
+	print "1.2.17"
 }
 
 install_bun() {
@@ -910,7 +1050,7 @@ install_llvm() {
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-		
+
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"
 		;;
@@ -930,7 +1070,8 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
+	then
 		return
 	fi
 
@@ -1332,6 +1473,61 @@ install_chromium() {
 	esac
 }
 
+install_age() {
+	# we only use this to encrypt core dumps, which we only have on Linux
+	case "$os" in
+	linux)
+		age_tarball=""
+		case "$arch" in
+		x64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			;;
+		aarch64)
+			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			;;
+		esac
+
+		age_extract_dir="$(create_tmp_directory)"
+		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+		move_to_bin "$age_extract_dir/age/age"
+		;;
+	esac
+}
+
+configure_core_dumps() {
+	# we only have core dumps on Linux
+	case "$os" in
+	linux)
+		# set up a directory that the test runner will look in after running tests
+		cores_dir="/var/bun-cores-$distro-$release-$arch"
+		sysctl_file="/etc/sysctl.d/local.conf"
+		create_directory "$cores_dir"
+		# ensure core_pattern will point there
+		# %e = executable filename
+		# %p = pid
+		append_file "$sysctl_file" "kernel.core_pattern = $cores_dir/%e-%p.core"
+
+		# disable apport.service if it exists since it will override the core_pattern
+		if which systemctl >/dev/null; then
+			if systemctl list-unit-files apport.service >/dev/null; then
+				execute_sudo "$systemctl" disable --now apport.service
+			fi
+		fi
+
+		# load the new configuration (ignore permission errors)
+		execute_sudo sysctl -p "$sysctl_file"
+
+		# ensure that a regular user will be able to run sysctl
+		if [ -d /sbin ]; then
+			append_to_path /sbin
+		fi
+
+		# install gdb for backtraces
+		install_packages gdb
+		;;
+	esac
+}
+
 clean_system() {
 	if ! [ "$ci" = "1" ]; then
 		return
@@ -1343,6 +1539,17 @@ clean_system() {
 	for path in $tmp_paths; do
 		execute_sudo rm -rf "$path"/*
 	done
+}
+
+ensure_no_tmpfs() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$distro" = "ubuntu" ]; then
+		return
+	fi
+
+	execute_sudo systemctl mask tmp.mount
 }
 
 main() {
@@ -1357,7 +1564,12 @@ main() {
 	install_build_essentials
 	install_chromium
 	install_fuse_python
+	install_age
+	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
+		configure_core_dumps
+	fi
 	clean_system
+	ensure_no_tmpfs
 }
 
 main "$@"

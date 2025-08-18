@@ -1,4 +1,5 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
+
 const WindowsWatcher = @This();
 
 mutex: Mutex = .{},
@@ -37,7 +38,7 @@ const DirWatcher = struct {
     dirHandle: w.HANDLE,
 
     // invalidates any EventIterators
-    fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
+    fn prepare(this: *DirWatcher) bun.sys.Maybe(void) {
         const filter: w.FileNotifyChangeFilter = .{ .file_name = true, .dir_name = true, .last_write = true, .creation = true };
         if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
             const err = w.kernel32.GetLastError();
@@ -48,7 +49,7 @@ const DirWatcher = struct {
             } };
         }
         log("read directory changes!", .{});
-        return .{ .result = {} };
+        return .success;
     }
 };
 
@@ -139,7 +140,7 @@ const Timeout = enum(w.DWORD) {
 };
 
 // wait until new events are available
-pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
+pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterator) {
     switch (this.watcher.prepare()) {
         .err => |err| {
             log("prepare() returned error", .{});
@@ -196,7 +197,7 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;
 
@@ -216,7 +217,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
-            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], []const u16, event.filename, false);
+            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], []const u16, event.filename);
             const eventpath = buf[0 .. base_idx + convert_res.written];
 
             log("watcher update event: (filename: {s}, action: {s}", .{ eventpath, @tagName(event.action) });
@@ -237,18 +238,43 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
                 // skip unrelated items
                 if (rel == .unrelated) continue;
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
+
+                // Check if we're about to exceed the watch_events array capacity
+                if (event_id >= this.watch_events.len) {
+                    // Process current batch of events
+                    switch (processWatchEventBatch(this, event_id)) {
+                        .err => |err| return .{ .err = err },
+                        .result => {},
+                    }
+                    // Reset event_id to start a new batch
+                    event_id = 0;
+                }
+
                 this.watch_events[event_id] = createWatchEvent(event, @truncate(item_idx));
                 event_id += 1;
             }
         }
     }
-    if (event_id == 0) {
-        return .{ .result = {} };
+
+    // Process any remaining events in the final batch
+    if (event_id > 0) {
+        switch (processWatchEventBatch(this, event_id)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
     }
 
-    // log("event_id: {d}\n", .{event_id});
+    return .success;
+}
 
-    var all_events = this.watch_events[0..event_id];
+fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(void) {
+    if (event_count == 0) {
+        return .success;
+    }
+
+    // log("event_count: {d}\n", .{event_count});
+
+    var all_events = this.watch_events[0..event_count];
     std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
     var last_event_index: usize = 0;
@@ -262,14 +288,14 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         last_event_index = i;
         last_event_id = all_events[i].index;
     }
-    if (all_events.len == 0) return .{ .result = {} };
+    if (all_events.len == 0) return .success;
     all_events = all_events[0 .. last_event_index + 1];
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
@@ -283,12 +309,14 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
     };
 }
 
+const log = Output.scoped(.watcher, .visible);
+
 const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const log = Output.scoped(.watcher, false);
-const Mutex = bun.Mutex;
 const w = std.os.windows;
 
-const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const bun = @import("bun");
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+
 const WatchEvent = bun.Watcher.WatchEvent;
+const WatchItemIndex = bun.Watcher.WatchItemIndex;

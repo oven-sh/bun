@@ -33,7 +33,7 @@ public:
         return new JSPropertyIterator(vm, data);
     }
 
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSPropertyIterator);
 };
 
 extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
@@ -162,11 +162,11 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    if (!object->getNonIndexPropertySlot(globalObject, prop, slot)) {
+    auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!has) {
         return {};
     }
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (slot.isAccessor() || slot.isCustom()) {
         return {};
     }

@@ -1,28 +1,30 @@
-name: format
+name: autofix.ci
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   workflow_call:
   workflow_dispatch:
   pull_request:
   merge_group:
-
+  push:
+    branches: ["main"]
 env:
   BUN_VERSION: "1.2.11"
   LLVM_VERSION: "19.1.7"
   LLVM_VERSION_MAJOR: "19"
 
 jobs:
-  format:
+  autofix:
     name: Format
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -35,32 +37,73 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
-      - name: Install LLVM
+      - name: Format Code
         run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.14.0
-      - name: Zig Format
+          # Start prettier in background with prefixed output
+          echo "::group::Prettier"
+          (bun run prettier 2>&1 | sed 's/^/[prettier] /' || echo "[prettier] Failed with exit code $?") &
+          PRETTIER_PID=$!
+          
+          # Start clang-format installation and formatting in background with prefixed output
+          echo "::group::Clang-format"
+          (
+            echo "[clang-format] Installing clang-format-${{ env.LLVM_VERSION_MAJOR }}..."
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${{ env.LLVM_VERSION_MAJOR }}
+            echo "[clang-format] Running clang-format..."
+            LLVM_VERSION_MAJOR=${{ env.LLVM_VERSION_MAJOR }} ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
+          ) &
+          CLANG_PID=$!
+          
+          # Setup Zig in temp directory and run zig fmt in background with prefixed output
+          echo "::group::Zig fmt"
+          (
+            ZIG_TEMP=$(mktemp -d)
+            echo "[zig] Downloading Zig (musl build)..."
+            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-d1a4e0b0ddc75f37c6a090b97eef0cbb6335556e/bootstrap-x86_64-linux-musl.zip
+            unzip -q -d "$ZIG_TEMP" "$ZIG_TEMP/zig.zip"
+            export PATH="$ZIG_TEMP/bootstrap-x86_64-linux-musl:$PATH"
+            echo "[zig] Running zig fmt..."
+            zig fmt src 2>&1 | sed 's/^/[zig] /'
+            ./scripts/sort-imports.ts src 2>&1 | sed 's/^/[zig] /'
+            zig fmt src 2>&1 | sed 's/^/[zig] /'
+            rm -rf "$ZIG_TEMP"
+          ) &
+          ZIG_PID=$!
+          
+          # Wait for all formatting tasks to complete
+          echo ""
+          echo "Running formatters in parallel..."
+          FAILED=0
+          
+          if ! wait $PRETTIER_PID; then
+            echo "::error::Prettier failed"
+            FAILED=1
+          fi
+          echo "::endgroup::"
+          
+          if ! wait $CLANG_PID; then
+            echo "::error::Clang-format failed"
+            FAILED=1
+          fi
+          echo "::endgroup::"
+          
+          if ! wait $ZIG_PID; then
+            echo "::error::Zig fmt failed"
+            FAILED=1
+          fi
+          echo "::endgroup::"
+          
+          # Exit with error if any formatter failed
+          if [ $FAILED -eq 1 ]; then
+            echo "::error::One or more formatters failed"
+            exit 1
+          fi
+          
+          echo "✅ All formatters completed successfully"
+      - name: Ban Words
         run: |
-          bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
-          zig fmt src
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run zig-format`"
-      - name: Prettier Format
-        run: |
-          bun run prettier
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run prettier`"
-      - name: Clang Format
-        run: |
-          bun run clang-format
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "`bun run clang-format`"
+          bun ./test/internal/ban-words.test.ts
+      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

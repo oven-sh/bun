@@ -1,20 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Allocator = std.mem.Allocator;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const cli = @import("../cli.zig");
-
-const Command = cli.Command;
-const Run = @import("./run_command.zig").RunCommand;
-const UpdateRequest = bun.PackageManager.UpdateRequest;
-
-const debug = Output.scoped(.bunx, false);
+const debug = Output.scoped(.bunx, .visible);
 
 pub const BunxCommand = struct {
     var path_buf: bun.PathBuffer = undefined;
@@ -25,6 +9,10 @@ pub const BunxCommand = struct {
         passthrough_list: std.ArrayListUnmanaged(string) = .{},
         /// `bunx <package_name>`
         package_name: string,
+        /// The binary name to run (when using --package)
+        binary_name: ?string = null,
+        /// The package to install (when using --package)
+        specified_package: ?string = null,
         // `--silent` and `--verbose` are not mutually exclusive. Both the
         // global CLI parser and `bun add` parser use them for different
         // purposes.
@@ -41,17 +29,20 @@ pub const BunxCommand = struct {
         /// - `--revision` or `--version` flags are passed without a target
         ///   command also being provided. This is not a failure.
         /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
-        fn parse(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
+        fn parse(ctx: bun.cli.Command.Context, argv: [][:0]const u8) Allocator.Error!Options {
             var found_subcommand_name = false;
             var maybe_package_name: ?string = null;
             var has_version = false; //  --version
             var has_revision = false; // --revision
+            var i: usize = 0;
 
             // SAFETY: `opts` is only ever returned when a package name is found, otherwise the process exits.
             var opts = Options{ .package_name = undefined, .allocator = ctx.allocator };
             try opts.passthrough_list.ensureTotalCapacityPrecise(opts.allocator, argv.len);
 
-            for (argv) |positional| {
+            while (i < argv.len) : (i += 1) {
+                const positional = argv[i];
+
                 if (maybe_package_name != null) {
                     opts.passthrough_list.appendAssumeCapacity(positional);
                     continue;
@@ -70,6 +61,32 @@ pub const BunxCommand = struct {
                         ctx.debug.run_in_bun = true;
                     } else if (strings.eqlComptime(positional, "--no-install")) {
                         opts.no_install = true;
+                    } else if (strings.eqlComptime(positional, "--package") or strings.eqlComptime(positional, "-p")) {
+                        // Next argument should be the package name
+                        i += 1;
+                        if (i >= argv.len) {
+                            Output.errGeneric("--package requires a package name", .{});
+                            Global.exit(1);
+                        }
+                        if (argv[i].len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            Global.exit(1);
+                        }
+                        opts.specified_package = argv[i];
+                    } else if (strings.hasPrefixComptime(positional, "--package=")) {
+                        const package_value = positional["--package=".len..];
+                        if (package_value.len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            Global.exit(1);
+                        }
+                        opts.specified_package = package_value;
+                    } else if (strings.hasPrefixComptime(positional, "-p=")) {
+                        const package_value = positional["-p=".len..];
+                        if (package_value.len == 0) {
+                            Output.errGeneric("--package requires a non-empty package name", .{});
+                            Global.exit(1);
+                        }
+                        opts.specified_package = package_value;
                     }
                 } else {
                     if (!found_subcommand_name) {
@@ -80,18 +97,35 @@ pub const BunxCommand = struct {
                 }
             }
 
-            // check if package_name_for_update_request is empty string or " "
-            if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-                // no need to free memory b/c we're exiting
-                if (has_revision) {
-                    cli.printRevisionAndExit();
-                } else if (has_version) {
-                    cli.printVersionAndExit();
+            // Handle --package flag case differently
+            if (opts.specified_package != null) {
+                if (maybe_package_name) |package_name| {
+                    if (package_name.len == 0) {
+                        Output.errGeneric("When using --package, you must specify the binary to run", .{});
+                        Output.prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", .{});
+                        Global.exit(1);
+                    }
                 } else {
-                    exitWithUsage();
+                    Output.errGeneric("When using --package, you must specify the binary to run", .{});
+                    Output.prettyln("  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>", .{});
+                    Global.exit(1);
                 }
+                opts.binary_name = maybe_package_name;
+                opts.package_name = opts.specified_package.?;
+            } else {
+                // Normal case: package_name is the first non-flag argument
+                if (maybe_package_name == null or maybe_package_name.?.len == 0) {
+                    // no need to free memory b/c we're exiting
+                    if (has_revision) {
+                        cli.printRevisionAndExit();
+                    } else if (has_version) {
+                        cli.printVersionAndExit();
+                    } else {
+                        exitWithUsage();
+                    }
+                }
+                opts.package_name = maybe_package_name.?;
             }
-            opts.package_name = maybe_package_name.?;
             return opts;
         }
 
@@ -156,16 +190,16 @@ pub const BunxCommand = struct {
 
         // TODO: make this better
         if (package_json_read.err) |err| {
-            try (bun.JSC.Maybe(void){ .err = err }).unwrap();
+            try (bun.sys.Maybe(void){ .err = err }).unwrap();
         }
 
         const package_json_contents = package_json_read.bytes.items;
         const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
-        bun.JSAst.Expr.Data.Store.create();
-        bun.JSAst.Stmt.Data.Store.create();
+        bun.ast.Expr.Data.Store.create();
+        bun.ast.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
+        const expr = try bun.json.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -196,8 +230,7 @@ pub const BunxCommand = struct {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer bin_dir.close();
-                    const dir = std.fs.Dir{ .fd = bin_dir.cast() };
-                    var iterator = bun.DirIterator.iterate(dir, .u8);
+                    var iterator = bun.DirIterator.iterate(bin_dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {
@@ -296,7 +329,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
+    pub fn exec(ctx: bun.cli.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -324,11 +357,14 @@ pub const BunxCommand = struct {
         // if you type "tsc" and TypeScript is not installed:
         // 1. Install TypeScript
         // 2. Run tsc
-        if (strings.eqlComptime(update_request.name, "tsc")) {
+        // BUT: Skip this transformation if --package was explicitly specified
+        if (opts.specified_package == null and strings.eqlComptime(update_request.name, "tsc")) {
             update_request.name = "typescript";
         }
 
-        const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
+        const initial_bin_name = if (opts.binary_name) |bin_name|
+            bin_name
+        else if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
@@ -596,47 +632,55 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
+            // BUT: Skip this if --package was used, as the user explicitly specified the binary name
             const root_dir_fd = root_dir_info.getFileDescriptor();
             bun.assert(root_dir_fd.isValid());
-            if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
-                // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
+            if (opts.binary_name == null) {
+                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                    // if we check the bin name and its actually the same, we don't need to check $PATH here again
+                    if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
-                    // Only use the system-installed version if there is no version specified
-                    if (update_request.version.literal.isEmpty()) {
-                        destination_ = bun.which(
+                        // Only use the system-installed version if there is no version specified
+                        if (update_request.version.literal.isEmpty()) {
+                            destination_ = bun.which(
+                                &path_buf,
+                                bunx_cache_dir,
+                                if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
+                                package_name_for_bin,
+                            );
+                        }
+
+                        if (destination_ orelse bun.which(
                             &path_buf,
                             bunx_cache_dir,
                             if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
-                            package_name_for_bin,
-                        );
+                            absolute_in_cache_dir,
+                        )) |destination| {
+                            const out = bun.asByteSlice(destination);
+                            try Run.runBinary(
+                                ctx,
+                                try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
+                                destination,
+                                this_transpiler.fs.top_level_dir,
+                                this_transpiler.env,
+                                passthrough,
+                                null,
+                            );
+                            // runBinary is noreturn
+                            @compileError("unreachable");
+                        }
                     }
-
-                    if (destination_ orelse bun.which(
-                        &path_buf,
-                        bunx_cache_dir,
-                        if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
-                        absolute_in_cache_dir,
-                    )) |destination| {
-                        const out = bun.asByteSlice(destination);
-                        try Run.runBinary(
-                            ctx,
-                            try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
-                            destination,
-                            this_transpiler.fs.top_level_dir,
-                            this_transpiler.env,
-                            passthrough,
-                            null,
-                        );
-                        // runBinary is noreturn
-                        @compileError("unreachable");
+                } else |err| {
+                    if (err == error.NoBinFound) {
+                        if (opts.specified_package != null and opts.binary_name != null) {
+                            Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
+                            Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
+                        } else {
+                            Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+                        }
+                        Global.exit(1);
                     }
-                }
-            } else |err| {
-                if (err == error.NoBinFound) {
-                    Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
-                    Global.exit(1);
                 }
             }
         }
@@ -712,7 +756,7 @@ pub const BunxCommand = struct {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env)),
             },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
@@ -772,33 +816,58 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
-            if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
+        // BUT: Skip this if --package was used, as the user explicitly specified the binary name
+        if (opts.binary_name == null) {
+            if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
+                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
-                if (bun.which(
-                    &path_buf,
-                    bunx_cache_dir,
-                    if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
-                    absolute_in_cache_dir,
-                )) |destination| {
-                    const out = bun.asByteSlice(destination);
-                    try Run.runBinary(
-                        ctx,
-                        try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
-                        destination,
-                        this_transpiler.fs.top_level_dir,
-                        this_transpiler.env,
-                        passthrough,
-                        null,
-                    );
-                    // runBinary is noreturn
-                    @compileError("unreachable");
+                    if (bun.which(
+                        &path_buf,
+                        bunx_cache_dir,
+                        if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
+                        absolute_in_cache_dir,
+                    )) |destination| {
+                        const out = bun.asByteSlice(destination);
+                        try Run.runBinary(
+                            ctx,
+                            try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
+                            destination,
+                            this_transpiler.fs.top_level_dir,
+                            this_transpiler.env,
+                            passthrough,
+                            null,
+                        );
+                        // runBinary is noreturn
+                        @compileError("unreachable");
+                    }
                 }
-            }
-        } else |_| {}
+            } else |_| {}
+        }
 
-        Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+        if (opts.specified_package != null and opts.binary_name != null) {
+            Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
+            Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
+        } else {
+            Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
+        }
         Global.exit(1);
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Run = @import("./run_command.zig").RunCommand;
+const Allocator = std.mem.Allocator;
+
+const cli = @import("../cli.zig");
+const Command = cli.Command;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const UpdateRequest = bun.PackageManager.UpdateRequest;

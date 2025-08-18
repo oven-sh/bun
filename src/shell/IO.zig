@@ -5,6 +5,10 @@ stdin: InKind,
 stdout: OutKind,
 stderr: OutKind,
 
+pub fn format(this: IO, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
+}
+
 pub fn deinit(this: *IO) void {
     this.stdin.close();
     this.stdout.close();
@@ -32,6 +36,13 @@ pub fn deref(this: *IO) void {
 pub const InKind = union(enum) {
     fd: *Interpreter.IOReader,
     ignore,
+
+    pub fn format(this: InKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            .fd => try writer.print("fd: {}", .{this.fd.fd}),
+            .ignore => try writer.print("ignore", .{}),
+        }
+    }
 
     pub fn ref(this: InKind) InKind {
         switch (this) {
@@ -74,11 +85,20 @@ pub const OutKind = union(enum) {
     /// in the Interpreter struct
     fd: struct { writer: *Interpreter.IOWriter, captured: ?*bun.ByteList = null },
     /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
+    ///
+    /// This is set when the shell is called with `.quiet()`
     pipe,
     /// Discards output
     ignore,
 
-    // fn dupeForSubshell(this: *ShellState,
+    // fn dupeForSubshell(this: *ShellExecEnv,
+    pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
+            .pipe => try writer.print("pipe", .{}),
+            .ignore => try writer.print("ignore", .{}),
+        }
+    }
 
     pub fn ref(this: @This()) @This() {
         switch (this) {
@@ -118,7 +138,21 @@ pub const OutKind = union(enum) {
         return switch (this) {
             .fd => |val| brk: {
                 shellio.* = val.writer.refSelf();
-                break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                break :brk if (val.captured) |cap| .{
+                    .capture = .{
+                        .buf = cap,
+                    },
+                } else .{
+                    // Windows notes:
+                    // Since `val.writer.fd` is `MovableFD`, it could
+                    // technically be moved to libuv for ownership.
+                    //
+                    // But since this file descriptor never going to be touched by this
+                    // process, except to hand off to the subprocess when we
+                    // spawn it, we don't really care if the file descriptor
+                    // ends up being invalid.
+                    .fd = val.writer.fd.get().?,
+                };
             },
             .pipe => .pipe,
             .ignore => .ignore,
@@ -132,11 +166,12 @@ pub fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio, shellio: *
     stdio[stderr_no] = this.stderr.to_subproc_stdio(&shellio.stderr);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
 
 const shell = bun.shell;
 const Interpreter = bun.shell.Interpreter;
+
 const OutputNeedsIOSafeGuard = bun.shell.interpret.OutputNeedsIOSafeGuard;
-const stdout_no = bun.shell.interpret.stdout_no;
 const stderr_no = bun.shell.interpret.stderr_no;
+const stdout_no = bun.shell.interpret.stdout_no;

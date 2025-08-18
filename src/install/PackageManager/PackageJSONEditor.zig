@@ -5,6 +5,17 @@ const dependency_groups = &.{
     .{ "peerDependencies", .{ .peer = true } },
 };
 
+fn resolveCatalogDependency(manager: *PackageManager, dep: Dependency) ?Dependency.Version {
+    return if (dep.version.tag == .catalog) blk: {
+        const catalog_dep = manager.lockfile.catalogs.get(
+            manager.lockfile,
+            dep.version.value.catalog,
+            dep.name,
+        ) orelse return null;
+        break :blk catalog_dep.version;
+    } else dep.version;
+}
+
 pub const EditOptions = struct {
     exact_versions: bool = false,
     add_trusted_dependencies: bool = false,
@@ -217,8 +228,8 @@ pub fn editUpdateNoArgs(
                         const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
                         var tag = Dependency.Version.Tag.infer(version_literal);
 
-                        // only updating dependencies with npm versions, and dist-tags if `--latest`.
-                        if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
+                        // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
+                        if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
 
                         var alias_at_index: ?usize = null;
                         if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
@@ -226,7 +237,7 @@ pub fn editUpdateNoArgs(
                             // e.g. "dep": "npm:@foo/bar@1.2.3"
                             if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
                                 tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
+                                if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
                                 alias_at_index = at_index;
                             }
                         }
@@ -291,7 +302,8 @@ pub fn editUpdateNoArgs(
                                     const workspace_dep_name = workspace_dep.name.slice(string_buf);
                                     if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
 
-                                    if (workspace_dep.version.npm()) |npm_version| {
+                                    const resolved_version = resolveCatalogDependency(manager, workspace_dep) orelse workspace_dep.version;
+                                    if (resolved_version.npm()) |npm_version| {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
                                         if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
@@ -407,10 +419,7 @@ pub fn edit(
                 inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                     if (current_package_json.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
-                            const name = if (request.is_aliased)
-                                request.name
-                            else
-                                request.version.literal.slice(request.version_buf);
+                            const name = request.getName();
 
                             if (query.expr.asProperty(name)) |value| {
                                 if (value.expr.data == .e_string) {
@@ -537,69 +546,37 @@ pub fn edit(
             break :brk deps;
         };
 
-        outer: for (updates.*) |*request| {
+        for (updates.*) |*request| {
             if (request.e_string != null) continue;
             defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
 
             var k: usize = 0;
             while (k < new_dependencies.len) : (k += 1) {
                 if (new_dependencies[k].key) |key| {
-                    if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string.eql(
-                        string,
-                        manager.lockfile.packages.items(.name)[request.package_id].slice(request.version_buf),
-                    )) {
-                        // This actually is a duplicate which we did not
-                        // pick up before dependency resolution.
-                        // For this case, we'll just swap remove it.
-                        if (new_dependencies.len > 1) {
-                            new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                            new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                        } else {
-                            new_dependencies = &[_]G.Property{};
-                        }
-                        continue;
-                    }
-                    if (key.data.e_string.eql(
-                        string,
-                        if (request.is_aliased)
-                            request.name
-                        else
-                            request.version.literal.slice(request.version_buf),
-                    )) {
-                        if (request.package_id == invalid_package_id) {
-                            // This actually is a duplicate like "react"
-                            // appearing in both "dependencies" and "optionalDependencies".
-                            // For this case, we'll just swap remove it
-                            if (new_dependencies.len > 1) {
-                                new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                            } else {
-                                new_dependencies = &[_]G.Property{};
-                            }
-                            continue;
-                        }
-
-                        new_dependencies[k].key = null;
+                    const name = request.getName();
+                    if (!key.data.e_string.eql(string, name)) continue;
+                    if (request.package_id == invalid_package_id) {
+                        // Duplicate dependency (e.g., "react" in both "dependencies" and
+                        // "optionalDependencies"). Remove the old dependency.
+                        new_dependencies[k] = .{};
+                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
                     }
                 }
 
-                if (new_dependencies[k].key == null) {
-                    new_dependencies[k].key = JSAst.Expr.allocate(
-                        allocator,
-                        JSAst.E.String,
-                        .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
-                        logger.Loc.Empty,
-                    );
+                new_dependencies[k].key = JSAst.Expr.allocate(
+                    allocator,
+                    JSAst.E.String,
+                    .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
+                    logger.Loc.Empty,
+                );
 
-                    new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                        // we set it later
-                        .data = "",
-                    }, logger.Loc.Empty);
+                new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                    // we set it later
+                    .data = "",
+                }, logger.Loc.Empty);
 
-                    request.e_string = new_dependencies[k].value.?.data.e_string;
-
-                    if (request.is_aliased) continue :outer;
-                }
+                request.e_string = new_dependencies[k].value.?.data.e_string;
+                break;
             }
         }
 
@@ -806,18 +783,23 @@ pub fn edit(
 
 const trusted_dependencies_string = "trustedDependencies";
 
-const std = @import("std");
-const bun = @import("bun");
-const JSAst = bun.JSAst;
-const Expr = JSAst.Expr;
-const G = JSAst.G;
-const E = JSAst.E;
-const PackageManager = bun.install.PackageManager;
 const string = []const u8;
-const UpdateRequest = bun.install.PackageManager.UpdateRequest;
+
+const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Semver = bun.Semver;
-const Dependency = bun.install.Dependency;
-const invalid_package_id = bun.install.invalid_package_id;
 const logger = bun.logger;
 const strings = bun.strings;
+
+const JSAst = bun.ast;
+const E = JSAst.E;
+const Expr = JSAst.Expr;
+const G = JSAst.G;
+
+const Dependency = bun.install.Dependency;
+const invalid_package_id = bun.install.invalid_package_id;
+
+const PackageManager = bun.install.PackageManager;
+const UpdateRequest = bun.install.PackageManager.UpdateRequest;

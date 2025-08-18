@@ -1,8 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const uv = bun.windows.libuv;
-
-const log = bun.Output.scoped(.PipeSource, true);
+const log = bun.Output.scoped(.PipeSource, .hidden);
 
 pub const Source = union(enum) {
     pipe: *Pipe,
@@ -102,7 +98,7 @@ pub const Source = union(enum) {
         };
     }
 
-    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Pipe) {
+    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
         const pipe = bun.default_allocator.create(Source.Pipe) catch bun.outOfMemory();
         // we should never init using IPC here see ipc.zig
@@ -126,7 +122,7 @@ pub const Source = union(enum) {
     pub var stdin_tty: uv.uv_tty_t = undefined;
     pub var stdin_tty_init = false;
 
-    pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Tty) {
+    pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Tty) {
         log("openTTY (fd = {})", .{fd});
 
         const uv_fd = fd.uv();
@@ -160,7 +156,7 @@ pub const Source = union(enum) {
         return file;
     }
 
-    pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
+    pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(Source) {
         const rc = bun.windows.libuv.uv_guess_handle(fd.uv());
         log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
 
@@ -209,7 +205,7 @@ pub const Source = union(enum) {
                 {
                     return .{ .err = err };
                 } else {
-                    return .{ .result = {} };
+                    return .success;
                 }
             },
             else => .{
@@ -224,7 +220,7 @@ pub const Source = union(enum) {
 };
 
 export fn Source__setRawModeStdin(raw: bool) c_int {
-    const tty = switch (Source.openTty(bun.JSC.VirtualMachine.get().uvLoop(), .stdin())) {
+    const tty = switch (Source.openTty(bun.jsc.VirtualMachine.get().uvLoop(), .stdin())) {
         .result => |tty| tty,
         .err => |e| return e.errno,
     };
@@ -233,3 +229,7 @@ export fn Source__setRawModeStdin(raw: bool) c_int {
     }
     return 0;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const uv = bun.windows.libuv;

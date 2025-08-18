@@ -34,7 +34,7 @@ pub const ImportWatcher = union(enum) {
         dir_fd: bun.FD,
         package_json: ?*bun.PackageJSON,
         comptime copy_file_path: bool,
-    ) bun.JSC.Maybe(void) {
+    ) bun.sys.Maybe(void) {
         return switch (this) {
             inline .hot, .watch => |watcher| watcher.addFile(
                 fd,
@@ -45,13 +45,13 @@ pub const ImportWatcher = union(enum) {
                 package_json,
                 copy_file_path,
             ),
-            .none => .{ .result = {} },
+            .none => .success,
         };
     }
 };
 
-pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
-pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
+pub const HotReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 
 extern fn BunDebugger__willHotReload() void;
 
@@ -86,7 +86,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         fn debug(comptime fmt: string, args: anytype) void {
             if (Environment.enable_logs) {
-                Output.scoped(.hot_reloader, false)(fmt, args);
+                Output.scoped(.hot_reloader, .visible)(fmt, args);
             } else {
                 Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
             }
@@ -96,7 +96,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             return this.ctx.eventLoop();
         }
 
-        pub fn enqueueTaskConcurrent(this: @This(), task: *JSC.ConcurrentTask) void {
+        pub fn enqueueTaskConcurrent(this: @This(), task: *jsc.ConcurrentTask) void {
             if (comptime reload_immediately)
                 unreachable;
 
@@ -110,7 +110,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             hashes: [8]u32,
             paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
             /// Left uninitialized until .enqueue
-            concurrent_task: JSC.ConcurrentTask,
+            concurrent_task: jsc.ConcurrentTask,
             reloader: *Reloader,
 
             pub fn initEmpty(reloader: *Reloader) Task {
@@ -150,7 +150,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *Task) void {
-                JSC.markBinding(@src());
+                jsc.markBinding(@src());
                 if (this.count == 0)
                     return;
 
@@ -174,7 +174,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .hashes = this.hashes,
                     .concurrent_task = undefined,
                 });
-                that.concurrent_task = .{ .task = JSC.Task.init(that), .auto_delete = false };
+                that.concurrent_task = .{ .task = jsc.Task.init(that), .auto_delete = false };
                 that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
             }
@@ -461,16 +461,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
     };
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const string = []const u8;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const options = bun.options;
-const JSC = bun.JSC;
-const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
-const VirtualMachine = JSC.VirtualMachine;
-const Watcher = bun.Watcher;
 pub const Buffer = MarkedArrayBuffer;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const Fs = bun.fs;
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+const options = bun.options;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const MarkedArrayBuffer = bun.jsc.MarkedArrayBuffer;
+const VirtualMachine = jsc.VirtualMachine;

@@ -399,6 +399,51 @@ nativeTests.test_reflect_construct_napi_class = () => {
   console.log("reflect constructed data =", instance.getData?.());
 };
 
+nativeTests.test_reflect_construct_no_prototype_crash = () => {
+  // This test verifies the fix for jsDynamicCast being called on JSValue(0)
+  // when a NAPI class constructor is called via Reflect.construct with a
+  // newTarget that has no prototype property.
+
+  const NapiClass = nativeTests.get_class_with_constructor();
+
+  // Test 1: Constructor function with deleted prototype property
+  // This case should work without crashing
+  function ConstructorWithoutPrototype() {}
+  delete ConstructorWithoutPrototype.prototype;
+
+  try {
+    const instance1 = Reflect.construct(NapiClass, [], ConstructorWithoutPrototype);
+    console.log("constructor without prototype: success - no crash");
+  } catch (e) {
+    console.log("constructor without prototype error:", e.message);
+  }
+
+  // Test 2: Regular constructor (control test)
+  // This should always work
+  function NormalConstructor() {}
+
+  try {
+    const instance2 = Reflect.construct(NapiClass, [], NormalConstructor);
+    console.log("normal constructor: success - no crash");
+  } catch (e) {
+    console.log("normal constructor error:", e.message);
+  }
+
+  // Test 3: Reflect.construct with Proxy newTarget (prototype returns undefined)
+  function ProxyObject() {}
+
+  const proxyTarget = new Proxy(ProxyObject, {
+    get(target, prop) {
+      if (prop === "prototype") {
+        return undefined;
+      }
+      return target[prop];
+    },
+  });
+  const instance3 = Reflect.construct(NapiClass, [], proxyTarget);
+  console.log("✓ Success - no crash!");
+};
+
 nativeTests.test_napi_wrap = () => {
   const values = [
     {},
@@ -607,6 +652,41 @@ nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };
 
+nativeTests.test_bigint_word_count = () => {
+  // Test with a 2-word BigInt
+  const bigint = 0x123456789ABCDEF0123456789ABCDEFn;
+  const result = nativeTests.test_bigint_actual_word_count(bigint);
+  
+  console.log(`BigInt: ${bigint.toString(16)}`);
+  console.log(`Queried word count: ${result.queriedWordCount}`);
+  console.log(`Actual word count: ${result.actualWordCount}`);
+  console.log(`Sign bit: ${result.signBit}`);
+  
+  // Both counts should be 2 for this BigInt
+  if (result.queriedWordCount === 2 && result.actualWordCount === 2) {
+    console.log("✅ PASS: Word count correctly returns 2");
+  } else {
+    console.log(`❌ FAIL: Expected word count 2, got queried=${result.queriedWordCount}, actual=${result.actualWordCount}`);
+  }
+};
+
+nativeTests.test_ref_unref_underflow = () => {
+  // Test that napi_reference_unref properly handles refCount == 0
+  const obj = { test: "value" };
+  const result = nativeTests.test_reference_unref_underflow(obj);
+  
+  console.log(`First unref count: ${result.firstUnrefCount}`);
+  console.log(`Second unref status: ${result.secondUnrefStatus}`);
+  
+  // First unref should succeed and return count of 0
+  // Second unref should fail with napi_generic_failure (status = 1)
+  if (result.firstUnrefCount === 0 && result.secondUnrefStatus === 1) {
+    console.log("✅ PASS: Reference unref correctly prevents underflow");
+  } else {
+    console.log(`❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`);
+  }
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
@@ -647,6 +727,41 @@ nativeTests.test_get_value_string = () => {
       fn(string);
     }
   }
+};
+
+nativeTests.test_constructor_order = () => {
+  require("./build/Debug/constructor_order_addon.node");
+};
+
+// Cleanup hook tests
+nativeTests.test_cleanup_hook_order = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_order.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_duplicates = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_mixed_order = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_mixed_order.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_modification_during_iteration = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_modification_during_iteration.node");
+  addon.test();
 };
 
 module.exports = nativeTests;

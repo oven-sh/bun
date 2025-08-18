@@ -1,3 +1,5 @@
+const Mv = @This();
+
 opts: Opts = .{},
 args: struct {
     sources: []const [*:0]const u8 = &[_][*:0]const u8{},
@@ -76,7 +78,7 @@ pub const ShellMvBatchedTask = struct {
     err: ?Syscall.Error = null,
 
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
-    event_loop: JSC.EventLoopHandle,
+    event_loop: jsc.EventLoopHandle,
 
     pub fn runFromThreadPool(this: *@This()) void {
         // Moving multiple entries into a directory
@@ -166,24 +168,22 @@ pub const ShellMvBatchedTask = struct {
     }
 };
 
-pub fn start(this: *Mv) Maybe(void) {
+pub fn start(this: *Mv) Yield {
     return this.next();
 }
 
-pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .{ .waiting_write_err = .{ .exit_code = exit_code } };
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn next(this: *Mv) Maybe(void) {
+pub fn next(this: *Mv) Yield {
     while (!(this.state == .done or this.state == .err)) {
         switch (this.state) {
             .idle => {
@@ -203,17 +203,17 @@ pub fn next(this: *Mv) Maybe(void) {
                             .target = this.args.target,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                         },
                         .state = .running,
                     },
                 };
                 this.state.check_target.task.task.schedule();
-                return Maybe(void).success;
+                return .suspended;
             },
             .check_target => {
-                if (this.state.check_target.state == .running) return Maybe(void).success;
+                if (this.state.check_target.state == .running) return .suspended;
                 const check_target = &this.state.check_target;
 
                 if (comptime bun.Environment.allow_assert) {
@@ -276,7 +276,7 @@ pub fn next(this: *Mv) Maybe(void) {
                             .error_signal = undefined,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                             .event_loop = this.bltn().parentCmd().base.eventLoop(),
                         };
@@ -296,36 +296,32 @@ pub fn next(this: *Mv) Maybe(void) {
                     t.task.schedule();
                 }
 
-                return Maybe(void).success;
+                return .suspended;
             },
             // Shouldn't happen
             .executing => {},
             .waiting_write_err => {
-                return Maybe(void).success;
+                return .failed;
             },
             .done, .err => unreachable,
         }
     }
 
     switch (this.state) {
-        .done => this.bltn().done(0),
-        else => this.bltn().done(1),
+        .done => return this.bltn().done(0),
+        else => return this.bltn().done(1),
     }
-
-    return Maybe(void).success;
 }
 
-pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?jsc.SystemError) Yield {
     defer if (e) |err| err.deref();
     switch (this.state) {
         .waiting_write_err => {
             if (e != null) {
                 this.state = .err;
-                _ = this.next();
-                return;
+                return this.next();
             }
-            this.bltn().done(this.state.waiting_write_err.exit_code);
-            return;
+            return this.bltn().done(this.state.waiting_write_err.exit_code);
         },
         else => @panic("Invalid state"),
     }
@@ -340,8 +336,7 @@ pub fn checkTargetTaskDone(this: *Mv, task: *ShellMvCheckTargetTask) void {
     }
 
     this.state.check_target.state = .done;
-    _ = this.next();
-    return;
+    this.next().run();
 }
 
 pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
@@ -371,8 +366,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
         }
         this.state = .done;
 
-        _ = this.next();
-        return;
+        this.next().run();
     }
 }
 
@@ -491,23 +485,27 @@ pub inline fn bltn(this: *Mv) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellCat, true);
-const Mv = @This();
+const debug = bun.Output.scoped(.ShellCat, .hidden);
 
-const Syscall = bun.sys;
-const ShellTask = interpreter.ShellTask;
-const assert = bun.assert;
 const std = @import("std");
-const bun = @import("bun");
-const shell = bun.shell;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ShellSyscall = interpreter.ShellSyscall;
+const ShellTask = interpreter.ShellTask;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
 const ResolvePath = bun.path;
+const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

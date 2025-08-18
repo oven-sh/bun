@@ -2,6 +2,7 @@ pub const InternalLoopData = extern struct {
     pub const us_internal_async = opaque {};
 
     sweep_timer: ?*Timer,
+    sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
     last_write_failed: i32,
     head: ?*SocketContext,
@@ -22,13 +23,17 @@ pub const InternalLoopData = extern struct {
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
     iteration_nr: usize,
-    jsc_vm: ?*JSC.VM,
+    jsc_vm: ?*jsc.VM,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
     }
 
-    pub fn setParentEventLoop(this: *InternalLoopData, parent: JSC.EventLoopHandle) void {
+    pub fn shouldEnableDateHeaderTimer(this: *const InternalLoopData) bool {
+        return this.sweep_timer_count > 0;
+    }
+
+    pub fn setParentEventLoop(this: *InternalLoopData, parent: jsc.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {
                 this.parent_tag = 1;
@@ -41,12 +46,12 @@ pub const InternalLoopData = extern struct {
         }
     }
 
-    pub fn getParent(this: *InternalLoopData) JSC.EventLoopHandle {
+    pub fn getParent(this: *InternalLoopData) jsc.EventLoopHandle {
         const parent = this.parent_ptr orelse @panic("Parent loop not set - pointer is null");
         return switch (this.parent_tag) {
             0 => @panic("Parent loop not set - tag is zero"),
-            1 => .{ .js = bun.cast(*JSC.EventLoop, parent) },
-            2 => .{ .mini = bun.cast(*JSC.MiniEventLoop, parent) },
+            1 => .{ .js = bun.cast(*jsc.EventLoop, parent) },
+            2 => .{ .mini = bun.cast(*jsc.MiniEventLoop, parent) },
             else => @panic("Parent loop data corrupted - tag is invalid"),
         };
     }
@@ -55,11 +60,12 @@ pub const InternalLoopData = extern struct {
 };
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
+
 const uws = bun.uws;
-const Timer = uws.Timer;
-const SocketContext = uws.SocketContext;
 const ConnectingSocket = uws.ConnectingSocket;
+const Loop = uws.Loop;
+const SocketContext = uws.SocketContext;
+const Timer = uws.Timer;
 const udp = uws.udp;
 const us_socket_t = uws.us_socket_t;
-const Loop = uws.Loop;

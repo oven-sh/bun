@@ -1,34 +1,14 @@
-const std = @import("std");
-
-const Path = @import("../../resolver/resolve_path.zig");
-const Fs = @import("../../fs.zig");
-const Mutex = bun.Mutex;
-const FSEvents = @import("./fs_events.zig");
-
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const FD = bun.FD;
-const string = bun.string;
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-
 var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
-const FSWatcher = bun.api.node.fs.Watcher;
-const Event = FSWatcher.Event;
-
-const Watcher = bun.Watcher;
-
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    const log = Output.scoped(.PathWatcherManager, false);
+    const log = Output.scoped(.PathWatcherManager, .visible);
     main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
     watcher_count: u32 = 0,
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
     file_paths: bun.StringHashMap(PathInfo),
     current_fd_task: bun.FDHashMap(*DirectoryRegisterTask),
     deinit_on_last_watcher: bool = false,
@@ -71,7 +51,7 @@ pub const PathWatcherManager = struct {
     fn _fdFromAbsolutePathZ(
         this: *PathWatcherManager,
         path: [:0]const u8,
-    ) bun.JSC.Maybe(PathInfo) {
+    ) bun.sys.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
@@ -129,7 +109,7 @@ pub const PathWatcherManager = struct {
         std.posix.INotifyInitError ||
         std.Thread.SpawnError;
 
-    pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
+    pub fn init(vm: *jsc.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
         const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
         errdefer bun.default_allocator.destroy(this);
         var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
@@ -345,10 +325,10 @@ pub const PathWatcherManager = struct {
     pub const DirectoryRegisterTask = struct {
         manager: *PathWatcherManager,
         path: PathInfo,
-        task: JSC.WorkPoolTask = .{ .callback = callback },
+        task: jsc.WorkPoolTask = .{ .callback = callback },
         watcher_list: bun.BabyList(*PathWatcher) = .{},
 
-        pub fn callback(task: *JSC.WorkPoolTask) void {
+        pub fn callback(task: *jsc.WorkPoolTask) void {
             var routine: *@This() = @fieldParentPtr("task", task);
             defer routine.deinit();
             routine.run();
@@ -402,7 +382,7 @@ pub const PathWatcherManager = struct {
                 };
             }
             if (manager.refPendingTask()) {
-                JSC.WorkPool.schedule(&routine.task);
+                jsc.WorkPool.schedule(&routine.task);
                 return;
             }
             return error.UnexpectedFailure;
@@ -426,7 +406,7 @@ pub const PathWatcherManager = struct {
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
             buf: *bun.PathBuffer,
-        ) bun.JSC.Maybe(void) {
+        ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
             const manager = this.manager;
@@ -497,13 +477,13 @@ pub const PathWatcherManager = struct {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err },
+                            .err => |err| return .{ .err = err.withPath(child_path.path) },
                             .result => {},
                         }
                     }
                 }
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         fn run(this: *DirectoryRegisterTask) void {
@@ -534,10 +514,10 @@ pub const PathWatcherManager = struct {
     };
 
     // this should only be called if thread pool is not null
-    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.JSC.Maybe(void) {
+    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
         const fd = path.fd;
         switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
-            .err => |err| return .{ .err = err },
+            .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
 
@@ -878,7 +858,9 @@ pub const PathWatcher = struct {
         }
 
         this.needs_flush = true;
-        if (this.isClosed()) return;
+        if (this.isClosed()) {
+            return;
+        }
         this.callback(this.ctx, event, is_file);
     }
 
@@ -932,7 +914,7 @@ pub fn watch(
     comptime callback: PathWatcher.Callback,
     comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: ?*anyopaque,
-) bun.JSC.Maybe(*PathWatcher) {
+) bun.sys.Maybe(*PathWatcher) {
     const manager = default_manager orelse brk: {
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();
@@ -1010,3 +992,23 @@ pub fn watch(
 
     return .{ .result = watcher };
 }
+
+const string = []const u8;
+
+const FSEvents = @import("./fs_events.zig");
+const Fs = @import("../../fs.zig");
+const Path = @import("../../resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const Watcher = bun.Watcher;
+
+const FSWatcher = bun.api.node.fs.Watcher;
+const Event = FSWatcher.Event;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

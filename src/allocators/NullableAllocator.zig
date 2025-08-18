@@ -1,6 +1,4 @@
 //! A nullable allocator the same size as `std.mem.Allocator`.
-const std = @import("std");
-const bun = @import("bun");
 
 const NullableAllocator = @This();
 
@@ -32,8 +30,8 @@ pub inline fn get(this: NullableAllocator) ?std.mem.Allocator {
 pub fn free(this: *const NullableAllocator, bytes: []const u8) void {
     if (this.get()) |allocator| {
         if (bun.String.isWTFAllocator(allocator)) {
-            // workaround for https://github.com/ziglang/zig/issues/4298
-            bun.String.StringImplAllocator.free(allocator.ptr, @constCast(bytes), .fromByteUnits(1), 0);
+            // avoid calling `std.mem.Allocator.free` as it sets the memory to undefined
+            allocator.rawFree(@constCast(bytes), .@"1", 0);
             return;
         }
 
@@ -46,3 +44,6 @@ comptime {
         @compileError("Expected the sizes to be the same.");
     }
 }
+
+const bun = @import("bun");
+const std = @import("std");

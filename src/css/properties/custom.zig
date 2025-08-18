@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");
 pub const Printer = css.Printer;
@@ -33,8 +29,6 @@ const ComponentParser = css.css_values.color.ComponentParser;
 
 const SupportsCondition = css.SupportsCondition;
 const ColorFallbackKind = css.ColorFallbackKind;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// PERF: nullable optimization
 pub const TokenList = struct {
@@ -311,7 +305,7 @@ pub const TokenList = struct {
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn parseInto(
@@ -597,7 +591,7 @@ pub const TokenList = struct {
             last_is_whitespace = false;
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
@@ -800,7 +794,7 @@ pub const UnresolvedColor = union(enum) {
     ) PrintErr!void {
         const Helper = struct {
             pub fn conv(c: f32) i32 {
-                return @intFromFloat(bun.clamp(@round(c * 255.0), 0.0, 255.0));
+                return bun.intFromFloat(i32, bun.clamp(@round(c * 255.0), 0.0, 255.0));
             }
         };
 
@@ -1554,3 +1548,9 @@ pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *
 
     return null;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -1,5 +1,3 @@
-const Arguments = @This();
-
 pub fn loader_resolver(in: string) !Api.Loader {
     const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
     return option_loader.toAPI();
@@ -82,6 +80,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
     clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
     clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
+    clap.parseParam("--import <STR>...                 Alias of --preload, for Node.js compatibility") catch unreachable,
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -105,8 +104,11 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+    clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
+    clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -137,6 +139,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -462,6 +465,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
         if (args.option("--test-name-pattern")) |namePattern| {
+            ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
@@ -515,7 +519,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
     else
         null;
 
@@ -542,13 +546,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     // runtime commands
     if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-        var preloads = args.options("--preload");
-        if (preloads.len == 0) {
-            if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
-                preloads = bun.default_allocator.dupe([]const u8, &.{preload}) catch unreachable;
+        {
+            const preloads = args.options("--preload");
+            const preloads2 = args.options("--require");
+            const preloads3 = args.options("--import");
+            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+
+            const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
+            if (total_preloads > 0) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
+                if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
+                if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);
+                if (preloads3.len > 0) all.appendSliceAssumeCapacity(preloads3);
+                if (preload4) |p| all.appendAssumeCapacity(p);
+                ctx.preloads = all.items;
             }
         }
-        const preloads2 = args.options("--require");
 
         if (args.flag("--hot")) {
             ctx.debug.hot_reload = .hot;
@@ -574,6 +588,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.flag("--redis-preconnect")) {
             ctx.runtime_options.redis_preconnect = true;
+        }
+
+        if (args.flag("--sql-preconnect")) {
+            ctx.runtime_options.sql_preconnect = true;
         }
 
         if (args.flag("--no-addons")) {
@@ -621,6 +639,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
+        }
+
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
         else if (args.flag("--prefer-latest"))
@@ -645,25 +667,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
-        if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
-            var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
-            all.appendSliceAssumeCapacity(ctx.preloads);
-            all.appendSliceAssumeCapacity(preloads);
-            all.appendSliceAssumeCapacity(preloads2);
-            ctx.preloads = all.items;
-        } else if (preloads.len > 0) {
-            if (preloads2.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
-                all.appendSliceAssumeCapacity(preloads);
-                all.appendSliceAssumeCapacity(preloads2);
-                ctx.preloads = all.items;
-            } else {
-                ctx.preloads = preloads;
-            }
-        } else if (preloads2.len > 0) {
-            ctx.preloads = preloads2;
-        }
-
         if (args.option("--print")) |script| {
             ctx.runtime_options.eval.script = script;
             ctx.runtime_options.eval.eval_and_print = true;
@@ -674,6 +677,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+        if (args.option("--console-depth")) |depth_str| {
+            const depth = std.fmt.parseInt(u16, depth_str, 10) catch {
+                Output.errGeneric("Invalid value for --console-depth: \"{s}\". Must be a positive integer\n", .{depth_str});
+                Global.exit(1);
+            };
+            // Treat depth=0 as maxInt(u16) for infinite depth
+            ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
+        }
 
         if (args.option("--dns-result-order")) |order| {
             ctx.runtime_options.dns_result_order = order;
@@ -687,7 +699,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -699,7 +711,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -713,7 +725,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .set_breakpoint_on_first_line = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         if (args.flag("--no-deprecation")) {
@@ -873,6 +885,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--compile")) {
             ctx.bundler_options.compile = true;
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+        }
+
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
         }
 
         if (args.flag("--windows-hide-console")) {
@@ -1058,7 +1078,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (opts.define) |define| {
             if (define.keys.len > 0)
-                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+                bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
     }
 
@@ -1166,28 +1186,31 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Api = bun.Schema.Api;
-const logger = bun.logger;
-const strings = bun.strings;
-const string = bun.string;
-const clap = bun.clap;
+const string = []const u8;
+
 const builtin = @import("builtin");
-const FeatureFlags = bun.FeatureFlags;
-const Command = CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const debug_flags = CLI.debug_flags;
-const js_ast = bun.js_ast;
-const resolve_path = bun.path;
+const std = @import("std");
+
+const bun = @import("bun");
 const Bunfig = bun.Bunfig;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
 const OOM = bun.OOM;
-const options = bun.options;
-const printVersionAndExit = CLI.printVersionAndExit;
-const printRevisionAndExit = CLI.printRevisionAndExit;
-const CLI = bun.CLI;
+const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
+const clap = bun.clap;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const options = bun.options;
+const resolve_path = bun.path;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
+const CLI = bun.cli;
+const Command = CLI.Command;
 const DefineColonList = CLI.DefineColonList;
 const LoaderColonList = CLI.LoaderColonList;
+const debug_flags = CLI.debug_flags;
+const printRevisionAndExit = CLI.printRevisionAndExit;
+const printVersionAndExit = CLI.printVersionAndExit;

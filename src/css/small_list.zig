@@ -1,20 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const css = @import("./css_parser.zig");
-const Printer = css.Printer;
-const Parser = css.Parser;
-const Result = css.Result;
-const voidWrap = css.voidWrap;
-const generic = css.generic;
-const Delimiters = css.Delimiters;
-const PrintErr = css.PrintErr;
-const Allocator = std.mem.Allocator;
-const TextShadow = css.css_properties.text.TextShadow;
-
 /// This is a type whose items can either be heap-allocated (essentially the
 /// same as a BabyList(T)) or inlined in the struct itself.
 ///
-/// This is type is a performance optimizations for avoiding allocations, especially when you know the list
+/// This is type is a performance optimization for avoiding allocations, especially when you know the list
 /// will commonly have N or fewer items.
 ///
 /// The `capacity` field is used to disambiguate between the two states: - When
@@ -176,6 +163,12 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub inline fn last(this: *const @This()) ?*const T {
             const sl = this.slice();
+            if (sl.len == 0) return null;
+            return &sl[sl.len - 1];
+        }
+
+        pub inline fn lastMut(this: *@This()) ?*T {
+            const sl = this.slice_mut();
             if (sl.len == 0) return null;
             return &sl[sl.len - 1];
         }
@@ -654,3 +647,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const css = @import("./css_parser.zig");
+const Delimiters = css.Delimiters;
+const Parser = css.Parser;
+const PrintErr = css.PrintErr;
+const Printer = css.Printer;
+const Result = css.Result;
+const generic = css.generic;
+const voidWrap = css.voidWrap;
+const TextShadow = css.css_properties.text.TextShadow;

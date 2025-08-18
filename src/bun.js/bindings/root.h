@@ -98,4 +98,8 @@
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
 
+// can be nothrow | zero_is_throw | check_slow
+#define ZIG_EXPORT(...)
+#define ZIG_NONNULL
+
 #endif

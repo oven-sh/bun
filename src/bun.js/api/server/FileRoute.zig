@@ -12,14 +12,15 @@ has_content_length_header: bool,
 pub const InitOptions = struct {
     server: ?AnyServer,
     status_code: u16 = 200,
+    headers: ?*jsc.WebCore.FetchHeaders = null,
 };
 
-pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
+pub fn lastModifiedDate(this: *const FileRoute) bun.JSError!?u64 {
     if (this.has_last_modified_header) {
         if (this.headers.get("last-modified")) |last_modified| {
             var string = bun.String.init(last_modified);
             defer string.deref();
-            const date_f64 = bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+            const date_f64 = try bun.String.parseDate(&string, bun.jsc.VirtualMachine.get().global);
             if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
                 return @intFromFloat(date_f64);
             }
@@ -34,12 +35,14 @@ pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
 }
 
 pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
-    const headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+    const headers = Headers.from(opts.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
     return bun.new(FileRoute, .{
         .ref_count = .init(),
         .server = opts.server,
         .blob = blob,
         .headers = headers,
+        .has_last_modified_header = headers.get("last-modified") != null,
+        .has_content_length_header = headers.get("content-length") != null,
         .status_code = opts.status_code,
     });
 }
@@ -54,8 +57,8 @@ pub fn memoryCost(this: *const FileRoute) usize {
     return @sizeOf(FileRoute) + this.headers.memoryCost() + this.blob.reported_estimated_size;
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*FileRoute {
-    if (argument.as(JSC.WebCore.Response)) |response| {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*FileRoute {
+    if (argument.as(jsc.WebCore.Response)) |response| {
         response.body.value.toBlobIfPossible();
         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
             if (response.body.value.Blob.store.?.data.file.pathlike == .fd) {
@@ -182,7 +185,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     const fd = fd_result.result;
 
-    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since");
+    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch return; // TODO: properly propagate exception upwards
 
     const can_serve_file: bool, const size: u64, const file_type: bun.io.FileType, const pollable: bool = brk: {
         const stat = switch (bun.sys.fstat(fd)) {
@@ -223,7 +226,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         // ignored, unless the server doesn't support If-None-Match.
         if (input_if_modified_since_date) |requested_if_modified_since| {
             if (method == .HEAD or method == .GET) {
-                if (this.lastModifiedDate()) |actual_last_modified_at| {
+                if (this.lastModifiedDate() catch return) |actual_last_modified_at| { // TODO: properly propagate exception upwards
                     if (actual_last_modified_at <= requested_if_modified_since) {
                         break :brk 304;
                     }
@@ -281,19 +284,6 @@ fn onResponseComplete(this: *FileRoute, resp: AnyResponse) void {
     this.deref();
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const uws = bun.uws;
-const Headers = bun.http.Headers;
-const AnyServer = JSC.API.AnyServer;
-const Blob = JSC.WebCore.Blob;
-const writeStatus = @import("../server.zig").writeStatus;
-const AnyResponse = uws.AnyResponse;
-const Async = bun.Async;
-const FileType = bun.io.FileType;
-const Output = bun.Output;
-
 const StreamTransfer = struct {
     const StreamTransferRefCount = bun.ptr.RefCount(@This(), "ref_count", StreamTransfer.deinit, .{});
     pub const ref = StreamTransferRefCount.ref;
@@ -307,13 +297,13 @@ const StreamTransfer = struct {
 
     max_size: ?u64 = null,
 
-    eof_task: ?JSC.AnyTask = null,
+    eof_task: ?jsc.AnyTask = null,
 
     state: packed struct(u8) {
         has_ended_response: bool = false,
         _: u7 = 0,
     } = .{},
-    const log = Output.scoped(.StreamTransfer, false);
+    const log = Output.scoped(.StreamTransfer, .visible);
 
     pub fn create(
         fd: bun.FileDescriptor,
@@ -408,8 +398,8 @@ const StreamTransfer = struct {
                         // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
                         this.reader.pause();
                         // we cannot free inside onReadChunk this would be UAF so we schedule it to be done in the next event loop tick
-                        this.eof_task = JSC.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
-                        server.vm().enqueueTask(JSC.Task.init(&this.eof_task.?));
+                        this.eof_task = jsc.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
+                        server.vm().enqueueTask(jsc.Task.init(&this.eof_task.?));
                     }
                     break :brk .{ chunk, .eof };
                 }
@@ -472,8 +462,8 @@ const StreamTransfer = struct {
         this.finish();
     }
 
-    pub fn eventLoop(this: *StreamTransfer) JSC.EventLoopHandle {
-        return JSC.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
+    pub fn eventLoop(this: *StreamTransfer) jsc.EventLoopHandle {
+        return jsc.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
     }
 
     pub fn loop(this: *StreamTransfer) *Async.Loop {
@@ -540,3 +530,18 @@ const StreamTransfer = struct {
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Output = bun.Output;
+const jsc = bun.jsc;
+const FileType = bun.io.FileType;
+const Headers = bun.http.Headers;
+const AnyServer = jsc.API.AnyServer;
+const Blob = jsc.WebCore.Blob;
+const writeStatus = bun.api.server.writeStatus;
+
+const uws = bun.uws;
+const AnyResponse = uws.AnyResponse;

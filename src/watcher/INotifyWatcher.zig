@@ -1,7 +1,9 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
+
 const INotifyWatcher = @This();
-const log = Output.scoped(.watcher, false);
+
+const log = Output.scoped(.watcher, .visible);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
 // since communication is done via the `read` syscall). what is notable about
@@ -10,7 +12,6 @@ const log = Output.scoped(.watcher, false);
 // but an arbitrary but reasonable size. when reading, the strategy is to read
 // as much as possible, then process the buffer in `max_count` chunks, since
 // `bun.Watcher` has the same hardcoded `max_count`.
-const max_count = bun.Watcher.max_count;
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
 const EventListBytes = [eventlist_bytes_size]u8;
 fd: bun.FileDescriptor = bun.invalid_fd,
@@ -51,7 +52,7 @@ pub const Event = extern struct {
     const largest_size = std.mem.alignForward(usize, @sizeOf(Event) + bun.MAX_PATH_BYTES, @alignOf(Event));
 
     pub fn name(event: *align(1) Event) [:0]u8 {
-        if (comptime Environment.allow_assert) bun.assert(event.name_len > 0);
+        if (comptime Environment.allow_assert) bun.assertf(event.name_len > 0, "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function.", .{});
         const name_first_char_ptr = std.mem.asBytes(&event.name_len).ptr + @sizeOf(u32);
         return bun.sliceTo(@as([*:0]u8, @ptrCast(name_first_char_ptr)), 0);
     }
@@ -61,25 +62,25 @@ pub const Event = extern struct {
     }
 };
 
-pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
-pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
-    return bun.JSC.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
+    return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
 
@@ -103,7 +104,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     log("{} init", .{this.fd});
 }
 
-pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
+pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
     bun.assert(this.loaded);
     // This is what replit does as of Jaunary 2023.
     // 1) CREATE .http.ts.3491171321~
@@ -192,13 +193,13 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-        if (!Environment.enable_logs)
+        if (Environment.enable_logs)
             log("{} read event {} {} {} {}", .{
                 this.fd,
                 event.watch_descriptor,
                 event.cookie,
                 event.mask,
-                bun.fmt.quote(event.name()),
+                bun.fmt.quote(if (event.name_len > 0) event.name() else ""),
             });
 
         // when under high load with short file paths, it is very easy to
@@ -225,82 +226,136 @@ pub fn stop(this: *INotifyWatcher) void {
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.
-pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
+pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     defer Output.flush();
 
-    var events = switch (this.platform.read()) {
+    const events = switch (this.platform.read()) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
-    if (events.len == 0) return .{ .result = {} };
-
-    // TODO: is this thread safe?
-    var remaining_events = events.len;
+    if (events.len == 0) return .success;
 
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
-    while (remaining_events > 0) {
+    var event_id: usize = 0;
+    var events_processed: usize = 0;
+
+    while (events_processed < events.len) {
         var name_off: u8 = 0;
         var temp_name_list: [128]?[:0]u8 = undefined;
         var temp_name_off: u8 = 0;
 
-        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
-        var watchevents = this.watch_events[0..slice.len];
-        var watch_event_id: u32 = 0;
-        for (slice) |event| {
-            watchevents[watch_event_id] = watchEventFromInotifyEvent(
+        // Process events one by one, batching when we hit limits
+        while (events_processed < events.len) {
+            const event = events[events_processed];
+
+            // Check if we're about to exceed the watch_events array capacity
+            if (event_id >= this.watch_events.len) {
+                // Process current batch of events
+                switch (processINotifyEventBatch(this, event_id, temp_name_list[0..temp_name_off])) {
+                    .err => |err| return .{ .err = err },
+                    .result => {},
+                }
+                // Reset event_id to start a new batch
+                event_id = 0;
+                name_off = 0;
+                temp_name_off = 0;
+            }
+
+            // Check if we can fit this event's name in temp_name_list
+            const will_have_name = event.name_len > 0;
+            if (will_have_name and temp_name_off >= temp_name_list.len) {
+                // Process current batch and start a new one
+                if (event_id > 0) {
+                    switch (processINotifyEventBatch(this, event_id, temp_name_list[0..temp_name_off])) {
+                        .err => |err| return .{ .err = err },
+                        .result => {},
+                    }
+                    event_id = 0;
+                    name_off = 0;
+                    temp_name_off = 0;
+                }
+            }
+
+            this.watch_events[event_id] = watchEventFromInotifyEvent(
                 event,
                 @intCast(std.mem.indexOfScalar(
                     EventListIndex,
                     eventlist_index,
                     event.watch_descriptor,
-                ) orelse continue),
+                ) orelse {
+                    events_processed += 1;
+                    continue;
+                }),
             );
-            temp_name_list[temp_name_off] = if (event.name_len > 0)
-                event.name()
-            else
-                null;
-            watchevents[watch_event_id].name_off = temp_name_off;
-            watchevents[watch_event_id].name_len = @as(u8, @intFromBool((event.name_len > 0)));
-            temp_name_off += @as(u8, @intFromBool((event.name_len > 0)));
 
-            watch_event_id += 1;
+            // Safely handle event names with bounds checking
+            if (event.name_len > 0 and temp_name_off < temp_name_list.len) {
+                temp_name_list[temp_name_off] = event.name();
+                this.watch_events[event_id].name_off = temp_name_off;
+                this.watch_events[event_id].name_len = 1;
+                temp_name_off += 1;
+            } else {
+                this.watch_events[event_id].name_off = temp_name_off;
+                this.watch_events[event_id].name_len = 0;
+            }
+
+            event_id += 1;
+            events_processed += 1;
         }
 
-        var all_events = watchevents[0..watch_event_id];
-        std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+        // Process any remaining events in the final batch
+        if (event_id > 0) {
+            switch (processINotifyEventBatch(this, event_id, temp_name_list[0..temp_name_off])) {
+                .err => |err| return .{ .err = err },
+                .result => {},
+            }
+        }
+        break;
+    }
 
-        var last_event_index: usize = 0;
-        var last_event_id: EventListIndex = std.math.maxInt(EventListIndex);
+    return .success;
+}
 
-        for (all_events, 0..) |_, i| {
-            if (all_events[i].name_len > 0) {
+fn processINotifyEventBatch(this: *bun.Watcher, event_count: usize, temp_name_list: []?[:0]u8) bun.sys.Maybe(void) {
+    if (event_count == 0) {
+        return .success;
+    }
+
+    var name_off: u8 = 0;
+    var all_events = this.watch_events[0..event_count];
+    std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+
+    var last_event_index: usize = 0;
+    var last_event_id: EventListIndex = std.math.maxInt(EventListIndex);
+
+    for (all_events, 0..) |_, i| {
+        if (all_events[i].name_len > 0) {
+            // Check bounds before accessing arrays
+            if (name_off < this.changed_filepaths.len and all_events[i].name_off < temp_name_list.len) {
                 this.changed_filepaths[name_off] = temp_name_list[all_events[i].name_off];
                 all_events[i].name_off = name_off;
                 name_off += 1;
             }
-
-            if (all_events[i].index == last_event_id) {
-                all_events[last_event_index].merge(all_events[i]);
-                continue;
-            }
-            last_event_index = i;
-            last_event_id = all_events[i].index;
         }
-        if (all_events.len == 0) return .{ .result = {} };
 
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        if (this.running) {
-            // all_events.len == 0 is checked above, so last_event_index + 1 is safe
-            this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off], this.watchlist);
-        } else {
-            break;
+        if (all_events[i].index == last_event_id) {
+            all_events[last_event_index].merge(all_events[i]);
+            continue;
         }
-        remaining_events -= slice.len;
+        last_event_index = i;
+        last_event_id = all_events[i].index;
+    }
+    if (all_events.len == 0) return .success;
+
+    this.mutex.lock();
+    defer this.mutex.unlock();
+    if (this.running) {
+        // all_events.len == 0 is checked above, so last_event_index + 1 is safe
+        this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off], this.watchlist);
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, index: WatchItemIndex) WatchEvent {
@@ -316,12 +371,14 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Futex = bun.Futex;
 const system = std.posix.system;
 const IN = std.os.linux.IN;
 
-const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Output = bun.Output;
+
 const WatchEvent = bun.Watcher.Event;
+const WatchItemIndex = bun.Watcher.WatchItemIndex;
+const max_count = bun.Watcher.max_count;

@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const ACL = @import("./acl.zig").ACL;
-const Storageclass = @import("./storage_class.zig").StorageClass;
-const JSC = bun.JSC;
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3SimpleRequest = @import("./simple_request.zig");
-const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
-const S3Error = @import("./error.zig").S3Error;
 // When we start the request we will buffer data until partSize is reached or the last chunk is received.
 // If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
@@ -118,11 +107,10 @@ pub const MultiPartUpload = struct {
     storage_class: ?Storageclass = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
-    vm: *JSC.VirtualMachine,
-    globalThis: *JSC.JSGlobalObject,
+    vm: *jsc.VirtualMachine,
+    globalThis: *jsc.JSGlobalObject,
 
-    buffered: std.ArrayListUnmanaged(u8) = .{},
-    offset: usize = 0,
+    buffered: bun.io.StreamBuffer = .{},
 
     path: []const u8,
     proxy: []const u8,
@@ -143,6 +131,7 @@ pub const MultiPartUpload = struct {
     } = .not_started,
 
     callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
+    onWritable: ?*const fn (task: *MultiPartUpload, ctx: *anyopaque, flushed: u64) void = null,
     callback_context: *anyopaque,
 
     const Self = @This();
@@ -150,7 +139,7 @@ pub const MultiPartUpload = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, true);
+    const log = bun.Output.scoped(.S3MultiPartUpload, .hidden);
 
     pub const UploadPart = struct {
         data: []const u8,
@@ -220,6 +209,7 @@ pub const MultiPartUpload = struct {
                 },
                 .etag => |etag| {
                     log("onPartResponse {} success", .{this.partNumber});
+                    const sent = this.data.len;
                     this.freeAllocatedSlice();
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
@@ -231,7 +221,7 @@ pub const MultiPartUpload = struct {
                     // mark as available
                     this.ctx.available.set(this.index);
                     // drain more
-                    this.ctx.drainEnqueuedParts();
+                    this.ctx.drainEnqueuedParts(sent);
                 },
             }
         }
@@ -309,7 +299,7 @@ pub const MultiPartUpload = struct {
                         .path = this.path,
                         .method = .PUT,
                         .proxy_url = this.proxyUrl(),
-                        .body = this.buffered.items,
+                        .body = this.buffered.slice(),
                         .content_type = this.content_type,
                         .acl = this.acl,
                         .storage_class = this.storage_class,
@@ -323,6 +313,10 @@ pub const MultiPartUpload = struct {
             },
             .success => {
                 log("singleSendUploadResponse success", .{});
+
+                if (this.onWritable) |callback| {
+                    callback(this, this.callback_context, this.buffered.size());
+                }
                 this.done();
             },
         }
@@ -374,7 +368,7 @@ pub const MultiPartUpload = struct {
     }
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
-    fn drainEnqueuedParts(this: *@This()) void {
+    fn drainEnqueuedParts(this: *@This(), flushed: u64) void {
         if (this.state == .finished or this.state == .singlefile_started) {
             return;
         }
@@ -390,13 +384,24 @@ pub const MultiPartUpload = struct {
             }
         }
         const partSize = this.partSizeInBytes();
-        if (this.ended or this.buffered.items.len >= partSize) {
+        if (this.ended or this.buffered.size() >= partSize) {
             this.processMultiPart(partSize);
         }
 
-        if (this.ended and this.available.mask == std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull().mask) {
-            // we are done and no more parts are running
-            this.done();
+        // empty queue
+        if (this.isQueueEmpty()) {
+            if (this.onWritable) |callback| {
+                callback(this, this.callback_context, flushed);
+            }
+            if (this.ended) {
+                // we are done and no more parts are running
+                this.done();
+            }
+        } else if (!this.hasBackpressure() and flushed > 0) {
+            // we have more space in the queue, we can drain more
+            if (this.onWritable) |callback| {
+                callback(this, this.callback_context, flushed);
+            }
         }
     }
     /// Finalize the upload with a failure
@@ -444,10 +449,10 @@ pub const MultiPartUpload = struct {
             this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
             // will deref and ends after commit
             this.commitMultiPartRequest();
-        } else {
+        } else if (this.state == .singlefile_started) {
+            this.state = .finished;
             // single file upload no need to commit
             this.callback(.{ .success = {} }, this.callback_context);
-            this.state = .finished;
             this.deref();
         }
     }
@@ -482,7 +487,7 @@ pub const MultiPartUpload = struct {
                 log("startMultiPartRequestResult {s} success id: {s}", .{ this.path, this.upload_id });
                 this.state = .multipart_completed;
                 // start draining the parts
-                this.drainEnqueuedParts();
+                this.drainEnqueuedParts(0);
             },
             // this is "unreachable" but we cover in case AWS returns 404
             .not_found => this.fail(.{
@@ -504,12 +509,13 @@ pub const MultiPartUpload = struct {
                     this.commitMultiPartRequest();
                     return;
                 }
+                this.state = .finished;
                 this.callback(.{ .failure = err }, this.callback_context);
                 this.deref();
             },
             .success => {
-                this.callback(.{ .success = {} }, this.callback_context);
                 this.state = .finished;
+                this.callback(.{ .success = {} }, this.callback_context);
                 this.deref();
             },
         }
@@ -588,25 +594,28 @@ pub const MultiPartUpload = struct {
 
     fn processMultiPart(this: *@This(), part_size: usize) void {
         log("processMultiPart {s} {d}", .{ this.path, part_size });
+        if (this.buffered.isEmpty() and this.isQueueEmpty() and this.ended) {
+            // no more data to send and we are done
+            this.done();
+            return;
+        }
         // need to split in multiple parts because of the size
-        var buffer = this.buffered.items[this.offset..];
-        defer if (this.offset >= this.buffered.items.len) {
-            this.buffered.clearRetainingCapacity();
-            this.offset = 0;
+        defer if (this.buffered.isEmpty()) {
+            this.buffered.reset();
         };
 
-        while (buffer.len > 0) {
-            const len = @min(part_size, buffer.len);
+        while (this.buffered.isNotEmpty()) {
+            const len = @min(part_size, this.buffered.size());
             if (len < part_size and !this.ended) {
                 log("processMultiPart {s} {d} slice too small", .{ this.path, len });
                 //slice is too small, we need to wait for more data
                 break;
             }
             // if is one big chunk we can pass ownership and avoid dupe
-            if (len == this.buffered.items.len) {
+            if (this.buffered.cursor == 0 and this.buffered.size() == len) {
                 // we need to know the allocated size to free the memory later
-                const allocated_size = this.buffered.capacity;
-                const slice = this.buffered.items;
+                const allocated_size = this.buffered.memoryCost();
+                const slice = this.buffered.slice();
 
                 // we dont care about the result because we are sending everything
                 if (this.enqueuePart(slice, allocated_size, false)) {
@@ -615,7 +624,6 @@ pub const MultiPartUpload = struct {
                     // queue is not full, we can clear the buffer part now owns the data
                     // if its full we will retry later
                     this.buffered = .{};
-                    this.offset = 0;
                     return;
                 }
                 log("processMultiPart {s} {d} queue full", .{ this.path, slice.len });
@@ -623,13 +631,12 @@ pub const MultiPartUpload = struct {
                 return;
             }
 
-            const slice = buffer[0..len];
-            buffer = buffer[len..];
+            const slice = this.buffered.slice()[0..len];
             // allocated size is the slice len because we dupe the buffer
             if (this.enqueuePart(slice, slice.len, true)) {
                 log("processMultiPart {s} {d} slice enqueued", .{ this.path, slice.len });
                 // queue is not full, we can set the offset
-                this.offset += len;
+                this.buffered.wrote(len);
             } else {
                 log("processMultiPart {s} {d} queue full", .{ this.path, slice.len });
                 // queue is full stop enqueue and retry later
@@ -642,7 +649,7 @@ pub const MultiPartUpload = struct {
         return this.proxy;
     }
     fn processBuffered(this: *@This(), part_size: usize) void {
-        if (this.ended and this.buffered.items.len < this.partSizeInBytes() and this.state == .not_started) {
+        if (this.ended and this.buffered.size() < this.partSizeInBytes() and this.state == .not_started) {
             log("processBuffered {s} singlefile_started", .{this.path});
             this.state = .singlefile_started;
             // we can do only 1 request
@@ -650,7 +657,7 @@ pub const MultiPartUpload = struct {
                 .path = this.path,
                 .method = .PUT,
                 .proxy_url = this.proxyUrl(),
-                .body = this.buffered.items,
+                .body = this.buffered.slice(),
                 .content_type = this.content_type,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
@@ -674,34 +681,88 @@ pub const MultiPartUpload = struct {
         }
     }
 
-    pub fn sendRequestData(this: *@This(), chunk: []const u8, is_last: bool) void {
-        if (this.ended) return;
+    pub fn hasBackpressure(this: *@This()) bool {
+        // if we dont have any space in the queue, we have backpressure
+        // since we are not allowed to send more data
+        const index = this.available.findFirstSet() orelse return true;
+        return index >= this.options.queueSize;
+    }
+
+    pub fn isQueueEmpty(this: *@This()) bool {
+        return this.available.mask == std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull().mask;
+    }
+
+    pub const WriteEncoding = enum {
+        bytes,
+        latin1,
+        utf16,
+    };
+
+    fn write(this: *@This(), chunk: []const u8, is_last: bool, comptime encoding: WriteEncoding) bun.OOM!bool {
+        if (this.ended) return true; // no backpressure since we are done
+        // we may call done inside processBuffered so we ensure that we keep a ref until we are done
+        this.ref();
+        defer this.deref();
         if (this.state == .wait_stream_check and chunk.len == 0 and is_last) {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
             this.ended = true;
-            if (this.buffered.items.len > 0) {
+            if (this.buffered.size() > 0) {
                 this.processBuffered(this.partSizeInBytes());
             }
-            return;
+            return !this.hasBackpressure();
         }
         if (is_last) {
             this.ended = true;
             if (chunk.len > 0) {
-                this.buffered.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+                switch (encoding) {
+                    .bytes => try this.buffered.write(chunk),
+                    .latin1 => try this.buffered.writeLatin1(chunk, true),
+                    .utf16 => try this.buffered.writeUTF16(@alignCast(std.mem.bytesAsSlice(u16, chunk))),
+                }
             }
             this.processBuffered(this.partSizeInBytes());
         } else {
             // still have more data and receive empty, nothing todo here
-            if (chunk.len == 0) return;
-            this.buffered.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+            if (chunk.len == 0) return this.hasBackpressure();
+            switch (encoding) {
+                .bytes => try this.buffered.write(chunk),
+                .latin1 => try this.buffered.writeLatin1(chunk, true),
+                .utf16 => try this.buffered.writeUTF16(@alignCast(std.mem.bytesAsSlice(u16, chunk))),
+            }
             const partSize = this.partSizeInBytes();
-            if (this.buffered.items.len >= partSize) {
+            if (this.buffered.size() >= partSize) {
                 // send the part we have enough data
                 this.processBuffered(partSize);
-                return;
             }
 
             // wait for more
         }
+        return !this.hasBackpressure();
+    }
+
+    pub fn writeLatin1(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+        return try this.write(chunk, is_last, .latin1);
+    }
+
+    pub fn writeUTF16(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+        return try this.write(chunk, is_last, .utf16);
+    }
+
+    pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+        return try this.write(chunk, is_last, .bytes);
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const S3Credentials = @import("./credentials.zig").S3Credentials;
+const S3Error = @import("./error.zig").S3Error;
+const Storageclass = @import("./storage_class.zig").StorageClass;
+
+const S3SimpleRequest = @import("./simple_request.zig");
+const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;

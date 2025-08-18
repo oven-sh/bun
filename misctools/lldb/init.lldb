@@ -15,5 +15,7 @@ type category enable zig.std
 
 command script import -c lldb_webkit.py
 
+command script import -c bun_pretty_printer.py
+
 command script delete btjs
 command alias btjs p {printf("gathering btjs trace...\n");printf("%s\n", (char*)dumpBtjsTrace())}

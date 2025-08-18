@@ -11,7 +11,7 @@ pub const EnvStr = packed struct(u128) {
     tag: Tag = .empty,
     len: usize = 0,
 
-    const debug = bun.Output.scoped(.EnvStr, true);
+    const debug = bun.Output.scoped(.EnvStr, .hidden);
 
     const Tag = enum(u16) {
         /// no value
@@ -39,6 +39,19 @@ pub const EnvStr = packed struct(u128) {
     fn toPtr(ptr_val: *const anyopaque) u48 {
         const num: [8]u8 = @bitCast(@intFromPtr(ptr_val));
         return @bitCast(num[0..6].*);
+    }
+
+    /// Same thing as `initRefCounted` except it duplicates thepassed string
+    pub fn dupeRefCounted(old_str: []const u8) EnvStr {
+        if (old_str.len == 0)
+            return .{ .tag = .empty, .ptr = 0, .len = 0 };
+
+        const str = bun.default_allocator.dupe(u8, old_str) catch bun.outOfMemory();
+        return .{
+            .ptr = toPtr(RefCountedStr.init(str)),
+            .len = str.len,
+            .tag = .refcounted,
+        };
     }
 
     pub fn initRefCounted(str: []const u8) EnvStr {
@@ -86,5 +99,6 @@ pub const EnvStr = packed struct(u128) {
 };
 
 const bun = @import("bun");
+
 const interpreter = @import("./interpreter.zig");
 const RefCountedStr = interpreter.RefCountedStr;

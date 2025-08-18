@@ -42,6 +42,7 @@ src/bun.js/bindings/DOMURL.cpp
 src/bun.js/bindings/DOMWrapperWorld.cpp
 src/bun.js/bindings/DoubleFormatter.cpp
 src/bun.js/bindings/EncodeURIComponent.cpp
+src/bun.js/bindings/EncodingTables.cpp
 src/bun.js/bindings/ErrorCode.cpp
 src/bun.js/bindings/ErrorStackFrame.cpp
 src/bun.js/bindings/ErrorStackTrace.cpp
@@ -100,6 +101,9 @@ src/bun.js/bindings/napi_finalizer.cpp
 src/bun.js/bindings/napi_handle_scope.cpp
 src/bun.js/bindings/napi_type_tag.cpp
 src/bun.js/bindings/napi.cpp
+src/bun.js/bindings/NapiClass.cpp
+src/bun.js/bindings/NapiRef.cpp
+src/bun.js/bindings/NapiWeakValue.cpp
 src/bun.js/bindings/ncrpyto_engine.cpp
 src/bun.js/bindings/ncrypto.cpp
 src/bun.js/bindings/node/crypto/CryptoDhJob.cpp
@@ -189,7 +193,16 @@ src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
+src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp
+src/bun.js/bindings/TextCodec.cpp
+src/bun.js/bindings/TextCodecCJK.cpp
+src/bun.js/bindings/TextCodecReplacement.cpp
+src/bun.js/bindings/TextCodecSingleByte.cpp
+src/bun.js/bindings/TextCodecUserDefined.cpp
+src/bun.js/bindings/TextCodecWrapper.cpp
+src/bun.js/bindings/TextEncoding.cpp
+src/bun.js/bindings/TextEncodingRegistry.cpp
 src/bun.js/bindings/Uint8Array.cpp
 src/bun.js/bindings/Undici.cpp
 src/bun.js/bindings/URLDecomposition.cpp
@@ -347,6 +360,7 @@ src/bun.js/bindings/webcore/JSTextEncoderStream.cpp
 src/bun.js/bindings/webcore/JSTransformStream.cpp
 src/bun.js/bindings/webcore/JSTransformStreamDefaultController.cpp
 src/bun.js/bindings/webcore/JSURLSearchParams.cpp
+src/bun.js/bindings/webcore/JSWasmStreamingCompiler.cpp
 src/bun.js/bindings/webcore/JSWebSocket.cpp
 src/bun.js/bindings/webcore/JSWorker.cpp
 src/bun.js/bindings/webcore/JSWorkerOptions.cpp

@@ -5,7 +5,17 @@ import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Load
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -139,6 +149,8 @@ export interface BundlerTestInput {
   outputPaths?: string[];
   /** Use --compile */
   compile?: boolean;
+  /** Use --compile-exec-argv to prepend arguments to standalone executable */
+  compileArgv?: string | string[];
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -420,6 +432,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    compileArgv,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -683,6 +696,9 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              compileArgv
+                ? `--compile-exec-argv=${Array.isArray(compileArgv) ? compileArgv.join(" ") : compileArgv}`
+                : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -826,10 +842,13 @@ function expectBundled(
       }
 
       const bundlerEnv = { ...bunEnv, ...env };
-      // remove undefined keys instead of passing "undefined"
+      // remove undefined keys instead of passing "undefined" and resolve {{root}}
       for (const key in bundlerEnv) {
-        if (bundlerEnv[key] === undefined) {
+        const value = bundlerEnv[key];
+        if (value === undefined) {
           delete bundlerEnv[key];
+        } else if (typeof value === "string") {
+          bundlerEnv[key] = value.replaceAll("{{root}}", root);
         }
       }
 
@@ -1594,11 +1613,6 @@ for (const [key, blob] of build.outputs) {
 
           // no idea why this logs. ¯\_(ツ)_/¯
           result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
-          // when the inspector runs (can be due to VSCode extension), there is
-          // a bug that in debug modes the console logs extra stuff
-          if (name === "stderr" && process.env.BUN_INSPECT_CONNECT_TO) {
-            result = result.replace(/(?:^|\n)\/[^\n]*: CONSOLE LOG[^\n]*(\n|$)/g, "$1").trim();
-          }
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1636,6 +1650,8 @@ for (const [key, blob] of build.outputs) {
         }
       }
     }
+
+    rmdirSync(root, { recursive: true });
 
     return testRef(id, opts);
   })();

@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
-
 pub const S3ListObjectsOptions = struct {
     continuation_token: ?[]const u8,
     delimiter: ?[]const u8,
@@ -14,11 +7,11 @@ pub const S3ListObjectsOptions = struct {
     prefix: ?[]const u8,
     start_after: ?[]const u8,
 
-    _continuation_token: ?JSC.ZigString.Slice,
-    _delimiter: ?JSC.ZigString.Slice,
-    _encoding_type: ?JSC.ZigString.Slice,
-    _prefix: ?JSC.ZigString.Slice,
-    _start_after: ?JSC.ZigString.Slice,
+    _continuation_token: ?jsc.ZigString.Slice,
+    _delimiter: ?jsc.ZigString.Slice,
+    _encoding_type: ?jsc.ZigString.Slice,
+    _prefix: ?jsc.ZigString.Slice,
+    _start_after: ?jsc.ZigString.Slice,
 
     pub fn deinit(this: *@This()) void {
         if (this._continuation_token) |slice| slice.deinit();
@@ -78,42 +71,42 @@ pub const S3ListObjectsV2Result = struct {
         const jsResult = JSValue.createEmptyObject(globalObject, 12);
 
         if (this.name) |name| {
-            jsResult.put(globalObject, JSC.ZigString.static("name"), bun.String.createUTF8ForJS(globalObject, name));
+            jsResult.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));
         }
 
         if (this.prefix) |prefix| {
-            jsResult.put(globalObject, JSC.ZigString.static("prefix"), bun.String.createUTF8ForJS(globalObject, prefix));
+            jsResult.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
         }
 
         if (this.delimiter) |delimiter| {
-            jsResult.put(globalObject, JSC.ZigString.static("delimiter"), bun.String.createUTF8ForJS(globalObject, delimiter));
+            jsResult.put(globalObject, jsc.ZigString.static("delimiter"), try bun.String.createUTF8ForJS(globalObject, delimiter));
         }
 
         if (this.start_after) |start_after| {
-            jsResult.put(globalObject, JSC.ZigString.static("startAfter"), bun.String.createUTF8ForJS(globalObject, start_after));
+            jsResult.put(globalObject, jsc.ZigString.static("startAfter"), try bun.String.createUTF8ForJS(globalObject, start_after));
         }
         if (this.encoding_type) |encoding_type| {
-            jsResult.put(globalObject, JSC.ZigString.static("encodingType"), bun.String.createUTF8ForJS(globalObject, encoding_type));
+            jsResult.put(globalObject, jsc.ZigString.static("encodingType"), try bun.String.createUTF8ForJS(globalObject, encoding_type));
         }
 
         if (this.continuation_token) |continuation_token| {
-            jsResult.put(globalObject, JSC.ZigString.static("continuationToken"), bun.String.createUTF8ForJS(globalObject, continuation_token));
+            jsResult.put(globalObject, jsc.ZigString.static("continuationToken"), try bun.String.createUTF8ForJS(globalObject, continuation_token));
         }
 
         if (this.next_continuation_token) |next_continuation_token| {
-            jsResult.put(globalObject, JSC.ZigString.static("nextContinuationToken"), bun.String.createUTF8ForJS(globalObject, next_continuation_token));
+            jsResult.put(globalObject, jsc.ZigString.static("nextContinuationToken"), try bun.String.createUTF8ForJS(globalObject, next_continuation_token));
         }
 
         if (this.is_truncated) |is_truncated| {
-            jsResult.put(globalObject, JSC.ZigString.static("isTruncated"), JSValue.jsBoolean(is_truncated));
+            jsResult.put(globalObject, jsc.ZigString.static("isTruncated"), JSValue.jsBoolean(is_truncated));
         }
 
         if (this.key_count) |key_count| {
-            jsResult.put(globalObject, JSC.ZigString.static("keyCount"), JSValue.jsNumber(key_count));
+            jsResult.put(globalObject, jsc.ZigString.static("keyCount"), JSValue.jsNumber(key_count));
         }
 
         if (this.max_keys) |max_keys| {
-            jsResult.put(globalObject, JSC.ZigString.static("maxKeys"), JSValue.jsNumber(max_keys));
+            jsResult.put(globalObject, jsc.ZigString.static("maxKeys"), JSValue.jsNumber(max_keys));
         }
 
         if (this.contents) |contents| {
@@ -121,49 +114,49 @@ pub const S3ListObjectsV2Result = struct {
 
             for (contents.items, 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 1);
-                objectInfo.put(globalObject, JSC.ZigString.static("key"), bun.String.createUTF8ForJS(globalObject, item.key));
+                objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
                 if (item.etag) |etag| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("eTag"), bun.String.createUTF8ForJS(globalObject, etag));
+                    objectInfo.put(globalObject, jsc.ZigString.static("eTag"), try bun.String.createUTF8ForJS(globalObject, etag));
                 }
 
                 if (item.checksum_algorithme) |checksum_algorithme| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("checksumAlgorithme"), bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
+                    objectInfo.put(globalObject, jsc.ZigString.static("checksumAlgorithme"), try bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
                 }
 
                 if (item.checksum_type) |checksum_type| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("checksumType"), bun.String.createUTF8ForJS(globalObject, checksum_type));
+                    objectInfo.put(globalObject, jsc.ZigString.static("checksumType"), try bun.String.createUTF8ForJS(globalObject, checksum_type));
                 }
 
                 if (item.last_modified) |last_modified| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("lastModified"), bun.String.createUTF8ForJS(globalObject, last_modified));
+                    objectInfo.put(globalObject, jsc.ZigString.static("lastModified"), try bun.String.createUTF8ForJS(globalObject, last_modified));
                 }
 
                 if (item.object_size) |object_size| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("size"), JSValue.jsNumber(object_size));
+                    objectInfo.put(globalObject, jsc.ZigString.static("size"), JSValue.jsNumber(object_size));
                 }
 
                 if (item.storage_class) |storage_class| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("storageClass"), bun.String.createUTF8ForJS(globalObject, storage_class));
+                    objectInfo.put(globalObject, jsc.ZigString.static("storageClass"), try bun.String.createUTF8ForJS(globalObject, storage_class));
                 }
 
                 if (item.owner) |owner| {
                     const jsOwner = JSValue.createEmptyObject(globalObject, 2);
                     if (owner.id) |id| {
-                        jsOwner.put(globalObject, JSC.ZigString.static("id"), bun.String.createUTF8ForJS(globalObject, id));
+                        jsOwner.put(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
                     }
 
                     if (owner.display_name) |display_name| {
-                        jsOwner.put(globalObject, JSC.ZigString.static("displayName"), bun.String.createUTF8ForJS(globalObject, display_name));
+                        jsOwner.put(globalObject, jsc.ZigString.static("displayName"), try bun.String.createUTF8ForJS(globalObject, display_name));
                     }
 
-                    objectInfo.put(globalObject, JSC.ZigString.static("owner"), jsOwner);
+                    objectInfo.put(globalObject, jsc.ZigString.static("owner"), jsOwner);
                 }
 
-                jsContents.putIndex(globalObject, @intCast(i), objectInfo);
+                try jsContents.putIndex(globalObject, @intCast(i), objectInfo);
             }
 
-            jsResult.put(globalObject, JSC.ZigString.static("contents"), jsContents);
+            jsResult.put(globalObject, jsc.ZigString.static("contents"), jsContents);
         }
 
         if (this.common_prefixes) |common_prefixes| {
@@ -171,11 +164,11 @@ pub const S3ListObjectsV2Result = struct {
 
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
-                jsPrefix.put(globalObject, JSC.ZigString.static("prefix"), bun.String.createUTF8ForJS(globalObject, prefix));
-                jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
+                jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
+                try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
 
-            jsResult.put(globalObject, JSC.ZigString.static("commonPrefixes"), jsCommonPrefixes);
+            jsResult.put(globalObject, jsc.ZigString.static("commonPrefixes"), jsCommonPrefixes);
         }
 
         return jsResult;
@@ -497,7 +490,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
     return result;
 }
 
-pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions: JSValue) !S3ListObjectsOptions {
+pub fn getListObjectsOptionsFromJS(globalThis: *jsc.JSGlobalObject, listOptions: JSValue) !S3ListObjectsOptions {
     var listObjectsOptions: S3ListObjectsOptions = .{
         .continuation_token = null,
         .delimiter = null,
@@ -585,3 +578,12 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     return listObjectsOptions;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

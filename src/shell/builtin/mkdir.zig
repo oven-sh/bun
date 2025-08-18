@@ -1,3 +1,5 @@
+const Mkdir = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -8,13 +10,13 @@ state: union(enum) {
         output_waiting: u16 = 0,
         output_done: u16 = 0,
         args: []const [*:0]const u8,
-        err: ?JSC.SystemError = null,
+        err: ?jsc.SystemError = null,
     },
     waiting_write_err,
     done,
 } = .idle,
 
-pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| err.deref();
 
     switch (this.state) {
@@ -25,13 +27,13 @@ pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
         .idle, .done => @panic("Invalid state"),
     }
 
-    this.next();
+    return this.next();
 }
-pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+
+pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
@@ -39,11 +41,10 @@ pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) May
     //     return .{ .err = e };
     // }
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn start(this: *Mkdir) Maybe(void) {
+pub fn start(this: *Mkdir) Yield {
     const filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |filepath_args| filepath_args,
         .err => |e| {
@@ -53,12 +54,10 @@ pub fn start(this: *Mkdir) Maybe(void) {
                 .unsupported => |unsupported| this.bltn().fmtErrorArena(.mkdir, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
-            _ = this.writeFailingError(buf, 1);
-            return Maybe(void).success;
+            return this.writeFailingError(buf, 1);
         },
     } orelse {
-        _ = this.writeFailingError(Builtin.Kind.mkdir.usageString(), 1);
-        return Maybe(void).success;
+        return this.writeFailingError(Builtin.Kind.mkdir.usageString(), 1);
     };
 
     this.state = .{
@@ -67,12 +66,10 @@ pub fn start(this: *Mkdir) Maybe(void) {
         },
     };
 
-    _ = this.next();
-
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn next(this: *Mkdir) void {
+pub fn next(this: *Mkdir) Yield {
     switch (this.state) {
         .idle => @panic("Invalid state"),
         .exec => {
@@ -82,10 +79,9 @@ pub fn next(this: *Mkdir) void {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     if (this.state.exec.err) |e| e.deref();
                     this.state = .done;
-                    this.bltn().done(exit_code);
-                    return;
+                    return this.bltn().done(exit_code);
                 }
-                return;
+                return .suspended;
             }
 
             exec.started = true;
@@ -96,9 +92,10 @@ pub fn next(this: *Mkdir) void {
                 var task = ShellMkdirTask.create(this, this.opts, dir_to_mk, this.bltn().parentCmd().base.shell.cwdZ());
                 task.schedule();
             }
+            return .suspended;
         },
-        .waiting_write_err => return,
-        .done => this.bltn().done(0),
+        .waiting_write_err => return .failed,
+        .done => return this.bltn().done(0),
     }
 }
 
@@ -116,10 +113,10 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
         this.state.exec.err = e;
-        output_task.start(error_string);
+        output_task.start(error_string).run();
         return;
     }
-    output_task.start(null);
+    output_task.start(null).run();
 }
 
 pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
@@ -131,38 +128,36 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 });
 
 const ShellMkdirOutputTaskVTable = struct {
-    pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) CoroutineResult {
+    pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) ?Yield {
         if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
-            return .yield;
+            return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
-        return .cont;
+        return null;
     }
 
     pub fn onWriteErr(this: *Mkdir) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) CoroutineResult {
+    pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) ?Yield {
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
-            this.bltn().stdout.enqueue(childptr, slice, safeguard);
-            return .yield;
+            return this.bltn().stdout.enqueue(childptr, slice, safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, output.slice());
-        return .cont;
+        return null;
     }
 
     pub fn onWriteOut(this: *Mkdir) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn onDone(this: *Mkdir) void {
-        this.next();
+    pub fn onDone(this: *Mkdir) Yield {
+        return this.next();
     }
 };
 
@@ -178,10 +173,10 @@ pub const ShellMkdirTask = struct {
     cwd_path: [:0]const u8,
     created_directories: ArrayList(u8),
 
-    err: ?JSC.SystemError = null,
-    task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    err: ?jsc.SystemError = null,
+    task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
 
     pub fn deinit(this: *ShellMkdirTask) void {
         this.created_directories.deinit();
@@ -215,7 +210,7 @@ pub const ShellMkdirTask = struct {
             .filepath = filepath,
             .created_directories = ArrayList(u8).init(bun.default_allocator),
             .event_loop = evtloop,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         };
         return task;
     }
@@ -234,7 +229,7 @@ pub const ShellMkdirTask = struct {
         this.runFromMainThread();
     }
 
-    fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+    fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellMkdirTask = @fieldParentPtr("task", task);
         debug("{} runFromThreadPool", .{this});
 
@@ -249,11 +244,11 @@ pub const ShellMkdirTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
-        var node_fs = JSC.Node.fs.NodeFS{};
+        var node_fs = jsc.Node.fs.NodeFS{};
         // Recursive
         if (this.opts.parents) {
-            const args = JSC.Node.fs.Arguments.Mkdir{
-                .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+            const args = jsc.Node.fs.Arguments.Mkdir{
+                .path = jsc.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = true,
                 .always_return_none = true,
             };
@@ -268,8 +263,8 @@ pub const ShellMkdirTask = struct {
                 },
             }
         } else {
-            const args = JSC.Node.fs.Arguments.Mkdir{
-                .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+            const args = jsc.Node.fs.Arguments.Mkdir{
+                .path = jsc.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = false,
                 .always_return_none = true,
             };
@@ -377,26 +372,30 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellMkdir, true);
-const bun = @import("bun");
-const shell = bun.shell;
+const debug = bun.Output.scoped(.ShellMkdir, .hidden);
+
+const log = debug;
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
 
-const Mkdir = @This();
-const log = debug;
-const OutputTask = interpreter.OutputTask;
-const CoroutineResult = interpreter.CoroutineResult;
-const OutputSrc = interpreter.OutputSrc;
-const WorkPool = bun.JSC.WorkPool;
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
 const ResolvePath = bun.path;
+
+const jsc = bun.jsc;
+const WorkPool = bun.jsc.WorkPool;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = bun.shell.Yield;
+
+const std = @import("std");
 const ArrayList = std.ArrayList;

@@ -1,6 +1,13 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { join } from "path";
+
+const normalizeBunSnapshot = (str: string) => {
+  str = normalizeBunSnapshot_(str);
+  str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
+  return str;
+};
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -516,21 +523,57 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
     });
     console.log(filedir);
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: filedir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const pkgjsonWithPatch = {
-      "name": "bun-patch-test",
-      "module": "index.ts",
-      "type": "module",
-      "patchedDependencies": {
-        "is-even@1.0.0": "patches/is-even@1.0.0.patch",
-      },
-      "dependencies": {
-        "is-even": "1.0.0",
-      },
-    };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`"Saved lockfile"`);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
 
-    await $`echo ${JSON.stringify(pkgjsonWithPatch)} > package.json`.cwd(filedir).env(bunEnv);
-    await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+        + is-even@1.0.0
+
+        5 packages installed"
+      `);
+    }
+    {
+      const pkgjsonWithPatch = {
+        "name": "bun-patch-test",
+        "module": "index.ts",
+        "type": "module",
+        "patchedDependencies": {
+          "is-even@1.0.0": "patches/is-even@1.0.0.patch",
+        },
+        "dependencies": {
+          "is-even": "1.0.0",
+        },
+      };
+
+      await Bun.write(join(filedir, "package.json"), JSON.stringify(pkgjsonWithPatch));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: filedir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        error: failed applying patch file: ENOENT: No such file or directory (fstatat())
+        error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
+      `);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    }
   });
 });

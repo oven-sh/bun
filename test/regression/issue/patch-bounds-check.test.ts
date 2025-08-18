@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+
+const normalizeBunSnapshot = (str: string) => {
+  str = normalizeBunSnapshot_(str);
+  str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
+  return str;
+};
 
 test("patch application should handle out-of-bounds line numbers gracefully", async () => {
   const dir = tempDirWithFiles("patch-bounds-test", {

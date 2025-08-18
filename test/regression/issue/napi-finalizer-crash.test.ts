@@ -1,7 +1,7 @@
-import { test, expect, beforeAll } from "bun:test";
+import { spawnSync } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { spawnSync } from "bun";
 
 // This test reproduces the NAPI finalizer crash that was happening with node-sqlite3
 // The crash was caused by iterator invalidation when finalizers triggered GC operations
@@ -15,9 +15,9 @@ test("NAPI finalizer iterator invalidation crash fix", async () => {
     cwd: join(__dirname, "../..", "napi", "napi-app"),
     stderr: "pipe",
     stdout: "pipe",
-    env: bunEnv
+    env: bunEnv,
   });
-  
+
   if (!buildResult.success) {
     console.error("Failed to build NAPI addons:", buildResult.stderr?.toString());
     throw new Error("NAPI addon build failed");
@@ -59,7 +59,7 @@ console.log("Current finalize count:", addon.getFinalizeCount());
 // After the fix, it should complete successfully
 console.log("Triggering exit with finalizer cleanup...");
 addon.forceCleanupAndExit();
-`
+`,
   });
 
   // Run the test - this would crash before the fix
@@ -68,16 +68,13 @@ addon.forceCleanupAndExit();
     cwd: testDir,
     env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
     stdout: "pipe",
-    stderr: "pipe"
+    stderr: "pipe",
   });
 
-  const [stdout, stderr] = await Promise.all([
-    testResult.stdout.text(),
-    testResult.stderr.text()
-  ]);
+  const [stdout, stderr] = await Promise.all([testResult.stdout.text(), testResult.stderr.text()]);
 
   await testResult.exited;
-  
+
   console.log("Test stdout:", stdout);
   if (stderr) console.log("Test stderr:", stderr);
 
@@ -85,10 +82,10 @@ addon.forceCleanupAndExit();
   expect(testResult.exitCode).toBe(0);
   expect(stdout).toContain("Creating objects with problematic finalizers");
   expect(stdout).toContain("Triggering exit with finalizer cleanup");
-  
+
   // Should not contain crash indicators
   expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("SIGSEGV"); 
+  expect(stderr).not.toContain("SIGSEGV");
   expect(stderr).not.toContain("signal 11");
   expect(stderr).not.toContain("crashed");
 

@@ -250,9 +250,10 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     test("messages are received in order", async () => {
       const TEST_MESSAGE_COUNT = 1024;
       const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
 
       var receivedMessages: string[] = [];
-      await redis.subscribe(testChannel, (message) => {
+      await subscriber.subscribe(testChannel, (message) => {
         receivedMessages.push(message);
       });
 
@@ -268,6 +269,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(receivedMessages.length).toBe(sentMessages.length);
       expect(receivedMessages).toEqual(sentMessages);
+
+      await subscriber.unsubscribe(testChannel);
     });
 
     //test("subscribing to multiple channels receives messages", async () => {

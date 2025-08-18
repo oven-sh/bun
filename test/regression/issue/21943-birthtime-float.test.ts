@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { nodeExe } from "harness";
-import { mkdirSync, promises, rmSync, stat, statSync as nodeStatSync } from "node:fs";
+import { mkdirSync, statSync as nodeStatSync, promises, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 

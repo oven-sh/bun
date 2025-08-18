@@ -138,7 +138,7 @@ export interface PostgresDotZig {
   ) => $ZigGeneratedClasses.PostgresSQLQuery;
 }
 
-enum SQLCommand {
+const enum SQLCommand {
   insert = 0,
   update = 1,
   updateSet = 2,
@@ -263,13 +263,13 @@ function detectCommand(query: string): SQLCommand {
   return command;
 }
 
-enum PooledConnectionState {
+const enum PooledConnectionState {
   pending = 0,
   connected = 1,
   closed = 2,
 }
 
-enum PooledConnectionFlags {
+const enum PooledConnectionFlags {
   /// canBeConnected is used to indicate that at least one time we were able to connect to the database
   canBeConnected = 1 << 0,
   /// reserved is used to indicate that the connection is currently reserved

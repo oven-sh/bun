@@ -39,7 +39,7 @@ function decodeIfValid(value: string | null): string | null {
   return null;
 }
 
-enum SSLMode {
+const enum SSLMode {
   disable = 0,
   prefer = 1,
   require = 2,

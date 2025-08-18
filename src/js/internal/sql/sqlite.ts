@@ -19,7 +19,7 @@ function getSQLiteModule() {
   return lazySQLiteModule;
 }
 
-enum SQLCommand {
+const enum SQLCommand {
   insert = 0,
   update = 1,
   updateSet = 2,

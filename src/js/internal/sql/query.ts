@@ -68,7 +68,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     values: any[],
     flags: number,
     handler,
-    adapter: DatabaseAdapter<any, Handle>,
+    adapter: DatabaseAdapter<any, any, Handle>,
   ) {
     let resolve_: (value: T) => void, reject_: (reason?: any) => void;
 
@@ -285,13 +285,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
-enum SQLQueryResultMode {
+const enum SQLQueryResultMode {
   objects = 0,
   values = 1,
   raw = 2,
 }
 
-enum SQLQueryFlags {
+const enum SQLQueryFlags {
   none = 0,
   allowUnsafeTransaction = 1 << 0,
   unsafe = 1 << 1,
@@ -300,7 +300,7 @@ enum SQLQueryFlags {
   notTagged = 1 << 4,
 }
 
-enum SQLQueryStatus {
+const enum SQLQueryStatus {
   none = 0,
   active = 1 << 1,
   cancelled = 1 << 2,

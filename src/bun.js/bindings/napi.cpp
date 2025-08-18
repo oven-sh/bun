@@ -1266,7 +1266,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
 
     // First check if the environment has a pending exception
     *result = env->hasPendingException();
-    
+
     // If no exception is pending in the environment, check the VM's exception state
     // but only if it's safe to access the VM (not during cleanup)
     if (!*result && !env->isFinishingFinalizers()) {
@@ -1278,7 +1278,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
             *result = scope.exception() != nullptr;
         }
     }
-    
+
     return napi_clear_last_error(env);
 }
 

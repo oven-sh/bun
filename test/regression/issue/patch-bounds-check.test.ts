@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 test("patch application should handle out-of-bounds line numbers gracefully", async () => {
   const dir = tempDirWithFiles("patch-bounds-test", {
@@ -26,18 +26,20 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
     cmd: [bunExe(), "install"],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should fail gracefully with proper error message, not crash
-  expect(exitCode).not.toBe(0);
-  expect(stderr).toContain("failed applying patch file");
-
-  // Should not crash with panic or segfault
-  expect(stderr).not.toContain("panic:");
-  expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("Trace/breakpoint trap");
+  expect(exitCode).toBe(1);
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    error: failed applying patch file: EINVAL: Invalid argument (fstatat())
+    error: failed to apply patchfile (patches/lodash+4.17.21.patch)"
+  `);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
 });
 
 test("patch application should handle deletion beyond file bounds", async () => {
@@ -66,15 +68,20 @@ test("patch application should handle deletion beyond file bounds", async () => 
     cmd: [bunExe(), "install"],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should fail gracefully, not crash
-  expect(exitCode).not.toBe(0);
-  expect(stderr).toContain("failed applying patch file");
-  expect(stderr).not.toContain("panic:");
-  expect(stderr).not.toContain("Segmentation fault");
+  expect(exitCode).toBe(1);
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    error: failed to parse patchfile: hunk_header_integrity_check_failed
+    error: failed to apply patchfile (patches/lodash+4.17.21.patch)"
+  `);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
 });
 
 test("patch application should work correctly with valid patches", async () => {
@@ -100,16 +107,31 @@ test("patch application should work correctly with valid patches", async () => {
     cmd: [bunExe(), "install"],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Valid patch should succeed
   expect(exitCode).toBe(0);
-  expect(stderr).not.toContain("failed applying patch file");
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [3]
+    Saved lockfile"
+  `);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun install <version> (<revision>)
+
+    + lodash@4.17.21
+
+    1 package installed"
+  `);
 
   // Verify the patch was applied
   const patchedFile = await Bun.file(`${dir}/node_modules/lodash/index.js`).text();
-  expect(patchedFile).toContain("// Valid patch comment");
-  expect(patchedFile).toContain("module.exports = require('./lodash');");
+  expect(patchedFile).toMatchInlineSnapshot(`
+    "// Valid patch comment
+    module.exports = require('./lodash');"
+  `);
 });

@@ -548,9 +548,6 @@ describe("napi", () => {
     // Get initial count
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
-
-    // Test passes if we reach here without crashing
-    expect(true).toBe(true);
   });
 });
 

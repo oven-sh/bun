@@ -88,6 +88,7 @@ for (let key in bunEnv) {
   }
 }
 
+delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
 if (isDebug) {

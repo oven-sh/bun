@@ -3371,12 +3371,24 @@ pub fn disableLinger(fd: bun.FileDescriptor) void {
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        @panic("TODO: Implement `pipe()` for Windows");
+        const uv = bun.windows.libuv;
+        var out: [2]bun.FileDescriptor = undefined;
+        var fds: [2]uv.uv_file = undefined;
+        if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
+            const err = Error.fromCode(e, .pipe);
+            log("pipe() = {}", .{err});
+            return .{ .err = err };
+        }
+        out[0] = .fromUV(fds[0]);
+        out[1] = .fromUV(fds[1]);
+        log("pipe() = [{}, {}]", .{ out[0], out[1] });
+        return .{ .result = out };
     }
 
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
+        log("pipe() = {}", .{err});
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });

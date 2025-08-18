@@ -569,6 +569,7 @@ pub fn migrateYarnLockfile(
 
     this.initEmpty(allocator);
     Install.initializeStore();
+    bun.analytics.Features.yarn_migration += 1;
 
     var string_buf = this.stringBuf();
 

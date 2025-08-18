@@ -16,37 +16,133 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
-#include <list>
 #include <optional>
 #include <unordered_set>
+#include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
+static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
+
 namespace Napi {
 
 static constexpr int DEFAULT_NAPI_VERSION = 10;
 
-struct AsyncCleanupHook {
-    napi_async_cleanup_hook function = nullptr;
-    void* data = nullptr;
-    napi_async_cleanup_hook_handle handle = nullptr;
+struct CleanupHook {
+    void* data;
+    size_t insertionCounter;
+
+    CleanupHook(void* data, size_t insertionCounter)
+        : data(data)
+        , insertionCounter(insertionCounter)
+    {
+    }
+
+    size_t hash() const
+    {
+        return std::hash<void*> {}(data);
+    }
 };
+
+struct SyncCleanupHook : CleanupHook {
+    void (*function)(void*);
+
+    SyncCleanupHook(void (*function)(void*), void* data, size_t insertionCounter)
+        : CleanupHook(data, insertionCounter)
+        , function(function)
+    {
+    }
+
+    bool operator==(const SyncCleanupHook& other) const
+    {
+        return this == &other || (function == other.function && data == other.data);
+    }
+};
+
+struct AsyncCleanupHook : CleanupHook {
+    napi_async_cleanup_hook function;
+    napi_async_cleanup_hook_handle handle = nullptr;
+
+    AsyncCleanupHook(napi_async_cleanup_hook function, napi_async_cleanup_hook_handle handle, void* data, size_t insertionCounter)
+        : CleanupHook(data, insertionCounter)
+        , function(function)
+        , handle(handle)
+    {
+    }
+
+    bool operator==(const AsyncCleanupHook& other) const
+    {
+        if (this == &other || (function == other.function && data == other.data)) {
+            if (handle && other.handle) {
+                return equal(handle, other.handle);
+            }
+
+            return !handle && !other.handle;
+        }
+
+        return false;
+    }
+};
+
+struct EitherCleanupHook : std::variant<SyncCleanupHook, AsyncCleanupHook> {
+    template<typename Self>
+    auto& get(this Self& self)
+    {
+        using Hook = MatchConst<Self, CleanupHook>::type;
+
+        if (auto* sync = std::get_if<SyncCleanupHook>(&self)) {
+            return static_cast<Hook&>(*sync);
+        }
+
+        return static_cast<Hook&>(std::get<AsyncCleanupHook>(self));
+    }
+
+    struct Hash {
+        static size_t operator()(const EitherCleanupHook& hook)
+        {
+            return hook.get().hash();
+        }
+    };
+
+private:
+    template<typename T, typename U>
+    struct MatchConst {
+        using type = U;
+    };
+
+    template<typename T, typename U>
+    struct MatchConst<const T, U> {
+        using type = const U;
+    };
+};
+
+using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
 void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
-    std::list<Napi::AsyncCleanupHook>::iterator iter;
+    Napi::HookSet::iterator iter;
 
     napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
         : env(env)
         , iter(iter)
     {
     }
+
+    bool operator==(const napi_async_cleanup_hook_handle__& other) const
+    {
+        return this == &other || (env == other.env && iter == other.iter);
+    }
 };
+
+static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_handle two)
+{
+    return one == two || *one == *two;
+}
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
@@ -89,18 +185,7 @@ public:
     void cleanup()
     {
         while (!m_cleanupHooks.empty()) {
-            auto [function, data] = m_cleanupHooks.back();
-            m_cleanupHooks.pop_back();
-            ASSERT(function != nullptr);
-            function(data);
-        }
-
-        while (!m_asyncCleanupHooks.empty()) {
-            auto [function, data, handle] = m_asyncCleanupHooks.back();
-            ASSERT(function != nullptr);
-            function(handle, data);
-            delete handle;
-            m_asyncCleanupHooks.pop_back();
+            drain();
         }
 
         m_isFinishingFinalizers = true;
@@ -138,49 +223,72 @@ public:
     }
 
     /// Will abort the process if a duplicate entry would be added.
+    /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
     {
-        for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
+        // Always check for duplicates like Node.js CHECK_EQ
+        // See: node/src/cleanup_queue-inl.h:24 (CHECK_EQ runs in all builds)
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
+                NAPI_RELEASE_ASSERT(function != sync->function || data != sync->data, "Attempted to add a duplicate NAPI environment cleanup hook");
+            }
         }
 
-        m_cleanupHooks.emplace_back(function, data);
+        m_cleanupHooks.emplace(Napi::SyncCleanupHook(function, data, ++m_cleanupHookCounter));
     }
 
     void removeCleanupHook(void (*function)(void*), void* data)
     {
         for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
-            if (iter->first == function && iter->second == data) {
-                m_cleanupHooks.erase(iter);
-                return;
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&*iter)) {
+                if (sync->function == function && sync->data == data) {
+                    m_cleanupHooks.erase(iter);
+                    return;
+                }
             }
         }
 
-        NAPI_PERISH("Attempted to remove a NAPI environment cleanup hook that had never been added");
+        // Node.js silently ignores removal of non-existent hooks
+        // See: node/src/cleanup_queue-inl.h:27-30
     }
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
-        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
-        }
-
-        auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
-        iter->handle = new napi_async_cleanup_hook_handle__(this, iter);
-        return iter->handle;
-    }
-
-    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
-    {
-        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            if (existing_handle == handle) {
-                m_asyncCleanupHooks.erase(handle->iter);
-                delete handle;
-                return;
+        // Always check for duplicates like Node.js CHECK_EQ
+        // Node.js async cleanup hooks also use the same CleanupQueue with CHECK_EQ
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+                NAPI_RELEASE_ASSERT(function != async->function || data != async->data, "Attempted to add a duplicate async NAPI environment cleanup hook");
             }
         }
 
-        NAPI_PERISH("Attempted to remove an async NAPI environment cleanup hook that had never been added");
+        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this, m_cleanupHooks.end());
+
+        auto [iter, inserted] = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter));
+        NAPI_RELEASE_ASSERT(inserted, "Attempted to add a duplicate async NAPI environment cleanup hook");
+        handle->iter = iter;
+        return handle.release();
+    }
+
+    bool removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    {
+        if (handle == nullptr) {
+            return false; // Invalid handle
+        }
+
+        for (const auto& hook : m_cleanupHooks) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+                if (async->handle == handle) {
+                    m_cleanupHooks.erase(handle->iter);
+                    delete handle;
+                    return true;
+                }
+            }
+        }
+
+        // Node.js silently ignores removal of non-existent handles
+        // See: node/src/node_api.cc:849-855
+        return false;
     }
 
     bool inGC() const
@@ -347,9 +455,43 @@ private:
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
-    std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
-    std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
+    Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
+    size_t m_cleanupHookCounter = 0;
+
+    // Returns a vector of hooks in reverse order of insertion.
+    std::vector<Napi::EitherCleanupHook> getHooks() const
+    {
+        std::vector<Napi::EitherCleanupHook> hooks(m_cleanupHooks.begin(), m_cleanupHooks.end());
+        std::sort(hooks.begin(), hooks.end(), [](const Napi::EitherCleanupHook& left, const Napi::EitherCleanupHook& right) {
+            return left.get().insertionCounter > right.get().insertionCounter;
+        });
+        return hooks;
+    }
+
+    void drain()
+    {
+        std::vector<Napi::EitherCleanupHook> hooks = getHooks();
+
+        for (const Napi::EitherCleanupHook& hook : hooks) {
+            if (auto set_iter = m_cleanupHooks.find(hook); set_iter != m_cleanupHooks.end()) {
+                m_cleanupHooks.erase(set_iter);
+            } else {
+                // Already removed during removal of a different cleanup hook
+                continue;
+            }
+
+            if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
+                ASSERT(sync->function != nullptr);
+                sync->function(sync->data);
+            } else {
+                auto& async = std::get<Napi::AsyncCleanupHook>(hook);
+                ASSERT(async.function != nullptr);
+                async.function(async.handle, async.data);
+                delete async.handle;
+            }
+        }
+    }
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);

@@ -56,7 +56,6 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
-const SymbolReplace = Symbol.replace;
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
@@ -71,7 +70,6 @@ const ArrayPrototypeReverse = Array.prototype.reverse;
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeCodePointAt = String.prototype.codePointAt;
@@ -130,23 +128,14 @@ var getStringWidth = function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str);
 };
 
-// Regex used for ansi escape code splitting
-// Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
-// License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
-// Matches all ansi escape code sequences in a string
-var ansiPattern =
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-  "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
-  "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
-  "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
-var ansi = new RegExp(ansiPattern, "g");
+const stripANSI = Bun.stripANSI;
 
 /**
  * Remove all VT control characters. Use to estimate displayed string width.
  */
 function stripVTControlCharacters(str) {
   validateString(str, "str");
-  return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
+  return stripANSI(str);
 }
 
 // Constants

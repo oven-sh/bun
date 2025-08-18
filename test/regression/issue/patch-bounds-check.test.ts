@@ -4,6 +4,7 @@ import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirW
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
+  str = str.replaceAll("fstatat()", "stat()");
   return str;
 };
 
@@ -42,7 +43,7 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "Resolving dependencies
-    error: failed applying patch file: EINVAL: Invalid argument (fstatat())
+    error: failed applying patch file: EINVAL: Invalid argument (stat())
     error: failed to apply patchfile (patches/lodash+4.17.21.patch)"
   `);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
@@ -123,7 +124,6 @@ test("patch application should work correctly with valid patches", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "Resolving dependencies
-    Resolved, downloaded and extracted [3]
     Saved lockfile"
   `);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`

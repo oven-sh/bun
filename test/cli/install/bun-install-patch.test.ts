@@ -6,6 +6,7 @@ import { join } from "path";
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
+  str = str.replaceAll("fstatat()", "stat()");
   return str;
 };
 
@@ -570,7 +571,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(exitCode).toBe(1);
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
         "Resolving dependencies
-        error: failed applying patch file: ENOENT: No such file or directory (fstatat())
+        error: failed applying patch file: ENOENT: No such file or directory (stat())
         error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
       `);
       expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);

@@ -28,7 +28,7 @@ jobs:
     env:
       IS_SANDBOX: 1
     container:
-      image: claude-bun:latest
+      image: localhost:5000/claude-bun:latest
       options: --privileged
     permissions:
       contents: read

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
 
@@ -188,6 +189,10 @@ public:
             drain();
         }
 
+        // FIX: Defer GC during entire finalizer cleanup to prevent iterator invalidation
+        // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated
+        JSC::DeferGCForAWhile deferGC(m_vm);
+        
         m_isFinishingFinalizers = true;
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
             Bun::NapiHandleScope handle_scope(m_globalObject);

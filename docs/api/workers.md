@@ -1,5 +1,5 @@
 {% callout %}
-**🚧** — The `Worker` API is still experimental and should not be considered ready for production.
+**🚧** — The `Worker` API is still experimental (particularly for terminating workers). We are actively working on improving this.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.

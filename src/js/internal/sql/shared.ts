@@ -324,7 +324,9 @@ function parseOptions(
     try {
       url = new URL(stringOrUrl);
     } catch (e) {
-      throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`);
+      throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`, {
+        cause: e,
+      });
     }
   }
   query = "";

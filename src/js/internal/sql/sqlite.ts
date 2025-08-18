@@ -6,7 +6,6 @@ const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryResultMode,
-  SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
@@ -532,12 +531,13 @@ export class SQLiteAdapter
     }
   }
 
-  release(connection: BunSQLiteModule.Database, connectingEvent?: boolean) {
-    // SQLite doesn't need to release connections since we don't pool
-    // No-op for SQLite
+  release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {
+    // SQLite doesn't need to release connections since we don't pool. We
+    // shouldn't throw or prevent the user facing API from releasing connections
+    // so we can just no-op here
   }
 
-  async close(options?: { timeout?: number }) {
+  async close(_options?: { timeout?: number }) {
     if (this._closed) {
       return;
     }
@@ -602,7 +602,7 @@ export class SQLiteAdapter
     };
   }
 
-  getDistributedTransactionCommands(name: string): import("./shared").TransactionCommands | null {
+  getDistributedTransactionCommands(_name: string): import("./shared").TransactionCommands | null {
     // SQLite doesn't support distributed transactions
     return null;
   }
@@ -624,18 +624,18 @@ export class SQLiteAdapter
     return { valid: true };
   }
 
-  validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
+  validateDistributedTransactionName(): { valid: boolean; error?: string } {
     return {
       valid: false,
       error: "SQLite doesn't support distributed transactions.",
     };
   }
 
-  getCommitDistributedSQL(name: string): string {
+  getCommitDistributedSQL(): string {
     throw new Error("SQLite doesn't support distributed transactions.");
   }
 
-  getRollbackDistributedSQL(name: string): string {
+  getRollbackDistributedSQL(): string {
     throw new Error("SQLite doesn't support distributed transactions.");
   }
 }

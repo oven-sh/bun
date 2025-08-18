@@ -568,7 +568,7 @@ export class PostgresAdapter
     };
   }
 
-  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
     // PostgreSQL accepts any transaction options
     return { valid: true };
   }

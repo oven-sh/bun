@@ -5,7 +5,7 @@ import type { SQLHelper } from "internal/sql/shared";
 const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, parseOptions, SQLResultArray } = require("internal/sql/shared");
+const { SQLHelper, parseOptions } = require("internal/sql/shared");
 const { connectionClosedError } = require("internal/sql/utils");
 const { SQLError, PostgresError, SQLiteError } = require("internal/sql/errors");
 

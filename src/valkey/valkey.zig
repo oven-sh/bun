@@ -624,13 +624,20 @@ pub const ValkeyClient = struct {
                 this.fail(err, protocol.RedisError.InvalidResponse);
             },
             .Push => |push| {
-                if (!std.mem.eql(u8, push.kind, "subscribe")) {
-                    this.fail("Push message is not a subscription message.", protocol.RedisError.InvalidResponseType);
+                if (std.mem.eql(u8, push.kind, "subscribe")) {
+                    this.onValkeySubscribe(value);
+                    promise_ptr.resolve(globalThis, value);
                     return;
                 }
 
-                this.onValkeySubscribe(value);
-                promise_ptr.resolve(globalThis, value);
+                if (std.mem.eql(u8, push.kind, "unsubscribe")) {
+                    this.onValkeyUnsubscribe(value);
+                    promise_ptr.resolve(globalThis, value);
+                    return;
+                }
+
+                this.fail("Push message is not a subscription message.", protocol.RedisError.InvalidResponseType);
+                return;
             },
             else => {
                 // This may be a regular command response. Let's pass it down
@@ -1037,6 +1044,10 @@ pub const ValkeyClient = struct {
 
     pub fn onValkeySubscribe(this: *ValkeyClient, value: *protocol.RESPValue) void {
         this.parent().onValkeySubscribe(value);
+    }
+
+    pub fn onValkeyUnsubscribe(this: *ValkeyClient, value: *protocol.RESPValue) void {
+        this.parent().onValkeyUnsubscribe(value);
     }
 
     pub fn onValkeyMessage(this: *ValkeyClient, value: []protocol.RESPValue) void {

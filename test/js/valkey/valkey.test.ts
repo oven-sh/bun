@@ -194,10 +194,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const redis = await connectedRedis();
 
       await redis.subscribe(testChannel, () => {});
-      console.log("Subscribed to the channel.")
 
       expect(await redis.publish(testChannel, testMessage)).toBe(1);
-      console.log("Published message to the channel.");
 
       // Clean up subscription to avoid affecting other tests
       await redis.unsubscribe(testChannel);
@@ -313,42 +311,46 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await subscriber.unsubscribe(channels);
     });
 
-    //test("unsubscribing from specific channels while remaining subscribed to others", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel1 = "channel-1";
-    //  const channel2 = "channel-2";
-    //  const channel3 = "channel-3";
+    test("unsubscribing from specific channels while remaining subscribed to others", async () => {
+      const channel1 = "channel-1";
+      const channel2 = "channel-2";
+      const channel3 = "channel-3";
 
-    //  let receivedMessages: { [channel: string]: string[] } = {};
+      const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
 
-    //  // Subscribe to three channels
-    //  await redis.subscribe([channel1, channel2, channel3], (message, channel) => {
-    //    receivedMessages[channel] = receivedMessages[channel] || [];
-    //    receivedMessages[channel].push(message);
-    //  });
+      let receivedMessages: { [channel: string]: string[] } = {};
 
-    //  // Send initial messages to all channels
-    //  expect(await redis.publish(channel1, "msg1-before")).toBe(1);
-    //  expect(await redis.publish(channel2, "msg2-before")).toBe(1);
-    //  expect(await redis.publish(channel3, "msg3-before")).toBe(1);
+      // Subscribe to three channels
+      await subscriber.subscribe([channel1, channel2, channel3], (message, channel) => {
+        receivedMessages[channel] = receivedMessages[channel] || [];
+        receivedMessages[channel].push(message);
+      });
 
-    //  await sleep(flushTimeoutMs);
+      // Send initial messages to all channels
+      expect(await redis.publish(channel1, "msg1-before")).toBe(1);
+      expect(await redis.publish(channel2, "msg2-before")).toBe(1);
+      expect(await redis.publish(channel3, "msg3-before")).toBe(1);
 
-    //  // Unsubscribe from channel2
-    //  await redis.unsubscribe(channel2);
+      await sleep(flushTimeoutMs);
 
-    //  // Send messages after unsubscribing from channel2
-    //  expect(await redis.publish(channel1, "msg1-after")).toBe(1);
-    //  expect(await redis.publish(channel2, "msg2-after")).toBe(1);
-    //  expect(await redis.publish(channel3, "msg3-after")).toBe(1);
+      // Unsubscribe from channel2
+      await subscriber.unsubscribe(channel2);
 
-    //  await sleep(flushTimeoutMs);
+      // Send messages after unsubscribing from channel2
+      expect(await redis.publish(channel1, "msg1-after")).toBe(1);
+      expect(await redis.publish(channel2, "msg2-after")).toBe(0);
+      expect(await redis.publish(channel3, "msg3-after")).toBe(1);
 
-    //  // Check we received messages only on subscribed channels
-    //  expect(receivedMessages[channel1]).toEqual(["msg1-before", "msg1-after"]);
-    //  expect(receivedMessages[channel2]).toEqual(["msg2-before"]); // No "msg2-after"
-    //  expect(receivedMessages[channel3]).toEqual(["msg3-before", "msg3-after"]);
-    //});
+      await sleep(flushTimeoutMs);
+
+      // Check we received messages only on subscribed channels
+      expect(receivedMessages[channel1]).toEqual(["msg1-before", "msg1-after"]);
+      expect(receivedMessages[channel2]).toEqual(["msg2-before"]); // No "msg2-after"
+      expect(receivedMessages[channel3]).toEqual(["msg3-before", "msg3-after"]);
+
+      await subscriber.unsubscribe([channel1, channel3]);
+    });
 
     //test("subscribing to the same channel multiple times", async () => {
     //  const redis = await connectedRedis();

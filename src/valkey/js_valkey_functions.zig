@@ -694,7 +694,7 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
     }
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {
             item.deinit();
@@ -705,6 +705,9 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
     // The first argument given is the channel or may be an array of channels.
     const channelOrMany = callframe.argument(0);
     if (channelOrMany.isArray()) {
+        // Ensure we allocate enough space for all channels
+        try redis_channels.ensureTotalCapacity(try channelOrMany.getLength(globalObject));
+
         // It is an array, so let's iterate over it
         var array_iter = try channelOrMany.arrayIterator(globalObject);
         while (try array_iter.next()) |channel_arg| {
@@ -782,7 +785,7 @@ pub fn unsubscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
     const args_view = callframe.arguments();
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 8);
+    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
         for (redis_channels.items) |*item| {
             item.deinit();
@@ -821,6 +824,7 @@ pub fn unsubscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
 
     // Handle array of channels or single channel
     if (channelOrMany.isArray()) {
+        try redis_channels.ensureTotalCapacity(try channelOrMany.getLength(globalObject));
         // It is an array, so let's iterate over it
         var array_iter = try channelOrMany.arrayIterator(globalObject);
         while (try array_iter.next()) |channel_arg| {

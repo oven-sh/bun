@@ -612,10 +612,19 @@ pub const JSValkeyClient = struct {
 
         _ = value;
 
-        //const global_object = this.globalObject;
-        const event_loop = this.client.vm.eventLoop();
-        event_loop.enter();
-        defer event_loop.exit();
+        this.client.onWritable();
+        this.updatePollRef();
+    }
+
+    pub fn onValkeyUnsubscribe(this: *JSValkeyClient, value: *protocol.RESPValue) void {
+        // TODO(markovejnovic): Add another safety check to reason about the
+        // subscription state.
+        if (!this.isSubscriber()) {
+            debug("onUnsubscribe called but client is not in subscriber mode", .{});
+            return;
+        }
+
+        _ = value;
 
         this.client.onWritable();
         this.updatePollRef();

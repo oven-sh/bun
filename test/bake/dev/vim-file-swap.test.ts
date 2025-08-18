@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { devTest } from "../bake-harness";
-import { isWindows } from "harness";
 
 // skip on windows due to EPERM issues since we use libuv for uv_fs_rename and
 // it doesn't appaer to use posix semantics

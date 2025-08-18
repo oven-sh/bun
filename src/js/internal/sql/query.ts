@@ -33,7 +33,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
 
-  public readonly [_adapter]: DatabaseAdapter<any, Handle>;
+  public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
   [Symbol.for("nodejs.util.inspect.custom")](): `Query { ${string} }` {
     const status = this[_queryStatus];

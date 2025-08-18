@@ -76,7 +76,7 @@ pub const Yield = union(enum) {
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
         defer {
-            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec - 1 });
             if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
@@ -108,6 +108,7 @@ pub const Yield = union(enum) {
                     }
                     continue :state x.next();
                 }
+                bun.assert_eql(std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x), null);
                 pipeline_stack.append(x) catch bun.outOfMemory();
                 continue :state x.next();
             },

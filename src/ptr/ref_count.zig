@@ -547,7 +547,7 @@ fn genericDump(
 }
 
 pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
-    if (!@hasField(T, "ref_count")) return;
+    if (comptime !bun.meta.hasField(T, "ref_count")) return;
     const Rc = @FieldType(T, "ref_count");
     switch (@typeInfo(Rc)) {
         .@"struct" => if (@hasDecl(Rc, "assertNoRefs"))

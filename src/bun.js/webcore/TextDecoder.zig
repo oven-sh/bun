@@ -190,6 +190,8 @@ pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObje
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+    const TextCodec = @import("../bindings/TextCodec.zig").TextCodec;
+
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
@@ -273,6 +275,36 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
 
             var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
+        },
+
+        // Handle all other encodings using WebKit's TextCodec
+        else => {
+            const encoding_name = EncodingLabel.getLabel(this.encoding);
+
+            // Create codec if we don't have one cached
+            // Note: In production, we might want to cache these per-encoding
+            const codec = TextCodec.create(encoding_name) orelse {
+                // Fallback to empty string if codec creation fails
+                return ZigString.init("").toJS(globalThis);
+            };
+            defer codec.deinit();
+
+            // Handle BOM stripping if needed
+            if (!this.ignore_bom) {
+                codec.stripBOM();
+            }
+
+            // Decode the data
+            const result = codec.decode(buffer_slice, flush, this.fatal);
+            defer result.result.deref();
+
+            // Check for errors if fatal mode is enabled
+            if (result.sawError and this.fatal) {
+                return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{encoding_name}).throw();
+            }
+
+            // Return the decoded string
+            return result.result.toJS(globalThis);
         },
     }
 }

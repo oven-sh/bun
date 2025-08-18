@@ -1,3 +1,16 @@
+/// Options for `WithOptions`.
+pub const Options = struct {
+    // Whether to call `deinit` on the data before freeing it, if such a method exists.
+    deinit: bool = true,
+
+    fn toOwned(self: Options) owned.Options {
+        return .{
+            .deinit = self.deinit,
+            .allocator = null,
+        };
+    }
+};
+
 /// A possibly owned pointer or slice.
 ///
 /// Memory held by this type is either owned or borrowed. If owned, this type also holds the
@@ -12,14 +25,14 @@
 /// `deinit`, even if the data is borrowed. It's a no-op in that case but doing so will help prevent
 /// leaks.) If `Pointer` is optional, use `initNull` to create a null `MaybeOwned(Pointer)`.
 pub fn MaybeOwned(comptime Pointer: type) type {
-    return MaybeOwnedWithOpts(Pointer, .{});
+    return WithOptions(Pointer, .{});
 }
 
 /// Like `MaybeOwned`, but takes explicit options.
 ///
-/// `MaybeOwned(Pointer)` is simply an alias of `MaybeOwnedWithOpts(Pointer, .{})`.
-pub fn MaybeOwnedWithOpts(comptime Pointer: type, comptime options: Options) type {
-    const info = PointerInfo.parse(Pointer);
+/// `MaybeOwned(Pointer)` is simply an alias of `WithOptions(Pointer, .{})`.
+pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
+    const info = PointerInfo.parse(Pointer, .{});
     const NonOptionalPointer = info.NonOptionalPointer;
 
     return struct {
@@ -28,14 +41,16 @@ pub fn MaybeOwnedWithOpts(comptime Pointer: type, comptime options: Options) typ
         unsafe_raw_pointer: Pointer,
         unsafe_allocator: NullableAllocator,
 
+        const Owned = owned.WithOptions(Pointer, options.toOwned());
+
         /// Create a `MaybeOwned(Pointer)` from an `Owned(Pointer)`.
         ///
-        /// Don't use `owned` (including calling `deinit`) after calling this method.
-        pub fn fromOwned(owned: OwnedWithOpts(Pointer, options)) Self {
+        /// This method invalidates `owned`.
+        pub fn fromOwned(owned_ptr: Owned) Self {
             const data, const allocator = if (comptime info.isOptional())
-                owned.intoRawOwned() orelse return .initNull()
+                owned_ptr.intoRawOwned() orelse return .initNull()
             else
-                owned.intoRawOwned();
+                owned_ptr.intoRawOwned();
             return .{
                 .unsafe_raw_pointer = data,
                 .unsafe_allocator = .init(allocator),
@@ -53,6 +68,8 @@ pub fn MaybeOwnedWithOpts(comptime Pointer: type, comptime options: Options) typ
         }
 
         /// Create a `MaybeOwned(Pointer)` from borrowed slice or pointer.
+        ///
+        /// `data` must not be freed for the life of the `MaybeOwned`.
         pub fn fromBorrowed(data: NonOptionalPointer) Self {
             return .{
                 .unsafe_raw_pointer = data,
@@ -70,12 +87,14 @@ pub fn MaybeOwnedWithOpts(comptime Pointer: type, comptime options: Options) typ
             else
                 self.intoRaw();
             if (maybe_allocator) |allocator| {
-                OwnedWithOpts(Pointer, options).fromRawOwned(data, allocator).deinit();
+                Owned.fromRawOwned(data, allocator).deinit();
             }
         }
 
+        const SelfOrPtr = if (info.isConst()) Self else *Self;
+
         /// Returns the inner pointer or slice.
-        pub fn get(self: if (info.isConst()) Self else *Self) Pointer {
+        pub fn get(self: SelfOrPtr) Pointer {
             return self.unsafe_raw_pointer;
         }
 
@@ -134,10 +153,8 @@ const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const NullableAllocator = bun.allocators.NullableAllocator;
+const owned = bun.ptr.owned;
 
-const meta = @import("./meta.zig");
+const meta = @import("../meta.zig");
 const AddConst = meta.AddConst;
 const PointerInfo = meta.PointerInfo;
-
-const Options = bun.ptr.owned.Options;
-const OwnedWithOpts = bun.ptr.owned.OwnedWithOpts;

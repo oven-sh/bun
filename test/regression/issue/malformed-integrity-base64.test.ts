@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 test("malformed integrity base64 in lockfile should be handled gracefully", async () => {
   const dir = tempDirWithFiles("malformed-integrity-test", {
@@ -7,8 +7,8 @@ test("malformed integrity base64 in lockfile should be handled gracefully", asyn
       name: "test-malformed-integrity",
       version: "1.0.0",
       dependencies: {
-        "lodash": "4.17.21"  // Use a real package that exists
-      }
+        "lodash": "4.17.21", // Use a real package that exists
+      },
     }),
   });
 
@@ -18,7 +18,7 @@ test("malformed integrity base64 in lockfile should be handled gracefully", asyn
     cwd: dir,
     env: bunEnv,
   });
-  
+
   if (installExitCode !== 0) {
     throw new Error("Initial install failed");
   }
@@ -26,22 +26,22 @@ test("malformed integrity base64 in lockfile should be handled gracefully", asyn
   // Now modify the lockfile to have malformed integrity data
   // The original panic occurs when parsing this during lockfile loading
   const oversizedBytes = new Uint8Array(100); // Way larger than any hash digest (max 64 bytes)
-  oversizedBytes.fill(0xAA);
-  const oversizedBase64 = Buffer.from(oversizedBytes).toString('base64');
-  
+  oversizedBytes.fill(0xaa);
+  const oversizedBase64 = Buffer.from(oversizedBytes).toString("base64");
+
   const lockfile = {
     lockfileVersion: 1,
     workspaces: {
       "": {
         name: "test-malformed-integrity",
         dependencies: {
-          "lodash": "4.17.21"
-        }
-      }
+          "lodash": "4.17.21",
+        },
+      },
     },
     packages: {
-      "lodash": ["lodash@4.17.21", "", {}, `sha256-${oversizedBase64}`] // This causes the panic
-    }
+      "lodash": ["lodash@4.17.21", "", {}, `sha256-${oversizedBase64}`], // This causes the panic
+    },
   };
 
   await Bun.write(`${dir}/bun.lock`, JSON.stringify(lockfile, null, 2));

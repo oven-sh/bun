@@ -82,22 +82,22 @@ pub const Integrity = extern struct {
                 .tag = Tag.unknown,
             };
         }
-        
+
         const input = std.mem.trimRight(u8, buf[offset..], "=");
-        
+
         // Check if the base64 input would decode to more bytes than we can handle
         const decoded_size = Base64.Decoder.calcSizeForSlice(input) catch {
             return Integrity{
                 .tag = Tag.unknown,
             };
         };
-        
+
         if (decoded_size > expected_len) {
             return Integrity{
                 .tag = Tag.unknown,
             };
         }
-        
+
         Base64.Decoder.decode(out[0..expected_len], input) catch {
             return Integrity{
                 .tag = Tag.unknown,

@@ -1,13 +1,12 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { mkdirSync, rmSync, stat, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { stat } from "node:fs";
 
 test("time fields preserve fractional milliseconds", async () => {
   const tempDir = join(tmpdir(), "bun-time-precision-test-" + Date.now());
   mkdirSync(tempDir, { recursive: true });
-  
+
   const testFile = join(tempDir, "test.txt");
   writeFileSync(testFile, "test content");
 
@@ -32,15 +31,10 @@ test("time fields preserve fractional milliseconds", async () => {
 
     // Test that fractional precision is preserved by checking decimal places
     // At least one of the time fields should have fractional precision
-    const hasDecimalPrecision = [
-      stats.atimeMs,
-      stats.mtimeMs,
-      stats.ctimeMs,
-      stats.birthtimeMs
-    ].some(timeMs => {
+    const hasDecimalPrecision = [stats.atimeMs, stats.mtimeMs, stats.ctimeMs, stats.birthtimeMs].some(timeMs => {
       // Convert to string and check if it has a decimal point with fractional part
       const timeStr = timeMs.toString();
-      const decimalIndex = timeStr.indexOf('.');
+      const decimalIndex = timeStr.indexOf(".");
       return decimalIndex !== -1 && decimalIndex < timeStr.length - 1;
     });
 
@@ -56,7 +50,6 @@ test("time fields preserve fractional milliseconds", async () => {
     expect(Math.abs(new Date(stats.mtimeMs).getTime() - stats.mtimeMs)).toBeLessThan(1);
     expect(Math.abs(new Date(stats.ctimeMs).getTime() - stats.ctimeMs)).toBeLessThan(1);
     expect(Math.abs(new Date(stats.birthtimeMs).getTime() - stats.birthtimeMs)).toBeLessThan(1);
-
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

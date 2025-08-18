@@ -1,8 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { mkdirSync, promises, rmSync, stat } from "node:fs";
 import { tmpdir } from "node:os";
-import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { stat, promises } from "node:fs";
 
 test("fs.stat birthtimeMs should be a float with fractional part", async () => {
   const tempDir = join(tmpdir(), "bun-birthtime-test-" + Date.now());
@@ -35,7 +34,7 @@ test("fs.stat birthtimeMs should be a float with fractional part", async () => {
       // Node.js returns floating point values like 1755376430287.9988
       // The fractional part should be preserved
       const birthtimeStr = statSync.birthtimeMs.toString();
-      
+
       // Check that we have sub-millisecond precision when birthtime is supported
       // This is platform-dependent, so we check if it's > 0 first
       expect(statSync.birthtimeMs % 1).toBeFinite(); // fractional part should be finite

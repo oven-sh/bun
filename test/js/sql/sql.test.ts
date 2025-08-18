@@ -11602,30 +11602,6 @@ describe("Misc", () => {
           await db1`COMMIT`;
         });
       });
-
-      describe("PostgreSQL errors", () => {
-        test.todo("PostgreSQL connection error throws PostgresError", async () => {
-          try {
-            const sql = new SQL("postgres://invalid:invalid@localhost:99999/invalid");
-            await sql`SELECT 1`;
-            throw new Error("Should have thrown an error");
-          } catch (e) {
-            expect(e).toBeInstanceOf(SQL.PostgresError);
-            expect(e).toBeInstanceOf(SQL.SQLError);
-            expect(e.code).toBeDefined();
-          }
-        });
-
-        test.todo("PostgreSQL constraint violation throws PostgresError with details", async () => {
-          // This would require a running PostgreSQL instance
-          // Will be implemented when we have the actual error classes working
-        });
-
-        test.todo("PostgreSQL syntax error throws PostgresError", async () => {
-          // This would require a running PostgreSQL instance
-          // Will be implemented when we have the actual error classes working
-        });
-      });
     });
 
     describe("Type guards", () => {

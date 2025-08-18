@@ -273,42 +273,45 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await subscriber.unsubscribe(testChannel);
     });
 
-    //test("subscribing to multiple channels receives messages", async () => {
-    //  const TEST_MESSAGE_COUNT = 128;
-    //  const redis = await connectedRedis();
+    test("subscribing to multiple channels receives messages", async () => {
+      const TEST_MESSAGE_COUNT = 128;
+      const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
 
-    //  const channels = [testChannel, "another-test-channel"];
+      const channels = [testChannel, "another-test-channel"];
 
-    //  var receivedMessages: { [channel: string]: string[] } = {};
-    //  await redis.subscribe(channels, (message, channel) => {
-    //    receivedMessages[channel] = receivedMessages[channel] || [];
-    //    receivedMessages[channel].push(message);
-    //  });
+      var receivedMessages: { [channel: string]: string[] } = {};
+      await subscriber.subscribe(channels, (message, channel) => {
+        receivedMessages[channel] = receivedMessages[channel] || [];
+        receivedMessages[channel].push(message);
+      });
 
-    //  var sentMessages: { [channel: string]: string[] } = {};
-    //  for (let i = 0; i < TEST_MESSAGE_COUNT; i++) {
-    //    const channel = channels[randomCoinFlip() ? 0 : 1];
-    //    const message = randomUUIDv7();
+      var sentMessages: { [channel: string]: string[] } = {};
+      for (let i = 0; i < TEST_MESSAGE_COUNT; i++) {
+        const channel = channels[randomCoinFlip() ? 0 : 1];
+        const message = randomUUIDv7();
 
-    //    expect(await redis.publish(channel, message)).toBe(1);
+        expect(await redis.publish(channel, message)).toBe(1);
 
-    //    sentMessages[channel] = sentMessages[channel] || [];
-    //    sentMessages[channel].push(message);
-    //  }
+        sentMessages[channel] = sentMessages[channel] || [];
+        sentMessages[channel].push(message);
+      }
 
-    //  // Wait a little bit just to ensure all the messages are flushed.
-    //  await sleep(flushTimeoutMs);
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
 
-    //  // Check that we received messages on both channels
-    //  expect(Object.keys(receivedMessages).sort()).toEqual(Object.keys(sentMessages).sort());
+      // Check that we received messages on both channels
+      expect(Object.keys(receivedMessages).sort()).toEqual(Object.keys(sentMessages).sort());
 
-    //  // Check messages match for each channel
-    //  for (const channel of channels) {
-    //    if (sentMessages[channel]) {
-    //      expect(receivedMessages[channel]).toEqual(sentMessages[channel]);
-    //    }
-    //  }
-    //});
+      // Check messages match for each channel
+      for (const channel of channels) {
+        if (sentMessages[channel]) {
+          expect(receivedMessages[channel]).toEqual(sentMessages[channel]);
+        }
+      }
+
+      await subscriber.unsubscribe(channels);
+    });
 
     //test("unsubscribing from specific channels while remaining subscribed to others", async () => {
     //  const redis = await connectedRedis();

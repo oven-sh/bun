@@ -352,6 +352,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     //test("subscribing to the same channel multiple times", async () => {
     //  const redis = await connectedRedis();
+    //  const subscriber = await connectedRedis();
     //  const channel = "duplicate-channel";
 
     //  let callCount = 0;
@@ -360,11 +361,11 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     //  };
 
     //  // Subscribe to the same channel twice
-    //  await redis.subscribe(channel, listener);
-    //  await redis.subscribe(channel, listener);
+    //  await subscriber.subscribe(channel, listener);
+    //  await subscriber.subscribe(channel, listener);
 
     //  // Publish a single message
-    //  expect(await redis.publish(channel, "test-message")).toBe(2);
+    //  expect(await redis.publish(channel, "test-message")).toBe(1);
 
     //  await sleep(flushTimeoutMs);
 
@@ -372,114 +373,129 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     //  expect(callCount).toBe(1);
     //});
 
-    //test("empty string messages", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "empty-message-channel";
+    test("empty string messages", async () => {
+      const redis = await connectedRedis();
+      const channel = "empty-message-channel";
+      const subscriber = await connectedRedis();
 
-    //  let receivedMessage: string | undefined = undefined;
-    //  await redis.subscribe(channel, (message) => {
-    //    receivedMessage = message;
-    //  });
+      let receivedMessage: string | undefined = undefined;
+      await subscriber.subscribe(channel, (message) => {
+        receivedMessage = message;
+      });
 
-    //  expect(await redis.publish(channel, "")).toBe(1);
-    //  await sleep(flushTimeoutMs);
+      expect(await redis.publish(channel, "")).toBe(1);
+      await sleep(flushTimeoutMs);
 
-    //  expect(receivedMessage).not.toBeUndefined();
-    //  expect(receivedMessage!).toBe("");
-    //});
+      expect(receivedMessage).not.toBeUndefined();
+      expect(receivedMessage!).toBe("");
 
-    //test("special characters in channel names", async () => {
-    //  const redis = await connectedRedis();
+      await subscriber.unsubscribe(channel);
+    });
 
-    //  const specialChannels = [
-    //    "channel:with:colons",
-    //    "channel with spaces",
-    //    "channel-with-unicode-😀",
-    //    "channel[with]brackets",
-    //    "channel@with#special$chars",
-    //  ];
+    test("special characters in channel names", async () => {
+      const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
 
-    //  for (const channel of specialChannels) {
-    //    let received = false;
-    //    await redis.subscribe(channel, () => {
-    //      received = true;
-    //    });
+      const specialChannels = [
+        "channel:with:colons",
+        "channel with spaces",
+        "channel-with-unicode-😀",
+        "channel[with]brackets",
+        "channel@with#special$chars",
+      ];
 
-    //    expect(await redis.publish(channel, "test")).toBe(1);
-    //    await sleep(flushTimeoutMs);
+      for (const channel of specialChannels) {
+        let received = false;
+        await subscriber.subscribe(channel, () => {
+          received = true;
+        });
 
-    //    expect(received).toBe(true);
-    //    await redis.unsubscribe(channel);
-    //  }
-    //});
+        expect(await redis.publish(channel, "test")).toBe(1);
+        await sleep(flushTimeoutMs);
 
-    //test("ping works in subscription mode", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "ping-test-channel";
+        expect(received).toBe(true);
+        await subscriber.unsubscribe(channel);
+      }
+    });
 
-    //  await redis.subscribe(channel, () => {});
+    test("ping works in subscription mode", async () => {
+      const redis = await connectedRedis();
+      const channel = "ping-test-channel";
 
-    //  // Ping should work in subscription mode
-    //  const pong = await redis.ping();
-    //  expect(pong).toBe("PONG");
+      await redis.subscribe(channel, () => {});
 
-    //  const customPing = await redis.ping("hello");
-    //  expect(customPing).toBe("hello");
-    //});
+      // Ping should work in subscription mode
+      const pong = await redis.ping();
+      expect(pong).toBe("PONG");
 
-    //test("publish works from a subscribed client", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "self-publish-channel";
+      const customPing = await redis.ping("hello");
+      expect(customPing).toBe("hello");
 
-    //  let receivedMessage: string | undefined = undefined;
-    //  await redis.subscribe(channel, (message) => {
-    //    receivedMessage = message;
-    //  });
+      await redis.unsubscribe(channel);
+    });
 
-    //  // Publishing from the same client should work
-    //  expect(await redis.publish(channel, "self-published")).toBe(1);
-    //  await sleep(flushTimeoutMs);
+    test("publish works from a subscribed client", async () => {
+      const redis = await connectedRedis();
+      const channel = "self-publish-channel";
+      const subscriber = await connectedRedis();
 
-    //  expect(receivedMessage).toBeDefined();
-    //  expect(receivedMessage!).toBe("self-published");
-    //});
+      let receivedMessage: string | undefined = undefined;
+      await subscriber.subscribe(channel, (message) => {
+        receivedMessage = message;
+      });
+      let selfReceived: string | undefined = undefined;
+      await redis.subscribe(channel, (message) => {
+        selfReceived = message;
+      });
 
-    //test("complete unsubscribe restores normal command mode", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "restore-test-channel";
-    //  const testKey = "restore-test-key";
+      // Publishing from the same client should work
+      expect(await redis.publish(channel, "self-published")).toBe(2);
+      await sleep(flushTimeoutMs);
 
-    //  await redis.subscribe(channel, () => {});
+      expect(receivedMessage).toBeDefined();
+      expect(receivedMessage!).toBe("self-published");
+      expect(selfReceived).toBeDefined();
+      expect(selfReceived!).toBe("self-published");
 
-    //  // Should fail in subscription mode
-    //  expect(redis.set(testKey, "value")).rejects.toBeDefined();
+      await subscriber.unsubscribe(channel);
+      await redis.unsubscribe(channel);
+    });
 
-    //  // Unsubscribe from all channels
-    //  await redis.unsubscribe(channel);
+    test("complete unsubscribe restores normal command mode", async () => {
+      const redis = await connectedRedis();
+      const channel = "restore-test-channel";
+      const testKey = "restore-test-key";
 
-    //  // Should work after unsubscribing
-    //  const result = await redis.set(testKey, "value");
-    //  expect(result).toBe("OK");
+      await redis.subscribe(channel, () => {});
 
-    //  const value = await redis.get(testKey);
-    //  expect(value).toBe("value");
-    //});
+      // Should fail in subscription mode
+      expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
 
-    //test("publishing without subscribers succeeds", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "no-subscribers-channel";
+      // Unsubscribe from all channels
+      await redis.unsubscribe(channel);
 
-    //  // Publishing without subscribers should not throw
-    //  expect(await redis.publish(channel, "message")).toBe(0);
-    //});
+      // Should work after unsubscribing
+      const result = await redis.set(testKey, "value");
+      expect(result).toBe("OK");
 
-    //test("unsubscribing from non-subscribed channels", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "never-subscribed-channel";
+      const value = await redis.get(testKey);
+      expect(value).toBe("value");
+    });
 
-    //  // Should not throw when unsubscribing from a channel we never subscribed to
-    //  expect(redis.unsubscribe(channel)).resolves.toBeUndefined();
-    //});
+    test("publishing without subscribers succeeds", async () => {
+      const redis = await connectedRedis();
+      const channel = "no-subscribers-channel";
+
+      // Publishing without subscribers should not throw
+      expect(await redis.publish(channel, "message")).toBe(0);
+    });
+
+    test("unsubscribing from non-subscribed channels", async () => {
+      const redis = await connectedRedis();
+      const channel = "never-subscribed-channel";
+
+      expect(() => redis.unsubscribe(channel)).toThrow("Not in subscription mode");
+    });
 
     //test("callback errors don't crash the client", async () => {
     //  const redis = await connectedRedis();

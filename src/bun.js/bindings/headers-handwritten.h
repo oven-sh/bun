@@ -20,6 +20,7 @@ typedef struct ZigString {
     const unsigned char* ptr;
     size_t len;
 } ZigString;
+static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;

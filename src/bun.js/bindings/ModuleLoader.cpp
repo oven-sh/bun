@@ -129,31 +129,41 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
     };
 }
 
-static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+static OnLoadResult handleOnLoadObjectResult(MarkedArgumentBuffer& arguments, JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* object)
 {
-    OnLoadResult result {};
-    result.type = OnLoadResultTypeObject;
-    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& builtinNames = WebCore::builtinNames(vm);
+    const auto& builtinNames = WebCore::builtinNames(vm);
     auto exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName());
     if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
+        auto* exception = scope.exception();
+        JSC::ensureStillAliveHere(exception);
         scope.clearException();
-        return result;
+        arguments.append(exception);
+        return {
+            .value = { .error = exception },
+            .type = OnLoadResultTypeError,
+            .wasMock = false,
+        };
     }
-    if (exportsValue) {
-        if (exportsValue.isObject()) {
-            result.value.object = exportsValue;
-            return result;
-        }
+    arguments.append(exportsValue);
+    if (exportsValue && exportsValue.isObject()) {
+        return {
+            .value = { .object = exportsValue },
+            .type = OnLoadResultTypeObject,
+            .wasMock = false,
+        };
     }
 
     scope.throwException(globalObject, createTypeError(globalObject, "\"object\" loader must return an \"exports\" object"_s));
-    result.type = OnLoadResultTypeError;
-    result.value.error = scope.exception();
+    auto* exception = scope.exception();
+    JSC::ensureStillAliveHere(exception);
     scope.clearException();
-    return result;
+    arguments.append(exception);
+    return {
+        .value = { .error = exception },
+        .type = OnLoadResultTypeError,
+        .wasMock = false,
+    };
 }
 
 JSC::JSInternalPromise* PendingVirtualModuleResult::internalPromise()
@@ -204,39 +214,44 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
+OnLoadResult handleOnLoadResultNotPromise(MarkedArgumentBuffer& arguments, Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
 {
-    OnLoadResult result = {};
-    result.type = OnLoadResultTypeError;
     auto& vm = JSC::getVM(globalObject);
-    result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
 
+    const auto toErrorResult = [&](JSValue error) -> OnLoadResult {
+        arguments.append(error);
+        return {
+            .value = { .error = error },
+            .type = OnLoadResultTypeError,
+            .wasMock = false,
+        };
+    };
+
     if (JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(objectValue)) {
-        result.value.error = exception->value();
-        scope.release();
-        return result;
+        RELEASE_AND_RETURN(scope, toErrorResult(exception->value()));
     }
 
     if (wasModuleMock) {
-        result.type = OnLoadResultTypeObject;
-        result.value.object = objectValue;
-        return result;
+        return {
+            .value = { .object = objectValue },
+            .type = OnLoadResultTypeObject,
+            .wasMock = false,
+        };
     }
 
     JSC::JSObject* object = objectValue.getObject();
     if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
-        result.value.error = scope.exception();
+        const auto result = toErrorResult(scope.exception());
         scope.clearException();
-        result.type = OnLoadResultTypeError;
         return result;
     }
 
     auto loaderValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "loader"_s));
     if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
+        const auto result = toErrorResult(scope.exception());
         scope.clearException();
         return result;
     }
@@ -247,16 +262,17 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
             JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject);
             if (auto ex = scope.exception()) [[unlikely]] {
-                result.value.error = ex;
+                JSC::ensureStillAliveHere(ex);
                 scope.clearException();
-                return result;
+                RELEASE_AND_RETURN(scope, toErrorResult(ex));
             }
             if (loaderJSString) {
+
                 WTF::String loaderString = loaderJSString->value(globalObject);
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
-                    RELEASE_AND_RETURN(scope, handleOnLoadObjectResult(globalObject, object));
+                    RELEASE_AND_RETURN(scope, handleOnLoadObjectResult(arguments, vm, globalObject, object));
                 } else if (loaderString == "jsx"_s) {
                     loader = BunLoaderTypeJSX;
                 } else if (loaderString == "ts"_s) {
@@ -274,55 +290,60 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
-        result.value.error = scope.exception();
+        const auto result = toErrorResult(scope.exception());
         scope.clearException();
         return result;
     }
 
-    result.value.sourceText.loader = loader;
-    result.value.sourceText.value = JSValue {};
-    result.value.sourceText.string = {};
-
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
-        scope.clearException();
-        return result;
+        RELEASE_AND_RETURN(scope, toErrorResult(scope.exception()));
     }
     if (contentsValue) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
-                result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
-                result.value.sourceText.value = contentsValue;
+                arguments.append(contentsValue);
+                return {
+                    .value = { .sourceText = { .string = Zig::toZigString(contentsJSString, globalObject), .value = contentsValue, .loader = loader } },
+                    .type = OnLoadResultTypeCode,
+                    .wasMock = false,
+                };
             }
         } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(contentsValue)) {
-            result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
-            result.value.sourceText.value = contentsValue;
+            arguments.append(contentsValue);
+            return {
+                .value = { .sourceText = { .string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() }, .value = contentsValue, .loader = loader } },
+                .type = OnLoadResultTypeCode,
+                .wasMock = false,
+            };
         }
     }
 
-    if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
+    if (contentsValue.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
-        result.value.error = scope.exception();
+        const auto result = toErrorResult(scope.exception());
         scope.clearException();
         return result;
     }
 
-    result.type = OnLoadResultTypeCode;
-    return result;
+    return {
+        .value = { .sourceText = { .string = ZigStringEmpty, .value = contentsValue, .loader = loader } },
+        .type = OnLoadResultTypeCode,
+        .wasMock = false,
+    };
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)
+static OnLoadResult handleOnLoadResult(MarkedArgumentBuffer& arguments, Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)
 {
     if (JSC::jsDynamicCast<JSC::JSPromise*>(objectValue)) {
-        OnLoadResult result = {};
-        result.type = OnLoadResultTypePromise;
-        result.value.promise = objectValue;
-        result.wasMock = wasModuleMock;
-        return result;
+        return {
+            .value = { .promise = objectValue },
+            .type = OnLoadResultTypePromise,
+            .wasMock = wasModuleMock,
+        };
     }
 
-    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, wasModuleMock);
+    return handleOnLoadResultNotPromise(arguments, globalObject, objectValue, specifier, wasModuleMock);
 }
 
 template<bool allowPromise>
@@ -337,7 +358,8 @@ static JSValue handleVirtualModuleResult(
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
+    MarkedArgumentBuffer arguments;
+    auto onLoadResult = handleOnLoadResult(arguments, globalObject, virtualModuleResult, specifier, wasModuleMock);
     RETURN_IF_EXCEPTION(scope, {});
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 

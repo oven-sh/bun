@@ -42,7 +42,7 @@ fn hasPtr(alloc: Allocator) bool {
 /// This function may have false negatives; that is, it may fail to detect that two allocators
 /// are different. However, in practice, it's a useful safety check.
 pub fn assertEq(alloc1: Allocator, alloc2: Allocator) void {
-    if (comptime !bun.ci_assert) return;
+    if (comptime !enabled) return;
     bun.assertf(
         alloc1.vtable == alloc2.vtable,
         "allocators do not match (vtables differ: {*} and {*})",

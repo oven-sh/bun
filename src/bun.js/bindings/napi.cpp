@@ -169,6 +169,19 @@ extern "C" napi_status napi_set_last_error(napi_env env, napi_status status)
     return status;
 }
 
+// Clear the last error info, similar to Node.js's implementation.
+// This is used by functions that need to clear error state safely.
+extern "C" napi_status napi_clear_last_error(napi_env env)
+{
+    if (env) {
+        env->m_lastNapiErrorInfo.error_code = napi_ok;
+        env->m_lastNapiErrorInfo.engine_error_code = 0;
+        env->m_lastNapiErrorInfo.engine_reserved = nullptr;
+        env->m_lastNapiErrorInfo.error_message = nullptr;
+    }
+    return napi_ok;
+}
+
 extern "C" napi_status
 napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 {
@@ -1246,19 +1259,27 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
 
 extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    // NAPI_PREAMBLE is not used here: this function must execute when there is a
+    // pending exception, including during cleanup.
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
 
-    if (env->hasPendingException()) {
-        *result = true;
-    } else {
+    // First check if the environment has a pending exception
+    *result = env->hasPendingException();
+    
+    // If no exception is pending in the environment, check the VM's exception state
+    // but only if it's safe to access the VM (not during cleanup)
+    if (!*result && !env->isFinishingFinalizers()) {
         auto globalObject = toJS(env);
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-        *result = scope.exception() != nullptr;
+        if (globalObject) {
+            auto& vm = JSC::getVM(globalObject);
+            // Use a catch scope instead of throw scope for safety during cleanup
+            auto scope = DECLARE_CATCH_SCOPE(vm);
+            *result = scope.exception() != nullptr;
+        }
     }
-    // skip macros as they assume we made a throw scope in the preamble
-    return napi_set_last_error(env, napi_ok);
+    
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,

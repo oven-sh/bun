@@ -535,20 +535,20 @@ describe("napi", () => {
     // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
     // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
     // conditions, this test ensures the addon loads and runs without issues.
-    
+
     const addon = require("./napi-app/build/Debug/test_finalizer_iterator_invalidation.node");
-    
+
     // Create objects with finalizers (should not crash)
     const objects = addon.createProblematicObjects(5);
     expect(objects).toHaveLength(5);
-    
+
     // Clear references
     objects.length = 0;
-    
-    // Get initial count 
+
+    // Get initial count
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
-    
+
     // Test passes if we reach here without crashing
     expect(true).toBe(true);
   });
